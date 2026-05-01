@@ -4,108 +4,231 @@
 
 ```
 dbward-cli (binary)
-├── dbward-core      (types, RBAC, audit, config, query execution)
-└── dbward-migrate   (migration file I/O + execution)
-      └── dbward-core
-
-dbward-server (Pro, not in MVP)
-├── dbward-core
-└── dbward-migrate
+├── dbward-core      (Engine, types, RBAC, audit, config, query execution)
+├── dbward-migrate   (migration file I/O + execution)
+│     └── dbward-core
+└── dbward-server    (axum HTTP, approval flow, SQLite state, auth)
+      ├── dbward-core
+      └── dbward-migrate
 ```
 
-## DB Connection Ownership
+## Core Engine
 
-`dbward-core` owns the PostgreSQL connection pool (`sqlx::PgPool`).
-`dbward-migrate` receives a pool reference from the caller.
+CLI, MCP, and server all go through the same `Engine`.
+
+```rust
+pub struct Engine {
+    pool: PgPool,
+    config: Config,
+}
+
+impl Engine {
+    pub async fn migrate_up(&self, user: &str, role: Role) -> Result<MigrationResult>;
+    pub async fn migrate_down(&self, user: &str, role: Role) -> Result<MigrationResult>;
+    pub async fn migrate_status(&self) -> Result<Vec<MigrationStatus>>;
+    pub async fn migrate_create(&self, name: &str) -> Result<PathBuf>;
+    pub async fn execute_query(&self, user: &str, role: Role, sql: &str) -> Result<QueryResult>;
+}
+```
+
+## Two Modes
+
+### Direct Mode (CLI + MCP stdio, no server)
+
+Engine connects directly to target DB.
+No approval flow — operations execute immediately.
+Audit log to stdout (volatile).
 
 ```
-dbward-core::DbConnection
-  ├── connect(config) -> PgPool
-  ├── execute_query(pool, sql, role) -> QueryResult
-  └── (pool is passed to dbward-migrate)
+dbward-cli / dbward mcp
+  └─ Engine (owns PgPool)
+       └─ Target DB
+```
 
-dbward-migrate::Migrator
-  └── run(pool, direction, migrations_dir) -> MigrationResult
+### Server Mode (approval flow)
+
+`dbward server` runs as a long-lived process.
+Clients never touch the target DB directly.
+
+```
+dbward-cli --server http://localhost:8080
+  │ HTTP + API token
+  ▼
+dbward-server (axum + SQLite)
+  ├─ Authentication (API token → user + role)
+  ├─ Policy check (approval required?)
+  │   ├─ No  → Engine executes immediately
+  │   └─ Yes → Create pending request, return request ID
+  ├─ Engine (owns PgPool → Target DB)
+  └─ Audit log (SQLite, persistent)
+```
+
+## Approval Flow (server mode)
+
+State machine:
+```
+pending → approved → executed
+        → rejected
+```
+
+MVP constraints:
+- Hardcoded policy: production mutating ops require 1 approval
+- Requester ≠ approver (enforced by server)
+- One pending migration request at a time (ordering safety)
+- Approval = immediate execution (no scheduled execution)
+
+REST API (5 endpoints):
+```
+POST   /api/requests              Create approval request
+GET    /api/requests              List pending requests
+POST   /api/requests/{id}/approve Approve (triggers execution)
+POST   /api/requests/{id}/reject  Reject
+GET    /api/audit                 Search audit log
+```
+
+## Authentication (server mode)
+
+API tokens per user. Server stores bcrypt hash only.
+
+```bash
+dbward server token create --user alice --role developer
+# → Token: dbw_xxxxxxxxxxxx (shown once)
+```
+
+Client sends: `Authorization: Bearer dbw_xxxxxxxxxxxx`
+
+## SQLite Schema (server internal state)
+
+```sql
+PRAGMA journal_mode=WAL;  -- concurrent reads during writes
+
+CREATE TABLE tokens (
+    id TEXT PRIMARY KEY,
+    user TEXT NOT NULL,
+    role TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE requests (
+    id TEXT PRIMARY KEY,
+    user TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    approved_by TEXT,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+);
+
+CREATE TABLE audit_log (
+    id TEXT PRIMARY KEY,
+    timestamp TEXT NOT NULL,
+    user TEXT NOT NULL,
+    role TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    success INTEGER NOT NULL,
+    error_message TEXT,
+    request_id TEXT
+);
+```
+
+## Multi-Environment Config
+
+```toml
+# dbward.toml (direct mode)
+environment = "development"
+role = "developer"
+migrations_dir = "db/migrations"
+
+[database]
+url = "postgres://localhost:5432/myapp"
+```
+
+```toml
+# dbward-server.toml (server mode)
+listen = "127.0.0.1:8080"
+data_dir = "/var/lib/dbward"  # SQLite files
+
+[[databases]]
+name = "production"
+url = "postgres://prod:5432/myapp"
+approval_required = true
+
+[[databases]]
+name = "staging"
+url = "postgres://staging:5432/myapp"
+approval_required = false
 ```
 
 ## Data Flows
 
-### 1. CLI: `dbward migrate up`
-
-```
-User runs: dbward migrate up
-
-dbward-cli
-  │
-  ├─ load_config()           → Config from dbward.toml + env vars
-  ├─ check_permission()      → Role vs Operation::MigrateUp
-  ├─ DbConnection::connect() → PgPool
-  ├─ Migrator::up(pool)      → reads migration files
-  │   ├─ query schema_migrations table
-  │   ├─ determine pending migrations
-  │   └─ for each pending:
-  │       ├─ BEGIN
-  │       ├─ execute SQL
-  │       ├─ INSERT INTO schema_migrations
-  │       └─ COMMIT
-  ├─ AuditLogger::log()      → JSON line to stdout
-  └─ print result
-```
-
-### 2. MCP: `dbward_migrate_up` tool call
-
-```
-AI Agent sends JSON-RPC via stdin:
-  {"jsonrpc":"2.0","id":1,"method":"tools/call",
-   "params":{"name":"dbward_migrate_up","arguments":{}}}
-
-dbward-cli (MCP mode: `dbward mcp`)
-  │
-  ├─ read stdin line
-  ├─ parse JSON-RPC
-  ├─ dispatch to handler based on tool name
-  │   └─ (same flow as CLI migrate up)
-  ├─ AuditLogger::log()
-  └─ write JSON-RPC response to stdout:
-     {"jsonrpc":"2.0","id":1,"result":{"content":[
-       {"type":"text","text":"Applied 2 migrations: ..."}]}}
-```
-
-### 3. CLI: `dbward execute "SELECT * FROM users"`
+### 1. Direct: `dbward migrate up`
 
 ```
 dbward-cli
-  │
   ├─ load_config()
-  ├─ classify_query(sql)     → QueryType::Select
-  ├─ check_permission()      → Role vs Operation::ExecuteQuery
-  ├─ (if DDL → reject)
-  ├─ (if readonly + DML → reject)
-  ├─ DbConnection::connect()
-  ├─ execute_query(pool, sql)
-  │   ├─ SELECT → return rows as JSON
-  │   └─ DML → return affected row count
-  ├─ AuditLogger::log()
+  ├─ check_permission(role, MigrateUp)
+  ├─ Engine::migrate_up()
+  │   ├─ connect to target DB
+  │   ├─ read migration files, check schema_migrations
+  │   └─ execute pending migrations in transaction
+  ├─ AuditLogger::log() → stdout JSON
   └─ print result
 ```
 
-### 4. MCP: `dbward_execute_query` tool call
+### 2. Server: `dbward migrate up --server http://...`
 
 ```
-AI Agent sends:
-  {"jsonrpc":"2.0","id":2,"method":"tools/call",
-   "params":{"name":"dbward_execute_query",
-             "arguments":{"sql":"SELECT * FROM users LIMIT 10"}}}
-
-dbward-cli (MCP mode)
+dbward-cli
+  ├─ POST /api/requests {operation: "migrate_up", env: "production"}
+  │   (Authorization: Bearer dbw_xxx)
   │
-  ├─ (same flow as CLI execute)
-  └─ write JSON-RPC response with query results
+dbward-server
+  ├─ authenticate token → alice (developer)
+  ├─ policy: production + migrate → approval required
+  ├─ INSERT INTO requests (status=pending)
+  └─ respond: {"id":"req_abc","status":"pending"}
+
+(later) bob runs: dbward approve req_abc --server http://...
+  ├─ POST /api/requests/req_abc/approve
+  │
+dbward-server
+  ├─ authenticate token → bob (admin)
+  ├─ check: bob ≠ alice
+  ├─ Engine::migrate_up()
+  ├─ UPDATE requests SET status='executed'
+  ├─ INSERT INTO audit_log
+  └─ respond: {"status":"executed","result":"Applied 2 migrations"}
+```
+
+### 3. MCP via server: `dbward_migrate_up`
+
+```
+AI Agent → MCP stdio → dbward mcp --server http://...
+  ├─ POST /api/requests
+  └─ respond to AI: "Approval required. Request ID: req_abc.
+     Run: dbward approve req_abc --server http://..."
+```
+
+### 4. Direct: `dbward execute "SELECT * FROM users"`
+
+```
+dbward-cli
+  ├─ load_config()
+  ├─ classify_query(sql) → Select
+  ├─ check_permission(role, ExecuteQuery)
+  ├─ Engine::execute_query()
+  ├─ AuditLogger::log() → stdout JSON
+  └─ print rows
 ```
 
 ## MCP Protocol (stdio)
 
-Minimal JSON-RPC 2.0 over stdin/stdout. One JSON object per line.
+JSON-RPC 2.0 over stdin/stdout. One JSON object per line.
 
 ### Initialization
 
@@ -148,26 +271,9 @@ Minimal JSON-RPC 2.0 over stdin/stdout. One JSON object per line.
   ]}}
 ```
 
-## Config Loading
-
-Priority (highest wins):
-1. Environment variables: `DBWARD_DATABASE_URL`, `DBWARD_ROLE`, `DBWARD_ENV`
-2. `dbward.toml` in current directory (or `--config` flag)
-3. Defaults
-
-```toml
-# dbward.toml
-environment = "development"
-role = "developer"
-migrations_dir = "db/migrations"
-
-[database]
-url = "postgres://localhost:5432/myapp"
-```
-
 ## Migration File Format
 
-dbmate-compatible for easy migration path:
+dbmate-compatible:
 
 ```
 db/migrations/
@@ -175,7 +281,6 @@ db/migrations/
   20260501120100_add_email_index.sql
 ```
 
-Each file:
 ```sql
 -- migrate:up
 CREATE TABLE users (
@@ -189,17 +294,15 @@ DROP TABLE users;
 
 ### Schema Tracking
 
-`schema_migrations` table in target DB:
-
 ```sql
 CREATE TABLE IF NOT EXISTS schema_migrations (
-    version TEXT PRIMARY KEY  -- "20260501120000"
+    version TEXT PRIMARY KEY
 );
 ```
 
 ## Query Classification
 
-Simple prefix-based classification (no full SQL parser in MVP):
+Prefix-based (no SQL parser in MVP):
 
 ```rust
 fn classify_query(sql: &str) -> Result<QueryType, Error> {
@@ -222,7 +325,7 @@ fn classify_query(sql: &str) -> Result<QueryType, Error> {
 
 | Crate | Owns | Does NOT own |
 |---|---|---|
-| `dbward-core` | Types, RBAC, audit, config, DB pool, query execution, query classification | Migration file I/O |
-| `dbward-migrate` | Migration file parsing, schema_migrations table, up/down execution | DB connection creation |
-| `dbward-cli` | CLI arg parsing (clap), MCP stdio protocol, user interaction | Business logic |
-| `dbward-server` | REST API (axum), MCP HTTP, approval state (SQLite) | (Pro, not MVP) |
+| `dbward-core` | Engine, types, RBAC, audit, config, DB pool, query exec | Migration file I/O, HTTP, approval state |
+| `dbward-migrate` | Migration file parsing, schema_migrations, up/down | DB connection creation |
+| `dbward-server` | axum HTTP, SQLite (approval + audit), auth tokens | Direct DB operations (delegates to Engine) |
+| `dbward-cli` | CLI parsing (clap), MCP stdio, HTTP client to server | Business logic |
