@@ -1,15 +1,17 @@
-use sqlx::PgPool;
+use std::sync::Arc;
+
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
 use dbward_core::{Config, DatabaseConfig, Engine, Environment, Role};
+use dbward_core::driver;
 
-async fn setup() -> (testcontainers::ContainerAsync<Postgres>, PgPool, Config) {
+async fn setup() -> (testcontainers::ContainerAsync<Postgres>, Arc<dyn driver::DatabaseDriver>, Config) {
     let container = Postgres::default().start().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
-    let pool = PgPool::connect(&url).await.unwrap();
+    let drv = driver::connect(&url).await.unwrap();
     let config = Config {
         database: DatabaseConfig { url },
         environment: Environment::Development,
@@ -17,13 +19,13 @@ async fn setup() -> (testcontainers::ContainerAsync<Postgres>, PgPool, Config) {
         migrations_dir: "db/migrations".into(),
     };
 
-    (container, pool, config)
+    (container, drv, config)
 }
 
 #[tokio::test]
 async fn execute_select() {
-    let (_container, pool, config) = setup().await;
-    let mut engine = Engine::from_pool(pool, config);
+    let (_container, drv, config) = setup().await;
+    let mut engine = Engine::from_driver(drv, config);
 
     let result = engine
         .execute_query("test_user", Role::Admin, "SELECT 1 AS num, 'hello' AS msg")
@@ -37,14 +39,11 @@ async fn execute_select() {
 
 #[tokio::test]
 async fn execute_dml() {
-    let (_container, pool, config) = setup().await;
-    let mut engine = Engine::from_pool(pool.clone(), config);
+    let (_container, drv, config) = setup().await;
+    // Create table via driver directly
+    drv.execute("CREATE TABLE test_dml (id SERIAL, val TEXT)").await.unwrap();
 
-    sqlx::query("CREATE TABLE test_dml (id SERIAL, val TEXT)")
-        .execute(&pool)
-        .await
-        .unwrap();
-
+    let mut engine = Engine::from_driver(drv, config);
     let result = engine
         .execute_query(
             "test_user",
@@ -59,8 +58,8 @@ async fn execute_dml() {
 
 #[tokio::test]
 async fn readonly_cannot_dml() {
-    let (_container, pool, config) = setup().await;
-    let mut engine = Engine::from_pool(pool, config);
+    let (_container, drv, config) = setup().await;
+    let mut engine = Engine::from_driver(drv, config);
 
     let err = engine
         .execute_query("readonly_user", Role::Readonly, "DELETE FROM nonexistent")
@@ -71,8 +70,8 @@ async fn readonly_cannot_dml() {
 
 #[tokio::test]
 async fn ddl_rejected() {
-    let (_container, pool, config) = setup().await;
-    let mut engine = Engine::from_pool(pool, config);
+    let (_container, drv, config) = setup().await;
+    let mut engine = Engine::from_driver(drv, config);
 
     let err = engine
         .execute_query("admin", Role::Admin, "CREATE TABLE bad (id INT)")

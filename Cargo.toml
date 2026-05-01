@@ -20,7 +20,7 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
 toml = "0.8"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "mysql"] }
 tokio = { version = "1", features = ["full"] }
 testcontainers = "0.25"
 testcontainers-modules = { version = "0.13", features = ["postgres"] }

@@ -249,7 +249,7 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                     dbward_core::token::verify_token(&token, &public_key, "migrate_status", &env_str, "")?;
 
                     let engine = Engine::new(config).await?;
-                    let migrator = Migrator::new(engine.pool().clone(), config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?.migrations_dir);
+                    let migrator = Migrator::new(engine.driver().clone(), config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?.migrations_dir);
                     let statuses = migrator.status().await?;
                     sc.complete_request(&id, true).await?;
 
@@ -266,7 +266,7 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 MigrateAction::Create { .. } => {
                     // Create is local-only (no DB operation)
                     let migrator = Migrator::new(
-                        Engine::new(config).await?.pool().clone(),
+                        Engine::new(config).await?.driver().clone(),
                         config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?.migrations_dir,
                     );
                     if let MigrateAction::Create { name } = action {
@@ -282,7 +282,7 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
             dbward_core::token::verify_token(&token, &public_key, operation, &env_str, &detail)?;
 
             let engine = Engine::new(config.clone()).await?;
-            let migrator = Migrator::new(engine.pool().clone(), config.migrations_dir.clone());
+            let migrator = Migrator::new(engine.driver().clone(), config.migrations_dir.clone());
 
             match action {
                 MigrateAction::Up { count } => {
@@ -360,7 +360,7 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
         Command::Migrate { action } => {
             let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?;
             let engine = Engine::new(config.clone()).await?;
-            let migrator = Migrator::new(engine.pool().clone(), config.migrations_dir.clone());
+            let migrator = Migrator::new(engine.driver().clone(), config.migrations_dir.clone());
 
             match action {
                 MigrateAction::Up { count } => {

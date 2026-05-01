@@ -9,7 +9,7 @@ pub async fn run_stdio(config: Config) -> Result<(), dbward_core::Error> {
     let mut engine = Engine::new(config.clone()).await?;
     // MCP uses stdout for JSON-RPC, so audit log goes to stderr
     engine.set_audit_logger(dbward_core::AuditLogger::stderr());
-    let migrator = Migrator::new(engine.pool().clone(), config.migrations_dir.clone());
+    let migrator = Migrator::new(engine.driver().clone(), config.migrations_dir.clone());
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -303,7 +303,7 @@ pub async fn run_stdio_server_mode(
 ) -> Result<(), dbward_core::Error> {
     let mut engine = Engine::new(config.clone()).await?;
     engine.set_audit_logger(dbward_core::AuditLogger::stderr());
-    let migrator = Migrator::new(engine.pool().clone(), config.migrations_dir.clone());
+    let migrator = Migrator::new(engine.driver().clone(), config.migrations_dir.clone());
     let env_str = config.environment.to_string();
 
     // Track pending requests for resume
@@ -462,7 +462,7 @@ async fn server_flow_async(
     detail: &str,
     pending: &mut std::collections::HashMap<String, PendingRequest>,
 ) -> Result<String, String> {
-    let (req_id, status, token) = client
+    let (req_id, status, _token) = client
         .create_request(operation, environment, detail)
         .await
         .map_err(|e| e.to_string())?;

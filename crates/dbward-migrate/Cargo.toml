@@ -7,7 +7,6 @@ repository.workspace = true
 
 [dependencies]
 dbward-core = { path = "../dbward-core" }
-sqlx.workspace = true
 tokio.workspace = true
 chrono.workspace = true
 serde.workspace = true

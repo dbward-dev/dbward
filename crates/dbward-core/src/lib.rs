@@ -1,5 +1,6 @@
 mod audit;
 mod config;
+pub mod driver;
 mod engine;
 mod error;
 mod query;
