@@ -10,6 +10,9 @@ pub enum Error {
     #[error("DDL statements must go through migrations")]
     DdlNotAllowed,
 
+    #[error("database error: {0}")]
+    Database(String),
+
     #[error("configuration error: {0}")]
     Config(String),
 

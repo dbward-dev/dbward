@@ -31,15 +31,6 @@ pub enum Environment {
     Custom(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum QueryType {
-    Select,
-    Insert,
-    Update,
-    Delete,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEntry {
     pub id: String,
