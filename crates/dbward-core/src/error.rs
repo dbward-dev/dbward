@@ -13,6 +13,9 @@ pub enum Error {
     #[error("multi-statement queries are not allowed")]
     MultiStatement,
 
+    #[error("execution token error: {0}")]
+    Token(String),
+
     #[error("database error: {0}")]
     Database(String),
 

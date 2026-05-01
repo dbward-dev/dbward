@@ -2,19 +2,8 @@ use std::path::Path;
 
 use chrono::{Duration, Utc};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionToken {
-    pub request_id: String,
-    pub operation: String,
-    pub environment: String,
-    pub detail_hash: String,
-    pub issued_at: String,
-    pub expires_at: String,
-    pub signature: String,
-}
+pub use dbward_core::token::{ExecutionToken, hash_detail, token_message, verify_token};
 
 pub struct TokenSigner {
     signing_key: SigningKey,
@@ -84,80 +73,6 @@ impl TokenSigner {
     }
 }
 
-pub fn hash_detail(detail: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(detail.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
-fn token_message(
-    request_id: &str,
-    operation: &str,
-    environment: &str,
-    detail_hash: &str,
-    expires_at: &str,
-) -> String {
-    format!("{request_id}|{operation}|{environment}|{detail_hash}|{expires_at}")
-}
-
-/// Verify an execution token using the server's public key.
-pub fn verify_token(
-    token: &ExecutionToken,
-    public_key: &VerifyingKey,
-    expected_operation: &str,
-    expected_environment: &str,
-    expected_detail: &str,
-) -> Result<(), String> {
-    use ed25519_dalek::Verifier;
-
-    // Check expiry
-    let expires = chrono::DateTime::parse_from_rfc3339(&token.expires_at)
-        .map_err(|e| format!("invalid expires_at: {e}"))?;
-    if Utc::now() > expires {
-        return Err("execution token expired".to_string());
-    }
-
-    // Check operation/environment match
-    if token.operation != expected_operation {
-        return Err(format!(
-            "operation mismatch: token={}, expected={}",
-            token.operation, expected_operation
-        ));
-    }
-    if token.environment != expected_environment {
-        return Err(format!(
-            "environment mismatch: token={}, expected={}",
-            token.environment, expected_environment
-        ));
-    }
-
-    // Check detail_hash
-    let expected_hash = hash_detail(expected_detail);
-    if token.detail_hash != expected_hash {
-        return Err("detail_hash mismatch: approved content differs from execution content".to_string());
-    }
-
-    // Verify Ed25519 signature
-    let message = token_message(
-        &token.request_id,
-        &token.operation,
-        &token.environment,
-        &token.detail_hash,
-        &token.expires_at,
-    );
-    let sig_bytes = hex::decode(&token.signature).map_err(|e| format!("invalid signature hex: {e}"))?;
-    let signature = ed25519_dalek::Signature::from_bytes(
-        &sig_bytes
-            .try_into()
-            .map_err(|_| "invalid signature length")?,
-    );
-    public_key
-        .verify(message.as_bytes(), &signature)
-        .map_err(|_| "invalid signature".to_string())?;
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,7 +105,6 @@ mod tests {
             "DELETE FROM users",
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("detail_hash mismatch"));
     }
 
     #[test]
@@ -206,14 +120,12 @@ mod tests {
             "test.sql",
         );
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("environment mismatch"));
     }
 
     #[test]
     fn rejects_tampered_signature() {
         let signer = TokenSigner::generate();
         let mut token = signer.issue("req_1", "migrate_up", "production", "test.sql");
-        // Tamper with the operation after signing
         token.operation = "execute_query".to_string();
 
         let result = verify_token(

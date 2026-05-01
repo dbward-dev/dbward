@@ -4,6 +4,7 @@ mod engine;
 mod error;
 mod query;
 mod rbac;
+pub mod token;
 mod types;
 
 pub use audit::AuditLogger;
