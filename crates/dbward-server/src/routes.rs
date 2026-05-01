@@ -105,6 +105,12 @@ async fn create_request(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if needs_approval {
+        state.webhooks.dispatch(crate::webhook::WebhookEvent {
+            event: "request_created".into(),
+            request_id: id.clone(), user: user.user.clone(),
+            operation: operation.into(), environment: environment.into(),
+            detail: detail.into(), approved_by: None, reason: None,
+        });
         Ok((
             StatusCode::CREATED,
             Json(json!({"id": id, "status": "pending"})),
@@ -157,6 +163,13 @@ async fn approve_request(
 
     let token = state.token_signer.issue(&id, &operation, &environment, &detail);
 
+    state.webhooks.dispatch(crate::webhook::WebhookEvent {
+        event: "request_approved".into(),
+        request_id: id.clone(), user: req_user.clone(),
+        operation: operation.clone(), environment: environment.clone(),
+        detail: detail.clone(), approved_by: Some(approver.user.clone()), reason: None,
+    });
+
     Ok(Json(json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token})))
 }
 
@@ -192,6 +205,13 @@ async fn reject_request(
         rusqlite::params![now, id],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    state.webhooks.dispatch(crate::webhook::WebhookEvent {
+        event: "request_rejected".into(),
+        request_id: id.clone(), user: user.user.clone(),
+        operation: "".into(), environment: "".into(),
+        detail: "".into(), approved_by: None, reason: None,
+    });
 
     Ok(Json(json!({"id": id, "status": "rejected"})))
 }
@@ -282,6 +302,13 @@ async fn complete_request(
         ],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    state.webhooks.dispatch(crate::webhook::WebhookEvent {
+        event: "request_completed".into(),
+        request_id: id.clone(), user: req_user.clone(),
+        operation: operation.clone(), environment: "".into(),
+        detail: "".into(), approved_by: None, reason: None,
+    });
 
     Ok(Json(json!({"id": id, "status": new_status})))
 }

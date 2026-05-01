@@ -120,6 +120,7 @@ mod tests {
         AppState {
             sqlite: Arc::new(Mutex::new(conn)),
             token_signer: Arc::new(crate::token::TokenSigner::generate()),
+            webhooks: Arc::new(crate::webhook::WebhookDispatcher::empty()),
         }
     }
 
