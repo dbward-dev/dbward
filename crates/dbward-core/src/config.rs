@@ -11,11 +11,19 @@ pub struct Config {
     pub role: Role,
     #[serde(default = "default_migrations_dir")]
     pub migrations_dir: PathBuf,
+    pub server: Option<ServerConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
     pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerConfig {
+    pub url: String,
+    pub token: Option<String>,
+    pub public_key: Option<String>,
 }
 
 fn default_migrations_dir() -> PathBuf {

@@ -17,6 +17,7 @@ async fn setup() -> (testcontainers::ContainerAsync<Postgres>, Arc<dyn driver::D
         environment: Environment::Development,
         role: Role::Admin,
         migrations_dir: "db/migrations".into(),
+        server: None,
     };
 
     (container, drv, config)

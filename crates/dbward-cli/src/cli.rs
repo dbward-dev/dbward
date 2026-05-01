@@ -84,6 +84,13 @@ enum Command {
         /// Request ID to reject
         id: String,
     },
+    /// List pending requests (server mode)
+    List,
+    /// Resume execution of an approved request
+    Resume {
+        /// Request ID to resume
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -147,15 +154,34 @@ fn require_server_flags(cli: &Cli) -> Result<(&str, &str), dbward_core::Error> {
     let server = cli
         .server
         .as_deref()
-        .ok_or_else(|| dbward_core::Error::Config("--server is required".into()))?;
+        .ok_or_else(|| dbward_core::Error::Config("--server is required (or set [server] url in dbward.toml)".into()))?;
     let token = cli
         .token
         .as_deref()
-        .ok_or_else(|| dbward_core::Error::Config("--token is required".into()))?;
+        .ok_or_else(|| dbward_core::Error::Config("--token is required (or set [server] token in dbward.toml)".into()))?;
     Ok((server, token))
 }
 
-pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
+/// Merge config file [server] section into CLI flags (CLI flags take precedence).
+fn apply_server_config(cli: &mut Cli, config: &dbward_core::Config) {
+    if let Some(ref sc) = config.server {
+        if cli.server.is_none() {
+            cli.server = Some(sc.url.clone());
+        }
+        if cli.token.is_none() {
+            cli.token = sc.token.clone();
+        }
+        if cli.public_key.is_none() {
+            cli.public_key = sc.public_key.as_ref().map(std::path::PathBuf::from);
+        }
+    }
+}
+
+pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
+    // Load config early to merge server settings
+    if let Ok(config) = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role) {
+        apply_server_config(&mut cli, &config);
+    }
     // Handle approve/reject first (always require --server)
     match &cli.command {
         Command::Approve { id } => {
@@ -170,6 +196,87 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             let client = server_client::ServerClient::new(server, token);
             let body = client.reject(id).await?;
             println!("{}", serde_json::to_string_pretty(&body)?);
+            return Ok(());
+        }
+        Command::List => {
+            let (server, token) = require_server_flags(&cli)?;
+            let client = server_client::ServerClient::new(server, token);
+            let body = client.list_requests().await?;
+            let empty = vec![];
+            let requests = body.as_array().unwrap_or(&empty);
+            if requests.is_empty() {
+                println!("No requests.");
+            } else {
+                for r in requests {
+                    let id = r["id"].as_str().unwrap_or("?");
+                    let status = r["status"].as_str().unwrap_or("?");
+                    let user = r["user"].as_str().unwrap_or("?");
+                    let op = r["operation"].as_str().unwrap_or("?");
+                    let env = r["environment"].as_str().unwrap_or("?");
+                    let detail = r["detail"].as_str().unwrap_or("");
+                    let short_detail = if detail.len() > 60 { &detail[..60] } else { detail };
+                    println!("[{status}] {id}  {user}  {op}  {env}  {short_detail}");
+                }
+            }
+            return Ok(());
+        }
+        Command::Resume { id } => {
+            let (server, token) = require_server_flags(&cli)?;
+            let client = server_client::ServerClient::new(server, token);
+
+            let public_key_path = cli.public_key.as_deref()
+                .ok_or_else(|| dbward_core::Error::Config("--public-key is required".into()))?;
+            let public_key = dbward_core::token::load_public_key(public_key_path)?;
+
+            let resp = client.get_request(id).await?;
+            let status = resp["status"].as_str().unwrap_or("");
+            if status != "approved" && status != "auto_approved" {
+                return Err(dbward_core::Error::Config(format!("request is {status}, not approved")));
+            }
+
+            let exec_token: dbward_core::token::ExecutionToken =
+                serde_json::from_value(resp["execution_token"].clone())
+                    .map_err(|e| dbward_core::Error::Config(format!("missing execution_token: {e}")))?;
+
+            let operation = resp["operation"].as_str().unwrap_or("");
+            let environment = resp["environment"].as_str().unwrap_or("");
+            let detail = resp["detail"].as_str().unwrap_or("");
+
+            dbward_core::token::verify_token(&exec_token, &public_key, operation, environment, detail)?;
+
+            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?;
+            let mut engine = Engine::new(config.clone()).await?;
+            let role = cli.role.unwrap_or(Role::Developer);
+
+            let result_text = match operation {
+                "execute_query" => {
+                    let result = engine.execute_query("cli_user", role, detail).await?;
+                    if result.rows.is_empty() {
+                        format!("Rows affected: {}", result.rows_affected)
+                    } else {
+                        serde_json::to_string_pretty(&result.rows)?
+                    }
+                }
+                "migrate_up" => {
+                    let migrator = dbward_migrate::Migrator::new(engine.driver().clone(), config.migrations_dir.clone());
+                    let count = detail.strip_prefix("count:").and_then(|s| s.parse().ok());
+                    let count = if count == Some(0) { None } else { count };
+                    let r = migrator.up(count).await?;
+                    if r.applied.is_empty() { "No pending migrations.".into() }
+                    else { format!("Applied {} migration(s):\n{}", r.applied.len(), r.applied.join("\n")) }
+                }
+                "migrate_down" => {
+                    let migrator = dbward_migrate::Migrator::new(engine.driver().clone(), config.migrations_dir.clone());
+                    let count = detail.strip_prefix("count:").and_then(|s| s.parse().ok());
+                    let r = migrator.down(count).await?;
+                    if r.rolled_back.is_empty() { "Nothing to rollback.".into() }
+                    else { format!("Rolled back:\n{}", r.rolled_back.join("\n")) }
+                }
+                _ => format!("Executed operation: {operation}"),
+            };
+
+            client.complete_request(id, true).await?;
+            println!("{result_text}");
             return Ok(());
         }
         _ => {}
@@ -488,6 +595,6 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
             },
         },
         // Approve/Reject handled before this point
-        Command::Approve { .. } | Command::Reject { .. } => unreachable!(),
+        Command::Approve { .. } | Command::Reject { .. } | Command::List | Command::Resume { .. } => unreachable!(),
     }
 }
