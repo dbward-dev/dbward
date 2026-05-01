@@ -55,6 +55,15 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Initialize dbward configuration
+    Init {
+        /// Non-interactive mode (for CI)
+        #[arg(long)]
+        non_interactive: bool,
+        /// Overwrite existing dbward.toml
+        #[arg(long)]
+        force: bool,
+    },
     /// Run database migrations
     Migrate {
         #[command(subcommand)]
@@ -191,6 +200,11 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
     if let Ok(config) = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role) {
         apply_server_config(&mut cli, &config);
     }
+    // Handle init before anything else
+    if let Command::Init { non_interactive, force } = &cli.command {
+        return run_init(&cli, *non_interactive, *force).await;
+    }
+
     // Handle approve/reject first (always require --server)
     match &cli.command {
         Command::Approve { id } => {
@@ -613,6 +627,120 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
             },
         },
         // Approve/Reject handled before this point
-        Command::Approve { .. } | Command::Reject { .. } | Command::List | Command::Resume { .. } => unreachable!(),
+        Command::Approve { .. } | Command::Reject { .. } | Command::List | Command::Resume { .. } | Command::Init { .. } => unreachable!(),
     }
+}
+
+async fn run_init(cli: &Cli, non_interactive: bool, force: bool) -> Result<(), dbward_core::Error> {
+    use std::io::{self, BufRead, Write};
+
+    let config_path = &cli.config;
+    if config_path.exists() && !force {
+        return Err(dbward_core::Error::Config(format!(
+            "{} already exists. Use --force to overwrite.",
+            config_path.display()
+        )));
+    }
+
+    let prompt = |msg: &str, default: &str| -> String {
+        if non_interactive {
+            return default.to_string();
+        }
+        eprint!("{msg} [{default}]: ");
+        io::stderr().flush().ok();
+        let mut line = String::new();
+        io::stdin().lock().read_line(&mut line).ok();
+        let trimmed = line.trim();
+        if trimmed.is_empty() { default.to_string() } else { trimmed.to_string() }
+    };
+
+    // Database URL
+    let db_url = cli.database_url.clone().unwrap_or_else(|| {
+        prompt("Database URL", "postgres://localhost:5432/mydb")
+    });
+
+    // Test connection
+    eprint!("Testing database connection... ");
+    match dbward_core::driver::connect(&db_url).await {
+        Ok(drv) => {
+            match drv.query("SELECT 1 AS ok").await {
+                Ok(_) => eprintln!("✓"),
+                Err(e) => eprintln!("✗ query failed: {e}"),
+            }
+        }
+        Err(e) => eprintln!("✗ {e}"),
+    }
+
+    let environment = cli.environment.clone().unwrap_or_else(|| {
+        prompt("Environment", "development")
+    });
+    let role_str = cli.role.map(|r| r.to_string()).unwrap_or_else(|| {
+        prompt("Role", "developer")
+    });
+    let migrations_dir = prompt("Migrations directory", "db/migrations");
+
+    // Server (optional)
+    let server_url = cli.server.clone().unwrap_or_else(|| {
+        prompt("Server URL (leave empty for direct mode)", "")
+    });
+
+    let mut server_section = String::new();
+    if !server_url.is_empty() {
+        // Fetch public key
+        let pub_key_path = ".dbward/signing.pub";
+        eprint!("Fetching public key from {server_url}... ");
+        match reqwest::get(format!("{}/api/public-key", server_url.trim_end_matches('/'))).await {
+            Ok(resp) if resp.status().is_success() => {
+                let bytes = resp.bytes().await.unwrap_or_default();
+                if bytes.len() == 32 {
+                    std::fs::create_dir_all(".dbward").ok();
+                    std::fs::write(pub_key_path, &bytes).ok();
+                    eprintln!("✓ saved to {pub_key_path}");
+                } else {
+                    eprintln!("✗ unexpected key size");
+                }
+            }
+            Ok(resp) => eprintln!("✗ server returned {}", resp.status()),
+            Err(e) => eprintln!("✗ {e}"),
+        }
+
+        server_section = format!(
+            r#"
+[server]
+url = "{server_url}"
+# token = "dbw_..."  # Set via DBWARD_SERVER_TOKEN env var
+public_key = "{pub_key_path}"
+"#
+        );
+    }
+
+    let toml_content = format!(
+        r#"environment = "{environment}"
+role = "{role_str}"
+migrations_dir = "{migrations_dir}"
+
+[database]
+url = "{db_url}"
+{server_section}"#
+    );
+
+    std::fs::write(config_path, toml_content.trim_end()).map_err(dbward_core::Error::Io)?;
+    eprintln!("Created {}", config_path.display());
+
+    // Add .dbward/ to .gitignore
+    if std::path::Path::new(".git").exists() && !server_url.is_empty() {
+        let gitignore = std::path::Path::new(".gitignore");
+        let content = std::fs::read_to_string(gitignore).unwrap_or_default();
+        if !content.contains(".dbward/") {
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(gitignore)
+                .map_err(dbward_core::Error::Io)?;
+            writeln!(f, "\n.dbward/").map_err(dbward_core::Error::Io)?;
+            eprintln!("Added .dbward/ to .gitignore");
+        }
+    }
+
+    Ok(())
 }

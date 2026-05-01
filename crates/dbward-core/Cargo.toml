@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
+description = "Core types, RBAC, and Ed25519 token verification for dbward"
+keywords = ["database", "rbac", "audit", "workflow"]
+categories = ["database"]
 
 [dependencies]
 serde.workspace = true

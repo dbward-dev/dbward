@@ -1,18 +1,22 @@
 [package]
-name = "dbward-cli"
+name = "dbward"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
+description = "DB operations workflow engine with approval, RBAC, and audit logging"
+keywords = ["database", "approval", "migration", "mcp", "workflow"]
+categories = ["command-line-utilities", "database"]
 
 [[bin]]
 name = "dbward"
 path = "src/main.rs"
 
 [dependencies]
-dbward-core = { path = "../dbward-core" }
-dbward-migrate = { path = "../dbward-migrate" }
-dbward-server = { path = "../dbward-server" }
+dbward-core = { path = "../dbward-core", version = "0.1.0" }
+dbward-migrate = { path = "../dbward-migrate", version = "0.1.0" }
+dbward-server = { path = "../dbward-server", version = "0.1.0" }
 clap = { version = "4", features = ["derive", "env"] }
 tokio.workspace = true
 serde.workspace = true

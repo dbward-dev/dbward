@@ -4,9 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
+description = "Approval workflow HTTP server with Ed25519 signed execution tokens"
+keywords = ["database", "approval", "workflow", "audit"]
+categories = ["database", "web-programming::http-server"]
 
 [dependencies]
-dbward-core = { path = "../dbward-core" }
+dbward-core = { path = "../dbward-core", version = "0.1.0" }
 axum = "0.8"
 tokio.workspace = true
 serde.workspace = true
