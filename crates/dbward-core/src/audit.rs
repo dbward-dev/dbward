@@ -15,6 +15,13 @@ impl AuditLogger {
         }
     }
 
+    /// Use stderr — required for MCP mode where stdout is the JSON-RPC channel.
+    pub fn stderr() -> Self {
+        Self {
+            writer: Box::new(io::stderr()),
+        }
+    }
+
     #[cfg(test)]
     fn from_writer(writer: impl Write + Send + 'static) -> Self {
         Self {

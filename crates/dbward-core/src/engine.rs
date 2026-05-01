@@ -37,6 +37,10 @@ impl Engine {
     pub fn config(&self) -> &Config {
         &self.config
     }
+
+    pub fn set_audit_logger(&mut self, logger: AuditLogger) {
+        self.audit = logger;
+    }
     pub async fn execute_query(
         &mut self,
         user: &str,
