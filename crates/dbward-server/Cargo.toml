@@ -15,4 +15,7 @@ uuid.workspace = true
 chrono.workspace = true
 rusqlite = { version = "0.35", features = ["bundled"] }
 sha2 = "0.10"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+hex = "0.4"
 tower-http = { version = "0.6", features = ["cors"] }

@@ -2,6 +2,7 @@ pub mod auth;
 pub mod db;
 mod routes;
 mod state;
+pub mod token;
 
 pub use state::AppState;
 

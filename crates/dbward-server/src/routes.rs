@@ -80,20 +80,33 @@ async fn create_request(
         .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
     let detail = body["detail"].as_str().unwrap_or("");
 
+    // MVP policy: production + mutating ops require approval
+    let needs_approval = environment == "production"
+        && !matches!(operation, "migrate_status" | "audit_search");
+
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
+    let status = if needs_approval { "pending" } else { "auto_approved" };
 
     let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     conn.execute(
-        "INSERT INTO requests (id, user, operation, environment, detail, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
-        rusqlite::params![id, user.user, operation, environment, detail, now],
+        "INSERT INTO requests (id, user, operation, environment, detail, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![id, user.user, operation, environment, detail, status, now],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({"id": id, "status": "pending"})),
-    ))
+    if needs_approval {
+        Ok((
+            StatusCode::CREATED,
+            Json(json!({"id": id, "status": "pending"})),
+        ))
+    } else {
+        let token = state.token_signer.issue(&id, operation, environment, detail);
+        Ok((
+            StatusCode::CREATED,
+            Json(json!({"id": id, "status": "auto_approved", "execution_token": token})),
+        ))
+    }
 }
 
 async fn approve_request(
@@ -106,11 +119,11 @@ async fn approve_request(
     let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Fetch request
-    let (req_user, status): (String, String) = conn
+    let (req_user, status, operation, environment, detail): (String, String, String, String, String) = conn
         .query_row(
-            "SELECT user, status FROM requests WHERE id = ?1",
+            "SELECT user, status, operation, environment, detail FROM requests WHERE id = ?1",
             rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
@@ -133,7 +146,9 @@ async fn approve_request(
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(json!({"id": id, "status": "approved", "approved_by": approver.user})))
+    let token = state.token_signer.issue(&id, &operation, &environment, &detail);
+
+    Ok(Json(json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token})))
 }
 
 async fn reject_request(

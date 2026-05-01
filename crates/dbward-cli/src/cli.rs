@@ -202,8 +202,12 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
                 dbward_server::db::init(&conn)
                     .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                let data_path = std::path::Path::new(&data).parent().unwrap_or(std::path::Path::new("."));
+                let token_signer = dbward_server::token::TokenSigner::load_or_generate(data_path)
+                    .map_err(|e| dbward_core::Error::Config(e))?;
                 let state = dbward_server::AppState {
                     sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+                    token_signer: std::sync::Arc::new(token_signer),
                 };
                 let addr: std::net::SocketAddr = listen
                     .parse()
@@ -216,8 +220,12 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                         .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
                     dbward_server::db::init(&conn)
                         .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                    let data_path = std::path::Path::new(&data).parent().unwrap_or(std::path::Path::new("."));
+                    let token_signer = dbward_server::token::TokenSigner::load_or_generate(data_path)
+                        .map_err(|e| dbward_core::Error::Config(e))?;
                     let state = dbward_server::AppState {
                         sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+                        token_signer: std::sync::Arc::new(token_signer),
                     };
                     let (token_id, raw_token) = dbward_server::auth::create_token(&state, &user, role)
                         .map_err(|e| dbward_core::Error::Config(e))?;
@@ -232,8 +240,12 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 TokenAction::Revoke { id, data } => {
                     let conn = rusqlite::Connection::open(&data)
                         .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                    let data_path = std::path::Path::new(&data).parent().unwrap_or(std::path::Path::new("."));
+                    let token_signer = dbward_server::token::TokenSigner::load_or_generate(data_path)
+                        .map_err(|e| dbward_core::Error::Config(e))?;
                     let state = dbward_server::AppState {
                         sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+                        token_signer: std::sync::Arc::new(token_signer),
                     };
                     dbward_server::auth::revoke_token(&state, &id)
                         .map_err(|e| dbward_core::Error::Config(e))?;
