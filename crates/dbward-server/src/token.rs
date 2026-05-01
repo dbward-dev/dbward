@@ -35,7 +35,6 @@ impl TokenSigner {
         Ok(Self { signing_key })
     }
 
-    #[cfg(test)]
     pub fn generate() -> Self {
         let mut rng = rand::rngs::OsRng {};
         Self {

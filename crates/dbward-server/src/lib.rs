@@ -1,6 +1,6 @@
 pub mod auth;
 pub mod db;
-mod routes;
+pub mod routes;
 mod state;
 pub mod token;
 
