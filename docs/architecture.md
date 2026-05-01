@@ -74,18 +74,21 @@ Client (dbward CLI / MCP)
 
 Client talks to server for approval, then executes DB operations locally.
 Server never touches the target DB.
+Server issues a signed execution token upon approval — client refuses to execute without it.
 
 ```
 Client                              Server
   │                                   │
   ├─① POST /api/requests ───────────▶│ policy check → pending / auto_approved
+  │                                   │   (auto_approved → execution_token included)
   │                                   │
   │    (human approves via CLI)       │
   │                                   │◀── POST /api/requests/{id}/approve
+  │                                   │     → generates execution_token
   │                                   │
-  ├─② GET /api/requests/{id} ──────▶│ → status: "approved"
+  ├─② GET /api/requests/{id} ──────▶│ → status: "approved" + execution_token
   │                                   │
-  ├─③ Engine → Target DB (local)     │
+  ├─③ verify token → Engine → DB     │
   │                                   │
   ├─④ POST /api/requests/{id}/complete▶│ → audit_log + status: "executed"
   │                                   │
@@ -102,18 +105,63 @@ pending ──→ approved ──→ executed
 
 auto_approved ──→ executed (no human approval needed)
 
+When a request transitions to `approved` or `auto_approved`, the server generates
+a signed execution token. The client **must** verify this token before executing.
+Without a valid token, the client refuses to run the operation (enforced in code).
+
 MVP constraints:
 - Hardcoded policy: production mutating ops require 1 approval
 - Requester ≠ approver (enforced by server)
 - One pending migration request at a time (ordering safety)
 
+## Execution Token
+
+Server issues a signed token when a request is approved. Client verifies the token
+locally before executing any DB operation in server mode.
+
+### Token structure
+
+```json
+{
+  "request_id": "req_abc",
+  "operation": "migrate_up",
+  "environment": "production",
+  "issued_at": "2026-05-01T13:00:00Z",
+  "expires_at": "2026-05-01T14:00:00Z",
+  "signature": "hmac_sha256(secret, request_id + operation + environment + expires_at)"
+}
+```
+
+### Signing
+
+- Algorithm: HMAC-SHA256
+- Secret: configured in `dbward-server.toml` (`token_secret`), auto-generated on first run if absent
+- Input: `request_id || operation || environment || expires_at` (concatenated strings)
+
+### Client-side verification
+
+1. Recompute HMAC-SHA256 over the token fields using the shared secret
+2. Compare with `signature` — reject on mismatch
+3. Check `expires_at` > now — reject if expired
+4. Check `operation` and `environment` match the current request — reject on mismatch
+
+### Security properties
+
+- Server controls what can be executed (token is proof of approval)
+- Tokens are time-limited (default: 1 hour)
+- Replay is bounded by expiry and request_id uniqueness
+- OSS code can be modified to skip verification — this is intentional circumvention,
+  detectable via audit log (server sees no `complete` call, or mismatched metadata)
+
 ## REST API (7 endpoints)
 
 ```
 POST   /api/requests              Create approval request
+                                    → auto_approved: response includes execution_token
 GET    /api/requests              List requests
 GET    /api/requests/{id}         Get request status (for polling)
-POST   /api/requests/{id}/approve Approve (human)
+                                    → approved: response includes execution_token
+POST   /api/requests/{id}/approve Approve (human) → generates execution_token
 POST   /api/requests/{id}/reject  Reject (human)
 POST   /api/requests/{id}/complete Client reports execution result
 GET    /api/audit                 Search audit log
@@ -152,6 +200,10 @@ Priority: env vars > config file > defaults.
 listen = "127.0.0.1:8080"
 data_dir = "/var/lib/dbward"  # SQLite files
 
+# Shared secret for signing execution tokens (HMAC-SHA256).
+# Auto-generated on first run if absent.
+token_secret = "your-secret-key-here"
+
 # Policy: which environments require approval for mutating operations
 [[environments]]
 name = "production"
@@ -163,6 +215,7 @@ approval_required = false
 ```
 
 Server does NOT have database URLs — it only knows environment names and policies.
+Client must also have `token_secret` to verify execution tokens locally.
 
 ## SQLite Schema (server)
 
@@ -232,13 +285,14 @@ bob: dbward approve req_abc --server http://server:8080
   │
 Server
   ├─ auth: bob (admin), bob ≠ alice → OK
-  └─ UPDATE requests SET status='approved'
+  ├─ UPDATE requests SET status='approved'
+  └─ generate execution_token (HMAC-SHA256 signed, 1h expiry)
 
         ~~~ AI retries / polls ~~~
 
 Client (dbward mcp)
-  ├─② GET /api/requests/req_abc → "approved"
-  ├─③ Engine → Target DB (BEGIN → ALTER TABLE → schema_migrations → COMMIT)
+  ├─② GET /api/requests/req_abc → "approved" + execution_token
+  ├─③ verify token → Engine → Target DB (BEGIN → ALTER TABLE → schema_migrations → COMMIT)
   ├─④ POST /api/requests/req_abc/complete {success: true}
   │
 Server
@@ -258,10 +312,10 @@ alice: dbward execute "SELECT * FROM users" --server http://server:8080
   │
 Server
   ├─ policy: staging + SELECT → auto_approved
-  └─ → {id: "req_xyz", status: "auto_approved"}
+  └─ → {id: "req_xyz", status: "auto_approved", execution_token: "..."}
   │
 Client
-  ├─② Engine → Target DB → rows
+  ├─② verify token → Engine → Target DB → rows
   ├─③ POST /api/requests/req_xyz/complete {success: true}
   │
 Server → INSERT INTO audit_log
