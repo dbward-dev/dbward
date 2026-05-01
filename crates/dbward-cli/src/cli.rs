@@ -56,6 +56,53 @@ enum Command {
     Audit,
     /// Start MCP stdio server
     Mcp,
+    /// Start the dbward HTTP server
+    Server {
+        #[command(subcommand)]
+        action: ServerAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ServerAction {
+    /// Start the server
+    Start {
+        /// Listen address
+        #[arg(long, default_value = "127.0.0.1:8080")]
+        listen: String,
+        /// SQLite database path
+        #[arg(long, default_value = "dbward.db")]
+        data: String,
+    },
+    /// Manage API tokens
+    Token {
+        #[command(subcommand)]
+        action: TokenAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum TokenAction {
+    /// Create a new API token
+    Create {
+        /// Username
+        #[arg(long)]
+        user: String,
+        /// Role
+        #[arg(long, value_parser = parse_role)]
+        role: Role,
+        /// SQLite database path
+        #[arg(long, default_value = "dbward.db")]
+        data: String,
+    },
+    /// Revoke an API token
+    Revoke {
+        /// Token ID to revoke
+        id: String,
+        /// SQLite database path
+        #[arg(long, default_value = "dbward.db")]
+        data: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -149,5 +196,51 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             println!("Audit search is only available in server mode (--server).");
             Ok(())
         }
+        Command::Server { action } => match action {
+            ServerAction::Start { listen, data } => {
+                let conn = rusqlite::Connection::open(&data)
+                    .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                dbward_server::db::init(&conn)
+                    .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                let state = dbward_server::AppState {
+                    sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+                };
+                let addr: std::net::SocketAddr = listen
+                    .parse()
+                    .map_err(|e: std::net::AddrParseError| dbward_core::Error::Config(e.to_string()))?;
+                dbward_server::start(addr, state).await
+            }
+            ServerAction::Token { action } => match action {
+                TokenAction::Create { user, role, data } => {
+                    let conn = rusqlite::Connection::open(&data)
+                        .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                    dbward_server::db::init(&conn)
+                        .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                    let state = dbward_server::AppState {
+                        sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+                    };
+                    let (token_id, raw_token) = dbward_server::auth::create_token(&state, &user, role)
+                        .map_err(|e| dbward_core::Error::Config(e))?;
+                    println!("Token created:");
+                    println!("  ID:    {token_id}");
+                    println!("  Token: {raw_token}");
+                    println!("  User:  {user}");
+                    println!("  Role:  {role}");
+                    println!("\nSave this token — it cannot be retrieved later.");
+                    Ok(())
+                }
+                TokenAction::Revoke { id, data } => {
+                    let conn = rusqlite::Connection::open(&data)
+                        .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                    let state = dbward_server::AppState {
+                        sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+                    };
+                    dbward_server::auth::revoke_token(&state, &id)
+                        .map_err(|e| dbward_core::Error::Config(e))?;
+                    println!("Token {id} revoked.");
+                    Ok(())
+                }
+            },
+        },
     }
 }

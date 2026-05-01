@@ -12,8 +12,10 @@ path = "src/main.rs"
 [dependencies]
 dbward-core = { path = "../dbward-core" }
 dbward-migrate = { path = "../dbward-migrate" }
+dbward-server = { path = "../dbward-server" }
 clap = { version = "4", features = ["derive", "env"] }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+rusqlite = { version = "0.35", features = ["bundled"] }

@@ -6,3 +6,14 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+dbward-core = { path = "../dbward-core" }
+dbward-migrate = { path = "../dbward-migrate" }
+axum = "0.8"
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+rusqlite = { version = "0.35", features = ["bundled"] }
+bcrypt = "0.17"
+tower-http = { version = "0.6", features = ["cors"] }
