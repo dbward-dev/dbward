@@ -26,11 +26,20 @@ pub fn router(state: AppState) -> Router {
             axum::routing::post(complete_request),
         )
         .route("/api/audit", get(list_audit))
+        .route("/api/public-key", get(get_public_key))
         .with_state(state)
 }
 
 async fn health() -> impl IntoResponse {
     Json(json!({"status": "ok"}))
+}
+
+async fn get_public_key(State(state): State<AppState>) -> impl IntoResponse {
+    let bytes = state.token_signer.verifying_key().to_bytes();
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
+        bytes.to_vec(),
+    )
 }
 
 async fn list_requests(
@@ -196,35 +205,21 @@ async fn get_request(
 
     let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let (operation, environment, detail, status): (String, String, String, String) = conn
-        .query_row(
-            "SELECT operation, environment, detail, status FROM requests WHERE id = ?1",
-            rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
-
-    let mut resp = conn
+    let (id_val, user, operation, environment, detail, status, approved_by, created_at, resolved_at): (String, String, String, String, String, String, Option<String>, String, Option<String>) = conn
         .query_row(
             "SELECT id, user, operation, environment, detail, status, approved_by, created_at, resolved_at FROM requests WHERE id = ?1",
             rusqlite::params![id],
-            |row| {
-                Ok(json!({
-                    "id": row.get::<_, String>(0)?,
-                    "user": row.get::<_, String>(1)?,
-                    "operation": row.get::<_, String>(2)?,
-                    "environment": row.get::<_, String>(3)?,
-                    "detail": row.get::<_, String>(4)?,
-                    "status": row.get::<_, String>(5)?,
-                    "approved_by": row.get::<_, Option<String>>(6)?,
-                    "created_at": row.get::<_, String>(7)?,
-                    "resolved_at": row.get::<_, Option<String>>(8)?,
-                }))
-            },
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?)),
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
-    // Include execution token for approved/auto_approved requests
+    let mut resp = json!({
+        "id": id_val, "user": user, "operation": operation,
+        "environment": environment, "detail": detail, "status": status,
+        "approved_by": approved_by, "created_at": created_at, "resolved_at": resolved_at,
+    });
+
+    // Only issue token for approved/auto_approved (not executed/failed/rejected)
     if status == "approved" || status == "auto_approved" {
         let token = state.token_signer.issue(&id, &operation, &environment, &detail);
         resp["execution_token"] = serde_json::to_value(token)

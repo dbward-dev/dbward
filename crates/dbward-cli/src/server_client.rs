@@ -59,6 +59,28 @@ impl ServerClient {
         Ok((id, status, token))
     }
 
+    /// Get a single request by ID.
+    pub async fn get_request(&self, request_id: &str) -> Result<Value, Error> {
+        let resp = self
+            .client
+            .get(format!("{}/api/requests/{}", self.base_url, request_id))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| Error::Config(format!("get request failed: {e}")))?;
+
+        let status_code = resp.status();
+        let body: Value = resp
+            .json()
+            .await
+            .map_err(|e| Error::Config(format!("invalid response: {e}")))?;
+
+        if !status_code.is_success() {
+            return Err(Error::Config(format!("get request failed ({}): {}", status_code, body)));
+        }
+        Ok(body)
+    }
+
     /// Poll a request until it's no longer pending. Returns (status, optional token).
     pub async fn poll_request(
         &self,

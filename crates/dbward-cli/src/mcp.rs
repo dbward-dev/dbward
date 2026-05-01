@@ -202,6 +202,10 @@ async fn call_execute_query(
 }
 
 fn tools_definitions() -> Value {
+    tools_definitions_base()
+}
+
+fn tools_definitions_base() -> Value {
     json!([
         {
             "name": "dbward_migrate_status",
@@ -265,6 +269,33 @@ fn tools_definitions() -> Value {
     ])
 }
 
+fn tools_definitions_server() -> Value {
+    let mut tools: Vec<Value> = serde_json::from_value(tools_definitions_base()).unwrap();
+    tools.push(json!({
+        "name": "dbward_check_request",
+        "description": "Check the status of a pending approval request. Returns status and execution_token if approved.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string", "description": "Request ID to check"}
+            },
+            "required": ["request_id"]
+        }
+    }));
+    tools.push(json!({
+        "name": "dbward_resume_execution",
+        "description": "Resume execution of an approved request. Verifies the execution token and runs the operation locally.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string", "description": "Request ID to resume"}
+            },
+            "required": ["request_id"]
+        }
+    }));
+    json!(tools)
+}
+
 pub async fn run_stdio_server_mode(
     config: Config,
     client: crate::server_client::ServerClient,
@@ -274,6 +305,10 @@ pub async fn run_stdio_server_mode(
     engine.set_audit_logger(dbward_core::AuditLogger::stderr());
     let migrator = Migrator::new(engine.pool().clone(), config.migrations_dir.clone());
     let env_str = config.environment.to_string();
+
+    // Track pending requests for resume
+    let mut pending_requests: std::collections::HashMap<String, PendingRequest> =
+        std::collections::HashMap::new();
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -307,9 +342,13 @@ pub async fn run_stdio_server_mode(
 
         let response = match method {
             "initialize" => handle_initialize(id.clone()),
-            "tools/list" => handle_tools_list(id.clone()),
+            "tools/list" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {"tools": tools_definitions_server()}
+            }),
             "tools/call" => {
-                handle_tools_call_server(
+                handle_tools_call_server_async(
                     id.clone(),
                     &request["params"],
                     &mut engine,
@@ -318,6 +357,7 @@ pub async fn run_stdio_server_mode(
                     &client,
                     &public_key,
                     &env_str,
+                    &mut pending_requests,
                 )
                 .await
             }
@@ -335,7 +375,13 @@ pub async fn run_stdio_server_mode(
     Ok(())
 }
 
-async fn handle_tools_call_server(
+struct PendingRequest {
+    operation: String,
+    environment: String,
+    detail: String,
+}
+
+async fn handle_tools_call_server_async(
     id: Option<Value>,
     params: &Value,
     engine: &mut Engine,
@@ -344,49 +390,44 @@ async fn handle_tools_call_server(
     client: &crate::server_client::ServerClient,
     public_key: &ed25519_dalek::VerifyingKey,
     env_str: &str,
+    pending: &mut std::collections::HashMap<String, PendingRequest>,
 ) -> Value {
     let tool_name = params["name"].as_str().unwrap_or("");
     let args = &params["arguments"];
 
     let result = match tool_name {
         "dbward_migrate_create" => {
-            // Local-only, no server approval needed
             let name = args["name"].as_str().unwrap_or("unnamed");
             call_migrate_create(migrator, name)
+        }
+        "dbward_check_request" => {
+            let req_id = args["request_id"].as_str().unwrap_or("");
+            check_request(client, req_id).await
+        }
+        "dbward_resume_execution" => {
+            let req_id = args["request_id"].as_str().unwrap_or("");
+            resume_execution(client, public_key, engine, migrator, config, pending, req_id).await
         }
         "dbward_execute_query" => {
             let sql = args["sql"].as_str().unwrap_or("");
             if sql.is_empty() {
                 Err("sql parameter is required".to_string())
             } else {
-                server_flow(client, public_key, "execute_query", env_str, sql, || async {
-                    call_execute_query(engine, sql, config.role).await
-                })
-                .await
+                server_flow_async(client, "execute_query", env_str, sql, pending).await
             }
         }
         "dbward_migrate_up" => {
             let count = args["count"].as_u64().map(|n| n as usize);
             let detail = format!("count:{}", count.unwrap_or(0));
-            server_flow(client, public_key, "migrate_up", env_str, &detail, || async {
-                call_migrate_up(migrator, count).await
-            })
-            .await
+            server_flow_async(client, "migrate_up", env_str, &detail, pending).await
         }
         "dbward_migrate_down" => {
             let count = args["count"].as_u64().map(|n| n as usize);
             let detail = format!("count:{}", count.unwrap_or(1));
-            server_flow(client, public_key, "migrate_down", env_str, &detail, || async {
-                call_migrate_down(migrator, count).await
-            })
-            .await
+            server_flow_async(client, "migrate_down", env_str, &detail, pending).await
         }
         "dbward_migrate_status" => {
-            let detail = "";
-            server_flow(client, public_key, "migrate_status", env_str, detail, || async {
-                call_migrate_status(migrator).await
-            })
-            .await
+            server_flow_async(client, "migrate_status", env_str, "", pending).await
         }
         "dbward_audit_search" => {
             Ok("Audit search via server: not yet implemented.".to_string())
@@ -413,47 +454,136 @@ async fn handle_tools_call_server(
     }
 }
 
-async fn server_flow<F, Fut>(
+/// Non-blocking: create request, if auto_approved execute immediately, if pending return request_id.
+async fn server_flow_async(
     client: &crate::server_client::ServerClient,
-    public_key: &ed25519_dalek::VerifyingKey,
     operation: &str,
     environment: &str,
     detail: &str,
-    execute: F,
-) -> Result<String, String>
-where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<String, String>>,
-{
+    pending: &mut std::collections::HashMap<String, PendingRequest>,
+) -> Result<String, String> {
     let (req_id, status, token) = client
         .create_request(operation, environment, detail)
         .await
         .map_err(|e| e.to_string())?;
 
-    let token = match status.as_str() {
-        "auto_approved" => token.ok_or("auto_approved missing token")?,
-        "pending" => {
-            eprintln!("Request {req_id} requires approval. Polling...");
-            let (_s, t) = client
-                .poll_request(
-                    &req_id,
-                    std::time::Duration::from_secs(2),
-                    std::time::Duration::from_secs(1800),
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-            t.ok_or("approved missing token")?
+    match status.as_str() {
+        "auto_approved" => {
+            // Store for resume_execution
+            pending.insert(
+                req_id.clone(),
+                PendingRequest {
+                    operation: operation.to_string(),
+                    environment: environment.to_string(),
+                    detail: detail.to_string(),
+                },
+            );
+            Ok(format!(
+                "Request {req_id} auto-approved. Call dbward_resume_execution with request_id=\"{req_id}\" to execute."
+            ))
         }
-        _ => return Err(format!("unexpected status: {status}")),
-    };
+        "pending" => {
+            pending.insert(
+                req_id.clone(),
+                PendingRequest {
+                    operation: operation.to_string(),
+                    environment: environment.to_string(),
+                    detail: detail.to_string(),
+                },
+            );
+            Ok(format!(
+                "Request {req_id} requires approval. A team member must approve it. \
+                 Then call dbward_check_request to check status, and dbward_resume_execution to execute."
+            ))
+        }
+        _ => Err(format!("unexpected status: {status}")),
+    }
+}
 
-    dbward_core::token::verify_token(&token, public_key, operation, environment, detail)
+async fn check_request(
+    client: &crate::server_client::ServerClient,
+    request_id: &str,
+) -> Result<String, String> {
+    if request_id.is_empty() {
+        return Err("request_id is required".to_string());
+    }
+    // poll_request with 0 timeout = single check
+    let resp = client
+        .get_request(request_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp["status"].as_str().unwrap_or("unknown");
+    match status {
+        "pending" => Ok(format!("Request {request_id} is still pending approval.")),
+        "approved" | "auto_approved" => Ok(format!(
+            "Request {request_id} is approved. Call dbward_resume_execution with request_id=\"{request_id}\" to execute."
+        )),
+        "rejected" => Ok(format!("Request {request_id} was rejected.")),
+        "executed" => Ok(format!("Request {request_id} was already executed.")),
+        _ => Ok(format!("Request {request_id} status: {status}")),
+    }
+}
+
+async fn resume_execution(
+    client: &crate::server_client::ServerClient,
+    public_key: &ed25519_dalek::VerifyingKey,
+    engine: &mut Engine,
+    migrator: &Migrator,
+    config: &Config,
+    pending: &mut std::collections::HashMap<String, PendingRequest>,
+    request_id: &str,
+) -> Result<String, String> {
+    if request_id.is_empty() {
+        return Err("request_id is required".to_string());
+    }
+
+    let pr = pending
+        .get(request_id)
+        .ok_or_else(|| format!("request {request_id} not found in this session"))?;
+
+    // Fetch current state + token
+    let resp = client
+        .get_request(request_id)
+        .await
         .map_err(|e| e.to_string())?;
 
-    let result = execute().await;
+    let status = resp["status"].as_str().unwrap_or("");
+    if status != "approved" && status != "auto_approved" {
+        return Err(format!("request is {status}, not approved"));
+    }
+
+    let token: dbward_core::token::ExecutionToken =
+        serde_json::from_value(resp["execution_token"].clone())
+            .map_err(|e| format!("missing execution_token: {e}"))?;
+
+    dbward_core::token::verify_token(
+        &token,
+        public_key,
+        &pr.operation,
+        &pr.environment,
+        &pr.detail,
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Execute
+    let result = match pr.operation.as_str() {
+        "execute_query" => call_execute_query(engine, &pr.detail, config.role).await,
+        "migrate_up" => {
+            let count = pr.detail.strip_prefix("count:").and_then(|s| s.parse().ok());
+            let count = if count == Some(0) { None } else { count };
+            call_migrate_up(migrator, count).await
+        }
+        "migrate_down" => {
+            let count = pr.detail.strip_prefix("count:").and_then(|s| s.parse().ok());
+            call_migrate_down(migrator, count).await
+        }
+        "migrate_status" => call_migrate_status(migrator).await,
+        _ => Err(format!("unknown operation: {}", pr.operation)),
+    };
 
     let success = result.is_ok();
-    let _ = client.complete_request(&req_id, success).await;
+    let _ = client.complete_request(request_id, success).await;
+    pending.remove(request_id);
 
     result
 }

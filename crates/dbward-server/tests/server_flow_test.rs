@@ -191,6 +191,7 @@ async fn complete_flow() {
 
     // Verify status is executed
     let resp = app
+        .clone()
         .oneshot(
             Request::get(&format!("/api/requests/{request_id}"))
                 .header("authorization", auth_header(&alice_token))
@@ -202,4 +203,21 @@ async fn complete_flow() {
 
     let body = body_json(resp).await;
     assert_eq!(body["status"], "executed");
+    // Token replay prevention: executed requests should NOT have execution_token
+    assert!(body.get("execution_token").is_none() || body["execution_token"].is_null());
+}
+
+#[tokio::test]
+async fn public_key_endpoint() {
+    let state = test_state();
+    let app = routes::router(state);
+
+    let resp = app
+        .oneshot(Request::get("/api/public-key").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(bytes.len(), 32); // Ed25519 public key is 32 bytes
 }
