@@ -7,7 +7,6 @@ repository.workspace = true
 
 [dependencies]
 dbward-core = { path = "../dbward-core" }
-dbward-migrate = { path = "../dbward-migrate" }
 axum = "0.8"
 tokio.workspace = true
 serde.workspace = true

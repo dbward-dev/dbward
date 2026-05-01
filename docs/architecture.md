@@ -7,9 +7,8 @@ dbward-cli (binary)
 ├── dbward-core      (Engine, types, RBAC, audit, config, query execution)
 ├── dbward-migrate   (migration file I/O + execution)
 │     └── dbward-core
-└── dbward-server    (axum HTTP, approval flow, SQLite state, auth)
-      ├── dbward-core
-      └── dbward-migrate
+└── dbward-server    (axum HTTP, approval state, SQLite, auth — NO DB connection)
+      └── dbward-core (types only)
 ```
 
 ## Core Engine
@@ -48,7 +47,8 @@ dbward-cli / dbward mcp
 ### Server Mode (approval flow)
 
 `dbward server` runs as a long-lived process.
-Clients never touch the target DB directly.
+Server has NO database connection — it only manages approval state and audit log.
+Agent/client executes DB operations locally after receiving approval.
 
 ```
 dbward-cli --server http://localhost:8080
@@ -57,10 +57,16 @@ dbward-cli --server http://localhost:8080
 dbward-server (axum + SQLite)
   ├─ Authentication (API token → user + role)
   ├─ Policy check (approval required?)
-  │   ├─ No  → Engine executes immediately
-  │   └─ Yes → Create pending request, return request ID
-  ├─ Engine (owns PgPool → Target DB)
+  │   ├─ No  → return {status: "auto_approved"}
+  │   └─ Yes → create pending request, return {status: "pending"}
   └─ Audit log (SQLite, persistent)
+
+(after approval)
+dbward-cli --server http://localhost:8080
+  ├─ GET /api/requests/{id} → sees "approved"
+  ├─ Engine executes locally (agent has DB access)
+  └─ POST /api/requests/{id}/complete → reports result to server
+```
 ```
 
 ## Approval Flow (server mode)
@@ -77,12 +83,14 @@ MVP constraints:
 - One pending migration request at a time (ordering safety)
 - Approval = immediate execution (no scheduled execution)
 
-REST API (5 endpoints):
+REST API (7 endpoints):
 ```
 POST   /api/requests              Create approval request
-GET    /api/requests              List pending requests
-POST   /api/requests/{id}/approve Approve (triggers execution)
+GET    /api/requests              List requests
+GET    /api/requests/{id}         Get request status (for polling)
+POST   /api/requests/{id}/approve Approve
 POST   /api/requests/{id}/reject  Reject
+POST   /api/requests/{id}/complete Agent reports execution result
 GET    /api/audit                 Search audit log
 ```
 
@@ -199,19 +207,34 @@ dbward-server
 dbward-server
   ├─ authenticate token → bob (admin)
   ├─ check: bob ≠ alice
-  ├─ Engine::migrate_up()
+  ├─ UPDATE requests SET status='approved'
+  └─ respond: {"id":"req_abc","status":"approved"}
+
+(agent polls or is notified)
+dbward-cli
+  ├─ GET /api/requests/req_abc → status: "approved"
+  ├─ Engine::migrate_up() locally (agent has DB access)
+  ├─ POST /api/requests/req_abc/complete {success: true, result: "Applied 2 migrations"}
+  │
+dbward-server
   ├─ UPDATE requests SET status='executed'
   ├─ INSERT INTO audit_log
-  └─ respond: {"status":"executed","result":"Applied 2 migrations"}
+  └─ respond: {"status":"executed"}
 ```
 
 ### 3. MCP via server: `dbward_migrate_up`
 
 ```
 AI Agent → MCP stdio → dbward mcp --server http://...
-  ├─ POST /api/requests
-  └─ respond to AI: "Approval required. Request ID: req_abc.
-     Run: dbward approve req_abc --server http://..."
+  ├─ POST /api/requests → {status: "pending", id: "req_abc"}
+  ├─ respond to AI: "Approval required. Request ID: req_abc."
+
+(after human approves via CLI)
+AI Agent calls dbward_migrate_up again (or polls)
+  ├─ GET /api/requests/req_abc → status: "approved"
+  ├─ Engine::migrate_up() locally
+  ├─ POST /api/requests/req_abc/complete
+  └─ respond to AI: "Applied 2 migrations"
 ```
 
 ### 4. Direct: `dbward execute "SELECT * FROM users"`
@@ -327,5 +350,5 @@ fn classify_query(sql: &str) -> Result<QueryType, Error> {
 |---|---|---|
 | `dbward-core` | Engine, types, RBAC, audit, config, DB pool, query exec | Migration file I/O, HTTP, approval state |
 | `dbward-migrate` | Migration file parsing, schema_migrations, up/down | DB connection creation |
-| `dbward-server` | axum HTTP, SQLite (approval + audit), auth tokens | Direct DB operations (delegates to Engine) |
-| `dbward-cli` | CLI parsing (clap), MCP stdio, HTTP client to server | Business logic |
+| `dbward-server` | axum HTTP, SQLite (approval + audit), auth tokens | DB operations (server has no DB connection) |
+| `dbward-cli` | CLI parsing (clap), MCP stdio, HTTP client to server, local DB execution after approval | — |
