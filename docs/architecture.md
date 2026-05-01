@@ -126,32 +126,77 @@ locally before executing any DB operation in server mode.
   "request_id": "req_abc",
   "operation": "migrate_up",
   "environment": "production",
+  "detail_hash": "sha256(SQL or migration filename)",
   "issued_at": "2026-05-01T13:00:00Z",
   "expires_at": "2026-05-01T14:00:00Z",
-  "signature": "hmac_sha256(secret, request_id + operation + environment + expires_at)"
+  "signature": "ed25519_sign(private_key, request_id + operation + environment + detail_hash + expires_at)"
 }
 ```
 
 ### Signing
 
-- Algorithm: HMAC-SHA256
-- Secret: configured in `dbward-server.toml` (`token_secret`), auto-generated on first run if absent
-- Input: `request_id || operation || environment || expires_at` (concatenated strings)
+- Algorithm: **Ed25519** (asymmetric)
+- Server holds the **private key** (signs tokens)
+- Client holds the **public key** only (verifies tokens, cannot forge)
+- Input: `request_id || operation || environment || detail_hash || expires_at`
+- `detail_hash`: SHA-256 of the SQL statement or migration filename — prevents
+  approving one query and executing another
+
+### Key management
+
+```bash
+# Server generates keypair on first run
+# Private key: data_dir/signing.key (server only, never shared)
+# Public key:  data_dir/signing.pub (distributed to clients)
+
+dbward server start --data /var/lib/dbward
+# → generates signing.key + signing.pub if absent
+
+# Client config references the public key
+# dbward.toml
+server = "http://server:8080"
+server_public_key = "/path/to/signing.pub"
+```
 
 ### Client-side verification
 
-1. Recompute HMAC-SHA256 over the token fields using the shared secret
-2. Compare with `signature` — reject on mismatch
-3. Check `expires_at` > now — reject if expired
-4. Check `operation` and `environment` match the current request — reject on mismatch
+1. Verify Ed25519 signature using server's public key — reject on mismatch
+2. Check `expires_at` > now — reject if expired
+3. Check `operation` and `environment` match the current request — reject on mismatch
+4. Recompute `detail_hash` from the actual SQL/migration — reject if different from token
 
 ### Security properties
 
-- Server controls what can be executed (token is proof of approval)
-- Tokens are time-limited (default: 1 hour)
-- Replay is bounded by expiry and request_id uniqueness
-- OSS code can be modified to skip verification — this is intentional circumvention,
-  detectable via audit log (server sees no `complete` call, or mismatched metadata)
+- **Asymmetric**: client cannot forge tokens (no private key)
+- **detail_hash**: approved SQL ≠ executed SQL is detected
+- **Time-limited**: default 1 hour expiry
+- **Replay-bounded**: request_id uniqueness + expiry
+- **OSS circumvention**: detectable via audit log (no `complete` call, or mismatched metadata)
+
+## Security Considerations
+
+### Direct mode limitations
+
+Direct mode (no server) has no approval flow and no persistent audit log.
+It is intended for local development only. Document clearly:
+- Direct mode should NOT be used for production databases
+- AI agents (MCP) should always use `--server` for production environments
+- DB-level permissions should restrict what Direct mode can do
+
+### Attack surface
+
+| Attack | Mitigation |
+|---|---|
+| Forge execution token | Ed25519: client has public key only, cannot sign |
+| Approve one SQL, execute another | `detail_hash` in token signature |
+| Steal private key from client | Client never has private key (asymmetric) |
+| Brute-force API tokens | SHA-256 hash + prefix lookup (not bcrypt O(n) scan) |
+| SQL injection via multi-statement | Reject queries containing unquoted semicolons |
+| Self-approve | Server enforces requester ≠ approver |
+| Reject others' requests maliciously | Only admin or requester can reject |
+| Direct mode bypass | Documentation + DB-level permissions |
+| Environment spoofing | Server validates environment against its policy config |
+| Token replay | request_id uniqueness + expiry + one-time use tracking |
 
 ## REST API (7 endpoints)
 
@@ -200,9 +245,8 @@ Priority: env vars > config file > defaults.
 listen = "127.0.0.1:8080"
 data_dir = "/var/lib/dbward"  # SQLite files
 
-# Shared secret for signing execution tokens (HMAC-SHA256).
-# Auto-generated on first run if absent.
-token_secret = "your-secret-key-here"
+# Signing keypair auto-generated on first run (Ed25519)
+# signing.key (private, server only) + signing.pub (distribute to clients)
 
 # Policy: which environments require approval for mutating operations
 [[environments]]
@@ -215,7 +259,7 @@ approval_required = false
 ```
 
 Server does NOT have database URLs — it only knows environment names and policies.
-Client must also have `token_secret` to verify execution tokens locally.
+Client needs the server's **public key** (`signing.pub`) to verify execution tokens.
 
 ## SQLite Schema (server)
 

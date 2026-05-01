@@ -14,5 +14,5 @@ serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 rusqlite = { version = "0.35", features = ["bundled"] }
-bcrypt = "0.17"
+sha2 = "0.10"
 tower-http = { version = "0.6", features = ["cors"] }

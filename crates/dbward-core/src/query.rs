@@ -19,14 +19,20 @@ pub struct QueryResult {
 }
 
 pub fn classify_query(sql: &str) -> Result<QueryType, Error> {
-    let trimmed = sql.trim_start().to_uppercase();
-    if trimmed.starts_with("SELECT") || trimmed.starts_with("WITH") {
+    // Reject multi-statement queries (SQL injection prevention)
+    let trimmed_end = sql.trim_end().trim_end_matches(';');
+    if trimmed_end.contains(';') {
+        return Err(Error::MultiStatement);
+    }
+
+    let upper = sql.trim_start().to_uppercase();
+    if upper.starts_with("SELECT") || upper.starts_with("WITH") {
         Ok(QueryType::Select)
-    } else if trimmed.starts_with("INSERT") {
+    } else if upper.starts_with("INSERT") {
         Ok(QueryType::Insert)
-    } else if trimmed.starts_with("UPDATE") {
+    } else if upper.starts_with("UPDATE") {
         Ok(QueryType::Update)
-    } else if trimmed.starts_with("DELETE") {
+    } else if upper.starts_with("DELETE") {
         Ok(QueryType::Delete)
     } else {
         Err(Error::DdlNotAllowed)
@@ -71,5 +77,17 @@ mod tests {
         assert!(classify_query("CREATE TABLE t (id int)").is_err());
         assert!(classify_query("ALTER TABLE t ADD COLUMN x int").is_err());
         assert!(classify_query("DROP TABLE t").is_err());
+    }
+
+    #[test]
+    fn rejects_multi_statement() {
+        assert!(classify_query("SELECT 1; DROP TABLE users").is_err());
+        assert!(classify_query("SELECT 1; SELECT 2").is_err());
+    }
+
+    #[test]
+    fn allows_trailing_semicolon() {
+        assert!(classify_query("SELECT 1;").is_ok());
+        assert!(classify_query("SELECT 1 ;  ").is_ok());
     }
 }

@@ -141,20 +141,25 @@ async fn reject_request(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state)?;
+    let user = auth::authenticate(&headers, &state)?;
 
     let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let status: String = conn
+    let (req_user, status): (String, String) = conn
         .query_row(
-            "SELECT status FROM requests WHERE id = ?1",
+            "SELECT user, status FROM requests WHERE id = ?1",
             rusqlite::params![id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
     if status != "pending" {
         return Err((StatusCode::CONFLICT, format!("request is already {status}")));
+    }
+
+    // Only admin or the requester can reject
+    if user.role != dbward_core::Role::Admin && user.user != req_user {
+        return Err((StatusCode::FORBIDDEN, "only admin or the requester can reject".into()));
     }
 
     let now = chrono::Utc::now().to_rfc3339();

@@ -10,6 +10,7 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             user TEXT NOT NULL,
             role TEXT NOT NULL,
             hash TEXT NOT NULL,
+            prefix TEXT NOT NULL,
             created_at TEXT NOT NULL,
             revoked INTEGER NOT NULL DEFAULT 0
         );

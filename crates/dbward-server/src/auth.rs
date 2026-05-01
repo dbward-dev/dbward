@@ -1,11 +1,27 @@
 use axum::http::{HeaderMap, StatusCode};
 use chrono::Utc;
 use rusqlite::params;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use dbward_core::Role;
 
 use crate::state::{AppState, AuthUser};
+
+fn hash_token(raw: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(raw.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Extract a prefix for fast lookup (first 8 chars after "dbw_").
+fn token_prefix(raw: &str) -> String {
+    raw.strip_prefix("dbw_")
+        .unwrap_or(raw)
+        .chars()
+        .take(8)
+        .collect()
+}
 
 /// Create a new API token for a user.
 pub fn create_token(
@@ -15,12 +31,13 @@ pub fn create_token(
 ) -> Result<(String, String), String> {
     let token_id = Uuid::new_v4().to_string();
     let raw_token = format!("dbw_{}", Uuid::new_v4().to_string().replace('-', ""));
-    let hash = bcrypt::hash(&raw_token, 10).map_err(|e| e.to_string())?;
+    let hash = hash_token(&raw_token);
+    let prefix = token_prefix(&raw_token);
 
     let conn = state.sqlite.lock().map_err(|e| e.to_string())?;
     conn.execute(
-        "INSERT INTO tokens (id, user, role, hash, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![token_id, user, role.to_string(), hash, Utc::now().to_rfc3339()],
+        "INSERT INTO tokens (id, user, role, hash, prefix, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![token_id, user, role.to_string(), hash, prefix, Utc::now().to_rfc3339()],
     )
     .map_err(|e| e.to_string())?;
 
@@ -54,40 +71,40 @@ pub fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<AuthUser, (
         .strip_prefix("Bearer ")
         .ok_or((StatusCode::UNAUTHORIZED, "invalid Authorization format".into()))?;
 
+    let prefix = token_prefix(raw_token);
+    let hash = hash_token(raw_token);
+
     let conn = state
         .sqlite
         .lock()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let mut stmt = conn
-        .prepare("SELECT id, user, role, hash FROM tokens WHERE revoked = 0")
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // O(1) lookup by prefix, then constant-time hash comparison
+    let result: Result<(String, String, String, String), _> = conn.query_row(
+        "SELECT id, user, role, hash FROM tokens WHERE prefix = ?1 AND revoked = 0",
+        params![prefix],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    );
 
-    let tokens: Vec<(String, String, String, String)> = stmt
-        .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    for (id, user, role_str, hash) in tokens {
-        if bcrypt::verify(raw_token, &hash).unwrap_or(false) {
+    match result {
+        Ok((id, user, role_str, stored_hash)) => {
+            if hash != stored_hash {
+                return Err((StatusCode::UNAUTHORIZED, "invalid token".into()));
+            }
             let role = match role_str.as_str() {
                 "admin" => Role::Admin,
                 "developer" => Role::Developer,
                 "readonly" => Role::Readonly,
                 _ => return Err((StatusCode::INTERNAL_SERVER_ERROR, "invalid role in db".into())),
             };
-            return Ok(AuthUser {
+            Ok(AuthUser {
                 token_id: id,
                 user,
                 role,
-            });
+            })
         }
+        Err(_) => Err((StatusCode::UNAUTHORIZED, "invalid token".into())),
     }
-
-    Err((StatusCode::UNAUTHORIZED, "invalid token".into()))
 }
 
 #[cfg(test)]
@@ -128,8 +145,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", format!("Bearer {raw_token}").parse().unwrap());
 
-        let result = authenticate(&headers, &state);
-        assert!(result.is_err());
+        assert!(authenticate(&headers, &state).is_err());
     }
 
     #[test]
@@ -138,7 +154,18 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer dbw_invalid".parse().unwrap());
 
-        let result = authenticate(&headers, &state);
-        assert!(result.is_err());
+        assert!(authenticate(&headers, &state).is_err());
+    }
+
+    #[test]
+    fn wrong_token_rejected() {
+        let state = test_state();
+        create_token(&state, "alice", Role::Developer).unwrap();
+
+        let mut headers = HeaderMap::new();
+        // Same prefix length but different token
+        headers.insert("authorization", "Bearer dbw_00000000aaaabbbbccccddddeeee".parse().unwrap());
+
+        assert!(authenticate(&headers, &state).is_err());
     }
 }

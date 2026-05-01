@@ -10,6 +10,9 @@ pub enum Error {
     #[error("DDL statements must go through migrations")]
     DdlNotAllowed,
 
+    #[error("multi-statement queries are not allowed")]
+    MultiStatement,
+
     #[error("database error: {0}")]
     Database(String),
 
