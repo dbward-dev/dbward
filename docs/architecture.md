@@ -48,7 +48,7 @@ dbward-cli / dbward mcp
 
 `dbward server` runs as a long-lived process.
 Server has NO database connection — it only manages approval state and audit log.
-Agent/client executes DB operations locally after receiving approval.
+Client executes DB operations locally after receiving approval.
 
 ```
 dbward-cli --server http://localhost:8080
@@ -64,7 +64,7 @@ dbward-server (axum + SQLite)
 (after approval)
 dbward-cli --server http://localhost:8080
   ├─ GET /api/requests/{id} → sees "approved"
-  ├─ Engine executes locally (agent has DB access)
+  ├─ Engine executes locally (client has DB access)
   └─ POST /api/requests/{id}/complete → reports result to server
 ```
 ```
@@ -90,7 +90,7 @@ GET    /api/requests              List requests
 GET    /api/requests/{id}         Get request status (for polling)
 POST   /api/requests/{id}/approve Approve
 POST   /api/requests/{id}/reject  Reject
-POST   /api/requests/{id}/complete Agent reports execution result
+POST   /api/requests/{id}/complete Client reports execution result
 GET    /api/audit                 Search audit log
 ```
 
@@ -210,10 +210,10 @@ dbward-server
   ├─ UPDATE requests SET status='approved'
   └─ respond: {"id":"req_abc","status":"approved"}
 
-(agent polls or is notified)
+(client polls or is notified)
 dbward-cli
   ├─ GET /api/requests/req_abc → status: "approved"
-  ├─ Engine::migrate_up() locally (agent has DB access)
+  ├─ Engine::migrate_up() locally (client has DB access)
   ├─ POST /api/requests/req_abc/complete {success: true, result: "Applied 2 migrations"}
   │
 dbward-server
@@ -225,12 +225,12 @@ dbward-server
 ### 3. MCP via server: `dbward_migrate_up`
 
 ```
-AI Agent → MCP stdio → dbward mcp --server http://...
+AI Client → MCP stdio → dbward mcp --server http://...
   ├─ POST /api/requests → {status: "pending", id: "req_abc"}
   ├─ respond to AI: "Approval required. Request ID: req_abc."
 
 (after human approves via CLI)
-AI Agent calls dbward_migrate_up again (or polls)
+AI Client calls dbward_migrate_up again (or polls)
   ├─ GET /api/requests/req_abc → status: "approved"
   ├─ Engine::migrate_up() locally
   ├─ POST /api/requests/req_abc/complete
