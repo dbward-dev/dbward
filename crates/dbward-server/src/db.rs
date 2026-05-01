@@ -24,7 +24,9 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             status TEXT NOT NULL DEFAULT 'pending',
             approved_by TEXT,
             created_at TEXT NOT NULL,
-            resolved_at TEXT
+            resolved_at TEXT,
+            emergency INTEGER NOT NULL DEFAULT 0,
+            reason TEXT
         );
 
         CREATE TABLE IF NOT EXISTS audit_log (
@@ -37,7 +39,8 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             detail TEXT NOT NULL,
             success INTEGER NOT NULL,
             error_message TEXT,
-            request_id TEXT
+            request_id TEXT,
+            emergency INTEGER NOT NULL DEFAULT 0
         );",
     )?;
 

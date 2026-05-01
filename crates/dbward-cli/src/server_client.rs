@@ -24,16 +24,25 @@ impl ServerClient {
         operation: &str,
         environment: &str,
         detail: &str,
+        emergency: bool,
+        reason: Option<&str>,
     ) -> Result<(String, String, Option<ExecutionToken>), Error> {
+        let mut body = serde_json::json!({
+            "operation": operation,
+            "environment": environment,
+            "detail": detail,
+        });
+        if emergency {
+            body["emergency"] = serde_json::json!(true);
+        }
+        if let Some(r) = reason {
+            body["reason"] = serde_json::json!(r);
+        }
         let resp = self
             .client
             .post(format!("{}/api/requests", self.base_url))
             .bearer_auth(&self.api_token)
-            .json(&serde_json::json!({
-                "operation": operation,
-                "environment": environment,
-                "detail": detail,
-            }))
+            .json(&body)
             .send()
             .await
             .map_err(|e| Error::Config(format!("server request failed: {e}")))?;

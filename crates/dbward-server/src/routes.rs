@@ -88,23 +88,47 @@ async fn create_request(
         .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
     let detail = body["detail"].as_str().unwrap_or("");
+    let emergency = body["emergency"].as_bool().unwrap_or(false);
+    let reason = body["reason"].as_str().map(|s| s.to_string());
 
-    // MVP policy: production + mutating ops require approval
-    let needs_approval = environment == "production"
+    if emergency && reason.is_none() {
+        return Err((StatusCode::BAD_REQUEST, "reason is required for emergency requests".into()));
+    }
+    // Readonly cannot use break-glass
+    if emergency && user.role == dbward_core::Role::Readonly {
+        return Err((StatusCode::FORBIDDEN, "readonly users cannot use break-glass".into()));
+    }
+
+    // MVP policy: production + mutating ops require approval (unless emergency)
+    let needs_approval = !emergency
+        && environment == "production"
         && !matches!(operation, "migrate_status" | "audit_search");
+
+    let status = if emergency { "break_glass" } else if needs_approval { "pending" } else { "auto_approved" };
 
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    let status = if needs_approval { "pending" } else { "auto_approved" };
 
     let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     conn.execute(
-        "INSERT INTO requests (id, user, operation, environment, detail, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        rusqlite::params![id, user.user, operation, environment, detail, status, now],
+        "INSERT INTO requests (id, user, operation, environment, detail, status, created_at, emergency, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![id, user.user, operation, environment, detail, status, now, emergency, reason],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    if needs_approval {
+    if emergency {
+        let token = state.token_signer.issue(&id, operation, environment, detail);
+        state.webhooks.dispatch(crate::webhook::WebhookEvent {
+            event: "break_glass".into(),
+            request_id: id.clone(), user: user.user.clone(),
+            operation: operation.into(), environment: environment.into(),
+            detail: detail.into(), approved_by: None, reason: reason.clone(),
+        });
+        Ok((
+            StatusCode::CREATED,
+            Json(json!({"id": id, "status": "break_glass", "execution_token": token})),
+        ))
+    } else if needs_approval {
         state.webhooks.dispatch(crate::webhook::WebhookEvent {
             event: "request_created".into(),
             request_id: id.clone(), user: user.user.clone(),
@@ -240,7 +264,7 @@ async fn get_request(
     });
 
     // Only issue token for approved/auto_approved (not executed/failed/rejected)
-    if status == "approved" || status == "auto_approved" {
+    if status == "approved" || status == "auto_approved" || status == "break_glass" {
         let token = state.token_signer.issue(&id, &operation, &environment, &detail);
         resp["execution_token"] = serde_json::to_value(token)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

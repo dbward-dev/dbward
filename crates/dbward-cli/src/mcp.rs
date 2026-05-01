@@ -463,7 +463,7 @@ async fn server_flow_async(
     pending: &mut std::collections::HashMap<String, PendingRequest>,
 ) -> Result<String, String> {
     let (req_id, status, _token) = client
-        .create_request(operation, environment, detail)
+        .create_request(operation, environment, detail, false, None)
         .await
         .map_err(|e| e.to_string())?;
 
