@@ -1,6 +1,7 @@
 mod cli;
 mod config_loader;
 mod mcp;
+mod server_client;
 
 use std::process;
 

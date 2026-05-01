@@ -196,7 +196,15 @@ async fn get_request(
 
     let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let row: serde_json::Value = conn
+    let (operation, environment, detail, status): (String, String, String, String) = conn
+        .query_row(
+            "SELECT operation, environment, detail, status FROM requests WHERE id = ?1",
+            rusqlite::params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+
+    let mut resp = conn
         .query_row(
             "SELECT id, user, operation, environment, detail, status, approved_by, created_at, resolved_at FROM requests WHERE id = ?1",
             rusqlite::params![id],
@@ -216,7 +224,14 @@ async fn get_request(
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
-    Ok(Json(row))
+    // Include execution token for approved/auto_approved requests
+    if status == "approved" || status == "auto_approved" {
+        let token = state.token_signer.issue(&id, &operation, &environment, &detail);
+        resp["execution_token"] = serde_json::to_value(token)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    Ok(Json(resp))
 }
 
 async fn complete_request(

@@ -264,3 +264,13 @@ fn tools_definitions() -> Value {
         }
     ])
 }
+
+pub async fn run_stdio_server_mode(
+    _config: Config,
+    _client: crate::server_client::ServerClient,
+    _public_key: ed25519_dalek::VerifyingKey,
+) -> Result<(), dbward_core::Error> {
+    // TODO: MCP server mode - route tools/call through server approval flow
+    eprintln!("MCP server mode not yet implemented");
+    Ok(())
+}
