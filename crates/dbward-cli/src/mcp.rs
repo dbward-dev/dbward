@@ -266,11 +266,194 @@ fn tools_definitions() -> Value {
 }
 
 pub async fn run_stdio_server_mode(
-    _config: Config,
-    _client: crate::server_client::ServerClient,
-    _public_key: ed25519_dalek::VerifyingKey,
+    config: Config,
+    client: crate::server_client::ServerClient,
+    public_key: ed25519_dalek::VerifyingKey,
 ) -> Result<(), dbward_core::Error> {
-    // TODO: MCP server mode - route tools/call through server approval flow
-    eprintln!("MCP server mode not yet implemented");
+    let mut engine = Engine::new(config.clone()).await?;
+    engine.set_audit_logger(dbward_core::AuditLogger::stderr());
+    let migrator = Migrator::new(engine.pool().clone(), config.migrations_dir.clone());
+    let env_str = config.environment.to_string();
+
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+
+    for line in stdin.lock().lines() {
+        let line = line.map_err(dbward_core::Error::Io)?;
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let request: Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(e) => {
+                let err_resp = json!({
+                    "jsonrpc": "2.0",
+                    "id": null,
+                    "error": {"code": -32700, "message": format!("Parse error: {e}")}
+                });
+                writeln!(stdout, "{err_resp}").map_err(dbward_core::Error::Io)?;
+                stdout.flush().map_err(dbward_core::Error::Io)?;
+                continue;
+            }
+        };
+
+        let id = request.get("id").cloned();
+        let method = request["method"].as_str().unwrap_or("");
+
+        if method == "notifications/initialized" {
+            continue;
+        }
+
+        let response = match method {
+            "initialize" => handle_initialize(id.clone()),
+            "tools/list" => handle_tools_list(id.clone()),
+            "tools/call" => {
+                handle_tools_call_server(
+                    id.clone(),
+                    &request["params"],
+                    &mut engine,
+                    &migrator,
+                    &config,
+                    &client,
+                    &public_key,
+                    &env_str,
+                )
+                .await
+            }
+            _ => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32601, "message": format!("Method not found: {method}")}
+            }),
+        };
+
+        writeln!(stdout, "{response}").map_err(dbward_core::Error::Io)?;
+        stdout.flush().map_err(dbward_core::Error::Io)?;
+    }
+
     Ok(())
+}
+
+async fn handle_tools_call_server(
+    id: Option<Value>,
+    params: &Value,
+    engine: &mut Engine,
+    migrator: &Migrator,
+    config: &Config,
+    client: &crate::server_client::ServerClient,
+    public_key: &ed25519_dalek::VerifyingKey,
+    env_str: &str,
+) -> Value {
+    let tool_name = params["name"].as_str().unwrap_or("");
+    let args = &params["arguments"];
+
+    let result = match tool_name {
+        "dbward_migrate_create" => {
+            // Local-only, no server approval needed
+            let name = args["name"].as_str().unwrap_or("unnamed");
+            call_migrate_create(migrator, name)
+        }
+        "dbward_execute_query" => {
+            let sql = args["sql"].as_str().unwrap_or("");
+            if sql.is_empty() {
+                Err("sql parameter is required".to_string())
+            } else {
+                server_flow(client, public_key, "execute_query", env_str, sql, || async {
+                    call_execute_query(engine, sql, config.role).await
+                })
+                .await
+            }
+        }
+        "dbward_migrate_up" => {
+            let count = args["count"].as_u64().map(|n| n as usize);
+            let detail = format!("count:{}", count.unwrap_or(0));
+            server_flow(client, public_key, "migrate_up", env_str, &detail, || async {
+                call_migrate_up(migrator, count).await
+            })
+            .await
+        }
+        "dbward_migrate_down" => {
+            let count = args["count"].as_u64().map(|n| n as usize);
+            let detail = format!("count:{}", count.unwrap_or(1));
+            server_flow(client, public_key, "migrate_down", env_str, &detail, || async {
+                call_migrate_down(migrator, count).await
+            })
+            .await
+        }
+        "dbward_migrate_status" => {
+            let detail = "";
+            server_flow(client, public_key, "migrate_status", env_str, detail, || async {
+                call_migrate_status(migrator).await
+            })
+            .await
+        }
+        "dbward_audit_search" => {
+            Ok("Audit search via server: not yet implemented.".to_string())
+        }
+        _ => Err(format!("Unknown tool: {tool_name}")),
+    };
+
+    match result {
+        Ok(text) => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "content": [{"type": "text", "text": text}]
+            }
+        }),
+        Err(e) => json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "content": [{"type": "text", "text": format!("Error: {e}")}],
+                "isError": true
+            }
+        }),
+    }
+}
+
+async fn server_flow<F, Fut>(
+    client: &crate::server_client::ServerClient,
+    public_key: &ed25519_dalek::VerifyingKey,
+    operation: &str,
+    environment: &str,
+    detail: &str,
+    execute: F,
+) -> Result<String, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    let (req_id, status, token) = client
+        .create_request(operation, environment, detail)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let token = match status.as_str() {
+        "auto_approved" => token.ok_or("auto_approved missing token")?,
+        "pending" => {
+            eprintln!("Request {req_id} requires approval. Polling...");
+            let (_s, t) = client
+                .poll_request(
+                    &req_id,
+                    std::time::Duration::from_secs(2),
+                    std::time::Duration::from_secs(1800),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+            t.ok_or("approved missing token")?
+        }
+        _ => return Err(format!("unexpected status: {status}")),
+    };
+
+    dbward_core::token::verify_token(&token, public_key, operation, environment, detail)
+        .map_err(|e| e.to_string())?;
+
+    let result = execute().await;
+
+    let success = result.is_ok();
+    let _ = client.complete_request(&req_id, success).await;
+
+    result
 }
