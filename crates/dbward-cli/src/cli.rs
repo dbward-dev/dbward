@@ -64,6 +64,12 @@ enum Command {
     Execute {
         /// SQL statement to execute
         sql: String,
+        /// Emergency bypass (skip approval, requires --reason)
+        #[arg(long)]
+        emergency: bool,
+        /// Reason for emergency bypass
+        #[arg(long, requires = "emergency")]
+        reason: Option<String>,
     },
     /// Search audit log (server mode only)
     Audit,
@@ -101,6 +107,9 @@ enum ServerAction {
         listen: String,
         #[arg(long, default_value = "dbward.db")]
         data: String,
+        /// Server config file (webhooks, etc.)
+        #[arg(long, default_value = "dbward-server.toml")]
+        config: String,
     },
     /// Manage API tokens
     Token {
@@ -305,13 +314,13 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
     let env_str = config.environment.to_string();
 
     match cli.command {
-        Command::Execute { ref sql } => {
+        Command::Execute { ref sql, emergency, ref reason } => {
             let (id, status, token) = sc
-                .create_request("execute_query", &env_str, sql)
+                .create_request("execute_query", &env_str, sql, emergency, reason.as_deref())
                 .await?;
 
             let token = match status.as_str() {
-                "auto_approved" => token.expect("auto_approved should include token"),
+                "auto_approved" | "break_glass" => token.expect("should include token"),
                 "pending" => {
                     eprintln!("Request {id} requires approval.");
                     let (_status, token) = sc
@@ -350,7 +359,7 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 MigrateAction::Status => {
                     // Status is read-only, still goes through server for audit
                     let (id, status, token) = sc
-                        .create_request("migrate_status", &env_str, "")
+                        .create_request("migrate_status", &env_str, "", false, None)
                         .await?;
                     let token = resolve_token(&sc, &id, status, token).await?;
                     dbward_core::token::verify_token(&token, &public_key, "migrate_status", &env_str, "")?;
@@ -384,7 +393,7 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 }
             };
 
-            let (id, status, token) = sc.create_request(operation, &env_str, &detail).await?;
+            let (id, status, token) = sc.create_request(operation, &env_str, &detail, false, None).await?;
             let token = resolve_token(&sc, &id, status, token).await?;
             dbward_core::token::verify_token(&token, &public_key, operation, &env_str, &detail)?;
 
@@ -509,7 +518,7 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
             }
             Ok(())
         }
-        Command::Execute { sql } => {
+        Command::Execute { sql, .. } => {
             let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?;
             let role = config.role;
             let mut engine = Engine::new(config).await?;
@@ -527,7 +536,12 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
             Ok(())
         }
         Command::Server { action } => match action {
-            ServerAction::Start { listen, data } => {
+            ServerAction::Start { listen, data, config: server_config_path } => {
+                let server_cfg = dbward_server::server_config::ServerConfig::load(
+                    std::path::Path::new(&server_config_path),
+                )
+                .map_err(|e| dbward_core::Error::Config(e))?;
+
                 let conn = rusqlite::Connection::open(&data)
                     .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
                 dbward_server::db::init(&conn)
@@ -538,9 +552,11 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 let token_signer =
                     dbward_server::token::TokenSigner::load_or_generate(data_path)
                         .map_err(|e| dbward_core::Error::Config(e))?;
+                let webhooks = dbward_server::webhook::WebhookDispatcher::new(server_cfg.webhooks);
                 let state = dbward_server::AppState {
                     sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
+                    webhooks: std::sync::Arc::new(webhooks),
                 };
                 let addr: std::net::SocketAddr = listen
                     .parse()
@@ -562,6 +578,7 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                     let state = dbward_server::AppState {
                         sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
                         token_signer: std::sync::Arc::new(token_signer),
+                        webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
                     };
                     let (token_id, raw_token) =
                         dbward_server::auth::create_token(&state, &user, role)
@@ -586,6 +603,7 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                     let state = dbward_server::AppState {
                         sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
                         token_signer: std::sync::Arc::new(token_signer),
+                        webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
                     };
                     dbward_server::auth::revoke_token(&state, &id)
                         .map_err(|e| dbward_core::Error::Config(e))?;

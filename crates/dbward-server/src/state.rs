@@ -4,15 +4,15 @@ use std::sync::{Arc, Mutex};
 use dbward_core::Role;
 
 use crate::token::TokenSigner;
+use crate::webhook::WebhookDispatcher;
 
-/// Shared application state for axum handlers.
 #[derive(Clone)]
 pub struct AppState {
     pub sqlite: Arc<Mutex<Connection>>,
     pub token_signer: Arc<TokenSigner>,
+    pub webhooks: Arc<WebhookDispatcher>,
 }
 
-/// Authenticated user extracted from API token.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub token_id: String,
