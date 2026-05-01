@@ -9,7 +9,7 @@ pub mod token;
 mod types;
 
 pub use audit::AuditLogger;
-pub use config::{Config, DatabaseConfig};
+pub use config::{Config, DatabaseConfig, ServerConfig};
 pub use engine::Engine;
 pub use error::Error;
 pub use query::{QueryResult, classify_query};

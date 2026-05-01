@@ -59,6 +59,21 @@ impl ServerClient {
         Ok((id, status, token))
     }
 
+    /// List all requests.
+    pub async fn list_requests(&self) -> Result<Value, Error> {
+        let resp = self
+            .client
+            .get(format!("{}/api/requests", self.base_url))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| Error::Config(format!("list requests failed: {e}")))?;
+
+        resp.json()
+            .await
+            .map_err(|e| Error::Config(format!("invalid response: {e}")))
+    }
+
     /// Get a single request by ID.
     pub async fn get_request(&self, request_id: &str) -> Result<Value, Error> {
         let resp = self

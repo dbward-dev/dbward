@@ -22,6 +22,7 @@ pub fn load(
             environment: Environment::Development,
             role: Role::Developer,
             migrations_dir: "db/migrations".into(),
+            server: None,
         }
     };
 
