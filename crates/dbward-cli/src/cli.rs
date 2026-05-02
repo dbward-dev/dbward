@@ -482,6 +482,24 @@ async fn resolve_token(
 }
 
 async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
+    // Direct mode is only allowed for development environment
+    if let Some(ref env) = cli.environment {
+        if env != "development" {
+            return Err(dbward_core::Error::Config(format!(
+                "direct mode is only allowed for development environment (got: {env}). Use --server for {env}."
+            )));
+        }
+    }
+    // Also check config file
+    if let Ok(config) = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role) {
+        if config.environment != dbward_core::Environment::Development {
+            return Err(dbward_core::Error::Config(format!(
+                "direct mode is only allowed for development environment (got: {}). Use --server for non-development environments.",
+                config.environment
+            )));
+        }
+    }
+
     match cli.command {
         Command::Mcp => {
             let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?;

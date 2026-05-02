@@ -9,6 +9,34 @@ services:
       POSTGRES_DB: dbward_dev
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbward"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  dbward-server:
+    build: .
+    command: ["server", "start", "--data", "/data/dbward.db", "--listen", "0.0.0.0:3000"]
+    ports:
+      - "3000:3000"
+    volumes:
+      - server-data:/data
+
+  dbward:
+    build: .
+    entrypoint: ["dbward"]
+    environment:
+      DBWARD_DATABASE_URL: "postgres://dbward:dbward@postgres:5432/dbward_dev"
+      DBWARD_SERVER_URL: "http://dbward-server:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - server-data:/data:ro
+    profiles:
+      - cli
 
 volumes:
   pgdata:
+  server-data:
