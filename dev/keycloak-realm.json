@@ -1,0 +1,61 @@
+{
+  "realm": "dbward",
+  "enabled": true,
+  "clients": [
+    {
+      "clientId": "dbward-cli",
+      "enabled": true,
+      "publicClient": true,
+      "redirectUris": [
+        "http://127.0.0.1:19836/callback",
+        "http://127.0.0.1:19837/callback",
+        "http://127.0.0.1:19838/callback",
+        "http://127.0.0.1:19839/callback",
+        "http://127.0.0.1:19840/callback"
+      ],
+      "webOrigins": ["http://127.0.0.1:*"],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": "true",
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "dbward-admins" },
+    { "name": "dbward-developers" }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "email": "alice@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "alice", "temporary": false }],
+      "groups": ["dbward-developers"]
+    },
+    {
+      "username": "bob",
+      "email": "bob@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [{ "type": "password", "value": "bob", "temporary": false }],
+      "groups": ["dbward-admins"]
+    }
+  ]
+}

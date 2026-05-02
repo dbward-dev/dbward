@@ -1,0 +1,17 @@
+[auth]
+mode = "both"
+
+[auth.oidc]
+issuer = "http://keycloak:8080/realms/dbward"
+client_id = "dbward-cli"
+default_role = "readonly"
+
+[[auth.oidc.role_mappings]]
+claim = "groups"
+value = "dbward-admins"
+role = "admin"
+
+[[auth.oidc.role_mappings]]
+claim = "groups"
+value = "dbward-developers"
+role = "developer"
