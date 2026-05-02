@@ -24,7 +24,7 @@ fn token_prefix(raw: &str) -> String {
 }
 
 /// Create a new API token for a user.
-pub fn create_token(
+pub async fn create_token(
     state: &AppState,
     user: &str,
     role: Role,
@@ -34,7 +34,7 @@ pub fn create_token(
     let hash = hash_token(&raw_token);
     let prefix = token_prefix(&raw_token);
 
-    let conn = state.sqlite.lock().map_err(|e| e.to_string())?;
+    let conn = state.sqlite.lock().await;
     conn.execute(
         "INSERT INTO tokens (id, user, role, hash, prefix, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![token_id, user, role.to_string(), hash, prefix, Utc::now().to_rfc3339()],
@@ -45,8 +45,8 @@ pub fn create_token(
 }
 
 /// Revoke a token by ID.
-pub fn revoke_token(state: &AppState, token_id: &str) -> Result<(), String> {
-    let conn = state.sqlite.lock().map_err(|e| e.to_string())?;
+pub async fn revoke_token(state: &AppState, token_id: &str) -> Result<(), String> {
+    let conn = state.sqlite.lock().await;
     let updated = conn
         .execute(
             "UPDATE tokens SET revoked = 1 WHERE id = ?1",
@@ -92,18 +92,15 @@ pub async fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<AuthU
         if state.auth_mode == "oidc" {
             return Err((StatusCode::UNAUTHORIZED, "API tokens disabled, use OIDC".into()));
         }
-        authenticate_api_token(raw_token, state)
+        authenticate_api_token(raw_token, state).await
     }
 }
 
-fn authenticate_api_token(raw_token: &str, state: &AppState) -> Result<AuthUser, (StatusCode, String)> {
+async fn authenticate_api_token(raw_token: &str, state: &AppState) -> Result<AuthUser, (StatusCode, String)> {
     let prefix = token_prefix(raw_token);
     let hash = hash_token(raw_token);
 
-    let conn = state
-        .sqlite
-        .lock()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let conn = state.sqlite.lock().await;
 
     let result: Result<(String, String, String, String), _> = conn.query_row(
         "SELECT id, user, role, hash FROM tokens WHERE prefix = ?1 AND revoked = 0",
@@ -137,13 +134,13 @@ mod tests {
     use super::*;
     use crate::db;
     use rusqlite::Connection;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
     fn test_state() -> AppState {
         let conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
         AppState {
-            sqlite: Arc::new(Mutex::new(conn)),
+            sqlite: Arc::new(tokio::sync::Mutex::new(conn)),
             token_signer: Arc::new(crate::token::TokenSigner::generate()),
             webhooks: Arc::new(crate::webhook::WebhookDispatcher::empty()),
             oidc: None,
@@ -154,7 +151,7 @@ mod tests {
     #[tokio::test]
     async fn create_and_verify_token() {
         let state = test_state();
-        let (token_id, raw_token) = create_token(&state, "alice", Role::Developer).unwrap();
+        let (token_id, raw_token) = create_token(&state, "alice", Role::Developer).await.unwrap();
 
         let mut headers = HeaderMap::new();
         headers.insert("authorization", format!("Bearer {raw_token}").parse().unwrap());
@@ -168,8 +165,8 @@ mod tests {
     #[tokio::test]
     async fn revoked_token_rejected() {
         let state = test_state();
-        let (token_id, raw_token) = create_token(&state, "bob", Role::Admin).unwrap();
-        revoke_token(&state, &token_id).unwrap();
+        let (token_id, raw_token) = create_token(&state, "bob", Role::Admin).await.unwrap();
+        revoke_token(&state, &token_id).await.unwrap();
 
         let mut headers = HeaderMap::new();
         headers.insert("authorization", format!("Bearer {raw_token}").parse().unwrap());
@@ -189,10 +186,9 @@ mod tests {
     #[tokio::test]
     async fn wrong_token_rejected() {
         let state = test_state();
-        create_token(&state, "alice", Role::Developer).unwrap();
+        create_token(&state, "alice", Role::Developer).await.unwrap();
 
         let mut headers = HeaderMap::new();
-        // Same prefix length but different token
         headers.insert("authorization", "Bearer dbw_00000000aaaabbbbccccddddeeee".parse().unwrap());
 
         assert!(authenticate(&headers, &state).await.is_err());

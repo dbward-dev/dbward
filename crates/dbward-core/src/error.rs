@@ -22,6 +22,12 @@ pub enum Error {
     #[error("configuration error: {0}")]
     Config(String),
 
+    #[error("server error: {0}")]
+    Server(String),
+
+    #[error("authentication error: {0}")]
+    Auth(String),
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 

@@ -23,7 +23,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+        .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
 
     eprintln!("dbward server shut down");
     Ok(())

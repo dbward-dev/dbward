@@ -48,7 +48,7 @@ async fn list_requests(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let _user = auth::authenticate(&headers, &state).await?;
 
-    let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let conn = state.sqlite.lock().await;
     let mut stmt = conn
         .prepare("SELECT id, user, operation, environment, detail, status, approved_by, created_at, resolved_at FROM requests ORDER BY created_at DESC")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -109,7 +109,7 @@ async fn create_request(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let conn = state.sqlite.lock().await;
     conn.execute(
         "INSERT INTO requests (id, user, operation, environment, detail, status, created_at, emergency, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![id, user.user, operation, environment, detail, status, now, emergency, reason],
@@ -155,7 +155,7 @@ async fn approve_request(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let approver = auth::authenticate(&headers, &state).await?;
 
-    let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let conn = state.sqlite.lock().await;
 
     // Fetch request
     let (req_user, status, operation, environment, detail): (String, String, String, String, String) = conn
@@ -204,7 +204,7 @@ async fn reject_request(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
 
-    let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let conn = state.sqlite.lock().await;
 
     let (req_user, status): (String, String) = conn
         .query_row(
@@ -247,7 +247,7 @@ async fn get_request(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let _user = auth::authenticate(&headers, &state).await?;
 
-    let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let conn = state.sqlite.lock().await;
 
     let (id_val, user, operation, environment, detail, status, approved_by, created_at, resolved_at): (String, String, String, String, String, String, Option<String>, String, Option<String>) = conn
         .query_row(
@@ -281,7 +281,7 @@ async fn complete_request(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
 
-    let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let conn = state.sqlite.lock().await;
 
     let (req_user, status): (String, String) = conn
         .query_row(
@@ -343,7 +343,7 @@ async fn list_audit(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let _user = auth::authenticate(&headers, &state).await?;
 
-    let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let conn = state.sqlite.lock().await;
     let mut stmt = conn
         .prepare("SELECT id, timestamp, user, role, operation, environment, detail, success, error_message, request_id FROM audit_log ORDER BY timestamp DESC LIMIT 100")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

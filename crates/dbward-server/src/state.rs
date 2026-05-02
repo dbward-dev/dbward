@@ -1,5 +1,6 @@
 use rusqlite::Connection;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use dbward_core::Role;
 

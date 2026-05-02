@@ -202,7 +202,7 @@ async fn require_server_flags(cli: &Cli) -> Result<(String, String), dbward_core
         }
     }
 
-    Err(dbward_core::Error::Config(
+    Err(dbward_core::Error::Auth(
         "no authentication: run 'dbward login' or set --token".into(),
     ))
 }
@@ -241,21 +241,21 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
             .ok_or_else(|| dbward_core::Error::Config("[server.oidc] not configured in dbward.toml".into()))?;
         if *device {
             oidc_login::login_device(&sc.issuer, &sc.client_id, sc.discovery_url.as_deref()).await
-                .map_err(|e| dbward_core::Error::Config(e))?;
+                .map_err(|e| dbward_core::Error::Auth(e))?;
         } else {
             oidc_login::login(&sc.issuer, &sc.client_id, sc.discovery_url.as_deref()).await
-                .map_err(|e| dbward_core::Error::Config(e))?;
+                .map_err(|e| dbward_core::Error::Auth(e))?;
         }
         return Ok(());
     }
 
     if matches!(&cli.command, Command::Logout) {
-        oidc_login::logout().await.map_err(|e| dbward_core::Error::Config(e))?;
+        oidc_login::logout().await.map_err(|e| dbward_core::Error::Auth(e))?;
         return Ok(());
     }
 
     if matches!(&cli.command, Command::Whoami) {
-        oidc_login::whoami().map_err(|e| dbward_core::Error::Config(e))?;
+        oidc_login::whoami().map_err(|e| dbward_core::Error::Auth(e))?;
         return Ok(());
     }
 
@@ -308,12 +308,12 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
             let resp = client.get_request(id).await?;
             let status = resp["status"].as_str().unwrap_or("");
             if status != "approved" && status != "auto_approved" {
-                return Err(dbward_core::Error::Config(format!("request is {status}, not approved")));
+                return Err(dbward_core::Error::Server(format!("request is {status}, not approved")));
             }
 
             let exec_token: dbward_core::token::ExecutionToken =
                 serde_json::from_value(resp["execution_token"].clone())
-                    .map_err(|e| dbward_core::Error::Config(format!("missing execution_token: {e}")))?;
+                    .map_err(|e| dbward_core::Error::Server(format!("missing execution_token: {e}")))?;
 
             let operation = resp["operation"].as_str().unwrap_or("");
             let environment = resp["environment"].as_str().unwrap_or("");
@@ -394,7 +394,7 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                     eprintln!("Run: dbward resume {id}");
                     return Ok(());
                 }
-                _ => return Err(dbward_core::Error::Config(format!("unexpected status: {status}"))),
+                _ => return Err(dbward_core::Error::Server(format!("unexpected status: {status}"))),
             };
 
             dbward_core::token::verify_token(&token, &public_key, "execute_query", &env_str, sql)?;
@@ -525,7 +525,7 @@ async fn resolve_token(
             eprintln!("Run: dbward resume {id}");
             Ok(None)
         }
-        _ => Err(dbward_core::Error::Config(format!("unexpected status: {status}"))),
+        _ => Err(dbward_core::Error::Server(format!("unexpected status: {status}"))),
     }
 }
 
@@ -620,18 +620,18 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 let server_cfg = dbward_server::server_config::ServerConfig::load(
                     std::path::Path::new(&server_config_path),
                 )
-                .map_err(|e| dbward_core::Error::Config(e))?;
+                .map_err(|e| dbward_core::Error::Server(e))?;
 
                 let conn = rusqlite::Connection::open(&data)
-                    .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                    .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
                 dbward_server::db::init(&conn)
-                    .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                    .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
                 let data_path = std::path::Path::new(&data)
                     .parent()
                     .unwrap_or(std::path::Path::new("."));
                 let token_signer =
                     dbward_server::token::TokenSigner::load_or_generate(data_path)
-                        .map_err(|e| dbward_core::Error::Config(e))?;
+                        .map_err(|e| dbward_core::Error::Server(e))?;
                 let webhooks = dbward_server::webhook::WebhookDispatcher::new(server_cfg.webhooks);
                 let (oidc, auth_mode) = match server_cfg.auth {
                     Some(ref auth) => {
@@ -644,7 +644,7 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                     None => (None, "token".to_string()),
                 };
                 let state = dbward_server::AppState {
-                    sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+                    sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
                     webhooks: std::sync::Arc::new(webhooks),
                     oidc,
@@ -652,31 +652,31 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 };
                 let addr: std::net::SocketAddr = listen
                     .parse()
-                    .map_err(|e: std::net::AddrParseError| dbward_core::Error::Config(e.to_string()))?;
+                    .map_err(|e: std::net::AddrParseError| dbward_core::Error::Server(e.to_string()))?;
                 dbward_server::start(addr, state).await
             }
             ServerAction::Token { action } => match action {
                 TokenAction::Create { user, role, data } => {
                     let conn = rusqlite::Connection::open(&data)
-                        .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                        .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
                     dbward_server::db::init(&conn)
-                        .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                        .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
                     let data_path = std::path::Path::new(&data)
                         .parent()
                         .unwrap_or(std::path::Path::new("."));
                     let token_signer =
                         dbward_server::token::TokenSigner::load_or_generate(data_path)
-                            .map_err(|e| dbward_core::Error::Config(e))?;
+                            .map_err(|e| dbward_core::Error::Server(e))?;
                     let state = dbward_server::AppState {
-                        sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+                        sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                         token_signer: std::sync::Arc::new(token_signer),
                         webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
                         oidc: None,
                         auth_mode: "token".to_string(),
                     };
                     let (token_id, raw_token) =
-                        dbward_server::auth::create_token(&state, &user, role)
-                            .map_err(|e| dbward_core::Error::Config(e))?;
+                        dbward_server::auth::create_token(&state, &user, role).await
+                            .map_err(|e| dbward_core::Error::Server(e))?;
                     println!("Token created:");
                     println!("  ID:    {token_id}");
                     println!("  Token: {raw_token}");
@@ -687,22 +687,22 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 }
                 TokenAction::Revoke { id, data } => {
                     let conn = rusqlite::Connection::open(&data)
-                        .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
+                        .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
                     let data_path = std::path::Path::new(&data)
                         .parent()
                         .unwrap_or(std::path::Path::new("."));
                     let token_signer =
                         dbward_server::token::TokenSigner::load_or_generate(data_path)
-                            .map_err(|e| dbward_core::Error::Config(e))?;
+                            .map_err(|e| dbward_core::Error::Server(e))?;
                     let state = dbward_server::AppState {
-                        sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
+                        sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                         token_signer: std::sync::Arc::new(token_signer),
                         webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
                         oidc: None,
                         auth_mode: "token".to_string(),
                     };
-                    dbward_server::auth::revoke_token(&state, &id)
-                        .map_err(|e| dbward_core::Error::Config(e))?;
+                    dbward_server::auth::revoke_token(&state, &id).await
+                        .map_err(|e| dbward_core::Error::Server(e))?;
                     println!("Token {id} revoked.");
                     Ok(())
                 }

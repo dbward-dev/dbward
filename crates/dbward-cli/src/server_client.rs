@@ -45,20 +45,20 @@ impl ServerClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| Error::Config(format!("server request failed: {e}")))?;
+            .map_err(|e| Error::Server(format!("server request failed: {e}")))?;
 
         let status_code = resp.status();
         let text = resp
             .text()
             .await
-            .map_err(|e| Error::Config(format!("server request failed: {e}")))?;
+            .map_err(|e| Error::Server(format!("server request failed: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Config(format!("server returned {}: {}", status_code, text)));
+            return Err(Error::Server(format!("server returned {}: {}", status_code, text)));
         }
 
         let body: Value = serde_json::from_str(&text)
-            .map_err(|e| Error::Config(format!("invalid server response: {e}")))?;
+            .map_err(|e| Error::Server(format!("invalid server response: {e}")))?;
 
         let id = body["id"].as_str().unwrap_or("").to_string();
         let status = body["status"].as_str().unwrap_or("").to_string();
@@ -75,11 +75,11 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Config(format!("list requests failed: {e}")))?;
+            .map_err(|e| Error::Server(format!("list requests failed: {e}")))?;
 
         resp.json()
             .await
-            .map_err(|e| Error::Config(format!("invalid response: {e}")))
+            .map_err(|e| Error::Server(format!("invalid response: {e}")))
     }
 
     /// Get a single request by ID.
@@ -90,16 +90,16 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Config(format!("get request failed: {e}")))?;
+            .map_err(|e| Error::Server(format!("get request failed: {e}")))?;
 
         let status_code = resp.status();
         let body: Value = resp
             .json()
             .await
-            .map_err(|e| Error::Config(format!("invalid response: {e}")))?;
+            .map_err(|e| Error::Server(format!("invalid response: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Config(format!("get request failed ({}): {}", status_code, body)));
+            return Err(Error::Server(format!("get request failed ({}): {}", status_code, body)));
         }
         Ok(body)
     }
@@ -120,19 +120,19 @@ impl ServerClient {
                 .bearer_auth(&self.api_token)
                 .send()
                 .await
-                .map_err(|e| Error::Config(format!("poll failed: {e}")))?;
+                .map_err(|e| Error::Server(format!("poll failed: {e}")))?;
 
             let body: Value = resp
                 .json()
                 .await
-                .map_err(|e| Error::Config(format!("invalid poll response: {e}")))?;
+                .map_err(|e| Error::Server(format!("invalid poll response: {e}")))?;
 
             let status = body["status"].as_str().unwrap_or("").to_string();
 
             match status.as_str() {
                 "pending" => {
                     if start.elapsed() > timeout {
-                        return Err(Error::Config(
+                        return Err(Error::Server(
                             "timed out waiting for approval".to_string(),
                         ));
                     }
@@ -144,7 +144,7 @@ impl ServerClient {
                     return Ok((status, token));
                 }
                 _ => {
-                    return Err(Error::Config(format!("request {status}")));
+                    return Err(Error::Server(format!("request {status}")));
                 }
             }
         }
@@ -162,11 +162,11 @@ impl ServerClient {
             .json(&serde_json::json!({"success": success}))
             .send()
             .await
-            .map_err(|e| Error::Config(format!("complete failed: {e}")))?;
+            .map_err(|e| Error::Server(format!("complete failed: {e}")))?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(Error::Config(format!("complete failed: {text}")));
+            return Err(Error::Server(format!("complete failed: {text}")));
         }
         Ok(())
     }
@@ -182,15 +182,15 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Config(format!("approve failed: {e}")))?;
+            .map_err(|e| Error::Server(format!("approve failed: {e}")))?;
 
         let status_code = resp.status();
-        let text = resp.text().await.map_err(|e| Error::Config(format!("approve failed: {e}")))?;
+        let text = resp.text().await.map_err(|e| Error::Server(format!("approve failed: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Config(format!("approve failed ({}): {}", status_code, text)));
+            return Err(Error::Server(format!("approve failed ({}): {}", status_code, text)));
         }
-        serde_json::from_str(&text).map_err(|e| Error::Config(format!("invalid response: {e}")))
+        serde_json::from_str(&text).map_err(|e| Error::Server(format!("invalid response: {e}")))
     }
 
     /// Reject a request.
@@ -204,14 +204,14 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Config(format!("reject failed: {e}")))?;
+            .map_err(|e| Error::Server(format!("reject failed: {e}")))?;
 
         let status_code = resp.status();
-        let text = resp.text().await.map_err(|e| Error::Config(format!("reject failed: {e}")))?;
+        let text = resp.text().await.map_err(|e| Error::Server(format!("reject failed: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Config(format!("reject failed ({}): {}", status_code, text)));
+            return Err(Error::Server(format!("reject failed ({}): {}", status_code, text)));
         }
-        serde_json::from_str(&text).map_err(|e| Error::Config(format!("invalid response: {e}")))
+        serde_json::from_str(&text).map_err(|e| Error::Server(format!("invalid response: {e}")))
     }
 }

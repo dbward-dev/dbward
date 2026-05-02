@@ -3,7 +3,8 @@ use http_body_util::BodyExt;
 use hyper::Request;
 use rusqlite::Connection;
 use serde_json::{Value, json};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tower::ServiceExt;
 
 use dbward_core::Role;
@@ -43,7 +44,7 @@ async fn health_check() {
 #[tokio::test]
 async fn auto_approve_non_production() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "alice", Role::Developer).unwrap();
+    let (_, token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
     let app = routes::router(state);
 
     let resp = app
@@ -68,8 +69,8 @@ async fn auto_approve_non_production() {
 #[tokio::test]
 async fn production_requires_approval() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).unwrap();
-    let (_, bob_token) = auth::create_token(&state, "bob", Role::Admin).unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
+    let (_, bob_token) = auth::create_token(&state, "bob", Role::Admin).await.unwrap();
     let app = routes::router(state);
 
     // Alice creates a production request
@@ -119,7 +120,7 @@ async fn production_requires_approval() {
 #[tokio::test]
 async fn self_approve_rejected() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Admin).unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Admin).await.unwrap();
     let app = routes::router(state);
 
     let resp = app
@@ -156,7 +157,7 @@ async fn self_approve_rejected() {
 #[tokio::test]
 async fn complete_flow() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
     let app = routes::router(state);
 
     // Create auto-approved request
