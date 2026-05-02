@@ -179,16 +179,32 @@ enum MigrateAction {
     },
 }
 
-fn require_server_flags(cli: &Cli) -> Result<(&str, &str), dbward_core::Error> {
+async fn require_server_flags(cli: &Cli) -> Result<(String, String), dbward_core::Error> {
     let server = cli
         .server
-        .as_deref()
+        .clone()
         .ok_or_else(|| dbward_core::Error::Config("--server is required (or set [server] url in dbward.toml)".into()))?;
-    let token = cli
-        .token
-        .as_deref()
-        .ok_or_else(|| dbward_core::Error::Config("--token is required (or set [server] token in dbward.toml)".into()))?;
-    Ok((server, token))
+
+    // Try --token first, then OIDC credentials
+    if let Some(ref token) = cli.token {
+        return Ok((server, token.clone()));
+    }
+
+    // Try loading OIDC token from ~/.dbward/credentials.json
+    let oidc_config = cli.config.exists().then(|| {
+        config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role).ok()
+    }).flatten().and_then(|c| c.server).and_then(|s| s.oidc);
+
+    if let Some(ref oc) = oidc_config {
+        match oidc_login::load_token(&oc.issuer, &oc.client_id).await {
+            Ok(token) => return Ok((server, token)),
+            Err(_) => {}
+        }
+    }
+
+    Err(dbward_core::Error::Config(
+        "no authentication: run 'dbward login' or set --token".into(),
+    ))
 }
 
 /// Merge config file [server] section into CLI flags (CLI flags take precedence).
@@ -245,22 +261,22 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
     // Handle approve/reject first (always require --server)
     match &cli.command {
         Command::Approve { id } => {
-            let (server, token) = require_server_flags(&cli)?;
-            let client = server_client::ServerClient::new(server, token);
+            let (server, token) = require_server_flags(&cli).await?;
+            let client = server_client::ServerClient::new(&server, &token);
             let body = client.approve(id).await?;
             println!("{}", serde_json::to_string_pretty(&body)?);
             return Ok(());
         }
         Command::Reject { id } => {
-            let (server, token) = require_server_flags(&cli)?;
-            let client = server_client::ServerClient::new(server, token);
+            let (server, token) = require_server_flags(&cli).await?;
+            let client = server_client::ServerClient::new(&server, &token);
             let body = client.reject(id).await?;
             println!("{}", serde_json::to_string_pretty(&body)?);
             return Ok(());
         }
         Command::List => {
-            let (server, token) = require_server_flags(&cli)?;
-            let client = server_client::ServerClient::new(server, token);
+            let (server, token) = require_server_flags(&cli).await?;
+            let client = server_client::ServerClient::new(&server, &token);
             let body = client.list_requests().await?;
             let empty = vec![];
             let requests = body.as_array().unwrap_or(&empty);
@@ -281,8 +297,8 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
             return Ok(());
         }
         Command::Resume { id } => {
-            let (server, token) = require_server_flags(&cli)?;
-            let client = server_client::ServerClient::new(server, token);
+            let (server, token) = require_server_flags(&cli).await?;
+            let client = server_client::ServerClient::new(&server, &token);
 
             let public_key_path = cli.public_key.as_deref()
                 .ok_or_else(|| dbward_core::Error::Config("--public-key is required".into()))?;
@@ -352,8 +368,8 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
 }
 
 async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
-    let (server_url, api_token) = require_server_flags(&cli)?;
-    let sc = server_client::ServerClient::new(server_url, api_token);
+    let (server_url, api_token) = require_server_flags(&cli).await?;
+    let sc = server_client::ServerClient::new(&server_url, &api_token);
 
     let public_key_path = cli
         .public_key
@@ -482,7 +498,7 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
         Command::Mcp => {
             mcp::run_stdio_server_mode(
                 config,
-                server_client::ServerClient::new(server_url, api_token),
+                server_client::ServerClient::new(&server_url, &api_token),
                 public_key,
             )
             .await
