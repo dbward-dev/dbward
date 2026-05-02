@@ -25,6 +25,8 @@ pub struct OidcConfig {
     pub issuer: String,
     pub client_id: String,
     pub client_secret_env: Option<String>,
+    /// Override JWKS URI (for Docker environments where issuer URL is not reachable from server)
+    pub jwks_uri: Option<String>,
     #[serde(default = "default_role")]
     pub default_role: String,
     #[serde(default)]

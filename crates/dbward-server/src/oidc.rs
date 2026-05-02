@@ -181,6 +181,11 @@ impl OidcVerifier {
     }
 
     async fn get_jwks_uri(&self) -> Result<String, String> {
+        // Use override if configured (for Docker environments)
+        if let Some(ref uri) = self.config.jwks_uri {
+            return Ok(uri.clone());
+        }
+
         {
             let cached = self.jwks_uri.read().await;
             if let Some(ref uri) = *cached {
