@@ -1,6 +1,44 @@
 {
   "realm": "dbward",
   "enabled": true,
+  "requiredActions": [
+    {
+      "alias": "CONFIGURE_TOTP",
+      "name": "Configure OTP",
+      "enabled": false,
+      "defaultAction": false
+    },
+    {
+      "alias": "UPDATE_PASSWORD",
+      "name": "Update Password",
+      "enabled": false,
+      "defaultAction": false
+    },
+    {
+      "alias": "UPDATE_PROFILE",
+      "name": "Update Profile",
+      "enabled": false,
+      "defaultAction": false
+    },
+    {
+      "alias": "VERIFY_EMAIL",
+      "name": "Verify Email",
+      "enabled": false,
+      "defaultAction": false
+    },
+    {
+      "alias": "VERIFY_PROFILE",
+      "name": "Verify Profile",
+      "enabled": false,
+      "defaultAction": false
+    },
+    {
+      "alias": "update_user_locale",
+      "name": "Update User Locale",
+      "enabled": false,
+      "defaultAction": false
+    }
+  ],
   "clients": [
     {
       "clientId": "dbward-cli",
@@ -47,7 +85,8 @@
       "enabled": true,
       "emailVerified": true,
       "credentials": [{ "type": "password", "value": "alice", "temporary": false }],
-      "groups": ["dbward-developers"]
+      "groups": ["dbward-developers"],
+      "requiredActions": []
     },
     {
       "username": "bob",
@@ -55,7 +94,8 @@
       "enabled": true,
       "emailVerified": true,
       "credentials": [{ "type": "password", "value": "bob", "temporary": false }],
-      "groups": ["dbward-admins"]
+      "groups": ["dbward-admins"],
+      "requiredActions": []
     }
   ]
 }
