@@ -16,6 +16,8 @@ fn test_state() -> AppState {
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        oidc: None,
+        auth_mode: "token".to_string(),
     }
 }
 

@@ -61,7 +61,8 @@ pub fn revoke_token(state: &AppState, token_id: &str) -> Result<(), String> {
 }
 
 /// Authenticate a request by extracting and verifying the Bearer token.
-pub fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<AuthUser, (StatusCode, String)> {
+/// Supports both API tokens (dbw_) and OIDC JWTs (eyJ).
+pub async fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<AuthUser, (StatusCode, String)> {
     let header = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -71,6 +72,31 @@ pub fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<AuthUser, (
         .strip_prefix("Bearer ")
         .ok_or((StatusCode::UNAUTHORIZED, "invalid Authorization format".into()))?;
 
+    // Route by token prefix
+    if raw_token.starts_with("eyJ") {
+        // JWT (OIDC)
+        if state.auth_mode == "token" {
+            return Err((StatusCode::UNAUTHORIZED, "OIDC not configured".into()));
+        }
+        let oidc = state.oidc.as_ref()
+            .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "OIDC verifier not initialized".into()))?;
+        let (identity, role) = oidc.verify(raw_token).await
+            .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
+        Ok(AuthUser {
+            token_id: format!("oidc:{identity}"),
+            user: identity,
+            role,
+        })
+    } else {
+        // API token
+        if state.auth_mode == "oidc" {
+            return Err((StatusCode::UNAUTHORIZED, "API tokens disabled, use OIDC".into()));
+        }
+        authenticate_api_token(raw_token, state)
+    }
+}
+
+fn authenticate_api_token(raw_token: &str, state: &AppState) -> Result<AuthUser, (StatusCode, String)> {
     let prefix = token_prefix(raw_token);
     let hash = hash_token(raw_token);
 
@@ -79,7 +105,6 @@ pub fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<AuthUser, (
         .lock()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // O(1) lookup by prefix, then constant-time hash comparison
     let result: Result<(String, String, String, String), _> = conn.query_row(
         "SELECT id, user, role, hash FROM tokens WHERE prefix = ?1 AND revoked = 0",
         params![prefix],
@@ -121,25 +146,27 @@ mod tests {
             sqlite: Arc::new(Mutex::new(conn)),
             token_signer: Arc::new(crate::token::TokenSigner::generate()),
             webhooks: Arc::new(crate::webhook::WebhookDispatcher::empty()),
+            oidc: None,
+            auth_mode: "token".to_string(),
         }
     }
 
-    #[test]
-    fn create_and_verify_token() {
+    #[tokio::test]
+    async fn create_and_verify_token() {
         let state = test_state();
         let (token_id, raw_token) = create_token(&state, "alice", Role::Developer).unwrap();
 
         let mut headers = HeaderMap::new();
         headers.insert("authorization", format!("Bearer {raw_token}").parse().unwrap());
 
-        let user = authenticate(&headers, &state).unwrap();
+        let user = authenticate(&headers, &state).await.unwrap();
         assert_eq!(user.user, "alice");
         assert_eq!(user.role, Role::Developer);
         assert_eq!(user.token_id, token_id);
     }
 
-    #[test]
-    fn revoked_token_rejected() {
+    #[tokio::test]
+    async fn revoked_token_rejected() {
         let state = test_state();
         let (token_id, raw_token) = create_token(&state, "bob", Role::Admin).unwrap();
         revoke_token(&state, &token_id).unwrap();
@@ -147,20 +174,20 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", format!("Bearer {raw_token}").parse().unwrap());
 
-        assert!(authenticate(&headers, &state).is_err());
+        assert!(authenticate(&headers, &state).await.is_err());
     }
 
-    #[test]
-    fn invalid_token_rejected() {
+    #[tokio::test]
+    async fn invalid_token_rejected() {
         let state = test_state();
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer dbw_invalid".parse().unwrap());
 
-        assert!(authenticate(&headers, &state).is_err());
+        assert!(authenticate(&headers, &state).await.is_err());
     }
 
-    #[test]
-    fn wrong_token_rejected() {
+    #[tokio::test]
+    async fn wrong_token_rejected() {
         let state = test_state();
         create_token(&state, "alice", Role::Developer).unwrap();
 
@@ -168,6 +195,6 @@ mod tests {
         // Same prefix length but different token
         headers.insert("authorization", "Bearer dbw_00000000aaaabbbbccccddddeeee".parse().unwrap());
 
-        assert!(authenticate(&headers, &state).is_err());
+        assert!(authenticate(&headers, &state).await.is_err());
     }
 }

@@ -25,3 +25,9 @@ toml.workspace = true
 rusqlite = { version = "0.35", features = ["bundled"] }
 reqwest = { version = "0.12", features = ["json"] }
 ed25519-dalek = "2"
+open = "5"
+base64 = "0.22"
+dirs = "6"
+rand = "0.9"
+sha2 = "0.10"
+chrono.workspace = true

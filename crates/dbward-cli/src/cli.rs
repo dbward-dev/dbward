@@ -7,6 +7,7 @@ use dbward_migrate::Migrator;
 
 use crate::config_loader;
 use crate::mcp;
+use crate::oidc_login;
 use crate::server_client;
 
 fn parse_role(s: &str) -> Result<Role, String> {
@@ -64,6 +65,16 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Login via OIDC (opens browser)
+    Login {
+        /// Use device authorization grant (no browser)
+        #[arg(long)]
+        device: bool,
+    },
+    /// Logout (revoke tokens + delete credentials)
+    Logout,
+    /// Show current identity
+    Whoami,
     /// Run database migrations
     Migrate {
         #[command(subcommand)]
@@ -203,6 +214,32 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
     // Handle init before anything else
     if let Command::Init { non_interactive, force } = &cli.command {
         return run_init(&cli, *non_interactive, *force).await;
+    }
+
+    if let Command::Login { device } = &cli.command {
+        let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)
+            .map_err(|_| dbward_core::Error::Config("config required for login (need [auth.oidc] issuer + client_id)".into()))?;
+        let sc = config.server.as_ref()
+            .and_then(|s| s.oidc.as_ref())
+            .ok_or_else(|| dbward_core::Error::Config("[auth.oidc] not configured in dbward.toml".into()))?;
+        if *device {
+            oidc_login::login_device(&sc.issuer, &sc.client_id).await
+                .map_err(|e| dbward_core::Error::Config(e))?;
+        } else {
+            oidc_login::login(&sc.issuer, &sc.client_id).await
+                .map_err(|e| dbward_core::Error::Config(e))?;
+        }
+        return Ok(());
+    }
+
+    if matches!(&cli.command, Command::Logout) {
+        oidc_login::logout().await.map_err(|e| dbward_core::Error::Config(e))?;
+        return Ok(());
+    }
+
+    if matches!(&cli.command, Command::Whoami) {
+        oidc_login::whoami().map_err(|e| dbward_core::Error::Config(e))?;
+        return Ok(());
     }
 
     // Handle approve/reject first (always require --server)
@@ -579,10 +616,22 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                     dbward_server::token::TokenSigner::load_or_generate(data_path)
                         .map_err(|e| dbward_core::Error::Config(e))?;
                 let webhooks = dbward_server::webhook::WebhookDispatcher::new(server_cfg.webhooks);
+                let (oidc, auth_mode) = match server_cfg.auth {
+                    Some(ref auth) => {
+                        let mode = auth.mode.clone();
+                        let verifier = auth.oidc.as_ref().map(|c| {
+                            std::sync::Arc::new(dbward_server::oidc::OidcVerifier::new(c.clone()))
+                        });
+                        (verifier, mode)
+                    }
+                    None => (None, "token".to_string()),
+                };
                 let state = dbward_server::AppState {
                     sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
                     webhooks: std::sync::Arc::new(webhooks),
+                    oidc,
+                    auth_mode,
                 };
                 let addr: std::net::SocketAddr = listen
                     .parse()
@@ -605,6 +654,8 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                         sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
                         token_signer: std::sync::Arc::new(token_signer),
                         webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+                        oidc: None,
+                        auth_mode: "token".to_string(),
                     };
                     let (token_id, raw_token) =
                         dbward_server::auth::create_token(&state, &user, role)
@@ -630,6 +681,8 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                         sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
                         token_signer: std::sync::Arc::new(token_signer),
                         webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+                        oidc: None,
+                        auth_mode: "token".to_string(),
                     };
                     dbward_server::auth::revoke_token(&state, &id)
                         .map_err(|e| dbward_core::Error::Config(e))?;
@@ -639,7 +692,7 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
             },
         },
         // Approve/Reject handled before this point
-        Command::Approve { .. } | Command::Reject { .. } | Command::List | Command::Resume { .. } | Command::Init { .. } => unreachable!(),
+        Command::Approve { .. } | Command::Reject { .. } | Command::List | Command::Resume { .. } | Command::Init { .. } | Command::Login { .. } | Command::Logout | Command::Whoami => unreachable!(),
     }
 }
 

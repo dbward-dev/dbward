@@ -46,7 +46,7 @@ async fn list_requests(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state)?;
+    let _user = auth::authenticate(&headers, &state).await?;
 
     let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let mut stmt = conn
@@ -79,7 +79,7 @@ async fn create_request(
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let user = auth::authenticate(&headers, &state)?;
+    let user = auth::authenticate(&headers, &state).await?;
 
     let operation = body["operation"]
         .as_str()
@@ -153,7 +153,7 @@ async fn approve_request(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let approver = auth::authenticate(&headers, &state)?;
+    let approver = auth::authenticate(&headers, &state).await?;
 
     let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -202,7 +202,7 @@ async fn reject_request(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let user = auth::authenticate(&headers, &state)?;
+    let user = auth::authenticate(&headers, &state).await?;
 
     let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -245,7 +245,7 @@ async fn get_request(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state)?;
+    let _user = auth::authenticate(&headers, &state).await?;
 
     let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -279,7 +279,7 @@ async fn complete_request(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let user = auth::authenticate(&headers, &state)?;
+    let user = auth::authenticate(&headers, &state).await?;
 
     let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -341,7 +341,7 @@ async fn list_audit(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state)?;
+    let _user = auth::authenticate(&headers, &state).await?;
 
     let conn = state.sqlite.lock().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let mut stmt = conn

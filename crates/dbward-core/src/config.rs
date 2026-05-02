@@ -24,6 +24,13 @@ pub struct ServerConfig {
     pub url: String,
     pub token: Option<String>,
     pub public_key: Option<String>,
+    pub oidc: Option<ClientOidcConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientOidcConfig {
+    pub issuer: String,
+    pub client_id: String,
 }
 
 fn default_migrations_dir() -> PathBuf {
