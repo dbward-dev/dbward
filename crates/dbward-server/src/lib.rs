@@ -20,8 +20,28 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
     eprintln!("dbward server listening on {addr}");
 
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .map_err(|e| dbward_core::Error::Config(e.to_string()))?;
 
+    eprintln!("dbward server shut down");
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = tokio::signal::ctrl_c();
+    #[cfg(unix)]
+    {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => eprintln!("\nReceived SIGINT, shutting down..."),
+            _ = sigterm.recv() => eprintln!("\nReceived SIGTERM, shutting down..."),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await.ok();
+        eprintln!("\nReceived SIGINT, shutting down...");
+    }
 }
