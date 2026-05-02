@@ -198,7 +198,7 @@ async fn require_server_flags(cli: &Cli) -> Result<(String, String), dbward_core
     if let Some(ref oc) = oidc_config {
         match oidc_login::load_token(&oc.issuer, &oc.client_id).await {
             Ok(token) => return Ok((server, token)),
-            Err(_) => {}
+            Err(e) => eprintln!("OIDC token load failed: {e}"),
         }
     }
 
@@ -240,10 +240,10 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
             .and_then(|s| s.oidc.as_ref())
             .ok_or_else(|| dbward_core::Error::Config("[server.oidc] not configured in dbward.toml".into()))?;
         if *device {
-            oidc_login::login_device(&sc.issuer, &sc.client_id).await
+            oidc_login::login_device(&sc.issuer, &sc.client_id, sc.discovery_url.as_deref()).await
                 .map_err(|e| dbward_core::Error::Config(e))?;
         } else {
-            oidc_login::login(&sc.issuer, &sc.client_id).await
+            oidc_login::login(&sc.issuer, &sc.client_id, sc.discovery_url.as_deref()).await
                 .map_err(|e| dbward_core::Error::Config(e))?;
         }
         return Ok(());

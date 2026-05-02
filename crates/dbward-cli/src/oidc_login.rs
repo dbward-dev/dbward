@@ -48,8 +48,8 @@ fn dirs_next() -> PathBuf {
 }
 
 /// Authorization Code Flow + PKCE
-pub async fn login(issuer: &str, client_id: &str) -> Result<(), String> {
-    let discovery = discover(issuer).await?;
+pub async fn login(issuer: &str, client_id: &str, discovery_url: Option<&str>) -> Result<(), String> {
+    let discovery = discover_with_override(issuer, discovery_url).await?;
 
     // PKCE
     let verifier = generate_random(43);
@@ -115,8 +115,8 @@ pub async fn login(issuer: &str, client_id: &str) -> Result<(), String> {
 }
 
 /// Device Authorization Grant
-pub async fn login_device(issuer: &str, client_id: &str) -> Result<(), String> {
-    let discovery = discover(issuer).await?;
+pub async fn login_device(issuer: &str, client_id: &str, discovery_url: Option<&str>) -> Result<(), String> {
+    let discovery = discover_with_override(issuer, discovery_url).await?;
     let device_endpoint = discovery
         .device_authorization_endpoint
         .unwrap_or_else(|| discovery.authorization_endpoint.replace("/authorize", "/device/authorize"));
@@ -269,33 +269,40 @@ pub async fn load_token(issuer: &str, client_id: &str) -> Result<String, String>
     // Check expiry
     let expires = chrono::DateTime::parse_from_rfc3339(&creds.expires_at)
         .map_err(|e| format!("invalid expires_at: {e}"))?;
-    let refresh_threshold = chrono::Utc::now() + chrono::Duration::minutes(5);
 
+    // If fully expired, must re-login
+    if chrono::Utc::now() > expires {
+        return Err("token expired. Run: dbward login".into());
+    }
+
+    // Try refresh if near expiry (best-effort, don't fail if refresh fails)
+    let refresh_threshold = chrono::Utc::now() + chrono::Duration::minutes(5);
     if expires < refresh_threshold {
         if let Some(ref refresh_token) = creds.refresh_token {
-            let discovery = discover(issuer).await?;
-            let resp = reqwest::Client::new()
-                .post(&discovery.token_endpoint)
-                .form(&[
-                    ("grant_type", "refresh_token"),
-                    ("refresh_token", refresh_token),
-                    ("client_id", client_id),
-                ])
-                .send()
-                .await
-                .map_err(|e| format!("refresh failed: {e}"))?;
-
-            if resp.status().is_success() {
-                let token_resp: TokenResponse =
-                    resp.json().await.map_err(|e| format!("invalid refresh response: {e}"))?;
-                let new_expires = chrono::Utc::now()
-                    + chrono::Duration::seconds(token_resp.expires_in.unwrap_or(3600) as i64);
-                creds.access_token = token_resp.access_token;
-                if let Some(rt) = token_resp.refresh_token {
-                    creds.refresh_token = Some(rt);
+            if let Ok(discovery) = discover(issuer).await {
+                if let Ok(resp) = reqwest::Client::new()
+                    .post(&discovery.token_endpoint)
+                    .form(&[
+                        ("grant_type", "refresh_token"),
+                        ("refresh_token", refresh_token),
+                        ("client_id", client_id),
+                    ])
+                    .send()
+                    .await
+                {
+                    if resp.status().is_success() {
+                        if let Ok(token_resp) = resp.json::<TokenResponse>().await {
+                            let new_expires = chrono::Utc::now()
+                                + chrono::Duration::seconds(token_resp.expires_in.unwrap_or(3600) as i64);
+                            creds.access_token = token_resp.access_token;
+                            if let Some(rt) = token_resp.refresh_token {
+                                creds.refresh_token = Some(rt);
+                            }
+                            creds.expires_at = new_expires.to_rfc3339();
+                            let _ = save_credentials(&creds);
+                        }
+                    }
                 }
-                creds.expires_at = new_expires.to_rfc3339();
-                save_credentials(&creds)?;
             }
         }
     }
@@ -304,7 +311,14 @@ pub async fn load_token(issuer: &str, client_id: &str) -> Result<String, String>
 }
 
 async fn discover(issuer: &str) -> Result<OidcDiscovery, String> {
-    let url = format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/'));
+    discover_with_override(issuer, None).await
+}
+
+async fn discover_with_override(issuer: &str, discovery_url: Option<&str>) -> Result<OidcDiscovery, String> {
+    let url = match discovery_url {
+        Some(u) => u.to_string(),
+        None => format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/')),
+    };
     reqwest::get(&url)
         .await
         .map_err(|e| format!("OIDC discovery failed: {e}"))?

@@ -31,6 +31,8 @@ pub struct ServerConfig {
 pub struct ClientOidcConfig {
     pub issuer: String,
     pub client_id: String,
+    /// Override discovery URL (for Docker: issuer is localhost but discovery needs internal hostname)
+    pub discovery_url: Option<String>,
 }
 
 fn default_migrations_dir() -> PathBuf {
