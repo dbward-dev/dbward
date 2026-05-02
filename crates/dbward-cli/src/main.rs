@@ -1,14 +1,8 @@
-mod cli;
-mod config_loader;
-mod mcp;
-mod oidc_login;
-mod server_client;
-
 use std::process;
 
 use clap::Parser;
 
-use cli::Cli;
+use dbward::cli::{self, Cli};
 
 #[tokio::main]
 async fn main() {

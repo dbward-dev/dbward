@@ -26,7 +26,13 @@ pub fn classify_query(sql: &str) -> Result<QueryType, Error> {
     }
 
     let upper = sql.trim_start().to_uppercase();
-    if upper.starts_with("SELECT") || upper.starts_with("WITH") {
+    if upper.starts_with("WITH") {
+        // Writable CTE detection: scan CTE bodies for DML keywords
+        if let Some(dml) = detect_writable_cte(&upper) {
+            return Ok(dml);
+        }
+        Ok(QueryType::Select)
+    } else if upper.starts_with("SELECT") {
         Ok(QueryType::Select)
     } else if upper.starts_with("INSERT") {
         Ok(QueryType::Insert)
@@ -37,6 +43,43 @@ pub fn classify_query(sql: &str) -> Result<QueryType, Error> {
     } else {
         Err(Error::DdlNotAllowed)
     }
+}
+
+/// Scan CTE bodies (content inside parentheses after AS) for DML keywords.
+fn detect_writable_cte(upper: &str) -> Option<QueryType> {
+    let mut depth = 0;
+    let mut cte_body_start = false;
+    let bytes = upper.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        match bytes[i] {
+            b'(' => {
+                depth += 1;
+                if depth == 1 {
+                    cte_body_start = true;
+                }
+            }
+            b')' => {
+                depth -= 1;
+            }
+            _ if cte_body_start && depth == 1 && !bytes[i].is_ascii_whitespace() => {
+                cte_body_start = false;
+                let rest = &upper[i..];
+                if rest.starts_with("INSERT") {
+                    return Some(QueryType::Insert);
+                } else if rest.starts_with("UPDATE") {
+                    return Some(QueryType::Update);
+                } else if rest.starts_with("DELETE") {
+                    return Some(QueryType::Delete);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 #[cfg(test)]
@@ -89,5 +132,41 @@ mod tests {
     fn allows_trailing_semicolon() {
         assert!(classify_query("SELECT 1;").is_ok());
         assert!(classify_query("SELECT 1 ;  ").is_ok());
+    }
+
+    #[test]
+    fn detects_writable_cte_delete() {
+        let sql = "WITH deleted AS (DELETE FROM users RETURNING *) SELECT * FROM deleted";
+        assert!(matches!(classify_query(sql), Ok(QueryType::Delete)));
+    }
+
+    #[test]
+    fn detects_writable_cte_insert() {
+        let sql = "WITH ins AS (INSERT INTO archive SELECT * FROM users RETURNING *) SELECT * FROM ins";
+        assert!(matches!(classify_query(sql), Ok(QueryType::Insert)));
+    }
+
+    #[test]
+    fn detects_writable_cte_update() {
+        let sql = "WITH upd AS (UPDATE users SET active = false RETURNING *) SELECT * FROM upd";
+        assert!(matches!(classify_query(sql), Ok(QueryType::Update)));
+    }
+
+    #[test]
+    fn readonly_cte_stays_select() {
+        let sql = "WITH cte AS (SELECT id FROM users) SELECT * FROM cte";
+        assert!(matches!(classify_query(sql), Ok(QueryType::Select)));
+    }
+
+    #[test]
+    fn recursive_cte_stays_select() {
+        let sql = "WITH RECURSIVE tree AS (SELECT 1 AS n UNION ALL SELECT n+1 FROM tree WHERE n < 10) SELECT * FROM tree";
+        assert!(matches!(classify_query(sql), Ok(QueryType::Select)));
+    }
+
+    #[test]
+    fn nested_cte_with_writable() {
+        let sql = "WITH a AS (SELECT 1), b AS (DELETE FROM users RETURNING *) SELECT * FROM b";
+        assert!(matches!(classify_query(sql), Ok(QueryType::Delete)));
     }
 }

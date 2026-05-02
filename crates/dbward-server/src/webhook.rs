@@ -146,3 +146,96 @@ fn format_payload(hook: &WebhookConfig, event: &WebhookEvent) -> (String, String
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_event(event_name: &str) -> WebhookEvent {
+        WebhookEvent {
+            event: event_name.into(),
+            request_id: "req-1".into(),
+            user: "alice".into(),
+            operation: "execute".into(),
+            environment: "production".into(),
+            detail: "SELECT 1".into(),
+            approved_by: None,
+            reason: None,
+        }
+    }
+
+    fn test_hook(format: &str, events: Vec<&str>) -> WebhookConfig {
+        WebhookConfig {
+            url: "https://hooks.example.com/test".into(),
+            events: events.into_iter().map(Into::into).collect(),
+            format: format.into(),
+            secret: None,
+        }
+    }
+
+    #[test]
+    fn generic_format_is_json_event() {
+        let hook = test_hook("generic", vec!["request_created"]);
+        let event = test_event("request_created");
+        let (body, ct) = format_payload(&hook, &event);
+        assert_eq!(ct, "application/json");
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["event"], "request_created");
+        assert_eq!(parsed["user"], "alice");
+    }
+
+    #[test]
+    fn slack_format_has_text_field() {
+        let hook = test_hook("slack", vec!["request_created"]);
+        let event = test_event("request_created");
+        let (body, _) = format_payload(&hook, &event);
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let text = parsed["text"].as_str().unwrap();
+        assert!(text.contains("📋"));
+        assert!(text.contains("alice"));
+        assert!(text.contains("production"));
+    }
+
+    #[test]
+    fn slack_break_glass_uses_alert_emoji() {
+        let hook = test_hook("slack", vec!["break_glass"]);
+        let event = test_event("break_glass");
+        let (body, _) = format_payload(&hook, &event);
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(parsed["text"].as_str().unwrap().contains("🚨"));
+    }
+
+    #[test]
+    fn slack_truncates_long_detail() {
+        let hook = test_hook("slack", vec!["request_created"]);
+        let mut event = test_event("request_created");
+        event.detail = "X".repeat(200);
+        let (body, _) = format_payload(&hook, &event);
+        let text = serde_json::from_str::<serde_json::Value>(&body).unwrap()["text"].as_str().unwrap().to_string();
+        assert!(text.contains("..."));
+    }
+
+    #[test]
+    fn dispatch_filters_by_event_name() {
+        let hook = test_hook("generic", vec!["request_approved"]);
+        let dispatcher = WebhookDispatcher::new(vec![hook]);
+        // request_created should not match the hook configured for request_approved
+        // We can't easily assert dispatch doesn't fire (it's fire-and-forget),
+        // but we can verify the filtering logic directly
+        let hook = &dispatcher.hooks[0];
+        let event = test_event("request_created");
+        assert!(!hook.events.iter().any(|e| e == &event.event));
+        let event = test_event("request_approved");
+        assert!(hook.events.iter().any(|e| e == &event.event));
+    }
+
+    #[test]
+    fn default_events_covers_all_lifecycle() {
+        let events = default_events();
+        assert!(events.contains(&"request_created".to_string()));
+        assert!(events.contains(&"request_approved".to_string()));
+        assert!(events.contains(&"request_rejected".to_string()));
+        assert!(events.contains(&"request_completed".to_string()));
+        assert!(events.contains(&"break_glass".to_string()));
+    }
+}

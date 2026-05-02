@@ -587,3 +587,41 @@ async fn resume_execution(
 
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initialize_response_has_protocol_version() {
+        let resp = handle_initialize(Some(json!(1)));
+        assert_eq!(resp["jsonrpc"], "2.0");
+        assert_eq!(resp["id"], 1);
+        assert_eq!(resp["result"]["protocolVersion"], "2024-11-05");
+        assert_eq!(resp["result"]["serverInfo"]["name"], "dbward");
+    }
+
+    #[test]
+    fn tools_list_returns_tools_array() {
+        let resp = handle_tools_list(Some(json!(2)));
+        assert_eq!(resp["id"], 2);
+        let tools = resp["result"]["tools"].as_array().unwrap();
+        assert!(!tools.is_empty());
+        // Every tool should have name and description
+        for tool in tools {
+            assert!(tool["name"].is_string());
+            assert!(tool["description"].is_string());
+        }
+    }
+
+    #[test]
+    fn tools_definitions_include_core_tools() {
+        let defs = tools_definitions();
+        let names: Vec<&str> = defs.as_array().unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"dbward_migrate_status"));
+        assert!(names.contains(&"dbward_execute_query"));
+    }
+}

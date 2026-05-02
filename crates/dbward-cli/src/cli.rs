@@ -826,3 +826,60 @@ url = "{db_url}"
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_role_valid() {
+        assert!(matches!(parse_role("admin"), Ok(Role::Admin)));
+        assert!(matches!(parse_role("developer"), Ok(Role::Developer)));
+        assert!(matches!(parse_role("readonly"), Ok(Role::Readonly)));
+    }
+
+    #[test]
+    fn parse_role_invalid() {
+        assert!(parse_role("superuser").is_err());
+        assert!(parse_role("").is_err());
+    }
+
+    #[test]
+    fn apply_server_config_fills_missing() {
+        let mut cli = Cli::parse_from(["dbward", "execute", "SELECT 1"]);
+        let config = dbward_core::Config {
+            database: dbward_core::DatabaseConfig { url: "postgres://localhost/db".into() },
+            environment: dbward_core::Environment::Development,
+            role: Role::Developer,
+            migrations_dir: "db/migrations".into(),
+            server: Some(dbward_core::ServerConfig {
+                url: "http://localhost:3000".into(),
+                token: Some("dbw_test".into()),
+                public_key: Some("signing.pub".into()),
+                oidc: None,
+            }),
+        };
+        apply_server_config(&mut cli, &config);
+        assert_eq!(cli.server.as_deref(), Some("http://localhost:3000"));
+        assert_eq!(cli.token.as_deref(), Some("dbw_test"));
+    }
+
+    #[test]
+    fn apply_server_config_cli_takes_precedence() {
+        let mut cli = Cli::parse_from(["dbward", "--server", "http://override:3000", "execute", "SELECT 1"]);
+        let config = dbward_core::Config {
+            database: dbward_core::DatabaseConfig { url: "postgres://localhost/db".into() },
+            environment: dbward_core::Environment::Development,
+            role: Role::Developer,
+            migrations_dir: "db/migrations".into(),
+            server: Some(dbward_core::ServerConfig {
+                url: "http://localhost:3000".into(),
+                token: Some("dbw_test".into()),
+                public_key: None,
+                oidc: None,
+            }),
+        };
+        apply_server_config(&mut cli, &config);
+        assert_eq!(cli.server.as_deref(), Some("http://override:3000"));
+    }
+}

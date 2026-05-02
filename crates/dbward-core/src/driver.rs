@@ -121,6 +121,11 @@ fn pg_row_to_json(row: &sqlx::postgres::PgRow) -> serde_json::Value {
             "INT8" => row.try_get::<i64, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
             "FLOAT4" => row.try_get::<f32, _>(name).map(|v| v.into()).unwrap_or(serde_json::Value::Null),
             "FLOAT8" => row.try_get::<f64, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
+            "JSONB" | "JSON" => row.try_get::<String, _>(name)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or(serde_json::Value::Null),
+            // TIMESTAMPTZ, TIMESTAMP, DATE, UUID, NUMERIC → string via fallback
             _ => row.try_get::<String, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
         };
         map.insert(name.to_string(), val);
@@ -205,6 +210,11 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
             "BIGINT" => row.try_get::<i64, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
             "FLOAT" => row.try_get::<f32, _>(name).map(|v| v.into()).unwrap_or(serde_json::Value::Null),
             "DOUBLE" => row.try_get::<f64, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
+            "JSON" => row.try_get::<String, _>(name)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or(serde_json::Value::Null),
+            // TIMESTAMP, DATETIME, DATE, DECIMAL → string via fallback
             _ => row.try_get::<String, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
         };
         map.insert(name.to_string(), val);

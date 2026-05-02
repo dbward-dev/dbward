@@ -88,11 +88,112 @@ pub fn verify_token(
     Ok(())
 }
 
-/// Load a public key from file.
+/// Load a public key from a file (32-byte raw Ed25519 public key).
 pub fn load_public_key(path: &std::path::Path) -> Result<VerifyingKey, Error> {
     let bytes = std::fs::read(path).map_err(Error::Io)?;
     let key_bytes: [u8; 32] = bytes
         .try_into()
         .map_err(|_| Error::Token("invalid public key file".into()))?;
     VerifyingKey::from_bytes(&key_bytes).map_err(|e| Error::Token(format!("invalid public key: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    fn make_token(signing_key: &SigningKey, op: &str, env: &str, detail: &str, expires_at: chrono::DateTime<Utc>) -> ExecutionToken {
+        let detail_hash = hash_detail(detail);
+        let expires_str = expires_at.to_rfc3339();
+        let msg = token_message("req-1", op, env, &detail_hash, &expires_str);
+        let sig = signing_key.sign(msg.as_bytes());
+        ExecutionToken {
+            request_id: "req-1".into(),
+            operation: op.into(),
+            environment: env.into(),
+            detail_hash,
+            issued_at: Utc::now().to_rfc3339(),
+            expires_at: expires_str,
+            signature: hex::encode(sig.to_bytes()),
+        }
+    }
+
+    fn keypair() -> (SigningKey, VerifyingKey) {
+        let sk = SigningKey::generate(&mut rand::rngs::OsRng);
+        let vk = sk.verifying_key();
+        (sk, vk)
+    }
+
+    #[test]
+    fn valid_token_passes() {
+        let (sk, vk) = keypair();
+        let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
+        assert!(verify_token(&token, &vk, "execute", "production", "SELECT 1").is_ok());
+    }
+
+    #[test]
+    fn expired_token_rejected() {
+        let (sk, vk) = keypair();
+        let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() - Duration::seconds(1));
+        let err = verify_token(&token, &vk, "execute", "production", "SELECT 1").unwrap_err();
+        assert!(err.to_string().contains("expired"));
+    }
+
+    #[test]
+    fn operation_mismatch_rejected() {
+        let (sk, vk) = keypair();
+        let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
+        let err = verify_token(&token, &vk, "migrate", "production", "SELECT 1").unwrap_err();
+        assert!(err.to_string().contains("operation mismatch"));
+    }
+
+    #[test]
+    fn environment_mismatch_rejected() {
+        let (sk, vk) = keypair();
+        let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
+        let err = verify_token(&token, &vk, "execute", "staging", "SELECT 1").unwrap_err();
+        assert!(err.to_string().contains("environment mismatch"));
+    }
+
+    #[test]
+    fn detail_mismatch_rejected() {
+        let (sk, vk) = keypair();
+        let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
+        let err = verify_token(&token, &vk, "execute", "production", "DROP TABLE users").unwrap_err();
+        assert!(err.to_string().contains("detail_hash mismatch"));
+    }
+
+    #[test]
+    fn tampered_signature_rejected() {
+        let (sk, vk) = keypair();
+        let mut token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
+        // Flip a byte in the signature
+        let mut sig_bytes = hex::decode(&token.signature).unwrap();
+        sig_bytes[0] ^= 0xff;
+        token.signature = hex::encode(sig_bytes);
+        let err = verify_token(&token, &vk, "execute", "production", "SELECT 1").unwrap_err();
+        assert!(err.to_string().contains("invalid signature"));
+    }
+
+    #[test]
+    fn wrong_key_rejected() {
+        let (sk, _) = keypair();
+        let (_, other_vk) = keypair();
+        let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
+        let err = verify_token(&token, &other_vk, "execute", "production", "SELECT 1").unwrap_err();
+        assert!(err.to_string().contains("invalid signature"));
+    }
+
+    #[test]
+    fn load_public_key_from_file() {
+        let (_, vk) = keypair();
+        let dir = std::env::temp_dir().join("dbward-test-token");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.pub");
+        std::fs::write(&path, vk.to_bytes()).unwrap();
+        let loaded = load_public_key(&path).unwrap();
+        assert_eq!(loaded.to_bytes(), vk.to_bytes());
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

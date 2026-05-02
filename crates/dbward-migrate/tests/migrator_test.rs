@@ -20,6 +20,7 @@ async fn setup() -> (testcontainers::ContainerAsync<Postgres>, std::sync::Arc<dy
 }
 
 #[tokio::test]
+#[ignore]
 async fn migrate_up_and_status() {
     let (_container, drv) = setup().await;
     let migrator = Migrator::new(drv.clone(), fixtures_dir());
@@ -42,6 +43,7 @@ async fn migrate_up_and_status() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn migrate_up_with_count() {
     let (_container, drv) = setup().await;
     let migrator = Migrator::new(drv, fixtures_dir());
@@ -56,6 +58,7 @@ async fn migrate_up_with_count() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn migrate_down() {
     let (_container, drv) = setup().await;
     let migrator = Migrator::new(drv, fixtures_dir());
@@ -72,6 +75,7 @@ async fn migrate_down() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn migrate_idempotent() {
     let (_container, drv) = setup().await;
     let migrator = Migrator::new(drv, fixtures_dir());

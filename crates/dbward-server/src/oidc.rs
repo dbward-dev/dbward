@@ -245,3 +245,92 @@ fn parse_role(s: &str) -> Role {
         _ => Role::Readonly,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server_config::RoleMapping;
+
+    #[test]
+    fn parse_role_variants() {
+        assert!(matches!(parse_role("admin"), Role::Admin));
+        assert!(matches!(parse_role("developer"), Role::Developer));
+        assert!(matches!(parse_role("readonly"), Role::Readonly));
+        assert!(matches!(parse_role("unknown"), Role::Readonly));
+    }
+
+    #[test]
+    fn find_key_by_kid() {
+        let keys = vec![
+            Jwk { kid: Some("k1".into()), kty: "RSA".into(), alg: None, n: None, e: None, crv: None, x: None, y: None },
+            Jwk { kid: Some("k2".into()), kty: "RSA".into(), alg: None, n: None, e: None, crv: None, x: None, y: None },
+        ];
+        assert_eq!(find_key(&keys, "k2").unwrap().kid.as_deref(), Some("k2"));
+        assert!(find_key(&keys, "k3").is_none());
+    }
+
+    #[test]
+    fn find_key_empty_kid_returns_first() {
+        let keys = vec![
+            Jwk { kid: Some("k1".into()), kty: "RSA".into(), alg: None, n: None, e: None, crv: None, x: None, y: None },
+        ];
+        assert!(find_key(&keys, "").is_some());
+    }
+
+    fn test_verifier(mappings: Vec<RoleMapping>, default_role: &str) -> OidcVerifier {
+        OidcVerifier::new(OidcConfig {
+            issuer: "https://example.com".into(),
+            client_id: "test".into(),
+            client_secret_env: None,
+            jwks_uri: None,
+            default_role: default_role.into(),
+            role_mappings: mappings,
+        })
+    }
+
+    fn claims(sub: &str, email: Option<&str>, groups: Option<Vec<&str>>) -> Claims {
+        Claims {
+            sub: sub.into(),
+            iss: None,
+            aud: None,
+            exp: None,
+            iat: None,
+            email: email.map(Into::into),
+            groups: groups.map(|g| g.into_iter().map(Into::into).collect()),
+            extra: Default::default(),
+        }
+    }
+
+    #[test]
+    fn resolve_role_default_when_no_mappings() {
+        let v = test_verifier(vec![], "readonly");
+        assert!(matches!(v.resolve_role(&claims("user1", None, None)), Role::Readonly));
+    }
+
+    #[test]
+    fn resolve_role_by_subject_email() {
+        let v = test_verifier(vec![
+            RoleMapping { subject: Some("admin@co.jp".into()), claim: None, value: None, role: "admin".into() },
+        ], "readonly");
+        assert!(matches!(v.resolve_role(&claims("sub1", Some("admin@co.jp"), None)), Role::Admin));
+        assert!(matches!(v.resolve_role(&claims("sub1", Some("other@co.jp"), None)), Role::Readonly));
+    }
+
+    #[test]
+    fn resolve_role_by_groups_claim() {
+        let v = test_verifier(vec![
+            RoleMapping { subject: None, claim: Some("groups".into()), value: Some("db-admins".into()), role: "admin".into() },
+        ], "readonly");
+        assert!(matches!(v.resolve_role(&claims("u", None, Some(vec!["db-admins", "users"]))), Role::Admin));
+        assert!(matches!(v.resolve_role(&claims("u", None, Some(vec!["users"]))), Role::Readonly));
+    }
+
+    #[test]
+    fn resolve_role_first_match_wins() {
+        let v = test_verifier(vec![
+            RoleMapping { subject: Some("u@x.com".into()), claim: None, value: None, role: "developer".into() },
+            RoleMapping { subject: Some("u@x.com".into()), claim: None, value: None, role: "admin".into() },
+        ], "readonly");
+        assert!(matches!(v.resolve_role(&claims("s", Some("u@x.com"), None)), Role::Developer));
+    }
+}

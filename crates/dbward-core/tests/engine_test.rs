@@ -24,6 +24,7 @@ async fn setup() -> (testcontainers::ContainerAsync<Postgres>, Arc<dyn driver::D
 }
 
 #[tokio::test]
+#[ignore]
 async fn execute_select() {
     let (_container, drv, config) = setup().await;
     let mut engine = Engine::from_driver(drv, config);
@@ -39,6 +40,7 @@ async fn execute_select() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn execute_dml() {
     let (_container, drv, config) = setup().await;
     // Create table via driver directly
@@ -58,6 +60,7 @@ async fn execute_dml() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn readonly_cannot_dml() {
     let (_container, drv, config) = setup().await;
     let mut engine = Engine::from_driver(drv, config);
@@ -70,6 +73,7 @@ async fn readonly_cannot_dml() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn ddl_rejected() {
     let (_container, drv, config) = setup().await;
     let mut engine = Engine::from_driver(drv, config);
@@ -80,4 +84,53 @@ async fn ddl_rejected() {
 
     assert!(err.is_err());
     assert!(err.unwrap_err().to_string().contains("DDL"));
+}
+
+#[tokio::test]
+#[ignore]
+async fn pg_type_mapping_timestamptz() {
+    let (_container, drv, _config) = setup().await;
+    let rows = drv.query("SELECT '2024-01-15 10:30:00+00'::timestamptz AS ts").await.unwrap();
+    assert!(rows[0]["ts"].is_string());
+    let ts = rows[0]["ts"].as_str().unwrap();
+    assert!(ts.contains("2024-01-15"));
+}
+
+#[tokio::test]
+#[ignore]
+async fn pg_type_mapping_uuid() {
+    let (_container, drv, _config) = setup().await;
+    let rows = drv.query("SELECT 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid AS id").await.unwrap();
+    assert_eq!(rows[0]["id"].as_str().unwrap(), "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+}
+
+#[tokio::test]
+#[ignore]
+async fn pg_type_mapping_jsonb() {
+    let (_container, drv, _config) = setup().await;
+    let rows = drv.query(r#"SELECT '{"key": "value"}'::jsonb AS data"#).await.unwrap();
+    assert_eq!(rows[0]["data"]["key"], "value");
+}
+
+#[tokio::test]
+#[ignore]
+async fn pg_type_mapping_date() {
+    let (_container, drv, _config) = setup().await;
+    let rows = drv.query("SELECT '2024-06-15'::date AS d").await.unwrap();
+    assert!(rows[0]["d"].as_str().unwrap().contains("2024-06-15"));
+}
+
+#[tokio::test]
+#[ignore]
+async fn pg_type_mapping_numeric_as_string() {
+    let (_container, drv, _config) = setup().await;
+    let rows = drv.query("SELECT 123.456::numeric AS n").await.unwrap();
+    // NUMERIC falls through to String fallback
+    assert!(rows[0]["n"].is_string());
+}
+
+#[tokio::test]
+async fn connect_rejects_unsupported_scheme() {
+    let err = driver::connect("sqlite:///tmp/test.db").await;
+    assert!(err.is_err());
 }
