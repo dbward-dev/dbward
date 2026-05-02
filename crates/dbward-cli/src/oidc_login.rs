@@ -10,6 +10,8 @@ struct OidcDiscovery {
     token_endpoint: String,
     #[serde(default)]
     revocation_endpoint: Option<String>,
+    #[serde(default)]
+    device_authorization_endpoint: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -116,8 +118,8 @@ pub async fn login(issuer: &str, client_id: &str) -> Result<(), String> {
 pub async fn login_device(issuer: &str, client_id: &str) -> Result<(), String> {
     let discovery = discover(issuer).await?;
     let device_endpoint = discovery
-        .authorization_endpoint
-        .replace("/authorize", "/device/authorize");
+        .device_authorization_endpoint
+        .unwrap_or_else(|| discovery.authorization_endpoint.replace("/authorize", "/device/authorize"));
 
     let client = reqwest::Client::new();
     let resp: serde_json::Value = client

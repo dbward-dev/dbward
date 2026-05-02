@@ -233,11 +233,12 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
     }
 
     if let Command::Login { device } = &cli.command {
-        let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)
-            .map_err(|_| dbward_core::Error::Config("config required for login (need [auth.oidc] issuer + client_id)".into()))?;
+        // Login only needs OIDC config, not database
+        let config = config_loader::load(&cli.config, &Some("dummy://localhost/x".into()), &cli.environment, &cli.role)
+            .map_err(|e| dbward_core::Error::Config(format!("failed to load config: {e}")))?;
         let sc = config.server.as_ref()
             .and_then(|s| s.oidc.as_ref())
-            .ok_or_else(|| dbward_core::Error::Config("[auth.oidc] not configured in dbward.toml".into()))?;
+            .ok_or_else(|| dbward_core::Error::Config("[server.oidc] not configured in dbward.toml".into()))?;
         if *device {
             oidc_login::login_device(&sc.issuer, &sc.client_id).await
                 .map_err(|e| dbward_core::Error::Config(e))?;

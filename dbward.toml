@@ -1,0 +1,12 @@
+[database]
+url = "postgres://dbward:dbward@localhost:5432/dbward_dev"
+environment = "production"
+role = "developer"
+
+[server]
+url = "http://localhost:3000"
+public_key = "signing.pub"
+
+[server.oidc]
+issuer = "http://localhost:8080/realms/dbward"
+client_id = "dbward-cli"

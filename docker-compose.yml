@@ -54,9 +54,13 @@ services:
         condition: service_healthy
     volumes:
       - server-data:/data:ro
+      - ./dev/dbward-cli.toml:/app/dbward.toml:ro
+      - dbward-creds:/root/.dbward
+    working_dir: /app
     profiles:
       - cli
 
 volumes:
   pgdata:
   server-data:
+  dbward-creds:
