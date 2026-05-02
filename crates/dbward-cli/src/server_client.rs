@@ -48,18 +48,17 @@ impl ServerClient {
             .map_err(|e| Error::Config(format!("server request failed: {e}")))?;
 
         let status_code = resp.status();
-        let body: Value = resp
-            .json()
+        let text = resp
+            .text()
             .await
-            .map_err(|e| Error::Config(format!("invalid server response: {e}")))?;
+            .map_err(|e| Error::Config(format!("server request failed: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Config(format!(
-                "server returned {}: {}",
-                status_code,
-                body.as_str().unwrap_or(&body.to_string())
-            )));
+            return Err(Error::Config(format!("server returned {}: {}", status_code, text)));
         }
+
+        let body: Value = serde_json::from_str(&text)
+            .map_err(|e| Error::Config(format!("invalid server response: {e}")))?;
 
         let id = body["id"].as_str().unwrap_or("").to_string();
         let status = body["status"].as_str().unwrap_or("").to_string();
@@ -186,18 +185,12 @@ impl ServerClient {
             .map_err(|e| Error::Config(format!("approve failed: {e}")))?;
 
         let status_code = resp.status();
-        let body: Value = resp
-            .json()
-            .await
-            .map_err(|e| Error::Config(format!("invalid approve response: {e}")))?;
+        let text = resp.text().await.map_err(|e| Error::Config(format!("approve failed: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Config(format!(
-                "approve failed ({}): {}",
-                status_code, body
-            )));
+            return Err(Error::Config(format!("approve failed ({}): {}", status_code, text)));
         }
-        Ok(body)
+        serde_json::from_str(&text).map_err(|e| Error::Config(format!("invalid response: {e}")))
     }
 
     /// Reject a request.
@@ -214,17 +207,11 @@ impl ServerClient {
             .map_err(|e| Error::Config(format!("reject failed: {e}")))?;
 
         let status_code = resp.status();
-        let body: Value = resp
-            .json()
-            .await
-            .map_err(|e| Error::Config(format!("invalid reject response: {e}")))?;
+        let text = resp.text().await.map_err(|e| Error::Config(format!("reject failed: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Config(format!(
-                "reject failed ({}): {}",
-                status_code, body
-            )));
+            return Err(Error::Config(format!("reject failed ({}): {}", status_code, text)));
         }
-        Ok(body)
+        serde_json::from_str(&text).map_err(|e| Error::Config(format!("invalid response: {e}")))
     }
 }
