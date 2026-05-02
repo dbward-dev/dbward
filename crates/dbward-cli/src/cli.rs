@@ -579,10 +579,22 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                     dbward_server::token::TokenSigner::load_or_generate(data_path)
                         .map_err(|e| dbward_core::Error::Config(e))?;
                 let webhooks = dbward_server::webhook::WebhookDispatcher::new(server_cfg.webhooks);
+                let (oidc, auth_mode) = match server_cfg.auth {
+                    Some(ref auth) => {
+                        let mode = auth.mode.clone();
+                        let verifier = auth.oidc.as_ref().map(|c| {
+                            std::sync::Arc::new(dbward_server::oidc::OidcVerifier::new(c.clone()))
+                        });
+                        (verifier, mode)
+                    }
+                    None => (None, "token".to_string()),
+                };
                 let state = dbward_server::AppState {
                     sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
                     webhooks: std::sync::Arc::new(webhooks),
+                    oidc,
+                    auth_mode,
                 };
                 let addr: std::net::SocketAddr = listen
                     .parse()
@@ -605,6 +617,8 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                         sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
                         token_signer: std::sync::Arc::new(token_signer),
                         webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+                        oidc: None,
+                        auth_mode: "token".to_string(),
                     };
                     let (token_id, raw_token) =
                         dbward_server::auth::create_token(&state, &user, role)
@@ -630,6 +644,8 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                         sqlite: std::sync::Arc::new(std::sync::Mutex::new(conn)),
                         token_signer: std::sync::Arc::new(token_signer),
                         webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+                        oidc: None,
+                        auth_mode: "token".to_string(),
                     };
                     dbward_server::auth::revoke_token(&state, &id)
                         .map_err(|e| dbward_core::Error::Config(e))?;

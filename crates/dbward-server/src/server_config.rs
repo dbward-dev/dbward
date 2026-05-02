@@ -10,6 +10,33 @@ pub struct ServerConfig {
     pub data: String,
     #[serde(default)]
     pub webhooks: Vec<WebhookConfig>,
+    pub auth: Option<AuthConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthConfig {
+    #[serde(default = "default_auth_mode")]
+    pub mode: String,
+    pub oidc: Option<OidcConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OidcConfig {
+    pub issuer: String,
+    pub client_id: String,
+    pub client_secret_env: Option<String>,
+    #[serde(default = "default_role")]
+    pub default_role: String,
+    #[serde(default)]
+    pub role_mappings: Vec<RoleMapping>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RoleMapping {
+    pub subject: Option<String>,
+    pub claim: Option<String>,
+    pub value: Option<String>,
+    pub role: String,
 }
 
 fn default_listen() -> String {
@@ -18,6 +45,14 @@ fn default_listen() -> String {
 
 fn default_data() -> String {
     "dbward.db".into()
+}
+
+fn default_auth_mode() -> String {
+    "token".into()
+}
+
+fn default_role() -> String {
+    "readonly".into()
 }
 
 impl ServerConfig {
