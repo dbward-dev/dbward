@@ -337,14 +337,8 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 "auto_approved" | "break_glass" => token.expect("should include token"),
                 "pending" => {
                     eprintln!("Request {id} requires approval.");
-                    let (_status, token) = sc
-                        .poll_request(
-                            &id,
-                            std::time::Duration::from_secs(2),
-                            std::time::Duration::from_secs(1800),
-                        )
-                        .await?;
-                    token.expect("approved should include token")
+                    eprintln!("Run: dbward resume {id}");
+                    return Ok(());
                 }
                 _ => return Err(dbward_core::Error::Config(format!("unexpected status: {status}"))),
             };
@@ -375,7 +369,10 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                     let (id, status, token) = sc
                         .create_request("migrate_status", &env_str, "", false, None)
                         .await?;
-                    let token = resolve_token(&sc, &id, status, token).await?;
+                    let token = match resolve_token(&sc, &id, status, token).await? {
+                        Some(t) => t,
+                        None => return Ok(()),
+                    };
                     dbward_core::token::verify_token(&token, &public_key, "migrate_status", &env_str, "")?;
 
                     let engine = Engine::new(config).await?;
@@ -408,7 +405,10 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
             };
 
             let (id, status, token) = sc.create_request(operation, &env_str, &detail, false, None).await?;
-            let token = resolve_token(&sc, &id, status, token).await?;
+            let token = match resolve_token(&sc, &id, status, token).await? {
+                Some(t) => t,
+                None => return Ok(()),
+            };
             dbward_core::token::verify_token(&token, &public_key, operation, &env_str, &detail)?;
 
             let engine = Engine::new(config.clone()).await?;
@@ -463,19 +463,13 @@ async fn resolve_token(
     id: &str,
     status: String,
     token: Option<dbward_core::token::ExecutionToken>,
-) -> Result<dbward_core::token::ExecutionToken, dbward_core::Error> {
+) -> Result<Option<dbward_core::token::ExecutionToken>, dbward_core::Error> {
     match status.as_str() {
-        "auto_approved" => Ok(token.expect("auto_approved should include token")),
+        "auto_approved" | "break_glass" => Ok(Some(token.expect("should include token"))),
         "pending" => {
             eprintln!("Request {id} requires approval.");
-            let (_status, token) = sc
-                .poll_request(
-                    id,
-                    std::time::Duration::from_secs(2),
-                    std::time::Duration::from_secs(1800),
-                )
-                .await?;
-            Ok(token.expect("approved should include token"))
+            eprintln!("Run: dbward resume {id}");
+            Ok(None)
         }
         _ => Err(dbward_core::Error::Config(format!("unexpected status: {status}"))),
     }
