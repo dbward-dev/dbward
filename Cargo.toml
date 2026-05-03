@@ -4,6 +4,7 @@ members = [
     "crates/dbward-core",
     "crates/dbward-migrate",
     "crates/dbward-server",
+    "crates/dbward-agent",
     "crates/dbward-cli",
 ]
 

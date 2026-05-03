@@ -1,14 +1,8 @@
-environment = "production"
-role = "developer"
-
-[database]
-url = "postgres://dbward:dbward@postgres:5432/dbward_dev"
+default_database = "app"
+migrations_dir = "/workspace/db/migrations"
 
 [server]
 url = "http://dbward-server:3000"
-public_key = "/data/signing.pub"
+token = "__DBWARD_API_TOKEN__"
 
-[server.oidc]
-issuer = "http://localhost:8080/realms/dbward"
-client_id = "dbward-cli"
-discovery_url = "http://keycloak:8080/realms/dbward/.well-known/openid-configuration"
+[databases.app]

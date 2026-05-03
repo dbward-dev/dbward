@@ -122,4 +122,21 @@ impl Migrator {
     pub fn create(&self, name: &str) -> Result<std::path::PathBuf, dbward_core::Error> {
         create_migration_file(&self.migrations_dir, name)
     }
+
+    /// Create a Migrator for local-only operations (create migration files).
+    /// No DB driver needed.
+    pub fn new_local(migrations_dir: impl Into<std::path::PathBuf>) -> LocalMigrator {
+        LocalMigrator { migrations_dir: migrations_dir.into() }
+    }
+}
+
+/// Migrator that only supports local file operations (no DB connection).
+pub struct LocalMigrator {
+    migrations_dir: std::path::PathBuf,
+}
+
+impl LocalMigrator {
+    pub fn create(&self, name: &str) -> Result<std::path::PathBuf, dbward_core::Error> {
+        create_migration_file(&self.migrations_dir, name)
+    }
 }

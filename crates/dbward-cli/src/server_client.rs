@@ -216,4 +216,43 @@ impl ServerClient {
         }
         serde_json::from_str(&text).map_err(|e| Error::Server(format!("invalid response: {e}")))
     }
+
+    /// Poll for execution result (agent posts result, client retrieves it).
+    pub async fn poll_result(
+        &self,
+        request_id: &str,
+        poll_interval: std::time::Duration,
+        timeout: std::time::Duration,
+    ) -> Result<Value, Error> {
+        let start = std::time::Instant::now();
+        loop {
+            let resp = self.get_request(request_id).await?;
+            let status = resp["status"].as_str().unwrap_or("");
+            match status {
+                "executed" => return Ok(resp),
+                "failed" => {
+                    let err = resp["execution_error"].as_str().unwrap_or("unknown error");
+                    return Err(Error::Server(format!("execution failed: {err}")));
+                }
+                "rejected" => return Err(Error::Server("request was rejected".into())),
+                "pending" | "approved" | "auto_approved" | "running" => {
+                    if start.elapsed() > timeout {
+                        return Err(Error::Server(format!(
+                            "timed out waiting for result (status: {status})"
+                        )));
+                    }
+                    eprintln!("Waiting for agent to execute... (request: {request_id}, status: {status})");
+                    tokio::select! {
+                        _ = tokio::time::sleep(poll_interval) => {}
+                        _ = tokio::signal::ctrl_c() => {
+                            eprintln!("\nInterrupted. Request {request_id} is still {status}.");
+                            eprintln!("Run: dbward resume {request_id}");
+                            return Err(Error::Server("interrupted".into()));
+                        }
+                    }
+                }
+                _ => return Err(Error::Server(format!("unexpected status: {status}"))),
+            }
+        }
+    }
 }

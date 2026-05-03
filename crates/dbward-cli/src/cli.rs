@@ -1,33 +1,17 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
-use dbward_core::{Config, Engine, Role};
-use dbward_migrate::Migrator;
+use dbward_core::ClientConfig;
 
 use crate::config_loader;
 use crate::mcp;
 use crate::oidc_login;
 use crate::server_client;
 
-/// Resolve database from config and create Engine + Migrator.
-async fn resolve_engine(config: &Config, database: Option<&str>) -> Result<(Engine, Migrator, String), dbward_core::Error> {
-    let resolved = config.resolve_database(database)?;
-    let db_name = resolved.name.clone();
-    let migrations_dir = resolved.migrations_dir.clone();
-    let engine = Engine::new(&resolved, config.environment.clone()).await?;
-    let migrator = Migrator::new(engine.driver().clone(), migrations_dir);
-    Ok((engine, migrator, db_name))
-}
-
-fn parse_role(s: &str) -> Result<Role, String> {
-    match s {
-        "admin" => Ok(Role::Admin),
-        "developer" => Ok(Role::Developer),
-        "readonly" => Ok(Role::Readonly),
-        _ => Err(format!("unknown role: {s}")),
-    }
-}
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
+const POLL_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Parser)]
 #[command(name = "dbward", about = "DB operations workflow + approval engine")]
@@ -36,33 +20,13 @@ pub struct Cli {
     #[arg(long, default_value = "dbward.toml")]
     config: PathBuf,
 
-    /// Override database URL
-    #[arg(long, env = "DBWARD_DATABASE_URL")]
-    database_url: Option<String>,
-
     /// Select named database from config
     #[arg(long, env = "DBWARD_DATABASE")]
     database: Option<String>,
 
-    /// Override environment
+    /// Override environment for this request
     #[arg(long, env = "DBWARD_ENV")]
     environment: Option<String>,
-
-    /// Override role
-    #[arg(long, env = "DBWARD_ROLE", value_parser = parse_role)]
-    role: Option<Role>,
-
-    /// Server URL for server mode
-    #[arg(long, env = "DBWARD_SERVER_URL")]
-    server: Option<String>,
-
-    /// API token for server authentication
-    #[arg(long, env = "DBWARD_SERVER_TOKEN")]
-    token: Option<String>,
-
-    /// Path to server's public key (signing.pub) for token verification
-    #[arg(long, env = "DBWARD_PUBLIC_KEY")]
-    public_key: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Command,
@@ -72,16 +36,13 @@ pub struct Cli {
 enum Command {
     /// Initialize dbward configuration
     Init {
-        /// Non-interactive mode (for CI)
         #[arg(long)]
         non_interactive: bool,
-        /// Overwrite existing dbward.toml
         #[arg(long)]
         force: bool,
     },
     /// Login via OIDC (opens browser)
     Login {
-        /// Use device authorization grant (no browser)
         #[arg(long)]
         device: bool,
     },
@@ -105,7 +66,7 @@ enum Command {
         #[arg(long, requires = "emergency")]
         reason: Option<String>,
     },
-    /// Search audit log (server mode only)
+    /// Search audit log
     Audit,
     /// Start MCP stdio server
     Mcp,
@@ -114,23 +75,20 @@ enum Command {
         #[command(subcommand)]
         action: ServerAction,
     },
+    /// Start the dbward agent
+    Agent {
+        /// Path to agent config file
+        #[arg(long, default_value = "dbward-agent.toml")]
+        config: PathBuf,
+    },
     /// Approve a pending request
-    Approve {
-        /// Request ID to approve
-        id: String,
-    },
+    Approve { id: String },
     /// Reject a pending request
-    Reject {
-        /// Request ID to reject
-        id: String,
-    },
-    /// List pending requests (server mode)
+    Reject { id: String },
+    /// List pending requests
     List,
-    /// Resume execution of an approved request
-    Resume {
-        /// Request ID to resume
-        id: String,
-    },
+    /// Get result of an executed request
+    Resume { id: String },
 }
 
 #[derive(Subcommand)]
@@ -141,7 +99,6 @@ enum ServerAction {
         listen: String,
         #[arg(long, default_value = "dbward.db")]
         data: String,
-        /// Server config file (webhooks, etc.)
         #[arg(long, default_value = "dbward-server.toml")]
         config: String,
     },
@@ -154,16 +111,14 @@ enum ServerAction {
 
 #[derive(Subcommand)]
 enum TokenAction {
-    /// Create a new API token
     Create {
         #[arg(long)]
         user: String,
         #[arg(long, value_parser = parse_role)]
-        role: Role,
+        role: dbward_core::Role,
         #[arg(long, default_value = "dbward.db")]
         data: String,
     },
-    /// Revoke an API token
     Revoke {
         #[arg(long)]
         id: String,
@@ -174,558 +129,317 @@ enum TokenAction {
 
 #[derive(Subcommand)]
 enum MigrateAction {
-    /// Apply pending migrations
     Up {
         #[arg(long)]
         count: Option<usize>,
     },
-    /// Rollback migrations
     Down {
         #[arg(long, default_value = "1")]
         count: usize,
     },
-    /// Show migration status
     Status,
-    /// Create a new migration file
-    Create {
-        /// Migration name
-        name: String,
-    },
+    Create { name: String },
 }
 
-async fn require_server_flags(cli: &Cli) -> Result<(String, String), dbward_core::Error> {
-    let server = cli
-        .server
-        .clone()
-        .ok_or_else(|| dbward_core::Error::Config("--server is required (or set [server] url in dbward.toml)".into()))?;
+fn parse_role(s: &str) -> Result<dbward_core::Role, String> {
+    match s {
+        "admin" => Ok(dbward_core::Role::Admin),
+        "developer" => Ok(dbward_core::Role::Developer),
+        "readonly" => Ok(dbward_core::Role::Readonly),
+        _ => Err(format!("unknown role: {s}")),
+    }
+}
 
-    // Try --token first, then OIDC credentials
-    if let Some(ref token) = cli.token {
-        return Ok((server, token.clone()));
+// ---------------------------------------------------------------------------
+// Auth helper
+// ---------------------------------------------------------------------------
+
+async fn authenticate(config: &ClientConfig) -> Result<(String, String), dbward_core::Error> {
+    let server_url = config.server.url.clone();
+
+    // Try API token first
+    if let Some(ref token) = config.server.token {
+        return Ok((server_url, token.clone()));
     }
 
-    // Try loading OIDC token from ~/.dbward/credentials.json
-    let oidc_config = cli.config.exists().then(|| {
-        config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database).ok()
-    }).flatten().and_then(|c| c.server).and_then(|s| s.oidc);
-
-    if let Some(ref oc) = oidc_config {
+    // Try OIDC credentials
+    if let Some(ref oc) = config.server.oidc {
         match oidc_login::load_token(&oc.issuer, &oc.client_id).await {
-            Ok(token) => return Ok((server, token)),
+            Ok(token) => return Ok((server_url, token)),
             Err(e) => eprintln!("OIDC token load failed: {e}"),
         }
     }
 
     Err(dbward_core::Error::Auth(
-        "no authentication: run 'dbward login' or set --token".into(),
+        "no authentication: run 'dbward login' or set server.token in dbward.toml".into(),
     ))
 }
 
-/// Merge config file [server] section into CLI flags (CLI flags take precedence).
-fn apply_server_config(cli: &mut Cli, config: &dbward_core::Config) {
-    if let Some(ref sc) = config.server {
-        if cli.server.is_none() {
-            cli.server = Some(sc.url.clone());
-        }
-        if cli.token.is_none() {
-            cli.token = sc.token.clone();
-        }
-        if cli.public_key.is_none() {
-            cli.public_key = sc.public_key.as_ref().map(std::path::PathBuf::from);
-        }
-    }
-}
+// ---------------------------------------------------------------------------
+// Main entry point
+// ---------------------------------------------------------------------------
 
-pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
-    // Load config early to merge server settings
-    if let Ok(config) = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database) {
-        apply_server_config(&mut cli, &config);
-    }
-    // Handle init before anything else
-    if let Command::Init { non_interactive, force } = &cli.command {
-        return run_init(&cli, *non_interactive, *force).await;
-    }
-
-    if let Command::Login { device } = &cli.command {
-        // Login only needs OIDC config, not database
-        let config = config_loader::load(&cli.config, &Some("dummy://localhost/x".into()), &cli.environment, &cli.role, &None)
-            .map_err(|e| dbward_core::Error::Config(format!("failed to load config: {e}")))?;
-        let sc = config.server.as_ref()
-            .and_then(|s| s.oidc.as_ref())
-            .ok_or_else(|| dbward_core::Error::Config("[server.oidc] not configured in dbward.toml".into()))?;
-        if *device {
-            oidc_login::login_device(&sc.issuer, &sc.client_id, sc.discovery_url.as_deref()).await
-                .map_err(|e| dbward_core::Error::Auth(e))?;
-        } else {
-            oidc_login::login(&sc.issuer, &sc.client_id, sc.discovery_url.as_deref()).await
-                .map_err(|e| dbward_core::Error::Auth(e))?;
-        }
-        return Ok(());
-    }
-
-    if matches!(&cli.command, Command::Logout) {
-        oidc_login::logout().await.map_err(|e| dbward_core::Error::Auth(e))?;
-        return Ok(());
-    }
-
-    if matches!(&cli.command, Command::Whoami) {
-        oidc_login::whoami().map_err(|e| dbward_core::Error::Auth(e))?;
-        return Ok(());
-    }
-
-    // Handle approve/reject first (always require --server)
+pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
+    // Commands that don't need config/auth
     match &cli.command {
-        Command::Approve { id } => {
-            let (server, token) = require_server_flags(&cli).await?;
-            let client = server_client::ServerClient::new(&server, &token);
-            let body = client.approve(id).await?;
-            println!("{}", serde_json::to_string_pretty(&body)?);
+        Command::Init { non_interactive, force } => return run_init(&cli, *non_interactive, *force),
+        Command::Logout => {
+            oidc_login::logout().await.map_err(dbward_core::Error::Auth)?;
             return Ok(());
         }
-        Command::Reject { id } => {
-            let (server, token) = require_server_flags(&cli).await?;
-            let client = server_client::ServerClient::new(&server, &token);
-            let body = client.reject(id).await?;
-            println!("{}", serde_json::to_string_pretty(&body)?);
+        Command::Whoami => {
+            oidc_login::whoami().map_err(dbward_core::Error::Auth)?;
             return Ok(());
+        }
+        Command::Server { action } => return run_server_command(action).await,
+        Command::Agent { config: agent_config_path } => {
+            let content = std::fs::read_to_string(&agent_config_path)
+                .map_err(|e| dbward_core::Error::Config(format!("{}: {e}", agent_config_path.display())))?;
+            let agent_config: dbward_core::AgentConfig = toml::from_str(&content)
+                .map_err(|e| dbward_core::Error::Config(format!("{}: {e}", agent_config_path.display())))?;
+            return dbward_agent::run(agent_config).await;
+        }
+        _ => {}
+    }
+
+    let config = config_loader::load(&cli.config)?;
+
+    // Login needs OIDC config but not full auth
+    if let Command::Login { device } = &cli.command {
+        let oc = config.server.oidc.as_ref()
+            .ok_or_else(|| dbward_core::Error::Config("[server.oidc] not configured".into()))?;
+        if *device {
+            oidc_login::login_device(&oc.issuer, &oc.client_id, oc.discovery_url.as_deref()).await
+        } else {
+            oidc_login::login(&oc.issuer, &oc.client_id, oc.discovery_url.as_deref()).await
+        }.map_err(dbward_core::Error::Auth)?;
+        return Ok(());
+    }
+
+    // Migrate create is local-only (just creates a file)
+    if let Command::Migrate { action: MigrateAction::Create { ref name } } = cli.command {
+        let db_name = config.resolve_database_name(cli.database.as_deref())?;
+        let migrations_dir = config.migrations_dir_for(&db_name);
+        let migrator = dbward_migrate::Migrator::new_local(migrations_dir);
+        let path = migrator.create(name)?;
+        println!("Created: {}", path.display());
+        return Ok(());
+    }
+
+    let (server_url, api_token) = authenticate(&config).await?;
+    let sc = server_client::ServerClient::new(&server_url, &api_token);
+    let db_name = config.resolve_database_name(cli.database.as_deref())?;
+    let env_str = cli.environment.as_deref().unwrap_or("development");
+
+    match cli.command {
+        Command::Execute { ref sql, emergency, ref reason } => {
+            let (id, status, _token) = sc
+                .create_request("execute_query", env_str, &db_name, sql, emergency, reason.as_deref())
+                .await?;
+
+            match status.as_str() {
+                "auto_approved" | "break_glass" => {
+                    // Agent will pick it up; poll for result
+                    let resp = sc.poll_result(&id, POLL_INTERVAL, POLL_TIMEOUT).await?;
+                    print_execution_result(&resp);
+                }
+                "pending" => {
+                    eprintln!("Request {id} requires approval.");
+                    eprintln!("Run: dbward resume {id}");
+                }
+                _ => return Err(dbward_core::Error::Server(format!("unexpected status: {status}"))),
+            }
+            Ok(())
+        }
+        Command::Migrate { ref action } => {
+            let (operation, detail) = match action {
+                MigrateAction::Up { count } => ("migrate_up", format!("count:{}", count.unwrap_or(0))),
+                MigrateAction::Down { count } => ("migrate_down", format!("count:{count}")),
+                MigrateAction::Status => ("migrate_status", String::new()),
+                MigrateAction::Create { .. } => unreachable!(),
+            };
+
+            let (id, status, _token) = sc
+                .create_request(operation, env_str, &db_name, &detail, false, None)
+                .await?;
+
+            match status.as_str() {
+                "auto_approved" | "break_glass" => {
+                    let resp = sc.poll_result(&id, POLL_INTERVAL, POLL_TIMEOUT).await?;
+                    print_execution_result(&resp);
+                }
+                "pending" => {
+                    eprintln!("Request {id} requires approval.");
+                    eprintln!("Run: dbward resume {id}");
+                }
+                _ => return Err(dbward_core::Error::Server(format!("unexpected status: {status}"))),
+            }
+            Ok(())
+        }
+        Command::Approve { ref id } => {
+            let body = sc.approve(id).await?;
+            println!("{}", serde_json::to_string_pretty(&body)?);
+            Ok(())
+        }
+        Command::Reject { ref id } => {
+            let body = sc.reject(id).await?;
+            println!("{}", serde_json::to_string_pretty(&body)?);
+            Ok(())
         }
         Command::List => {
-            let (server, token) = require_server_flags(&cli).await?;
-            let client = server_client::ServerClient::new(&server, &token);
-            let body = client.list_requests().await?;
+            let body = sc.list_requests().await?;
             let empty = vec![];
-            let requests = body.as_array().unwrap_or(&empty);
+            let requests = body["requests"].as_array()
+                .or_else(|| body.as_array())
+                .unwrap_or(&empty);
             if requests.is_empty() {
                 println!("No requests.");
             } else {
                 for r in requests {
                     let id = r["id"].as_str().unwrap_or("?");
                     let status = r["status"].as_str().unwrap_or("?");
-                    let user = r["user"].as_str().unwrap_or("?");
+                    let user = r["created_by"].as_str().unwrap_or("?");
                     let op = r["operation"].as_str().unwrap_or("?");
                     let env = r["environment"].as_str().unwrap_or("?");
                     let detail = r["detail"].as_str().unwrap_or("");
-                    let short_detail = if detail.len() > 60 { &detail[..60] } else { detail };
-                    println!("[{status}] {id}  {user}  {op}  {env}  {short_detail}");
+                    let short = if detail.len() > 60 { &detail[..60] } else { detail };
+                    println!("[{status}] {id}  {user}  {op}  {env}  {short}");
                 }
-            }
-            return Ok(());
-        }
-        Command::Resume { id } => {
-            let (server, token) = require_server_flags(&cli).await?;
-            let client = server_client::ServerClient::new(&server, &token);
-
-            let public_key_path = cli.public_key.as_deref()
-                .ok_or_else(|| dbward_core::Error::Config("--public-key is required".into()))?;
-            let public_key = dbward_core::token::load_public_key(public_key_path)?;
-
-            let resp = client.get_request(id).await?;
-            let status = resp["status"].as_str().unwrap_or("");
-            if status != "approved" && status != "auto_approved" {
-                return Err(dbward_core::Error::Server(format!("request is {status}, not approved")));
-            }
-
-            let exec_token: dbward_core::token::ExecutionToken =
-                serde_json::from_value(resp["execution_token"].clone())
-                    .map_err(|e| dbward_core::Error::Server(format!("missing execution_token: {e}")))?;
-
-            let operation = resp["operation"].as_str().unwrap_or("");
-            let environment = resp["environment"].as_str().unwrap_or("");
-            let database = resp["database"].as_str().unwrap_or("default");
-            let detail = resp["detail"].as_str().unwrap_or("");
-
-            dbward_core::token::verify_token(&exec_token, &public_key, operation, environment, database, detail)?;
-
-            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database)?;
-            let (mut engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
-            let role = cli.role.unwrap_or(Role::Developer);
-
-            let result_text = match operation {
-                "execute_query" => {
-                    let result = engine.execute_query("cli_user", role, detail).await?;
-                    if result.rows.is_empty() {
-                        format!("Rows affected: {}", result.rows_affected)
-                    } else {
-                        serde_json::to_string_pretty(&result.rows)?
-                    }
-                }
-                "migrate_up" => {
-                    let count = detail.strip_prefix("count:").and_then(|s| s.parse().ok());
-                    let count = if count == Some(0) { None } else { count };
-                    let r = migrator.up(count).await?;
-                    if r.applied.is_empty() { "No pending migrations.".into() }
-                    else { format!("Applied {} migration(s):\n{}", r.applied.len(), r.applied.join("\n")) }
-                }
-                "migrate_down" => {
-                    let count = detail.strip_prefix("count:").and_then(|s| s.parse().ok());
-                    let r = migrator.down(count).await?;
-                    if r.rolled_back.is_empty() { "Nothing to rollback.".into() }
-                    else { format!("Rolled back:\n{}", r.rolled_back.join("\n")) }
-                }
-                _ => format!("Executed operation: {operation}"),
-            };
-
-            client.complete_request(id, true).await?;
-            println!("{result_text}");
-            return Ok(());
-        }
-        _ => {}
-    }
-
-    // Server mode: route through approval flow
-    if cli.server.is_some() {
-        return run_server_mode(cli).await;
-    }
-
-    // Direct mode
-    run_direct_mode(cli).await
-}
-
-async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
-    let (server_url, api_token) = require_server_flags(&cli).await?;
-    let sc = server_client::ServerClient::new(&server_url, &api_token);
-
-    let public_key_path = cli
-        .public_key
-        .as_deref()
-        .ok_or_else(|| dbward_core::Error::Config("--public-key is required in server mode".into()))?;
-    let public_key = dbward_core::token::load_public_key(public_key_path)?;
-
-    let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database)?;
-    let env_str = config.environment.to_string();
-    let db_name = config.resolve_database(cli.database.as_deref())?.name;
-
-    match cli.command {
-        Command::Execute { ref sql, emergency, ref reason } => {
-            let (id, status, token) = sc
-                .create_request("execute_query", &env_str, &db_name, sql, emergency, reason.as_deref())
-                .await?;
-
-            let token = match status.as_str() {
-                "auto_approved" | "break_glass" => token.expect("should include token"),
-                "pending" => {
-                    eprintln!("Request {id} requires approval.");
-                    eprintln!("Run: dbward resume {id}");
-                    return Ok(());
-                }
-                _ => return Err(dbward_core::Error::Server(format!("unexpected status: {status}"))),
-            };
-
-            dbward_core::token::verify_token(&token, &public_key, "execute_query", &env_str, &db_name, sql)?;
-
-            let (mut engine, _migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
-            let role = cli.role.unwrap_or(Role::Developer);
-            let result = engine.execute_query("cli_user", role, sql).await?;
-
-            sc.complete_request(&id, true).await?;
-
-            if result.rows.is_empty() {
-                println!("Rows affected: {}", result.rows_affected);
-            } else {
-                println!("{}", serde_json::to_string_pretty(&result.rows)?);
             }
             Ok(())
         }
-        Command::Migrate { ref action } => {
-            let (operation, detail) = match action {
-                MigrateAction::Up { count } => {
-                    ("migrate_up", format!("count:{}", count.unwrap_or(0)))
-                }
-                MigrateAction::Down { count } => ("migrate_down", format!("count:{count}")),
-                MigrateAction::Status => {
-                    // Status is read-only, still goes through server for audit
-                    let (id, status, token) = sc
-                        .create_request("migrate_status", &env_str, &db_name, "", false, None)
-                        .await?;
-                    let token = match resolve_token(&sc, &id, status, token).await? {
-                        Some(t) => t,
-                        None => return Ok(()),
-                    };
-                    dbward_core::token::verify_token(&token, &public_key, "migrate_status", &env_str, &db_name, "")?;
-
-                    let (_engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
-                    let statuses = migrator.status().await?;
-                    sc.complete_request(&id, true).await?;
-
-                    if statuses.is_empty() {
-                        println!("No migration files found.");
-                    } else {
-                        for s in &statuses {
-                            let mark = if s.applied { "[x]" } else { "[ ]" };
-                            println!("{mark} {}_{}", s.version, s.name);
-                        }
-                    }
-                    return Ok(());
-                }
-                MigrateAction::Create { .. } => {
-                    // Create is local-only (no DB operation)
-                    let (_engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
-                    if let MigrateAction::Create { name } = action {
-                        let path = migrator.create(name)?;
-                        println!("Created: {}", path.display());
-                    }
-                    return Ok(());
-                }
-            };
-
-            let (id, status, token) = sc.create_request(operation, &env_str, &db_name, &detail, false, None).await?;
-            let token = match resolve_token(&sc, &id, status, token).await? {
-                Some(t) => t,
-                None => return Ok(()),
-            };
-            dbward_core::token::verify_token(&token, &public_key, operation, &env_str, &db_name, &detail)?;
-
-            let (_engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
-
-            match action {
-                MigrateAction::Up { count } => {
-                    let result = migrator.up(*count).await?;
-                    sc.complete_request(&id, true).await?;
-                    if result.applied.is_empty() {
-                        println!("No pending migrations.");
-                    } else {
-                        for m in &result.applied {
-                            println!("Applied: {m}");
-                        }
-                        println!("Applied {} migration(s).", result.applied.len());
-                    }
-                }
-                MigrateAction::Down { count } => {
-                    let result = migrator.down(Some(*count)).await?;
-                    sc.complete_request(&id, true).await?;
-                    if result.rolled_back.is_empty() {
-                        println!("Nothing to rollback.");
-                    } else {
-                        for m in &result.rolled_back {
-                            println!("Rolled back: {m}");
-                        }
-                    }
-                }
-                _ => unreachable!(),
-            }
+        Command::Resume { ref id } => {
+            let resp = sc.poll_result(id, POLL_INTERVAL, POLL_TIMEOUT).await?;
+            print_execution_result(&resp);
             Ok(())
         }
         Command::Mcp => {
-            mcp::run_stdio_server_mode(
-                config,
-                cli.database.as_deref(),
-                server_client::ServerClient::new(&server_url, &api_token),
-                public_key,
-            )
-            .await
+            mcp::run_stdio(config, cli.database.as_deref(), sc).await
         }
         Command::Audit => {
-            println!("Audit search via server: not yet implemented.");
+            println!("Audit search: not yet implemented.");
             Ok(())
         }
-        _ => unreachable!(),
+        // Handled above
+        Command::Init { .. } | Command::Login { .. } | Command::Logout
+        | Command::Whoami | Command::Server { .. } | Command::Agent { .. } => unreachable!(),
     }
 }
 
-async fn resolve_token(
-    sc: &server_client::ServerClient,
-    id: &str,
-    status: String,
-    token: Option<dbward_core::token::ExecutionToken>,
-) -> Result<Option<dbward_core::token::ExecutionToken>, dbward_core::Error> {
-    match status.as_str() {
-        "auto_approved" | "break_glass" => Ok(Some(token.expect("should include token"))),
-        "pending" => {
-            eprintln!("Request {id} requires approval.");
-            eprintln!("Run: dbward resume {id}");
-            Ok(None)
+fn print_execution_result(resp: &serde_json::Value) {
+    if let Some(result) = resp.get("execution_result") {
+        if let Some(text) = result.as_str() {
+            println!("{text}");
+        } else {
+            println!("{}", serde_json::to_string_pretty(result).unwrap_or_default());
         }
-        _ => Err(dbward_core::Error::Server(format!("unexpected status: {status}"))),
+    } else {
+        println!("Executed successfully.");
     }
 }
 
-async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
-    // Direct mode is only allowed for development environment
-    if let Some(ref env) = cli.environment {
-        if env != "development" {
-            return Err(dbward_core::Error::Config(format!(
-                "direct mode is only allowed for development environment (got: {env}). Use --server for {env}."
-            )));
-        }
-    }
-    // Also check config file
-    if let Ok(config) = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database) {
-        if config.environment != dbward_core::Environment::Development {
-            return Err(dbward_core::Error::Config(format!(
-                "direct mode is only allowed for development environment (got: {}). Use --server for non-development environments.",
-                config.environment
-            )));
-        }
-    }
+// ---------------------------------------------------------------------------
+// Server management commands (these don't go through the agent flow)
+// ---------------------------------------------------------------------------
 
-    match cli.command {
-        Command::Mcp => {
-            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database)?;
-            mcp::run_stdio(config, cli.database.as_deref()).await
-        }
-        Command::Migrate { action } => {
-            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database)?;
-            let (_engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
+async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Error> {
+    match action {
+        ServerAction::Start { listen, data, config: server_config_path } => {
+            let server_cfg = dbward_server::server_config::ServerConfig::load(
+                std::path::Path::new(server_config_path),
+            ).map_err(dbward_core::Error::Server)?;
 
-            match action {
-                MigrateAction::Up { count } => {
-                    let result = migrator.up(count).await?;
-                    if result.applied.is_empty() {
-                        println!("No pending migrations.");
-                    } else {
-                        for m in &result.applied {
-                            println!("Applied: {m}");
-                        }
-                        println!("Applied {} migration(s).", result.applied.len());
-                    }
+            let conn = rusqlite::Connection::open(data)
+                .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+            dbward_server::db::init(&conn)
+                .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+            let data_path = std::path::Path::new(data)
+                .parent()
+                .unwrap_or(std::path::Path::new("."));
+            let token_signer = dbward_server::token::TokenSigner::load_or_generate(data_path)
+                .map_err(dbward_core::Error::Server)?;
+            let webhooks = dbward_server::webhook::WebhookDispatcher::new(server_cfg.webhooks);
+            let (oidc, auth_mode) = match server_cfg.auth {
+                Some(ref auth) => {
+                    let mode = auth.mode.clone();
+                    let verifier = auth.oidc.as_ref().map(|c| {
+                        std::sync::Arc::new(dbward_server::oidc::OidcVerifier::new(c.clone()))
+                    });
+                    (verifier, mode)
                 }
-                MigrateAction::Down { count } => {
-                    let result = migrator.down(Some(count)).await?;
-                    if result.rolled_back.is_empty() {
-                        println!("Nothing to rollback.");
-                    } else {
-                        for m in &result.rolled_back {
-                            println!("Rolled back: {m}");
-                        }
-                    }
-                }
-                MigrateAction::Status => {
-                    let statuses = migrator.status().await?;
-                    if statuses.is_empty() {
-                        println!("No migration files found.");
-                    } else {
-                        for s in &statuses {
-                            let mark = if s.applied { "[x]" } else { "[ ]" };
-                            println!("{mark} {}_{}", s.version, s.name);
-                        }
-                    }
-                }
-                MigrateAction::Create { name } => {
-                    let path = migrator.create(&name)?;
-                    println!("Created: {}", path.display());
-                }
-            }
-            Ok(())
+                None => (None, "token".to_string()),
+            };
+            let state = dbward_server::AppState {
+                sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
+                token_signer: std::sync::Arc::new(token_signer),
+                webhooks: std::sync::Arc::new(webhooks),
+                oidc,
+                auth_mode,
+                policy: std::sync::Arc::new(server_cfg.policy),
+            };
+            let addr: std::net::SocketAddr = listen.parse()
+                .map_err(|e: std::net::AddrParseError| dbward_core::Error::Server(e.to_string()))?;
+            dbward_server::start(addr, state).await
         }
-        Command::Execute { sql, .. } => {
-            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database)?;
-            let role = config.role;
-            let (mut engine, _migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
-            let result = engine.execute_query("cli_user", role, &sql).await?;
-
-            if result.rows.is_empty() {
-                println!("Rows affected: {}", result.rows_affected);
-            } else {
-                println!("{}", serde_json::to_string_pretty(&result.rows)?);
-            }
-            Ok(())
-        }
-        Command::Audit => {
-            println!("Audit search is only available in server mode (--server).");
-            Ok(())
-        }
-        Command::Server { action } => match action {
-            ServerAction::Start { listen, data, config: server_config_path } => {
-                let server_cfg = dbward_server::server_config::ServerConfig::load(
-                    std::path::Path::new(&server_config_path),
-                )
-                .map_err(|e| dbward_core::Error::Server(e))?;
-
-                let conn = rusqlite::Connection::open(&data)
+        ServerAction::Token { action } => match action {
+            TokenAction::Create { user, role, data } => {
+                let conn = rusqlite::Connection::open(data)
                     .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
                 dbward_server::db::init(&conn)
                     .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
-                let data_path = std::path::Path::new(&data)
+                let data_path = std::path::Path::new(data)
                     .parent()
                     .unwrap_or(std::path::Path::new("."));
-                let token_signer =
-                    dbward_server::token::TokenSigner::load_or_generate(data_path)
-                        .map_err(|e| dbward_core::Error::Server(e))?;
-                let webhooks = dbward_server::webhook::WebhookDispatcher::new(server_cfg.webhooks);
-                let (oidc, auth_mode) = match server_cfg.auth {
-                    Some(ref auth) => {
-                        let mode = auth.mode.clone();
-                        let verifier = auth.oidc.as_ref().map(|c| {
-                            std::sync::Arc::new(dbward_server::oidc::OidcVerifier::new(c.clone()))
-                        });
-                        (verifier, mode)
-                    }
-                    None => (None, "token".to_string()),
-                };
+                let token_signer = dbward_server::token::TokenSigner::load_or_generate(data_path)
+                    .map_err(dbward_core::Error::Server)?;
                 let state = dbward_server::AppState {
                     sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
-                    webhooks: std::sync::Arc::new(webhooks),
-                    oidc,
-                    auth_mode,
-                    policy: std::sync::Arc::new(server_cfg.policy),
+                    webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+                    oidc: None,
+                    auth_mode: "token".to_string(),
+                    policy: std::sync::Arc::new(Default::default()),
                 };
-                let addr: std::net::SocketAddr = listen
-                    .parse()
-                    .map_err(|e: std::net::AddrParseError| dbward_core::Error::Server(e.to_string()))?;
-                dbward_server::start(addr, state).await
+                let (token_id, raw_token) = dbward_server::auth::create_token(&state, user, *role).await
+                    .map_err(dbward_core::Error::Server)?;
+                println!("Token created:");
+                println!("  ID:    {token_id}");
+                println!("  Token: {raw_token}");
+                println!("  User:  {user}");
+                println!("  Role:  {role}");
+                println!("\nSave this token — it cannot be retrieved later.");
+                Ok(())
             }
-            ServerAction::Token { action } => match action {
-                TokenAction::Create { user, role, data } => {
-                    let conn = rusqlite::Connection::open(&data)
-                        .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
-                    dbward_server::db::init(&conn)
-                        .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
-                    let data_path = std::path::Path::new(&data)
-                        .parent()
-                        .unwrap_or(std::path::Path::new("."));
-                    let token_signer =
-                        dbward_server::token::TokenSigner::load_or_generate(data_path)
-                            .map_err(|e| dbward_core::Error::Server(e))?;
-                    let state = dbward_server::AppState {
-                        sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
-                        token_signer: std::sync::Arc::new(token_signer),
-                        webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
-                        oidc: None,
-                        auth_mode: "token".to_string(),
-                        policy: std::sync::Arc::new(Default::default()),
-                    };
-                    let (token_id, raw_token) =
-                        dbward_server::auth::create_token(&state, &user, role).await
-                            .map_err(|e| dbward_core::Error::Server(e))?;
-                    println!("Token created:");
-                    println!("  ID:    {token_id}");
-                    println!("  Token: {raw_token}");
-                    println!("  User:  {user}");
-                    println!("  Role:  {role}");
-                    println!("\nSave this token — it cannot be retrieved later.");
-                    Ok(())
-                }
-                TokenAction::Revoke { id, data } => {
-                    let conn = rusqlite::Connection::open(&data)
-                        .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
-                    let data_path = std::path::Path::new(&data)
-                        .parent()
-                        .unwrap_or(std::path::Path::new("."));
-                    let token_signer =
-                        dbward_server::token::TokenSigner::load_or_generate(data_path)
-                            .map_err(|e| dbward_core::Error::Server(e))?;
-                    let state = dbward_server::AppState {
-                        sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
-                        token_signer: std::sync::Arc::new(token_signer),
-                        webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
-                        oidc: None,
-                        auth_mode: "token".to_string(),
-                        policy: std::sync::Arc::new(Default::default()),
-                    };
-                    dbward_server::auth::revoke_token(&state, &id).await
-                        .map_err(|e| dbward_core::Error::Server(e))?;
-                    println!("Token {id} revoked.");
-                    Ok(())
-                }
-            },
+            TokenAction::Revoke { id, data } => {
+                let conn = rusqlite::Connection::open(data)
+                    .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+                let data_path = std::path::Path::new(data)
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."));
+                let token_signer = dbward_server::token::TokenSigner::load_or_generate(data_path)
+                    .map_err(dbward_core::Error::Server)?;
+                let state = dbward_server::AppState {
+                    sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
+                    token_signer: std::sync::Arc::new(token_signer),
+                    webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+                    oidc: None,
+                    auth_mode: "token".to_string(),
+                    policy: std::sync::Arc::new(Default::default()),
+                };
+                dbward_server::auth::revoke_token(&state, id).await
+                    .map_err(dbward_core::Error::Server)?;
+                println!("Token {id} revoked.");
+                Ok(())
+            }
         },
-        // Approve/Reject handled before this point
-        Command::Approve { .. } | Command::Reject { .. } | Command::List | Command::Resume { .. } | Command::Init { .. } | Command::Login { .. } | Command::Logout | Command::Whoami => unreachable!(),
     }
 }
 
-async fn run_init(cli: &Cli, non_interactive: bool, force: bool) -> Result<(), dbward_core::Error> {
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+
+fn run_init(cli: &Cli, non_interactive: bool, force: bool) -> Result<(), dbward_core::Error> {
     use std::io::{self, BufRead, Write};
 
     let config_path = &cli.config;
@@ -737,9 +451,7 @@ async fn run_init(cli: &Cli, non_interactive: bool, force: bool) -> Result<(), d
     }
 
     let prompt = |msg: &str, default: &str| -> String {
-        if non_interactive {
-            return default.to_string();
-        }
+        if non_interactive { return default.to_string(); }
         eprint!("{msg} [{default}]: ");
         io::stderr().flush().ok();
         let mut line = String::new();
@@ -748,94 +460,22 @@ async fn run_init(cli: &Cli, non_interactive: bool, force: bool) -> Result<(), d
         if trimmed.is_empty() { default.to_string() } else { trimmed.to_string() }
     };
 
-    // Database URL
-    let db_url = cli.database_url.clone().unwrap_or_else(|| {
-        prompt("Database URL", "postgres://localhost:5432/mydb")
-    });
-
-    // Test connection
-    eprint!("Testing database connection... ");
-    match dbward_core::driver::connect(&db_url).await {
-        Ok(drv) => {
-            match drv.query("SELECT 1 AS ok").await {
-                Ok(_) => eprintln!("✓"),
-                Err(e) => eprintln!("✗ query failed: {e}"),
-            }
-        }
-        Err(e) => eprintln!("✗ {e}"),
-    }
-
-    let environment = cli.environment.clone().unwrap_or_else(|| {
-        prompt("Environment", "development")
-    });
-    let role_str = cli.role.map(|r| r.to_string()).unwrap_or_else(|| {
-        prompt("Role", "developer")
-    });
-    let migrations_dir = prompt("Migrations directory", "db/migrations");
-
-    // Server (optional)
-    let server_url = cli.server.clone().unwrap_or_else(|| {
-        prompt("Server URL (leave empty for direct mode)", "")
-    });
-
-    let mut server_section = String::new();
-    if !server_url.is_empty() {
-        // Fetch public key
-        let pub_key_path = ".dbward/signing.pub";
-        eprint!("Fetching public key from {server_url}... ");
-        match reqwest::get(format!("{}/api/public-key", server_url.trim_end_matches('/'))).await {
-            Ok(resp) if resp.status().is_success() => {
-                let bytes = resp.bytes().await.unwrap_or_default();
-                if bytes.len() == 32 {
-                    std::fs::create_dir_all(".dbward").ok();
-                    std::fs::write(pub_key_path, &bytes).ok();
-                    eprintln!("✓ saved to {pub_key_path}");
-                } else {
-                    eprintln!("✗ unexpected key size");
-                }
-            }
-            Ok(resp) => eprintln!("✗ server returned {}", resp.status()),
-            Err(e) => eprintln!("✗ {e}"),
-        }
-
-        server_section = format!(
-            r#"
-[server]
-url = "{server_url}"
-# token = "dbw_..."  # Set via DBWARD_SERVER_TOKEN env var
-public_key = "{pub_key_path}"
-"#
-        );
-    }
+    let server_url = prompt("Server URL", "http://localhost:3000");
+    let db_name = prompt("Database name", "app");
 
     let toml_content = format!(
-        r#"environment = "{environment}"
-role = "{role_str}"
-migrations_dir = "{migrations_dir}"
+        r#"default_database = "{db_name}"
 
-[database]
-url = "{db_url}"
-{server_section}"#
+[server]
+url = "{server_url}"
+# token = "dbw_..."  # Or use [server.oidc] for OIDC
+
+[databases.{db_name}]
+"#
     );
 
     std::fs::write(config_path, toml_content.trim_end()).map_err(dbward_core::Error::Io)?;
     eprintln!("Created {}", config_path.display());
-
-    // Add .dbward/ to .gitignore
-    if std::path::Path::new(".git").exists() && !server_url.is_empty() {
-        let gitignore = std::path::Path::new(".gitignore");
-        let content = std::fs::read_to_string(gitignore).unwrap_or_default();
-        if !content.contains(".dbward/") {
-            let mut f = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(gitignore)
-                .map_err(dbward_core::Error::Io)?;
-            writeln!(f, "\n.dbward/").map_err(dbward_core::Error::Io)?;
-            eprintln!("Added .dbward/ to .gitignore");
-        }
-    }
-
     Ok(())
 }
 
@@ -845,59 +485,13 @@ mod tests {
 
     #[test]
     fn parse_role_valid() {
-        assert!(matches!(parse_role("admin"), Ok(Role::Admin)));
-        assert!(matches!(parse_role("developer"), Ok(Role::Developer)));
-        assert!(matches!(parse_role("readonly"), Ok(Role::Readonly)));
+        assert!(matches!(parse_role("admin"), Ok(dbward_core::Role::Admin)));
+        assert!(matches!(parse_role("developer"), Ok(dbward_core::Role::Developer)));
+        assert!(matches!(parse_role("readonly"), Ok(dbward_core::Role::Readonly)));
     }
 
     #[test]
     fn parse_role_invalid() {
         assert!(parse_role("superuser").is_err());
-        assert!(parse_role("").is_err());
-    }
-
-    #[test]
-    fn apply_server_config_fills_missing() {
-        let mut cli = Cli::parse_from(["dbward", "execute", "SELECT 1"]);
-        let config = dbward_core::Config {
-            databases: std::collections::BTreeMap::from([
-                ("default".into(), dbward_core::DatabaseConfig { url: "postgres://localhost/db".into(), migrations_dir: None }),
-            ]),
-            default_database: None,
-            environment: dbward_core::Environment::Development,
-            role: Role::Developer,
-            migrations_dir: "db/migrations".into(),
-            server: Some(dbward_core::ServerConfig {
-                url: "http://localhost:3000".into(),
-                token: Some("dbw_test".into()),
-                public_key: Some("signing.pub".into()),
-                oidc: None,
-            }),
-        };
-        apply_server_config(&mut cli, &config);
-        assert_eq!(cli.server.as_deref(), Some("http://localhost:3000"));
-        assert_eq!(cli.token.as_deref(), Some("dbw_test"));
-    }
-
-    #[test]
-    fn apply_server_config_cli_takes_precedence() {
-        let mut cli = Cli::parse_from(["dbward", "--server", "http://override:3000", "execute", "SELECT 1"]);
-        let config = dbward_core::Config {
-            databases: std::collections::BTreeMap::from([
-                ("default".into(), dbward_core::DatabaseConfig { url: "postgres://localhost/db".into(), migrations_dir: None }),
-            ]),
-            default_database: None,
-            environment: dbward_core::Environment::Development,
-            role: Role::Developer,
-            migrations_dir: "db/migrations".into(),
-            server: Some(dbward_core::ServerConfig {
-                url: "http://localhost:3000".into(),
-                token: Some("dbw_test".into()),
-                public_key: None,
-                oidc: None,
-            }),
-        };
-        apply_server_config(&mut cli, &config);
-        assert_eq!(cli.server.as_deref(), Some("http://override:3000"));
     }
 }

@@ -36,8 +36,8 @@ pub async fn create_token(
 
     let conn = state.sqlite.lock().await;
     conn.execute(
-        "INSERT INTO tokens (id, user, role, hash, prefix, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![token_id, user, role.to_string(), hash, prefix, Utc::now().to_rfc3339()],
+        "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, role, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![token_id, "user", user, hash, prefix, role.to_string(), "active", Utc::now().to_rfc3339()],
     )
     .map_err(|e| e.to_string())?;
 
@@ -49,8 +49,8 @@ pub async fn revoke_token(state: &AppState, token_id: &str) -> Result<(), String
     let conn = state.sqlite.lock().await;
     let updated = conn
         .execute(
-            "UPDATE tokens SET revoked = 1 WHERE id = ?1",
-            params![token_id],
+            "UPDATE tokens SET status = 'revoked', revoked_at = ?1 WHERE id = ?2",
+            params![Utc::now().to_rfc3339(), token_id],
         )
         .map_err(|e| e.to_string())?;
 
@@ -103,7 +103,7 @@ async fn authenticate_api_token(raw_token: &str, state: &AppState) -> Result<Aut
     let conn = state.sqlite.lock().await;
 
     let result: Result<(String, String, String), _> = conn.query_row(
-        "SELECT id, user, role FROM tokens WHERE prefix = ?1 AND hash = ?2 AND revoked = 0",
+        "SELECT id, subject_id, role FROM tokens WHERE token_prefix = ?1 AND token_hash = ?2 AND status = 'active'",
         params![prefix, hash],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     );
@@ -202,8 +202,8 @@ mod tests {
         {
             let conn = state.sqlite.lock().await;
             conn.execute(
-                "INSERT INTO tokens (id, user, role, hash, prefix, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params!["fake-id", "eve", "admin", "fakehash000", prefix_a, "2024-01-01T00:00:00Z"],
+                "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, role, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params!["fake-id", "user", "eve", "fakehash000", prefix_a, "admin", "active", "2024-01-01T00:00:00Z"],
             ).unwrap();
         }
 

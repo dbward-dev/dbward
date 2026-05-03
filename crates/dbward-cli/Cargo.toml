@@ -17,6 +17,7 @@ path = "src/main.rs"
 dbward-core = { path = "../dbward-core", version = "0.1.0" }
 dbward-migrate = { path = "../dbward-migrate", version = "0.1.0" }
 dbward-server = { path = "../dbward-server", version = "0.1.0" }
+dbward-agent = { path = "../dbward-agent", version = "0.1.0" }
 clap = { version = "4", features = ["derive", "env"] }
 tokio.workspace = true
 serde.workspace = true

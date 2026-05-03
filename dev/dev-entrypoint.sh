@@ -1,11 +1,21 @@
 #!/bin/sh
-# Wrapper: reads token from /tokens/<username>.token and runs dbward
-# Usage: dev-entrypoint.sh <username> <dbward args...>
-USER=$1
+set -eu
+
+user_name="$1"
 shift
 
-if [ -f "/tokens/${USER}.token" ]; then
-    export DBWARD_SERVER_TOKEN=$(cat "/tokens/${USER}.token")
+token_file="/tokens/${user_name}.token"
+config_in="/config/dbward-cli.toml"
+config_out="/tmp/dbward-cli.toml"
+
+if [ ! -f "$token_file" ]; then
+    echo "missing token file: $token_file" >&2
+    exit 1
 fi
 
-exec dbward "$@"
+token="$(cat "$token_file")"
+escaped_token="$(printf '%s' "$token" | sed 's/[\\/&]/\\&/g')"
+
+sed "s/__DBWARD_API_TOKEN__/${escaped_token}/" "$config_in" > "$config_out"
+
+exec dbward --config "$config_out" "$@"

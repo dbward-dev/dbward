@@ -1,18 +1,28 @@
 #!/bin/sh
-set -e
+set -eu
 
-echo "[dev-init] Creating API tokens..."
+create_token() {
+    user="$1"
+    role="$2"
+    path="$3"
 
-# alice = developer
-ALICE_OUTPUT=$(dbward server token create --user alice --role developer --data /data/dbward.db 2>&1)
-ALICE_TOKEN=$(echo "$ALICE_OUTPUT" | grep "Token:" | awk '{print $2}')
-echo "$ALICE_TOKEN" > /tokens/alice.token
-echo "[dev-init] alice (developer): $ALICE_TOKEN"
+    output="$(dbward server token create --user "$user" --role "$role" --data /data/dbward.db)"
+    token="$(printf '%s\n' "$output" | awk -F': ' '/^  Token: /{print $2}')"
 
-# bob = admin
-BOB_OUTPUT=$(dbward server token create --user bob --role admin --data /data/dbward.db 2>&1)
-BOB_TOKEN=$(echo "$BOB_OUTPUT" | grep "Token:" | awk '{print $2}')
-echo "$BOB_TOKEN" > /tokens/bob.token
-echo "[dev-init] bob (admin): $BOB_TOKEN"
+    if [ -z "$token" ]; then
+        printf '%s\n' "$output" >&2
+        echo "[dev-init] failed to parse token for $user" >&2
+        exit 1
+    fi
 
-echo "[dev-init] Done. Tokens saved to /tokens/"
+    printf '%s\n' "$token" > "$path"
+    echo "[dev-init] wrote $(basename "$path") for $user ($role)"
+}
+
+mkdir -p /tokens
+
+echo "[dev-init] creating API tokens"
+create_token "alice" "developer" "/tokens/alice.token"
+create_token "bob" "admin" "/tokens/bob.token"
+create_token "agent" "admin" "/tokens/agent.token"
+echo "[dev-init] done"

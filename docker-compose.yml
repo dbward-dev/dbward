@@ -1,3 +1,8 @@
+x-dbward-build: &dbward-build
+  context: .
+  dockerfile: Dockerfile
+  target: runtime
+
 services:
   postgres:
     image: postgres:17
@@ -10,47 +15,51 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dbward"]
-      interval: 2s
+      test: ["CMD-SHELL", "pg_isready -U dbward -d dbward_dev"]
+      interval: 3s
       timeout: 5s
-      retries: 10
-
-  keycloak:
-    image: quay.io/keycloak/keycloak:26.0
-    command: start-dev --import-realm
-    ports:
-      - "8080:8080"
-    environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-    volumes:
-      - ./dev/keycloak-realm.json:/opt/keycloak/data/import/realm.json:ro
-    healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
+      retries: 20
 
   dbward-server:
-    build: .
-    command: ["server", "start", "--data", "/data/dbward.db", "--listen", "0.0.0.0:3000", "--config", "/config/dbward-server.toml"]
+    build: *dbward-build
+    command:
+      - server
+      - start
+      - --data
+      - /data/dbward.db
+      - --listen
+      - 0.0.0.0:3000
+      - --config
+      - /config/dbward-server.toml
     ports:
-      - "3000:3000"
+      - "13000:3000"
     volumes:
       - server-data:/data
       - ./dev/dbward-server.toml:/config/dbward-server.toml:ro
-    depends_on:
-      keycloak:
-        condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "dbward server token create --user _healthcheck --role readonly --data /data/dbward.db 2>/dev/null || true && test -f /data/dbward.db"]
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/health >/dev/null"]
       interval: 3s
       timeout: 5s
-      retries: 10
+      retries: 20
 
-  # --- Dev setup: creates API tokens for alice and bob ---
+  dbward-agent:
+    build: *dbward-build
+    entrypoint: ["/bin/sh", "/scripts/agent-entrypoint.sh"]
+    volumes:
+      - ./:/workspace
+      - dev-tokens:/tokens:ro
+      - ./dev/dbward-agent.toml:/config/dbward-agent.toml:ro
+      - ./dev/agent-entrypoint.sh:/scripts/agent-entrypoint.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dbward-server:
+        condition: service_healthy
+      dev-init:
+        condition: service_completed_successfully
+
   dev-init:
-    build: .
+    build: *dbward-build
     entrypoint: ["/bin/sh", "/scripts/dev-init.sh"]
     volumes:
       - server-data:/data
@@ -60,47 +69,39 @@ services:
       dbward-server:
         condition: service_healthy
 
-  # --- alice: developer (requester) ---
   alice:
-    build: .
+    build: *dbward-build
     entrypoint: ["/bin/sh", "/scripts/dev-entrypoint.sh", "alice"]
-    environment:
-      DBWARD_DATABASE_URL: "postgres://dbward:dbward@postgres:5432/dbward_dev"
-      DBWARD_SERVER_URL: "http://dbward-server:3000"
-      DBWARD_PUBLIC_KEY: "/data/signing.pub"
+    command: ["list"]
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
     volumes:
-      - server-data:/data:ro
+      - ./:/workspace
       - dev-tokens:/tokens:ro
-      - ./dev/dbward-cli.toml:/app/dbward.toml:ro
+      - ./dev/dbward-cli.toml:/config/dbward-cli.toml:ro
       - ./dev/dev-entrypoint.sh:/scripts/dev-entrypoint.sh:ro
-    working_dir: /app
     depends_on:
       dev-init:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
     profiles:
       - dev
 
-  # --- bob: admin (approver) ---
   bob:
-    build: .
+    build: *dbward-build
     entrypoint: ["/bin/sh", "/scripts/dev-entrypoint.sh", "bob"]
-    environment:
-      DBWARD_DATABASE_URL: "postgres://dbward:dbward@postgres:5432/dbward_dev"
-      DBWARD_SERVER_URL: "http://dbward-server:3000"
-      DBWARD_PUBLIC_KEY: "/data/signing.pub"
+    command: ["list"]
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
     volumes:
-      - server-data:/data:ro
+      - ./:/workspace
       - dev-tokens:/tokens:ro
-      - ./dev/dbward-cli.toml:/app/dbward.toml:ro
+      - ./dev/dbward-cli.toml:/config/dbward-cli.toml:ro
       - ./dev/dev-entrypoint.sh:/scripts/dev-entrypoint.sh:ro
-    working_dir: /app
     depends_on:
       dev-init:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
     profiles:
       - dev
 
