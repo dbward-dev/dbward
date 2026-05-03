@@ -331,9 +331,10 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
 
             let operation = resp["operation"].as_str().unwrap_or("");
             let environment = resp["environment"].as_str().unwrap_or("");
+            let database = resp["database"].as_str().unwrap_or("default");
             let detail = resp["detail"].as_str().unwrap_or("");
 
-            dbward_core::token::verify_token(&exec_token, &public_key, operation, environment, &exec_token.database, detail)?;
+            dbward_core::token::verify_token(&exec_token, &public_key, operation, environment, database, detail)?;
 
             let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database)?;
             let (mut engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
@@ -392,11 +393,12 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
 
     let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database)?;
     let env_str = config.environment.to_string();
+    let db_name = config.resolve_database(cli.database.as_deref())?.name;
 
     match cli.command {
         Command::Execute { ref sql, emergency, ref reason } => {
             let (id, status, token) = sc
-                .create_request("execute_query", &env_str, sql, emergency, reason.as_deref())
+                .create_request("execute_query", &env_str, &db_name, sql, emergency, reason.as_deref())
                 .await?;
 
             let token = match status.as_str() {
@@ -409,7 +411,7 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 _ => return Err(dbward_core::Error::Server(format!("unexpected status: {status}"))),
             };
 
-            dbward_core::token::verify_token(&token, &public_key, "execute_query", &env_str, &token.database, sql)?;
+            dbward_core::token::verify_token(&token, &public_key, "execute_query", &env_str, &db_name, sql)?;
 
             let (mut engine, _migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
             let role = cli.role.unwrap_or(Role::Developer);
@@ -433,13 +435,13 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 MigrateAction::Status => {
                     // Status is read-only, still goes through server for audit
                     let (id, status, token) = sc
-                        .create_request("migrate_status", &env_str, "", false, None)
+                        .create_request("migrate_status", &env_str, &db_name, "", false, None)
                         .await?;
                     let token = match resolve_token(&sc, &id, status, token).await? {
                         Some(t) => t,
                         None => return Ok(()),
                     };
-                    dbward_core::token::verify_token(&token, &public_key, "migrate_status", &env_str, &token.database, "")?;
+                    dbward_core::token::verify_token(&token, &public_key, "migrate_status", &env_str, &db_name, "")?;
 
                     let (_engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
                     let statuses = migrator.status().await?;
@@ -466,12 +468,12 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 }
             };
 
-            let (id, status, token) = sc.create_request(operation, &env_str, &detail, false, None).await?;
+            let (id, status, token) = sc.create_request(operation, &env_str, &db_name, &detail, false, None).await?;
             let token = match resolve_token(&sc, &id, status, token).await? {
                 Some(t) => t,
                 None => return Ok(()),
             };
-            dbward_core::token::verify_token(&token, &public_key, operation, &env_str, &token.database, &detail)?;
+            dbward_core::token::verify_token(&token, &public_key, operation, &env_str, &db_name, &detail)?;
 
             let (_engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
 

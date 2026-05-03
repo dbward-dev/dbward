@@ -23,6 +23,7 @@ impl ServerClient {
         &self,
         operation: &str,
         environment: &str,
+        database: &str,
         detail: &str,
         emergency: bool,
         reason: Option<&str>,
@@ -30,6 +31,7 @@ impl ServerClient {
         let mut body = serde_json::json!({
             "operation": operation,
             "environment": environment,
+            "database": database,
             "detail": detail,
         });
         if emergency {

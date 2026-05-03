@@ -468,7 +468,7 @@ async fn server_flow_async(
     pending: &mut std::collections::HashMap<String, PendingRequest>,
 ) -> Result<String, String> {
     let (req_id, status, _token) = client
-        .create_request(operation, environment, detail, false, None)
+        .create_request(operation, environment, "default", detail, false, None)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -561,12 +561,14 @@ async fn resume_execution(
         serde_json::from_value(resp["execution_token"].clone())
             .map_err(|e| format!("missing execution_token: {e}"))?;
 
+    let expected_db = resp["database"].as_str().unwrap_or("default");
+
     dbward_core::token::verify_token(
         &token,
         public_key,
         &pr.operation,
         &pr.environment,
-        &token.database,
+        expected_db,
         &pr.detail,
     )
     .map_err(|e| e.to_string())?;
