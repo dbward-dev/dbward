@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
@@ -61,6 +61,12 @@ enum Command {
         /// Reason for emergency bypass
         #[arg(long, requires = "emergency")]
         reason: Option<String>,
+        /// Save result to a specific file
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Do not save result locally
+        #[arg(long)]
+        no_save: bool,
     },
     /// Search audit log
     Audit,
@@ -83,8 +89,20 @@ enum Command {
     Reject { id: String },
     /// List pending requests
     List,
-    /// Get result of an executed request
-    Resume { id: String },
+    /// Resume and get result of an executed request
+    Resume {
+        id: String,
+        /// Save result to a specific file
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Do not save result locally
+        #[arg(long)]
+        no_save: bool,
+    },
+    /// Show a previously saved result from local storage
+    Result {
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -250,6 +268,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             ref sql,
             emergency,
             ref reason,
+            ref output,
+            no_save,
         } => {
             let (id, status, _token) = sc
                 .create_request(
@@ -266,6 +286,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 "auto_approved" | "break_glass" => {
                     let resp = sc.dispatch_and_wait(&id).await?;
                     print_execution_result(&resp);
+                    save_result(&id, &resp, output.as_deref(), no_save);
                 }
                 "pending" => {
                     eprintln!("Request {id} requires approval.");
@@ -347,8 +368,14 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             }
             Ok(())
         }
-        Command::Resume { ref id } => {
+        Command::Resume { ref id, ref output, no_save } => {
             let resp = sc.dispatch_and_wait(id).await?;
+            print_execution_result(&resp);
+            save_result(id, &resp, output.as_deref(), no_save);
+            Ok(())
+        }
+        Command::Result { ref id } => {
+            let resp = load_result(id)?;
             print_execution_result(&resp);
             Ok(())
         }
@@ -387,6 +414,52 @@ fn print_execution_result(resp: &serde_json::Value) {
     } else {
         println!("Executed successfully.");
     }
+}
+
+/// Save result locally. Returns the path where it was saved.
+fn save_result(
+    request_id: &str,
+    resp: &serde_json::Value,
+    output: Option<&Path>,
+    no_save: bool,
+) -> Option<PathBuf> {
+    if no_save {
+        return None;
+    }
+    let path = match output {
+        Some(p) => p.to_path_buf(),
+        None => {
+            let dir = dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".dbward")
+                .join("results");
+            if std::fs::create_dir_all(&dir).is_err() {
+                return None;
+            }
+            dir.join(format!("{request_id}.json"))
+        }
+    };
+    let content = serde_json::to_string_pretty(resp).unwrap_or_default();
+    if std::fs::write(&path, &content).is_ok() {
+        eprintln!("Result saved to {}", path.display());
+        Some(path)
+    } else {
+        eprintln!("Warning: failed to save result to {}", path.display());
+        None
+    }
+}
+
+/// Load a previously saved result from local storage.
+fn load_result(request_id: &str) -> Result<serde_json::Value, dbward_core::Error> {
+    let path = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".dbward")
+        .join("results")
+        .join(format!("{request_id}.json"));
+    let content = std::fs::read_to_string(&path)
+        .map_err(|_| dbward_core::Error::Server(format!("No saved result for {request_id}. Path: {}", path.display())))?;
+    serde_json::from_str(&content)
+        .map_err(|e| dbward_core::Error::Server(format!("Failed to parse saved result: {e}")))
 }
 
 // ---------------------------------------------------------------------------
