@@ -192,6 +192,46 @@ async fn self_approve_rejected() {
 }
 
 #[tokio::test]
+async fn non_admin_cannot_approve_requests() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
+    let (_, bob_token) = auth::create_token(&state, "bob", Role::Developer)
+        .await
+        .unwrap();
+    let app = routes::router(state);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "production", "detail": "DELETE FROM old_data"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&bob_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
 async fn complete_flow() {
     let state = test_state();
     let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
@@ -248,6 +288,47 @@ async fn complete_flow() {
     assert_eq!(body["status"], "executed");
     // Token replay prevention: executed requests should NOT have execution_token
     assert!(body.get("execution_token").is_none() || body["execution_token"].is_null());
+}
+
+#[tokio::test]
+async fn non_admin_cannot_read_other_users_request() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
+    let (_, bob_token) = auth::create_token(&state, "bob", Role::Developer)
+        .await
+        .unwrap();
+    let app = routes::router(state);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "staging", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = body_json(resp).await;
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .oneshot(
+            Request::get(&format!("/api/requests/{request_id}"))
+                .header("authorization", auth_header(&bob_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
 }
 
 #[tokio::test]
@@ -556,6 +637,334 @@ async fn agent_cannot_claim_pending() {
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({"agent_id": "agent-1"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+}
+
+#[tokio::test]
+async fn workflow_operations_are_respected() {
+    let state = test_state();
+    {
+        let conn = state.sqlite.lock().await;
+        conn.execute(
+            "INSERT OR REPLACE INTO workflows (id, database_name, environment, operations_json, steps_json, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'api', ?6, ?6)",
+            rusqlite::params![
+                "app:development",
+                "app",
+                "development",
+                r#"["migrate_status"]"#,
+                r#"[{"type":"approval","min_approvals":1}]"#,
+                "2026-05-03T00:00:00Z",
+            ],
+        )
+        .unwrap();
+    }
+
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
+    let app = routes::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "development", "database": "app", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 201);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "auto_approved");
+}
+
+#[tokio::test]
+async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
+    let conn = Connection::open_in_memory().unwrap();
+    db::init(&conn).unwrap();
+    let state = AppState {
+        sqlite: Arc::new(Mutex::new(conn)),
+        token_signer: Arc::new(TokenSigner::generate()),
+        webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        oidc: None,
+        auth_mode: "token".to_string(),
+        policy: Arc::new(Default::default()),
+        result_channels: Arc::new(ResultChannels::new()),
+    };
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
+    let app = routes::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "staging", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 201);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "auto_approved");
+}
+
+#[tokio::test]
+async fn non_admin_cannot_use_agent_endpoints() {
+    let state = test_state();
+    let (_, user_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
+    let app = routes::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::post("/api/agent/poll")
+                .header("authorization", auth_header(&user_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn result_stream_honors_result_policy_access() {
+    let state = test_state();
+    {
+        let conn = state.sqlite.lock().await;
+        conn.execute(
+            "INSERT OR REPLACE INTO result_policies (id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'direct', '{}', ?4, 'api', ?5, ?5)",
+            rusqlite::params![
+                "app:development",
+                "app",
+                "development",
+                r#"["requester"]"#,
+                "2026-05-03T00:00:00Z",
+            ],
+        )
+        .unwrap();
+    }
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
+    let (_, bob_token) = auth::create_token(&state, "bob", Role::Developer)
+        .await
+        .unwrap();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "development", "database": "app", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let app = routes::router(state);
+    let resp = app
+        .oneshot(
+            Request::get(&format!("/api/requests/{request_id}/result/stream"))
+                .header("authorization", auth_header(&bob_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn only_claiming_agent_can_submit_result() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
+    let (_, agent1_token) = auth::create_token(&state, "agent-1", Role::Admin)
+        .await
+        .unwrap();
+    let (_, agent2_token) = auth::create_token(&state, "agent-2", Role::Admin)
+        .await
+        .unwrap();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "development", "database": "app", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    let app = routes::router(state.clone());
+    app.oneshot(
+        Request::post(&format!("/api/requests/{request_id}/dispatch"))
+            .header("authorization", auth_header(&alice_token))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post(&format!("/api/agent/jobs/{request_id}/claim"))
+                .header("authorization", auth_header(&agent1_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"agent_id": "spoofed"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    let exec_id = body["execution_id"].as_str().unwrap().to_string();
+
+    let app = routes::router(state);
+    let resp = app
+        .oneshot(
+            Request::post(&format!("/api/agent/jobs/{exec_id}/result"))
+                .header("authorization", auth_header(&agent2_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"success": true, "result": []}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn failed_request_still_respects_max_executions() {
+    let state = test_state();
+    {
+        let conn = state.sqlite.lock().await;
+        conn.execute(
+            "INSERT OR REPLACE INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
+            rusqlite::params![
+                "app:development",
+                "app",
+                "development",
+                1,
+                86400,
+                true,
+                "2026-05-03T00:00:00Z",
+            ],
+        )
+        .unwrap();
+    }
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token(&state, "agent-1", Role::Admin)
+        .await
+        .unwrap();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "development", "database": "app", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    let app = routes::router(state.clone());
+    app.oneshot(
+        Request::post(&format!("/api/requests/{request_id}/dispatch"))
+            .header("authorization", auth_header(&alice_token))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post(&format!("/api/agent/jobs/{request_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let exec_id = body["execution_id"].as_str().unwrap().to_string();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post(&format!("/api/agent/jobs/{exec_id}/result"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"success": false, "error": "boom"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let app = routes::router(state);
+    let resp = app
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
                 .unwrap(),
         )
         .await

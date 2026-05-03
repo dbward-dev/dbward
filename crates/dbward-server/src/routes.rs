@@ -10,6 +10,24 @@ use std::time::Instant;
 use crate::auth;
 use crate::state::AppState;
 
+fn require_admin_role(user: &crate::state::AuthUser) -> Result<(), (StatusCode, String)> {
+    if user.role == dbward_core::Role::Admin {
+        Ok(())
+    } else {
+        Err((StatusCode::FORBIDDEN, "admin only".into()))
+    }
+}
+
+fn can_access_result(
+    user: &crate::state::AuthUser,
+    requester: &str,
+    access_roles: &[String],
+) -> bool {
+    access_roles.iter().any(|role| {
+        (role == "requester" && user.user == requester) || role == &user.role.to_string()
+    })
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -92,15 +110,15 @@ async fn list_requests(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
 
     let conn = state.sqlite.lock().await;
-    let mut stmt = conn
-        .prepare("SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at FROM requests ORDER BY created_at DESC")
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let rows: Vec<serde_json::Value> = if user.role == dbward_core::Role::Admin {
+        let mut stmt = conn
+            .prepare("SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at FROM requests ORDER BY created_at DESC")
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let rows: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
+        stmt.query_map([], |row| {
             Ok(json!({
                 "id": row.get::<_, String>(0)?,
                 "created_by": row.get::<_, String>(1)?,
@@ -117,7 +135,31 @@ async fn list_requests(
         })
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .filter_map(|r| r.ok())
-        .collect();
+        .collect()
+    } else {
+        let mut stmt = conn
+            .prepare("SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at FROM requests WHERE created_by = ?1 ORDER BY created_at DESC")
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        stmt.query_map(rusqlite::params![user.user], |row| {
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "created_by": row.get::<_, String>(1)?,
+                "operation": row.get::<_, String>(2)?,
+                "environment": row.get::<_, String>(3)?,
+                "database_name": row.get::<_, String>(4)?,
+                "detail": row.get::<_, String>(5)?,
+                "status": row.get::<_, String>(6)?,
+                "emergency": row.get::<_, bool>(7)?,
+                "created_at": row.get::<_, String>(8)?,
+                "updated_at": row.get::<_, String>(9)?,
+                "resolved_at": row.get::<_, Option<String>>(10)?,
+            }))
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .filter_map(|r| r.ok())
+        .collect()
+    };
 
     Ok(Json(json!({"requests": rows})))
 }
@@ -154,10 +196,16 @@ async fn create_request(
         ));
     }
 
-    // Workflow evaluation: check workflows table first, fall back to static policy
+    // Workflow evaluation: check workflows table first, then fall back to static policy
     let conn = state.sqlite.lock().await;
-    let workflow_action = crate::db::evaluate_workflow(&conn, database_name, environment, operation);
-    let needs_approval = !emergency && workflow_action == "require_approval";
+    let policy_action = crate::db::evaluate_workflow(&conn, database_name, environment, operation)
+        .unwrap_or_else(|| {
+            state
+                .policy
+                .evaluate(environment, operation, &user.role.to_string())
+                .to_string()
+        });
+    let needs_approval = !emergency && policy_action == "require_approval";
 
     let status = if emergency {
         "break_glass"
@@ -226,6 +274,7 @@ async fn approve_request(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let approver = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&approver)?;
 
     let conn = state.sqlite.lock().await;
 
@@ -346,7 +395,7 @@ async fn get_request(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
 
     let conn = state.sqlite.lock().await;
 
@@ -357,6 +406,10 @@ async fn get_request(
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+
+    if user.role != dbward_core::Role::Admin && user.user != created_by {
+        return Err((StatusCode::FORBIDDEN, "request access denied".into()));
+    }
 
     let mut resp = json!({
         "id": id_val, "created_by": created_by, "operation": operation,
@@ -505,17 +558,30 @@ async fn dispatch_request(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
 
-    let (status, database_name, environment, resolved_at): (String, String, String, Option<String>) = {
+    let (requester, status, database_name, environment, resolved_at): (
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+    ) = {
         let conn = state.sqlite.lock().await;
         conn.query_row(
-            "SELECT status, database_name, environment, resolved_at FROM requests WHERE id = ?1",
+            "SELECT created_by, status, database_name, environment, resolved_at FROM requests WHERE id = ?1",
             rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?
     };
+
+    if user.user != requester && user.role != dbward_core::Role::Admin {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "only the requester can dispatch this request".into(),
+        ));
+    }
 
     match status.as_str() {
         "approved" | "auto_approved" | "break_glass" => {}
@@ -545,12 +611,11 @@ async fn dispatch_request(
                     |row| row.get(0),
                 )
                 .unwrap_or(0);
+            if status == "failed" && !retry {
+                return Err((StatusCode::CONFLICT, "retry on failure is disabled".into()));
+            }
             if exec_count >= max_exec {
-                if status == "failed" && retry {
-                    // Allow retry on failure
-                } else {
-                    return Err((StatusCode::CONFLICT, format!("max executions ({max_exec}) reached")));
-                }
+                return Err((StatusCode::CONFLICT, format!("max executions ({max_exec}) reached")));
             }
         }
         _ => {
@@ -590,19 +655,31 @@ async fn stream_result(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
+
+    let (requester, database_name, environment, status): (String, String, String, String) = {
+        let conn = state.sqlite.lock().await;
+        conn.query_row(
+            "SELECT created_by, database_name, environment, status FROM requests WHERE id = ?1",
+            rusqlite::params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?
+    };
+
+    let access_roles = {
+        let conn = state.sqlite.lock().await;
+        let (_, access_roles) = crate::db::get_result_policy(&conn, &database_name, &environment);
+        access_roles
+    };
+
+    if !can_access_result(&user, &requester, &access_roles) {
+        return Err((StatusCode::FORBIDDEN, "result access denied".into()));
+    }
 
     let slot = match state.result_channels.get(&id).await {
         Some(slot) => slot,
         None => {
-            let conn = state.sqlite.lock().await;
-            let status: String = conn
-                .query_row(
-                    "SELECT status FROM requests WHERE id = ?1",
-                    rusqlite::params![id],
-                    |row| row.get(0),
-                )
-                .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
             let msg = match status.as_str() {
                 "executed" | "failed" => {
                     "result relay is no longer available for this request".to_string()
@@ -660,7 +737,8 @@ async fn agent_poll(
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
 
     let databases: Vec<String> = body["databases"]
         .as_array()
@@ -719,10 +797,11 @@ async fn agent_claim(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-    Json(body): Json<serde_json::Value>,
+    Json(_body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    let agent_id = body["agent_id"].as_str().unwrap_or(&user.user);
+    require_admin_role(&user)?;
+    let agent_id = user.user.clone();
 
     let conn = state.sqlite.lock().await;
 
@@ -782,7 +861,8 @@ async fn agent_result(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
 
     let success = body["success"].as_bool().unwrap_or(false);
     let result = body["result"].clone();
@@ -791,11 +871,11 @@ async fn agent_result(
     let conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
 
-    let (request_id, exec_status): (String, String) = conn
+    let (request_id, exec_status, agent_id): (String, String, String) = conn
         .query_row(
-            "SELECT request_id, status FROM agent_executions WHERE id = ?1",
+            "SELECT request_id, status, agent_id FROM agent_executions WHERE id = ?1",
             rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "execution not found".into()))?;
 
@@ -803,6 +883,13 @@ async fn agent_result(
         return Err((
             StatusCode::CONFLICT,
             format!("execution status is {exec_status}"),
+        ));
+    }
+
+    if user.user != agent_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "only the claiming agent can submit this result".into(),
         ));
     }
 
@@ -933,9 +1020,7 @@ async fn create_workflow(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    if user.role != dbward_core::Role::Admin {
-        return Err((StatusCode::FORBIDDEN, "admin only".into()));
-    }
+    require_admin_role(&user)?;
 
     let database = body["database"].as_str()
         .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
@@ -973,9 +1058,7 @@ async fn update_workflow(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    if user.role != dbward_core::Role::Admin {
-        return Err((StatusCode::FORBIDDEN, "admin only".into()));
-    }
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
@@ -1008,9 +1091,7 @@ async fn delete_workflow(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    if user.role != dbward_core::Role::Admin {
-        return Err((StatusCode::FORBIDDEN, "admin only".into()));
-    }
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let changes = conn
@@ -1097,9 +1178,7 @@ async fn create_execution_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    if user.role != dbward_core::Role::Admin {
-        return Err((StatusCode::FORBIDDEN, "admin only".into()));
-    }
+    require_admin_role(&user)?;
 
     let database = body["database"].as_str()
         .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
@@ -1136,9 +1215,7 @@ async fn update_execution_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    if user.role != dbward_core::Role::Admin {
-        return Err((StatusCode::FORBIDDEN, "admin only".into()));
-    }
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
@@ -1174,9 +1251,7 @@ async fn delete_execution_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    if user.role != dbward_core::Role::Admin {
-        return Err((StatusCode::FORBIDDEN, "admin only".into()));
-    }
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let changes = conn
@@ -1267,9 +1342,7 @@ async fn create_result_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    if user.role != dbward_core::Role::Admin {
-        return Err((StatusCode::FORBIDDEN, "admin only".into()));
-    }
+    require_admin_role(&user)?;
 
     let database = body["database"].as_str()
         .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
@@ -1308,9 +1381,7 @@ async fn update_result_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    if user.role != dbward_core::Role::Admin {
-        return Err((StatusCode::FORBIDDEN, "admin only".into()));
-    }
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
@@ -1346,9 +1417,7 @@ async fn delete_result_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    if user.role != dbward_core::Role::Admin {
-        return Err((StatusCode::FORBIDDEN, "admin only".into()));
-    }
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let changes = conn

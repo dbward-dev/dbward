@@ -172,65 +172,57 @@ pub fn sync_workflows(
     Ok(())
 }
 
-/// Evaluate workflow for a request. Returns "auto_approve" or "require_approval".
+fn workflow_action_for_operation(
+    operations_json: &str,
+    steps_json: &str,
+    operation: &str,
+) -> Option<String> {
+    let operations: Vec<String> = serde_json::from_str(operations_json).unwrap_or_default();
+    if !operations.is_empty() && !operations.iter().any(|op| op == operation) {
+        return None;
+    }
+
+    let steps: Vec<serde_json::Value> = serde_json::from_str(steps_json).unwrap_or_default();
+    Some(if steps.is_empty() {
+        "auto_approve".into()
+    } else {
+        "require_approval".into()
+    })
+}
+
+/// Evaluate workflow for a request. Returns Some(action) when a workflow matches.
 pub fn evaluate_workflow(
     conn: &Connection,
     database: &str,
     environment: &str,
-    _operation: &str,
-) -> String {
-    // Try exact match: database + environment
-    let result: Option<String> = conn
-        .query_row(
-            "SELECT steps_json FROM workflows WHERE database_name = ?1 AND environment = ?2",
-            rusqlite::params![database, environment],
-            |row| row.get(0),
-        )
-        .ok();
+    operation: &str,
+) -> Option<String> {
+    let candidates = [
+        (database, environment),
+        ("*", environment),
+        (database, "*"),
+        ("*", "*"),
+    ];
 
-    // Try wildcard: * + environment
-    let result = result.or_else(|| {
-        conn.query_row(
-            "SELECT steps_json FROM workflows WHERE database_name = '*' AND environment = ?1",
-            rusqlite::params![environment],
-            |row| row.get(0),
-        )
-        .ok()
-    });
+    for (db_name, env_name) in candidates {
+        let row: Option<(String, String)> = conn
+            .query_row(
+                "SELECT operations_json, steps_json FROM workflows WHERE database_name = ?1 AND environment = ?2",
+                rusqlite::params![db_name, env_name],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
 
-    // Try wildcard: database + *
-    let result = result.or_else(|| {
-        conn.query_row(
-            "SELECT steps_json FROM workflows WHERE database_name = ?1 AND environment = '*'",
-            rusqlite::params![database],
-            |row| row.get(0),
-        )
-        .ok()
-    });
-
-    // Try wildcard: * + *
-    let result = result.or_else(|| {
-        conn.query_row(
-            "SELECT steps_json FROM workflows WHERE database_name = '*' AND environment = '*'",
-            rusqlite::params![],
-            |row| row.get(0),
-        )
-        .ok()
-    });
-
-    match result {
-        Some(steps_json) => {
-            let steps: Vec<serde_json::Value> =
-                serde_json::from_str(&steps_json).unwrap_or_default();
-            if steps.is_empty() {
-                "auto_approve".into()
-            } else {
-                "require_approval".into()
+        if let Some((operations_json, steps_json)) = row {
+            if let Some(action) =
+                workflow_action_for_operation(&operations_json, &steps_json, operation)
+            {
+                return Some(action);
             }
         }
-        // No workflow defined → fall back to require_approval (safe default)
-        None => "require_approval".into(),
     }
+
+    None
 }
 
 /// Sync execution policies from TOML config into SQLite.
