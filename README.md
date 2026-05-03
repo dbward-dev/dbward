@@ -176,12 +176,18 @@ In server mode, mutating operations on production return immediately with a requ
 dbward [OPTIONS] <COMMAND>
 
 Commands:
+  init      Interactive setup wizard (creates dbward.toml, tests DB connection)
+  login     OIDC login via browser (or --device for headless environments)
+  logout    Revoke tokens and delete local credentials
+  whoami    Show current identity, role, and token expiry
   migrate   Run database migrations (up/down/status/create)
-  execute   Execute a SQL query
+  execute   Execute a SQL query (--emergency --reason for break-glass)
   mcp       Start MCP stdio server
-  server    Start/manage the HTTP server
+  server    Start/manage the HTTP server (start, token create/revoke)
   approve   Approve a pending request
   reject    Reject a pending request
+  list      List pending/recent requests
+  resume    Resume execution after approval
   audit     Search audit log
 
 Global Options:
@@ -213,9 +219,12 @@ Global Options:
 - **Signed execution tokens** — Ed25519 asymmetric keys. Server signs, client verifies. Token includes SHA-256 hash of the approved SQL — you can't approve one query and execute another.
 - **Token replay prevention** — Completed requests don't issue new tokens.
 - **Multi-statement rejection** — Prevents SQL injection via statement chaining.
+- **Writable CTE detection** — `WITH x AS (DELETE FROM ...) SELECT ...` is classified as DML, not SELECT. Prevents readonly RBAC bypass.
 - **RBAC** — admin (all), developer (migrate + execute), readonly (SELECT only).
 - **Network isolation** — Server has no database credentials. Can run in a separate network zone.
-- **API token auth** — SHA-256 hashed with prefix-based O(1) lookup.
+- **API token auth** — SHA-256 hashed with prefix+hash composite lookup.
+- **OIDC auth** — JWT verification with JWKS caching, RS256/ES256, PKCE for CLI flows.
+- **Direct mode restriction** — Only allowed for `development` environment. Staging/production require `--server`.
 
 ## Database Support
 
@@ -226,16 +235,130 @@ Global Options:
 
 Database is auto-detected from the URL scheme (`postgres://` or `mysql://`).
 
-## Development
+## OIDC Authentication
+
+For teams using Google, Okta, OneLogin, Auth0, Keycloak, or K8s ServiceAccounts:
 
 ```bash
-# Prerequisites: Rust, Docker
+# Login via browser
+dbward login
 
-# Start dev database
-docker compose up -d
+# Login without browser (SSH, containers)
+dbward login --device
 
-# Run tests (requires Docker for testcontainers)
+# Check identity
+dbward whoami
+
+# Logout (revokes tokens)
+dbward logout
+```
+
+Configure in `dbward.toml`:
+
+```toml
+[server.oidc]
+issuer = "https://accounts.google.com"
+client_id = "xxx.apps.googleusercontent.com"
+```
+
+Server-side role mapping in `dbward-server.toml`:
+
+```toml
+[auth]
+mode = "both"  # "oidc", "token", or "both"
+
+[auth.oidc]
+issuer = "https://accounts.google.com"
+client_id = "xxx.apps.googleusercontent.com"
+default_role = "readonly"
+
+[[auth.oidc.role_mappings]]
+subject = "alice@example.com"
+role = "admin"
+
+[[auth.oidc.role_mappings]]
+claim = "groups"
+value = "db-developers"
+role = "developer"
+```
+
+## Webhook Notifications
+
+Server sends webhooks on approval events:
+
+```toml
+# dbward-server.toml
+[[webhooks]]
+url = "https://hooks.slack.com/services/T.../B.../xxx"
+format = "slack"
+
+[[webhooks]]
+url = "https://internal.example.com/dbward"
+format = "generic"
+secret = "whsec_xxxx"  # HMAC-SHA256 signature
+```
+
+Events: `request_created`, `request_approved`, `request_rejected`, `request_completed`, `break_glass`.
+
+## Break-Glass (Emergency Bypass)
+
+For incidents when no approver is available:
+
+```bash
+dbward execute "SELECT pg_terminate_backend(12345)" \
+  --emergency --reason "connection pool exhausted at 3am"
+```
+
+- Skips approval, issues token immediately
+- Fires `break_glass` webhook (🚨 in Slack)
+- Reason recorded in audit log
+- Admin and Developer only (Readonly cannot use)
+
+## Development
+
+### Docker Compose (recommended)
+
+Starts PostgreSQL, Keycloak (OIDC), and dbward-server:
+
+```bash
+# Start all services
+docker compose up -d --build
+
+# Create API tokens
+docker compose exec dbward-server \
+  dbward server token create --user alice --role admin --data /data/dbward.db
+docker compose exec dbward-server \
+  dbward server token create --user bob --role developer --data /data/dbward.db
+
+# Run CLI commands (as bob)
+docker compose run --rm \
+  -e DBWARD_SERVER_TOKEN=<bob-token> \
+  dbward execute "SELECT version()"
+
+# Approve (as alice)
+docker compose run --rm \
+  -e DBWARD_SERVER_TOKEN=<alice-token> \
+  dbward approve <request-id>
+
+# Resume (as bob)
+docker compose run --rm \
+  -e DBWARD_SERVER_TOKEN=<bob-token> \
+  dbward resume <request-id>
+
+# Tear down
+docker compose down -v
+```
+
+### Local Development
+
+```bash
+# Prerequisites: Rust 1.88+, Docker (for tests)
+
+# Run tests
 cargo test --workspace
+
+# Run tests including DB integration (requires Docker)
+cargo test --workspace -- --include-ignored
 
 # Build
 cargo build --release
