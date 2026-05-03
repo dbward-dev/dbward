@@ -42,25 +42,69 @@ services:
     depends_on:
       keycloak:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "dbward server token create --user _healthcheck --role readonly --data /data/dbward.db 2>/dev/null || true && test -f /data/dbward.db"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
 
-  dbward:
+  # --- Dev setup: creates API tokens for alice and bob ---
+  dev-init:
     build: .
-    entrypoint: ["dbward"]
+    entrypoint: ["/bin/sh", "/scripts/dev-init.sh"]
+    volumes:
+      - server-data:/data
+      - dev-tokens:/tokens
+      - ./dev/dev-init.sh:/scripts/dev-init.sh:ro
+    depends_on:
+      dbward-server:
+        condition: service_healthy
+
+  # --- alice: developer (requester) ---
+  alice:
+    build: .
+    entrypoint: ["/bin/sh", "/scripts/dev-entrypoint.sh", "alice"]
     environment:
       DBWARD_DATABASE_URL: "postgres://dbward:dbward@postgres:5432/dbward_dev"
       DBWARD_SERVER_URL: "http://dbward-server:3000"
-    depends_on:
-      postgres:
-        condition: service_healthy
+      DBWARD_PUBLIC_KEY: "/data/signing.pub"
     volumes:
       - server-data:/data:ro
+      - dev-tokens:/tokens:ro
       - ./dev/dbward-cli.toml:/app/dbward.toml:ro
-      - dbward-creds:/root/.dbward
+      - ./dev/dev-entrypoint.sh:/scripts/dev-entrypoint.sh:ro
     working_dir: /app
+    depends_on:
+      dev-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
     profiles:
-      - cli
+      - dev
+
+  # --- bob: admin (approver) ---
+  bob:
+    build: .
+    entrypoint: ["/bin/sh", "/scripts/dev-entrypoint.sh", "bob"]
+    environment:
+      DBWARD_DATABASE_URL: "postgres://dbward:dbward@postgres:5432/dbward_dev"
+      DBWARD_SERVER_URL: "http://dbward-server:3000"
+      DBWARD_PUBLIC_KEY: "/data/signing.pub"
+    volumes:
+      - server-data:/data:ro
+      - dev-tokens:/tokens:ro
+      - ./dev/dbward-cli.toml:/app/dbward.toml:ro
+      - ./dev/dev-entrypoint.sh:/scripts/dev-entrypoint.sh:ro
+    working_dir: /app
+    depends_on:
+      dev-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    profiles:
+      - dev
 
 volumes:
   pgdata:
   server-data:
-  dbward-creds:
+  dev-tokens:
