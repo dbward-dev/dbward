@@ -3,116 +3,92 @@
 DB operations workflow + approval engine. Safe database operations for teams and AI agents.
 
 ```
-dbward execute "SELECT * FROM users"                    # Direct mode
-dbward execute "DELETE FROM old" --server http://...     # Server mode (approval required)
-dbward mcp                                              # MCP server for AI agents
+dbward execute "SELECT * FROM users"              # Transparent — agent executes
+dbward execute "DELETE FROM old" --database prod   # Production requires approval
+dbward mcp                                         # MCP server for AI agents
 ```
 
 ## Why dbward?
 
 Tools like dbmate and golang-migrate handle migrations but lack **approval workflows, audit logging, and access control**. Enterprise tools like Bytebase require heavy infrastructure. dbward fills the gap:
 
-- **Single binary** — no Docker Compose, no external database for state
+- **Zero DB credentials on developer machines** — only the agent touches your database
 - **Approval flow built-in** — production changes require human approval
 - **MCP-first** — AI agents operate under the same controls as humans
-- **Server never touches your DB** — cryptographic enforcement via signed execution tokens
+- **Cryptographic enforcement** — Ed25519 signed execution tokens bind approval to exact SQL + database
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    dbward server                         │
-│  ┌──────────┐  ┌──────────┐  ┌───────────────────────┐ │
-│  │ REST API │  │  SQLite  │  │ Ed25519 Token Signer  │ │
-│  │ (axum)   │  │ (state)  │  │ (keypair)             │ │
-│  └──────────┘  └──────────┘  └───────────────────────┘ │
-│  NO database credentials — manages approvals only       │
-└─────────────────────────────────────────────────────────┘
-        ▲                              │
-        │ HTTP API                     │ Signed execution token
-        │                              ▼
+│              dbward client (CLI / MCP)                    │
+│  No DB credentials — sends requests, receives results    │
+└──────────┬───────────────────────────────────────────────┘
+           │ REST API
+           ▼
 ┌─────────────────────────────────────────────────────────┐
-│                  dbward client (CLI / MCP)               │
-│  ┌──────────┐  ┌──────────┐  ┌───────────────────────┐ │
-│  │  Engine  │  │ Migrator │  │ Token Verifier        │ │
-│  │          │  │          │  │ (public key only)     │ │
-│  └────┬─────┘  └────┬─────┘  └───────────────────────┘ │
-│       │              │                                   │
-│       └──────┬───────┘                                   │
-│              ▼                                           │
-│     ┌─────────────────┐                                  │
-│     │ DatabaseDriver  │ ← trait (Postgres / MySQL)       │
-│     └────────┬────────┘                                  │
-└──────────────┼──────────────────────────────────────────┘
-               ▼
-         Target Database
+│                    dbward server                         │
+│  Approval state (SQLite) │ Policy engine │ Audit log     │
+│  Ed25519 token signing   │ OIDC/API auth │ Webhooks      │
+│  NO database credentials                                 │
+└──────────┬───────────────────────────────────────────────┘
+           │ Agent polls (outbound HTTPS)
+           ▼
+┌─────────────────────────────────────────────────────────┐
+│                    dbward agent                           │
+│  DB credentials here only │ Executes approved operations  │
+│  Token verification (public key) │ Multiple DB support     │
+└──────────┬───────────────────────────────────────────────┘
+           │
+           ▼
+      Target Database (PostgreSQL / MySQL)
 ```
 
-**Key principle**: The server decides *what* can run. The client decides *where* it runs. The signed token binds the two — you can't execute anything the server didn't approve.
+**Key principle**: The client requests. The server decides. The agent executes. No component has more access than it needs.
 
 ## Quick Start
 
-### Direct Mode (development)
+### Local Development
 
 ```bash
-# Install
 cargo install dbward
 
 # Configure
 cat > dbward.toml << EOF
-[database]
-url = "postgres://user:pass@localhost:5432/mydb"
-
-[environment]
-name = "development"
-
-[role]
-name = "admin"
+default_database = "app"
+[server]
+url = "http://localhost:3000"
 EOF
 
-# Migrations
+# Start local server + agent
+dbward dev up
+
+# In another terminal:
 dbward migrate create add_users_table
 dbward migrate up
-dbward migrate status
-
-# Queries
 dbward execute "SELECT * FROM users"
 ```
 
-### Server Mode (team)
+### Team Setup (Production)
 
 ```bash
-# 1. Start server
-dbward server start --data dbward.db
+# 1. Deploy dbward-server (any network)
+dbward server start
 
-# 2. Create API tokens
-dbward server token create --user alice --role developer --data dbward.db
-dbward server token create --user bob --role admin --data dbward.db
+# 2. Deploy dbward-agent (DB-reachable network)
+dbward agent start --config dbward-agent.toml
 
-# 3. Copy signing.pub to client machines
-
-# 4. Client executes (staging — auto-approved)
-dbward execute "SELECT 1" \
-  --server http://server:3000 \
-  --token "dbw_..." \
-  --public-key signing.pub \
-  --database-url "postgres://..."
-
-# 5. Client executes (production — requires approval)
-dbward execute "DELETE FROM old_data" \
-  --server http://server:3000 \
-  --token "dbw_..." \
-  --public-key signing.pub \
-  --database-url "postgres://..." \
-  --environment production
+# 3. Developers just use CLI (no DB access needed)
+dbward login
+dbward execute "DELETE FROM old_data" --database primary
 # → "Request abc123 requires approval."
-# → Polls until approved...
 
-# 6. Another team member approves
-dbward approve abc123 \
-  --server http://server:3000 \
-  --token "dbw_..."
-# → Original CLI automatically verifies token and executes
+# 4. Approver
+dbward approve abc123
+# → Agent automatically executes, result available
+
+# 5. Developer gets result
+dbward resume abc123
 ```
 
 ### MCP Mode (AI agents)
@@ -124,16 +100,13 @@ Add to your MCP client configuration:
   "mcpServers": {
     "dbward": {
       "command": "dbward",
-      "args": ["mcp"],
-      "env": {
-        "DBWARD_DATABASE_URL": "postgres://user:pass@localhost:5432/mydb"
-      }
+      "args": ["mcp"]
     }
   }
 }
 ```
 
-With server mode (production safety):
+With server URL configured (team/production):
 
 ```json
 {
@@ -143,11 +116,9 @@ With server mode (production safety):
       "args": [
         "mcp",
         "--server", "http://server:3000",
-        "--token", "dbw_...",
-        "--public-key", "/path/to/signing.pub"
+        "--token", "dbw_..."
       ],
       "env": {
-        "DBWARD_DATABASE_URL": "postgres://...",
         "DBWARD_ENV": "production"
       }
     }
@@ -155,7 +126,7 @@ With server mode (production safety):
 }
 ```
 
-**MCP Tools (8 in server mode):**
+**MCP Tools:**
 
 | Tool | Description |
 |---|---|
@@ -165,10 +136,10 @@ With server mode (production safety):
 | `dbward_migrate_create` | Create migration file |
 | `dbward_execute_query` | Execute SQL (SELECT/DML) |
 | `dbward_audit_search` | Search audit log |
-| `dbward_check_request` | Check approval status (server mode) |
-| `dbward_resume_execution` | Execute after approval (server mode) |
+| `dbward_check_request` | Check approval/execution status |
+| `dbward_get_result` | Get execution result |
 
-In server mode, mutating operations on production return immediately with a request ID instead of blocking. The AI agent can check status and resume execution after human approval.
+Mutating operations on production return immediately with a request ID. The AI agent can poll status and retrieve results after the agent executes the approved query.
 
 ## CLI Reference
 
@@ -176,7 +147,7 @@ In server mode, mutating operations on production return immediately with a requ
 dbward [OPTIONS] <COMMAND>
 
 Commands:
-  init      Interactive setup wizard (creates dbward.toml, tests DB connection)
+  init      Interactive setup wizard (creates dbward.toml, tests server connection)
   login     OIDC login via browser (or --device for headless environments)
   logout    Revoke tokens and delete local credentials
   whoami    Show current identity, role, and token expiry
@@ -184,6 +155,8 @@ Commands:
   execute   Execute a SQL query (--emergency --reason for break-glass)
   mcp       Start MCP stdio server
   server    Start/manage the HTTP server (start, token create/revoke)
+  agent     Start the agent (polls server, executes on target DB)
+  dev       Development helpers (dev up — local server + agent)
   approve   Approve a pending request
   reject    Reject a pending request
   list      List pending/recent requests
@@ -192,12 +165,11 @@ Commands:
 
 Global Options:
   --config <PATH>          Config file [default: dbward.toml]
-  --database-url <URL>     Database URL [env: DBWARD_DATABASE_URL]
+  --database <NAME>        Named database target [env: DBWARD_DATABASE]
   --environment <ENV>      Environment [env: DBWARD_ENV]
   --role <ROLE>            Role (admin/developer/readonly) [env: DBWARD_ROLE]
-  --server <URL>           Server URL for approval mode [env: DBWARD_SERVER_URL]
+  --server <URL>           Server URL [env: DBWARD_SERVER_URL]
   --token <TOKEN>          API token [env: DBWARD_SERVER_TOKEN]
-  --public-key <PATH>      Server public key [env: DBWARD_PUBLIC_KEY]
 ```
 
 ## REST API
@@ -211,20 +183,23 @@ Global Options:
 | GET | `/api/requests/:id` | Yes | Get request (includes token if approved) |
 | POST | `/api/requests/:id/approve` | Yes | Approve (requester ≠ approver) |
 | POST | `/api/requests/:id/reject` | Yes | Reject (admin or requester only) |
-| POST | `/api/requests/:id/complete` | Yes | Report execution result |
+| POST | `/api/requests/:id/complete` | Yes | Report execution result (agent) |
+| GET | `/api/requests/:id/result` | Yes | Get execution result |
+| GET | `/api/agent/poll` | Yes | Agent polls for claimable tasks |
+| POST | `/api/agent/claim/:id` | Yes | Agent claims a task |
 | GET | `/api/audit` | Yes | Audit log |
 
 ## Security
 
-- **Signed execution tokens** — Ed25519 asymmetric keys. Server signs, client verifies. Token includes SHA-256 hash of the approved SQL — you can't approve one query and execute another.
+- **Zero-trust client model** — developer machines never have DB credentials. Only the agent connects to databases.
+- **Signed execution tokens** — Ed25519 asymmetric keys. Server signs, agent verifies. Token includes SHA-256 hash of the approved SQL + target database — you can't approve one query and execute another.
 - **Token replay prevention** — Completed requests don't issue new tokens.
 - **Multi-statement rejection** — Prevents SQL injection via statement chaining.
 - **Writable CTE detection** — `WITH x AS (DELETE FROM ...) SELECT ...` is classified as DML, not SELECT. Prevents readonly RBAC bypass.
 - **RBAC** — admin (all), developer (migrate + execute), readonly (SELECT only).
-- **Network isolation** — Server has no database credentials. Can run in a separate network zone.
+- **Network isolation** — Server has no database credentials. Agent connects outbound to server (no inbound ports needed).
 - **API token auth** — SHA-256 hashed with prefix+hash composite lookup.
 - **OIDC auth** — JWT verification with JWKS caching, RS256/ES256, PKCE for CLI flows.
-- **Direct mode restriction** — Only allowed for `development` environment. Staging/production require `--server`.
 
 ## Database Support
 
@@ -309,7 +284,7 @@ dbward execute "SELECT pg_terminate_backend(12345)" \
   --emergency --reason "connection pool exhausted at 3am"
 ```
 
-- Skips approval, issues token immediately
+- Skips approval, issues token immediately — agent executes without waiting
 - Fires `break_glass` webhook (🚨 in Slack)
 - Reason recorded in audit log
 - Admin and Developer only (Readonly cannot use)
@@ -318,10 +293,10 @@ dbward execute "SELECT pg_terminate_backend(12345)" \
 
 ### Docker Compose (recommended)
 
-Starts PostgreSQL, Keycloak (OIDC), and dbward-server:
+Starts PostgreSQL, Keycloak (OIDC), dbward-server, and dbward-agent:
 
 ```bash
-# Start all services
+# Start all services (server + agent + PostgreSQL + Keycloak)
 docker compose up -d --build
 
 # Create API tokens
@@ -330,20 +305,20 @@ docker compose exec dbward-server \
 docker compose exec dbward-server \
   dbward server token create --user bob --role developer --data /data/dbward.db
 
-# Run CLI commands (as bob)
+# Run CLI commands (as bob — no DB credentials needed)
 docker compose run --rm \
   -e DBWARD_SERVER_TOKEN=<bob-token> \
-  dbward execute "SELECT version()"
+  dbward-cli execute "SELECT version()"
 
 # Approve (as alice)
 docker compose run --rm \
   -e DBWARD_SERVER_TOKEN=<alice-token> \
-  dbward approve <request-id>
+  dbward-cli approve <request-id>
 
-# Resume (as bob)
+# Get result (as bob)
 docker compose run --rm \
   -e DBWARD_SERVER_TOKEN=<bob-token> \
-  dbward resume <request-id>
+  dbward-cli resume <request-id>
 
 # Tear down
 docker compose down -v

@@ -10,45 +10,65 @@
                │ MCP (JSON-RPC 2.0 over stdin/stdout)
                ▼
 ┌──────────────────────────────────────────────────────────┐
-│ Client (dbward process)                                  │
-│   - Runs on a network that can reach the target DB       │
-│   - Owns Engine (DatabaseDriver → Target DB)             │
-│   - CLI: dbward login/migrate/execute/approve/reject/mcp │
-│   - MCP: dbward mcp [--server http://...]                │
-└──────┬───────────────────────────────────┬───────────────┘
-       │ Direct mode                       │ Server mode
-       │ (development only)                │ (OIDC / API token)
-       ▼                                   ▼
-┌──────────────────┐          ┌────────────────────────────┐
-│ Target DB        │          │ Server (dbward server)     │
-│ (PostgreSQL /    │          │   - OIDC JWT verification  │
-│  MySQL)          │          │   - API token auth         │
-└──────────────────┘          │   - Approval state (SQLite)│
-                              │   - Audit log (SQLite)     │
-                              │   - Ed25519 token signing  │
-                              │   - Webhook notifications  │
-                              │   - NO DB connection       │
-                              └────────────────────────────┘
-                                        │
-                                        ▼
-                              ┌────────────────────────────┐
-                              │ Identity Provider (IdP)    │
-                              │ Google / Okta / OneLogin / │
-                              │ Auth0 / Keycloak /         │
-                              │ AWS IAM Identity Center /  │
-                              │ K8s ServiceAccount         │
-                              └────────────────────────────┘
+│ Client (dbward-cli / dbward mcp)                         │
+│   - NO DB credentials or DB connection                   │
+│   - Creates requests, retrieves results                  │
+│   - CLI: dbward login/migrate/execute/approve/reject/... │
+│   - MCP: dbward mcp --server http://...                  │
+└──────────────┬───────────────────────────────────────────┘
+               │ HTTPS (OIDC JWT or API token)
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│ Server (dbward server)                                   │
+│   - OIDC JWT verification                                │
+│   - API token auth                                       │
+│   - Policy engine (approval rules)                       │
+│   - Approval state (SQLite)                              │
+│   - Audit log (SQLite)                                   │
+│   - Ed25519 token signing                                │
+│   - Job dispatch (poll/claim)                            │
+│   - Result storage                                       │
+│   - Webhook notifications                                │
+│   - NO DB connection                                     │
+└──────────────┬───────────────────────────────────────────┘
+               │ Outbound HTTPS polling (no inbound needed)
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│ Agent (dbward agent)                                     │
+│   - ONLY component with DB credentials                   │
+│   - Polls server for approved jobs                       │
+│   - Claims + executes operations                         │
+│   - Returns results to server                            │
+│   - Runs on DB-reachable network                         │
+│   - Multiple agents supported (capabilities matching)    │
+└──────────────┬───────────────────────────────────────────┘
+               │ DatabaseDriver (sqlx)
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│ Target DB (PostgreSQL / MySQL)                           │
+└──────────────────────────────────────────────────────────┘
+
+               ┌────────────────────────────┐
+               │ Identity Provider (IdP)    │
+               │ Google / Okta / OneLogin / │
+               │ Auth0 / Keycloak /         │
+               │ AWS IAM Identity Center /  │
+               │ K8s ServiceAccount         │
+               └────────────────────────────┘
 ```
 
 ## Crate Dependency Graph
 
 ```
 dbward (binary, CLI)
-├── dbward-core      (Engine, DatabaseDriver trait, types, RBAC, audit, config, token verification)
-├── dbward-migrate   (migration file I/O + execution via DatabaseDriver)
+├── dbward-core      (types, RBAC, audit, config, token verification)
+├── dbward-migrate   (migration file I/O)
 │     └── dbward-core
-└── dbward-server    (axum HTTP, OIDC/token auth, approval state, SQLite, Ed25519 signing, webhooks)
-      └── dbward-core (types + token)
+├── dbward-server    (axum HTTP, OIDC/token auth, policy, approval state, SQLite, Ed25519 signing, webhooks, job dispatch, result storage)
+│     └── dbward-core
+└── dbward-agent     (DatabaseDriver, polls server, executes operations, returns results)
+      ├── dbward-core
+      └── dbward-migrate
 ```
 
 ## Authentication
@@ -173,41 +193,42 @@ Auto-refresh: before each command, if token expires within 5 minutes.
 | Token leak (refresh) | `dbward logout` revokes at IdP |
 | Token leak (credentials.json) | 0600 permissions |
 
-## Two Modes
+## Request Flow (Agent-Only Architecture)
 
-### Direct Mode (development only)
-
-Client connects directly to target DB. No approval flow. Audit log to stdout.
-
-**Restricted to `development` environment only.** Attempting Direct mode with
-staging/production is rejected at the CLI level. This prevents bypassing the
-approval flow by simply omitting `--server`.
-
-### Server Mode (staging, production)
-
-Client talks to server for approval, then executes locally.
+All DB operations go through the same flow: client → server → agent → DB.
 
 ```
-Client                              Server
-  │                                   │
-  ├─① POST /api/requests ───────────▶│ auth (OIDC JWT or API token)
-  │                                   │ policy check → pending / auto_approved / break_glass
-  │                                   │
-  │  (if pending)                     │
-  │  CLI prints request ID and exits  │
-  │                                   │
-  │    (human approves via CLI)       │
-  │                                   │◀── POST /api/requests/{id}/approve
-  │                                   │     → generates Ed25519 execution_token
-  │                                   │     → webhook notification
-  │                                   │
-  │  dbward resume {id}              │
-  ├─② GET /api/requests/{id} ──────▶│ → status + execution_token
-  │                                   │
-  ├─③ verify token → Engine → DB     │
-  │                                   │
-  ├─④ POST /api/requests/{id}/complete▶│ → audit_log + status: "executed"
-  │                                   │     → webhook notification
+Client                              Server                              Agent
+  │                                   │                                   │
+  ├─① POST /api/requests ───────────▶│ auth + policy check               │
+  │                                   │ → pending / auto_approved /       │
+  │                                   │   break_glass                     │
+  │                                   │                                   │
+  │  (if pending)                     │                                   │
+  │  CLI prints request ID and exits  │                                   │
+  │                                   │                                   │
+  │    (human approves via CLI)       │                                   │
+  │                                   │◀── POST /api/requests/{id}/approve│
+  │                                   │     → Ed25519 execution_token     │
+  │                                   │     → webhook notification        │
+  │                                   │                                   │
+  │                                   │  ② Agent polls for approved jobs  │
+  │                                   │◀──────── GET /api/agent/jobs ─────┤
+  │                                   │                                   │
+  │                                   │  ③ Agent claims job               │
+  │                                   │◀──── POST /api/agent/jobs/{id}/claim
+  │                                   │     → returns execution_token     │
+  │                                   │                                   │
+  │                                   │  ④ Agent verifies token,          │
+  │                                   │     executes on DB                │
+  │                                   │                                   │
+  │                                   │  ⑤ Agent returns result           │
+  │                                   │◀── POST /api/agent/jobs/{id}/complete
+  │                                   │     → audit_log + status update   │
+  │                                   │     → webhook notification        │
+  │                                   │                                   │
+  ├─⑥ GET /api/requests/{id} ──────▶│ → status + result                 │
+  │  (dbward resume {id})             │                                   │
 ```
 
 ### Break-Glass (Emergency Bypass)
@@ -221,13 +242,54 @@ dbward execute "SELECT pg_terminate_backend(12345)" \
 
 - Server issues token immediately (no approval needed)
 - Status = `break_glass`
+- Agent picks up and executes immediately
 - Webhook fires `break_glass` event to all hooks (🚨 in Slack)
 - Reason is recorded in audit log
 - Admin + Developer can use (Readonly cannot)
 
+## Agent
+
+### Responsibilities
+
+- **Only component with DB credentials** — credentials never leave the agent's network
+- Polls server for approved/auto_approved/break_glass jobs
+- Claims jobs (lease-based, prevents double execution)
+- Verifies Ed25519 execution token before executing
+- Executes SQL via DatabaseDriver
+- Returns results (rows/affected count/error) to server
+
+### Capabilities Matching
+
+Each agent registers its capabilities (which databases it can reach):
+
+```toml
+# dbward-agent.toml
+[agent]
+server = "https://dbward.internal:8080"
+token = "dbw_agent_xxx"
+poll_interval = "5s"
+
+[[agent.databases]]
+name = "primary"
+url = "postgres://user:pass@db-primary:5432/app"
+
+[[agent.databases]]
+name = "analytics"
+url = "mysql://user:pass@db-analytics:3306/warehouse"
+```
+
+Server matches jobs to agents based on the `database` field in the request.
+
+### Multiple Agents
+
+- Multiple agents can run simultaneously (e.g., one per DB, one per network zone)
+- Lease/claim prevents double execution: agent claims a job → server marks it as claimed
+- If an agent crashes, lease expires and another agent can pick up the job
+
 ## DatabaseDriver Trait
 
 Abstracts over database backends. URL scheme selects the driver automatically.
+Lives in the agent — client and server never use this.
 
 ```rust
 #[async_trait]
@@ -252,14 +314,16 @@ pub async fn connect(url: &str) -> Result<Arc<dyn DatabaseDriver>, Error>;
   "request_id": "req_abc",
   "operation": "migrate_up",
   "environment": "production",
+  "database": "primary",
   "detail_hash": "sha256(SQL)",
   "expires_at": "2026-05-01T14:00:00Z",
   "signature": "ed25519_sign(message)"
 }
 ```
 
-- Server holds **private key** (signs). Client holds **public key** only (verifies).
+- Server holds **private key** (signs). Agent holds **public key** (verifies before executing).
 - `detail_hash` = SHA-256 of SQL — prevents approve-one-execute-another.
+- `database` in signature — prevents executing against wrong database.
 - Token replay prevention: executed/failed requests don't issue new tokens.
 - Public key available via `GET /api/public-key`.
 
@@ -285,49 +349,50 @@ secret = "whsec_xxxx"  # HMAC-SHA256 signature in X-Dbward-Signature header
 - 3 retries with exponential backoff (1s → 4s → 16s)
 - Failure is warn log only (never blocks request processing)
 
-## MCP Async Approval (Server Mode)
+## MCP Async Approval
 
-MCP tools don't block on approval. Instead:
+MCP client never connects to DB. All operations go through the server → agent flow.
 
-1. `dbward_execute_query` → returns `"Request {id} requires approval"` immediately
+1. `dbward_execute_query` → creates request on server → returns `"Request {id} created (pending approval)"` or result if auto-approved and agent completes quickly
 2. Human approves via CLI: `dbward approve {id}`
-3. AI calls `dbward_check_request` → returns status
-4. AI calls `dbward_resume_execution` → verifies token, executes, reports completion
-
-8 MCP tools total (6 base + `check_request` + `resume_execution`).
+3. AI calls `dbward_check_request` → returns status (pending/approved/executed/failed)
+4. AI calls `dbward_get_result` → returns query result after agent execution
 
 MCP agents authenticate via API tokens (OIDC browser flow not available in stdio mode).
 
-## REST API (9 endpoints)
+## REST API
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/health` | No | Health check |
-| GET | `/api/public-key` | No | Ed25519 public key (32 bytes) |
+| GET | `/api/public-key` | No | Ed25519 public key |
 | GET | `/api/requests` | Yes | List requests |
 | POST | `/api/requests` | Yes | Create request (supports emergency flag) |
-| GET | `/api/requests/:id` | Yes | Get request + token if approved |
+| GET | `/api/requests/:id` | Yes | Get request + result |
 | POST | `/api/requests/:id/approve` | Yes | Approve (requester ≠ approver) |
 | POST | `/api/requests/:id/reject` | Yes | Reject (admin or requester) |
-| POST | `/api/requests/:id/complete` | Yes | Report execution result |
 | GET | `/api/audit` | Yes | Audit log |
+| GET | `/api/agent/jobs` | Agent | Poll for approved jobs |
+| POST | `/api/agent/jobs/:id/claim` | Agent | Claim a job (lease) |
+| POST | `/api/agent/jobs/:id/complete` | Agent | Report execution result |
 
-All "Yes" endpoints accept both OIDC JWT and API token in Authorization header.
+All "Yes" endpoints accept both OIDC JWT and API token. Agent endpoints use agent-specific API tokens.
 
 ## Security
 
 | Attack | Mitigation |
 |---|---|
-| Forge execution token | Ed25519 asymmetric — client has public key only |
+| Forge execution token | Ed25519 asymmetric — agent verifies with public key |
 | Approve one SQL, execute another | `detail_hash` in signature |
 | Token replay | Executed requests don't issue tokens |
 | SQL injection (multi-statement) | Semicolon check rejects chained statements |
 | Self-approve | Server enforces requester ≠ approver |
 | Unauthorized reject | Only admin or requester can reject |
-| Direct mode bypass | Blocked for non-development environments |
+| DB credential leak | Only agent has credentials, not on developer machines |
 | Auth token leak (OIDC) | Short-lived JWT + PKCE + revocation |
 | Auth token leak (API) | `dbward server token revoke` + audit log |
 | Webhook secret leak | HMAC-SHA256 signature verification |
+| Agent impersonation | Agent-specific API tokens, scoped to agent role |
 
 ## SQLite Schema (Server)
 
@@ -342,16 +407,26 @@ CREATE TABLE tokens (
 
 CREATE TABLE requests (
     id TEXT PRIMARY KEY, user TEXT NOT NULL,
-    operation TEXT NOT NULL, environment TEXT NOT NULL, detail TEXT NOT NULL,
+    operation TEXT NOT NULL, environment TEXT NOT NULL,
+    database TEXT NOT NULL, detail TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     approved_by TEXT, created_at TEXT NOT NULL, resolved_at TEXT,
-    emergency INTEGER NOT NULL DEFAULT 0, reason TEXT
+    emergency INTEGER NOT NULL DEFAULT 0, reason TEXT,
+    execution_result TEXT, completed_at TEXT
+);
+
+CREATE TABLE agents (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL,
+    capabilities TEXT NOT NULL,  -- JSON array of database names
+    last_seen TEXT NOT NULL,
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE audit_log (
     id TEXT PRIMARY KEY, timestamp TEXT NOT NULL,
     user TEXT NOT NULL, role TEXT NOT NULL,
-    operation TEXT NOT NULL, environment TEXT NOT NULL, detail TEXT NOT NULL,
+    operation TEXT NOT NULL, environment TEXT NOT NULL,
+    database TEXT NOT NULL, detail TEXT NOT NULL,
     success INTEGER NOT NULL, error_message TEXT, request_id TEXT,
     emergency INTEGER NOT NULL DEFAULT 0
 );
@@ -367,13 +442,15 @@ dbward whoami                   # Show current identity
 dbward logout                   # Revoke + delete tokens
 dbward migrate up/down/status/create
 dbward execute <SQL>            # --emergency --reason for break-glass
-dbward mcp                      # MCP stdio server
-dbward server start             # HTTP server
-dbward server token create/revoke
 dbward approve <ID>
 dbward reject <ID>
 dbward list                     # Show requests
-dbward resume <ID>              # Resume after approval
+dbward resume <ID>              # Get result after agent execution
+dbward mcp                      # MCP stdio server
+dbward server start             # HTTP server
+dbward server token create/revoke
+dbward agent start              # Start agent (polls server, executes jobs)
+dbward dev up                   # Start local server + agent for development
 ```
 
 ## Migration File Format (dbmate-compatible)
