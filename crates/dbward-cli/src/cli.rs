@@ -484,6 +484,10 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
             dbward_server::db::sync_workflows(&conn, &server_cfg.workflows)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+            dbward_server::db::sync_execution_policies(&conn, &server_cfg.execution_policies)
+                .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+            dbward_server::db::sync_result_policies(&conn, &server_cfg.result_policies)
+                .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
             let data_path = std::path::Path::new(data)
                 .parent()
                 .unwrap_or(std::path::Path::new("."));

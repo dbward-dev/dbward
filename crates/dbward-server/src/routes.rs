@@ -53,6 +53,26 @@ pub fn router(state: AppState) -> Router {
                 .put(update_workflow)
                 .delete(delete_workflow),
         )
+        .route(
+            "/api/execution-policies",
+            get(list_execution_policies).post(create_execution_policy),
+        )
+        .route(
+            "/api/execution-policies/{id}",
+            get(get_execution_policy_handler)
+                .put(update_execution_policy)
+                .delete(delete_execution_policy),
+        )
+        .route(
+            "/api/result-policies",
+            get(list_result_policies).post(create_result_policy),
+        )
+        .route(
+            "/api/result-policies/{id}",
+            get(get_result_policy_handler)
+                .put(update_result_policy)
+                .delete(delete_result_policy),
+        )
         .with_state(state)
 }
 
@@ -487,12 +507,12 @@ async fn dispatch_request(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let _user = auth::authenticate(&headers, &state).await?;
 
-    let status: String = {
+    let (status, database_name, environment, resolved_at): (String, String, String, Option<String>) = {
         let conn = state.sqlite.lock().await;
         conn.query_row(
-            "SELECT status FROM requests WHERE id = ?1",
+            "SELECT status, database_name, environment, resolved_at FROM requests WHERE id = ?1",
             rusqlite::params![id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?
     };
@@ -501,6 +521,37 @@ async fn dispatch_request(
         "approved" | "auto_approved" | "break_glass" => {}
         "dispatched" | "running" => {
             return Err((StatusCode::CONFLICT, format!("request already {status}")));
+        }
+        "executed" | "failed" => {
+            // Check execution policy for re-execution
+            let conn = state.sqlite.lock().await;
+            let (max_exec, window_secs, retry) = crate::db::get_execution_policy(&conn, &database_name, &environment);
+
+            // Check execution window
+            if let Some(ref resolved) = resolved_at {
+                if let Ok(resolved_time) = chrono::DateTime::parse_from_rfc3339(resolved) {
+                    let elapsed = chrono::Utc::now().signed_duration_since(resolved_time);
+                    if elapsed.num_seconds() as u64 > window_secs {
+                        return Err((StatusCode::GONE, "execution window expired".into()));
+                    }
+                }
+            }
+
+            // Check execution count
+            let exec_count: u32 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM agent_executions WHERE request_id = ?1",
+                    rusqlite::params![id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            if exec_count >= max_exec {
+                if status == "failed" && retry {
+                    // Allow retry on failure
+                } else {
+                    return Err((StatusCode::CONFLICT, format!("max executions ({max_exec}) reached")));
+                }
+            }
         }
         _ => {
             return Err((
@@ -968,6 +1019,344 @@ async fn delete_workflow(
 
     if changes == 0 {
         return Err((StatusCode::NOT_FOUND, "workflow not found".into()));
+    }
+
+    Ok(Json(json!({"id": id, "deleted": true})))
+}
+
+// ---------------------------------------------------------------------------
+// Execution Policy CRUD (admin only for mutations)
+// ---------------------------------------------------------------------------
+
+async fn list_execution_policies(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let _user = auth::authenticate(&headers, &state).await?;
+
+    let conn = state.sqlite.lock().await;
+    let mut stmt = conn
+        .prepare("SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at FROM execution_policies ORDER BY database_name, environment")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map([], |row| {
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "database": row.get::<_, String>(1)?,
+                "environment": row.get::<_, String>(2)?,
+                "max_executions": row.get::<_, i64>(3)?,
+                "execution_window_secs": row.get::<_, i64>(4)?,
+                "retry_on_failure": row.get::<_, bool>(5)?,
+                "source": row.get::<_, String>(6)?,
+                "created_at": row.get::<_, String>(7)?,
+                "updated_at": row.get::<_, String>(8)?,
+            }))
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(Json(json!({"execution_policies": rows})))
+}
+
+async fn get_execution_policy_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let _user = auth::authenticate(&headers, &state).await?;
+
+    let conn = state.sqlite.lock().await;
+    let row = conn
+        .query_row(
+            "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at FROM execution_policies WHERE id = ?1",
+            rusqlite::params![id],
+            |row| {
+                Ok(json!({
+                    "id": row.get::<_, String>(0)?,
+                    "database": row.get::<_, String>(1)?,
+                    "environment": row.get::<_, String>(2)?,
+                    "max_executions": row.get::<_, i64>(3)?,
+                    "execution_window_secs": row.get::<_, i64>(4)?,
+                    "retry_on_failure": row.get::<_, bool>(5)?,
+                    "source": row.get::<_, String>(6)?,
+                    "created_at": row.get::<_, String>(7)?,
+                    "updated_at": row.get::<_, String>(8)?,
+                }))
+            },
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "execution policy not found".into()))?;
+
+    Ok(Json(row))
+}
+
+async fn create_execution_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user = auth::authenticate(&headers, &state).await?;
+    if user.role != dbward_core::Role::Admin {
+        return Err((StatusCode::FORBIDDEN, "admin only".into()));
+    }
+
+    let database = body["database"].as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
+    let environment = body["environment"].as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
+    let max_executions = body["max_executions"].as_i64().unwrap_or(1);
+    let execution_window_secs = body["execution_window_secs"].as_i64().unwrap_or(3600);
+    let retry_on_failure = body["retry_on_failure"].as_bool().unwrap_or(false);
+
+    let id = format!("{database}:{environment}");
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let conn = state.sqlite.lock().await;
+    conn.execute(
+        "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
+        rusqlite::params![id, database, environment, max_executions, execution_window_secs, retry_on_failure, now],
+    )
+    .map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            (StatusCode::CONFLICT, format!("execution policy for {database}:{environment} already exists"))
+        } else {
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        }
+    })?;
+
+    Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
+}
+
+async fn update_execution_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user = auth::authenticate(&headers, &state).await?;
+    if user.role != dbward_core::Role::Admin {
+        return Err((StatusCode::FORBIDDEN, "admin only".into()));
+    }
+
+    let conn = state.sqlite.lock().await;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.query_row("SELECT id FROM execution_policies WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
+        .map_err(|_| (StatusCode::NOT_FOUND, "execution policy not found".into()))?;
+
+    if let Some(v) = body.get("max_executions").and_then(|v| v.as_i64()) {
+        conn.execute(
+            "UPDATE execution_policies SET max_executions = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![v, now, id],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    if let Some(v) = body.get("execution_window_secs").and_then(|v| v.as_i64()) {
+        conn.execute(
+            "UPDATE execution_policies SET execution_window_secs = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![v, now, id],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    if let Some(v) = body.get("retry_on_failure").and_then(|v| v.as_bool()) {
+        conn.execute(
+            "UPDATE execution_policies SET retry_on_failure = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![v, now, id],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    Ok(Json(json!({"id": id, "updated": true})))
+}
+
+async fn delete_execution_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user = auth::authenticate(&headers, &state).await?;
+    if user.role != dbward_core::Role::Admin {
+        return Err((StatusCode::FORBIDDEN, "admin only".into()));
+    }
+
+    let conn = state.sqlite.lock().await;
+    let changes = conn
+        .execute("DELETE FROM execution_policies WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if changes == 0 {
+        return Err((StatusCode::NOT_FOUND, "execution policy not found".into()));
+    }
+
+    Ok(Json(json!({"id": id, "deleted": true})))
+}
+
+// ---------------------------------------------------------------------------
+// Result Policy CRUD (admin only for mutations)
+// ---------------------------------------------------------------------------
+
+async fn list_result_policies(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let _user = auth::authenticate(&headers, &state).await?;
+
+    let conn = state.sqlite.lock().await;
+    let mut stmt = conn
+        .prepare("SELECT id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at FROM result_policies ORDER BY database_name, environment")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map([], |row| {
+            let storage: serde_json::Value = serde_json::from_str(row.get::<_, String>(4)?.as_str()).unwrap_or_default();
+            let access: serde_json::Value = serde_json::from_str(row.get::<_, String>(5)?.as_str()).unwrap_or_default();
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "database": row.get::<_, String>(1)?,
+                "environment": row.get::<_, String>(2)?,
+                "delivery_mode": row.get::<_, String>(3)?,
+                "storage_config": storage,
+                "access": access,
+                "source": row.get::<_, String>(6)?,
+                "created_at": row.get::<_, String>(7)?,
+                "updated_at": row.get::<_, String>(8)?,
+            }))
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(Json(json!({"result_policies": rows})))
+}
+
+async fn get_result_policy_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let _user = auth::authenticate(&headers, &state).await?;
+
+    let conn = state.sqlite.lock().await;
+    let row = conn
+        .query_row(
+            "SELECT id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at FROM result_policies WHERE id = ?1",
+            rusqlite::params![id],
+            |row| {
+                let storage: serde_json::Value = serde_json::from_str(row.get::<_, String>(4)?.as_str()).unwrap_or_default();
+                let access: serde_json::Value = serde_json::from_str(row.get::<_, String>(5)?.as_str()).unwrap_or_default();
+                Ok(json!({
+                    "id": row.get::<_, String>(0)?,
+                    "database": row.get::<_, String>(1)?,
+                    "environment": row.get::<_, String>(2)?,
+                    "delivery_mode": row.get::<_, String>(3)?,
+                    "storage_config": storage,
+                    "access": access,
+                    "source": row.get::<_, String>(6)?,
+                    "created_at": row.get::<_, String>(7)?,
+                    "updated_at": row.get::<_, String>(8)?,
+                }))
+            },
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "result policy not found".into()))?;
+
+    Ok(Json(row))
+}
+
+async fn create_result_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user = auth::authenticate(&headers, &state).await?;
+    if user.role != dbward_core::Role::Admin {
+        return Err((StatusCode::FORBIDDEN, "admin only".into()));
+    }
+
+    let database = body["database"].as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
+    let environment = body["environment"].as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
+    let delivery_mode = body["delivery_mode"].as_str().unwrap_or("stream");
+    let storage_config = body.get("storage_config").cloned().unwrap_or(json!({}));
+    let access = body.get("access").cloned().unwrap_or(json!({}));
+
+    let id = format!("{database}:{environment}");
+    let storage_json = storage_config.to_string();
+    let access_json = access.to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let conn = state.sqlite.lock().await;
+    conn.execute(
+        "INSERT INTO result_policies (id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
+        rusqlite::params![id, database, environment, delivery_mode, storage_json, access_json, now],
+    )
+    .map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            (StatusCode::CONFLICT, format!("result policy for {database}:{environment} already exists"))
+        } else {
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        }
+    })?;
+
+    Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
+}
+
+async fn update_result_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user = auth::authenticate(&headers, &state).await?;
+    if user.role != dbward_core::Role::Admin {
+        return Err((StatusCode::FORBIDDEN, "admin only".into()));
+    }
+
+    let conn = state.sqlite.lock().await;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.query_row("SELECT id FROM result_policies WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
+        .map_err(|_| (StatusCode::NOT_FOUND, "result policy not found".into()))?;
+
+    if let Some(v) = body.get("delivery_mode").and_then(|v| v.as_str()) {
+        conn.execute(
+            "UPDATE result_policies SET delivery_mode = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![v, now, id],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    if let Some(v) = body.get("storage_config") {
+        conn.execute(
+            "UPDATE result_policies SET storage_config_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![v.to_string(), now, id],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    if let Some(v) = body.get("access") {
+        conn.execute(
+            "UPDATE result_policies SET access_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![v.to_string(), now, id],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    Ok(Json(json!({"id": id, "updated": true})))
+}
+
+async fn delete_result_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user = auth::authenticate(&headers, &state).await?;
+    if user.role != dbward_core::Role::Admin {
+        return Err((StatusCode::FORBIDDEN, "admin only".into()));
+    }
+
+    let conn = state.sqlite.lock().await;
+    let changes = conn
+        .execute("DELETE FROM result_policies WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if changes == 0 {
+        return Err((StatusCode::NOT_FOUND, "result policy not found".into()));
     }
 
     Ok(Json(json!({"id": id, "deleted": true})))

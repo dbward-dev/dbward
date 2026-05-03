@@ -42,7 +42,43 @@ pub struct ServerConfig {
     pub policy: PolicyConfig,
     #[serde(default)]
     pub workflows: Vec<WorkflowDef>,
+    #[serde(default)]
+    pub execution_policies: Vec<ExecutionPolicyDef>,
+    #[serde(default)]
+    pub result_policies: Vec<ResultPolicyDef>,
 }
+
+/// Execution policy definition from TOML config.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExecutionPolicyDef {
+    pub database: String,
+    pub environment: String,
+    #[serde(default = "default_max_executions")]
+    pub max_executions: u32,
+    #[serde(default = "default_execution_window")]
+    pub execution_window_secs: u64,
+    #[serde(default)]
+    pub retry_on_failure: bool,
+}
+
+fn default_max_executions() -> u32 { 1 }
+fn default_execution_window() -> u64 { 86400 }
+
+/// Result policy definition from TOML config.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResultPolicyDef {
+    pub database: String,
+    pub environment: String,
+    #[serde(default = "default_delivery_mode")]
+    pub delivery_mode: String,
+    #[serde(default)]
+    pub storage_config: Option<serde_json::Value>,
+    #[serde(default = "default_access")]
+    pub access: Vec<String>,
+}
+
+fn default_delivery_mode() -> String { "direct".into() }
+fn default_access() -> Vec<String> { vec!["requester".into(), "admin".into()] }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuthConfig {

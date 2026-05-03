@@ -99,6 +99,32 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             updated_at TEXT NOT NULL,
             UNIQUE(database_name, environment)
         );
+
+        CREATE TABLE IF NOT EXISTS execution_policies (
+            id TEXT PRIMARY KEY,
+            database_name TEXT NOT NULL,
+            environment TEXT NOT NULL,
+            max_executions INTEGER NOT NULL DEFAULT 1,
+            execution_window_secs INTEGER NOT NULL DEFAULT 86400,
+            retry_on_failure INTEGER NOT NULL DEFAULT 0,
+            source TEXT NOT NULL DEFAULT 'api',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(database_name, environment)
+        );
+
+        CREATE TABLE IF NOT EXISTS result_policies (
+            id TEXT PRIMARY KEY,
+            database_name TEXT NOT NULL,
+            environment TEXT NOT NULL,
+            delivery_mode TEXT NOT NULL DEFAULT 'direct',
+            storage_config_json TEXT NOT NULL DEFAULT '{}',
+            access_json TEXT NOT NULL DEFAULT '[\"requester\", \"admin\"]',
+            source TEXT NOT NULL DEFAULT 'api',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(database_name, environment)
+        );
         ",
     )?;
 
@@ -205,6 +231,84 @@ pub fn evaluate_workflow(
         // No workflow defined → fall back to require_approval (safe default)
         None => "require_approval".into(),
     }
+}
+
+/// Sync execution policies from TOML config into SQLite.
+pub fn sync_execution_policies(
+    conn: &Connection,
+    policies: &[crate::server_config::ExecutionPolicyDef],
+) -> Result<(), rusqlite::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    for p in policies {
+        let id = format!("{}:{}", p.database, p.environment);
+        conn.execute(
+            "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'toml', ?7, ?7)
+             ON CONFLICT(database_name, environment) DO UPDATE SET
+               max_executions = ?4, execution_window_secs = ?5, retry_on_failure = ?6, updated_at = ?7
+             WHERE source = 'toml'",
+            rusqlite::params![id, p.database, p.environment, p.max_executions, p.execution_window_secs, p.retry_on_failure, now],
+        )?;
+    }
+    Ok(())
+}
+
+/// Sync result policies from TOML config into SQLite.
+pub fn sync_result_policies(
+    conn: &Connection,
+    policies: &[crate::server_config::ResultPolicyDef],
+) -> Result<(), rusqlite::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    for p in policies {
+        let id = format!("{}:{}", p.database, p.environment);
+        let config_json = p.storage_config.as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "{}".into());
+        let access_json = serde_json::to_string(&p.access).unwrap_or_else(|_| "[]".into());
+        conn.execute(
+            "INSERT INTO result_policies (id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'toml', ?7, ?7)
+             ON CONFLICT(database_name, environment) DO UPDATE SET
+               delivery_mode = ?4, storage_config_json = ?5, access_json = ?6, updated_at = ?7
+             WHERE source = 'toml'",
+            rusqlite::params![id, p.database, p.environment, p.delivery_mode, config_json, access_json, now],
+        )?;
+    }
+    Ok(())
+}
+
+/// Lookup execution policy for a request. Returns (max_executions, window_secs, retry_on_failure).
+pub fn get_execution_policy(conn: &Connection, database: &str, environment: &str) -> (u32, u64, bool) {
+    let query = |db: &str, env: &str| -> Option<(u32, u64, bool)> {
+        conn.query_row(
+            "SELECT max_executions, execution_window_secs, retry_on_failure FROM execution_policies WHERE database_name = ?1 AND environment = ?2",
+            rusqlite::params![db, env],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, bool>(2)?)),
+        ).ok()
+    };
+    query(database, environment)
+        .or_else(|| query("*", environment))
+        .or_else(|| query(database, "*"))
+        .or_else(|| query("*", "*"))
+        .unwrap_or((1, 86400, false)) // safe defaults
+}
+
+/// Lookup result policy for a request. Returns (delivery_mode, access_roles).
+pub fn get_result_policy(conn: &Connection, database: &str, environment: &str) -> (String, Vec<String>) {
+    let query = |db: &str, env: &str| -> Option<(String, String)> {
+        conn.query_row(
+            "SELECT delivery_mode, access_json FROM result_policies WHERE database_name = ?1 AND environment = ?2",
+            rusqlite::params![db, env],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).ok()
+    };
+    let (mode, access_json) = query(database, environment)
+        .or_else(|| query("*", environment))
+        .or_else(|| query(database, "*"))
+        .or_else(|| query("*", "*"))
+        .unwrap_or(("direct".into(), r#"["requester","admin"]"#.into()));
+    let access: Vec<String> = serde_json::from_str(&access_json).unwrap_or_default();
+    (mode, access)
 }
 
 #[cfg(test)]
