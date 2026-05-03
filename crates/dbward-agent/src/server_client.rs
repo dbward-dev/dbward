@@ -17,7 +17,11 @@ impl AgentClient {
         }
     }
 
-    pub async fn poll(&self, databases: &[String], environments: &[String]) -> Result<Vec<Value>, Error> {
+    pub async fn poll(
+        &self,
+        databases: &[String],
+        environments: &[String],
+    ) -> Result<Vec<Value>, Error> {
         let resp = self
             .client
             .post(format!("{}/api/agent/poll", self.base_url))
@@ -30,7 +34,9 @@ impl AgentClient {
             .await
             .map_err(|e| Error::Server(format!("poll failed: {e}")))?;
 
-        let body: Value = resp.json().await
+        let body: Value = resp
+            .json()
+            .await
             .map_err(|e| Error::Server(format!("poll parse failed: {e}")))?;
 
         Ok(body["jobs"].as_array().cloned().unwrap_or_default())
@@ -39,7 +45,10 @@ impl AgentClient {
     pub async fn claim(&self, request_id: &str, agent_id: &str) -> Result<Value, Error> {
         let resp = self
             .client
-            .post(format!("{}/api/agent/jobs/{}/claim", self.base_url, request_id))
+            .post(format!(
+                "{}/api/agent/jobs/{}/claim",
+                self.base_url, request_id
+            ))
             .bearer_auth(&self.agent_token)
             .json(&serde_json::json!({"agent_id": agent_id}))
             .send()
@@ -47,11 +56,16 @@ impl AgentClient {
             .map_err(|e| Error::Server(format!("claim failed: {e}")))?;
 
         let status = resp.status();
-        let body: Value = resp.json().await
+        let body: Value = resp
+            .json()
+            .await
             .map_err(|e| Error::Server(format!("claim parse failed: {e}")))?;
 
         if !status.is_success() {
-            return Err(Error::Server(format!("claim failed ({}): {}", status, body)));
+            return Err(Error::Server(format!(
+                "claim failed ({}): {}",
+                status, body
+            )));
         }
         Ok(body)
     }
@@ -65,7 +79,10 @@ impl AgentClient {
     ) -> Result<(), Error> {
         let resp = self
             .client
-            .post(format!("{}/api/agent/jobs/{}/result", self.base_url, execution_id))
+            .post(format!(
+                "{}/api/agent/jobs/{}/result",
+                self.base_url, execution_id
+            ))
             .bearer_auth(&self.agent_token)
             .json(&serde_json::json!({
                 "success": success,
@@ -91,10 +108,14 @@ impl AgentClient {
             .await
             .map_err(|e| Error::Server(format!("get public key failed: {e}")))?;
 
-        let bytes = resp.bytes().await
+        let bytes = resp
+            .bytes()
+            .await
             .map_err(|e| Error::Server(format!("read public key failed: {e}")))?;
 
-        let key_bytes: [u8; 32] = bytes.as_ref().try_into()
+        let key_bytes: [u8; 32] = bytes
+            .as_ref()
+            .try_into()
             .map_err(|_| Error::Server("invalid public key size".into()))?;
 
         ed25519_dalek::VerifyingKey::from_bytes(&key_bytes)

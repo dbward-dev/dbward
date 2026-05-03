@@ -4,6 +4,8 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::json;
+use std::sync::Arc;
+use std::time::Instant;
 
 use crate::auth;
 use crate::state::AppState;
@@ -29,10 +31,7 @@ pub fn router(state: AppState) -> Router {
             "/api/requests/{id}/dispatch",
             axum::routing::post(dispatch_request),
         )
-        .route(
-            "/api/requests/{id}/result/stream",
-            get(stream_result),
-        )
+        .route("/api/requests/{id}/result/stream", get(stream_result))
         .route("/api/agent/poll", axum::routing::post(agent_poll))
         .route(
             "/api/agent/jobs/{id}/claim",
@@ -112,18 +111,33 @@ async fn create_request(
     let reason = body["reason"].as_str().map(|s| s.to_string());
 
     if emergency && reason.is_none() {
-        return Err((StatusCode::BAD_REQUEST, "reason is required for emergency requests".into()));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "reason is required for emergency requests".into(),
+        ));
     }
     // Readonly cannot use break-glass
     if emergency && user.role == dbward_core::Role::Readonly {
-        return Err((StatusCode::FORBIDDEN, "readonly users cannot use break-glass".into()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "readonly users cannot use break-glass".into(),
+        ));
     }
 
     // Policy evaluation
     let needs_approval = !emergency
-        && state.policy.evaluate(environment, operation, &user.role.to_string()) == "require_approval";
+        && state
+            .policy
+            .evaluate(environment, operation, &user.role.to_string())
+            == "require_approval";
 
-    let status = if emergency { "break_glass" } else if needs_approval { "pending" } else { "auto_approved" };
+    let status = if emergency {
+        "break_glass"
+    } else if needs_approval {
+        "pending"
+    } else {
+        "auto_approved"
+    };
 
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
@@ -136,12 +150,18 @@ async fn create_request(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if emergency {
-        let token = state.token_signer.issue(&id, operation, environment, database_name, detail);
+        let token = state
+            .token_signer
+            .issue(&id, operation, environment, database_name, detail);
         state.webhooks.dispatch(crate::webhook::WebhookEvent {
             event: "break_glass".into(),
-            request_id: id.clone(), user: user.user.clone(),
-            operation: operation.into(), environment: environment.into(),
-            detail: detail.into(), approved_by: None, reason: reason.clone(),
+            request_id: id.clone(),
+            user: user.user.clone(),
+            operation: operation.into(),
+            environment: environment.into(),
+            detail: detail.into(),
+            approved_by: None,
+            reason: reason.clone(),
         });
         Ok((
             StatusCode::CREATED,
@@ -150,16 +170,22 @@ async fn create_request(
     } else if needs_approval {
         state.webhooks.dispatch(crate::webhook::WebhookEvent {
             event: "request_created".into(),
-            request_id: id.clone(), user: user.user.clone(),
-            operation: operation.into(), environment: environment.into(),
-            detail: detail.into(), approved_by: None, reason: None,
+            request_id: id.clone(),
+            user: user.user.clone(),
+            operation: operation.into(),
+            environment: environment.into(),
+            detail: detail.into(),
+            approved_by: None,
+            reason: None,
         });
         Ok((
             StatusCode::CREATED,
             Json(json!({"id": id, "status": "pending"})),
         ))
     } else {
-        let token = state.token_signer.issue(&id, operation, environment, database_name, detail);
+        let token = state
+            .token_signer
+            .issue(&id, operation, environment, database_name, detail);
         Ok((
             StatusCode::CREATED,
             Json(json!({"id": id, "status": "auto_approved", "execution_token": token})),
@@ -211,16 +237,24 @@ async fn approve_request(
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let token = state.token_signer.issue(&id, &operation, &environment, &database_name, &detail);
+    let token = state
+        .token_signer
+        .issue(&id, &operation, &environment, &database_name, &detail);
 
     state.webhooks.dispatch(crate::webhook::WebhookEvent {
         event: "request_approved".into(),
-        request_id: id.clone(), user: req_user.clone(),
-        operation: operation.clone(), environment: environment.clone(),
-        detail: detail.clone(), approved_by: Some(approver.user.clone()), reason: None,
+        request_id: id.clone(),
+        user: req_user.clone(),
+        operation: operation.clone(),
+        environment: environment.clone(),
+        detail: detail.clone(),
+        approved_by: Some(approver.user.clone()),
+        reason: None,
     });
 
-    Ok(Json(json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token})))
+    Ok(Json(
+        json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
+    ))
 }
 
 async fn reject_request(
@@ -246,7 +280,10 @@ async fn reject_request(
 
     // Only admin or the requester can reject
     if user.role != dbward_core::Role::Admin && user.user != req_user {
-        return Err((StatusCode::FORBIDDEN, "only admin or the requester can reject".into()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "only admin or the requester can reject".into(),
+        ));
     }
 
     let now = chrono::Utc::now().to_rfc3339();
@@ -265,9 +302,13 @@ async fn reject_request(
 
     state.webhooks.dispatch(crate::webhook::WebhookEvent {
         event: "request_rejected".into(),
-        request_id: id.clone(), user: user.user.clone(),
-        operation: "".into(), environment: "".into(),
-        detail: "".into(), approved_by: None, reason: None,
+        request_id: id.clone(),
+        user: user.user.clone(),
+        operation: "".into(),
+        environment: "".into(),
+        detail: "".into(),
+        approved_by: None,
+        reason: None,
     });
 
     Ok(Json(json!({"id": id, "status": "rejected"})))
@@ -298,7 +339,10 @@ async fn get_request(
 
     // Only issue token for approved/auto_approved (not executed/failed/rejected)
     if status == "approved" || status == "auto_approved" || status == "break_glass" {
-        let token = state.token_signer.issue(&id, &operation, &environment, &database_name, &detail);
+        let token =
+            state
+                .token_signer
+                .issue(&id, &operation, &environment, &database_name, &detail);
         resp["execution_token"] = serde_json::to_value(token)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
@@ -326,11 +370,17 @@ async fn complete_request(
 
     // Only the requester (or admin) can report completion
     if req_user != user.user && user.role != dbward_core::Role::Admin {
-        return Err((StatusCode::FORBIDDEN, "only the requester can report completion".into()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "only the requester can report completion".into(),
+        ));
     }
 
     if status != "approved" && status != "auto_approved" {
-        return Err((StatusCode::CONFLICT, format!("request status is {status}, expected approved")));
+        return Err((
+            StatusCode::CONFLICT,
+            format!("request status is {status}, expected approved"),
+        ));
     }
 
     let success = body["success"].as_bool().unwrap_or(false);
@@ -350,7 +400,14 @@ async fn complete_request(
         .query_row(
             "SELECT operation, environment, database_name, detail FROM requests WHERE id = ?1",
             rusqlite::params![id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
         )
         .unwrap_or_default();
 
@@ -364,9 +421,13 @@ async fn complete_request(
 
     state.webhooks.dispatch(crate::webhook::WebhookEvent {
         event: "request_completed".into(),
-        request_id: id.clone(), user: req_user.clone(),
-        operation: operation.clone(), environment: environment.clone(),
-        detail: detail.clone(), approved_by: None, reason: None,
+        request_id: id.clone(),
+        user: req_user.clone(),
+        operation: operation.clone(),
+        environment: environment.clone(),
+        detail: detail.clone(),
+        approved_by: None,
+        reason: None,
     });
 
     Ok(Json(json!({"id": id, "status": new_status})))
@@ -419,14 +480,15 @@ async fn dispatch_request(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let _user = auth::authenticate(&headers, &state).await?;
 
-    let conn = state.sqlite.lock().await;
-    let status: String = conn
-        .query_row(
+    let status: String = {
+        let conn = state.sqlite.lock().await;
+        conn.query_row(
             "SELECT status FROM requests WHERE id = ?1",
             rusqlite::params![id],
             |row| row.get(0),
         )
-        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?
+    };
 
     match status.as_str() {
         "approved" | "auto_approved" | "break_glass" => {}
@@ -434,24 +496,32 @@ async fn dispatch_request(
             return Err((StatusCode::CONFLICT, format!("request already {status}")));
         }
         _ => {
-            return Err((StatusCode::CONFLICT, format!("request status is {status}, cannot dispatch")));
+            return Err((
+                StatusCode::CONFLICT,
+                format!("request status is {status}, cannot dispatch"),
+            ));
         }
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
-        "UPDATE requests SET status = 'dispatched', updated_at = ?1 WHERE id = ?2",
-        rusqlite::params![now, id],
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    drop(conn);
-
-    // Create result slot for this request
-    let slot = std::sync::Arc::new(crate::state::ResultSlot {
+    let slot = Arc::new(crate::state::ResultSlot {
         result: tokio::sync::Mutex::new(None),
         notify: tokio::sync::Notify::new(),
+        created_at: Instant::now(),
     });
-    state.result_channels.slots.lock().await.insert(id.clone(), slot);
+    state.result_channels.insert(id.clone(), slot).await;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let update_result = {
+        let conn = state.sqlite.lock().await;
+        conn.execute(
+            "UPDATE requests SET status = 'dispatched', updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![now, id],
+        )
+    };
+    if let Err(e) = update_result {
+        let _ = state.result_channels.remove(&id).await;
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+    }
 
     Ok(Json(json!({"id": id, "status": "dispatched"})))
 }
@@ -464,22 +534,57 @@ async fn stream_result(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let _user = auth::authenticate(&headers, &state).await?;
 
-    let slot = {
-        let slots = state.result_channels.slots.lock().await;
-        slots.get(&id).cloned()
+    let slot = match state.result_channels.get(&id).await {
+        Some(slot) => slot,
+        None => {
+            let conn = state.sqlite.lock().await;
+            let status: String = conn
+                .query_row(
+                    "SELECT status FROM requests WHERE id = ?1",
+                    rusqlite::params![id],
+                    |row| row.get(0),
+                )
+                .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+            let msg = match status.as_str() {
+                "executed" | "failed" => {
+                    "result relay is no longer available for this request".to_string()
+                }
+                "approved" | "auto_approved" | "break_glass" => {
+                    "request is approved but not dispatched".to_string()
+                }
+                "dispatched" | "running" => {
+                    "result relay state is missing; retry dispatch".to_string()
+                }
+                _ => format!("request status is {status}"),
+            };
+            return Err((StatusCode::CONFLICT, msg));
+        }
     };
 
-    let slot = slot.ok_or((StatusCode::NOT_FOUND, "no pending result for this request".into()))?;
-
-    // Wait up to 5 minutes for agent to deliver result
-    let timeout = tokio::time::timeout(std::time::Duration::from_secs(300), slot.notify.notified()).await;
-    if timeout.is_err() {
-        return Err((StatusCode::GATEWAY_TIMEOUT, "timed out waiting for result".into()));
+    if let Some(payload) = slot.result.lock().await.clone() {
+        let _ = state.result_channels.remove(&id).await;
+        return Ok(Json(payload));
     }
 
-    let result = slot.result.lock().await.take();
-    // Clean up the slot
-    state.result_channels.slots.lock().await.remove(&id);
+    // Wait up to 5 minutes for agent to deliver result
+    let wait = tokio::time::timeout(std::time::Duration::from_secs(300), async {
+        loop {
+            slot.notify.notified().await;
+            if slot.result.lock().await.is_some() {
+                break;
+            }
+        }
+    })
+    .await;
+    if wait.is_err() {
+        return Err((
+            StatusCode::GATEWAY_TIMEOUT,
+            "timed out waiting for result".into(),
+        ));
+    }
+
+    let result = slot.result.lock().await.clone();
+    let _ = state.result_channels.remove(&id).await;
 
     match result {
         Some(payload) => Ok(Json(payload)),
@@ -501,11 +606,19 @@ async fn agent_poll(
 
     let databases: Vec<String> = body["databases"]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let environments: Vec<String> = body["environments"]
         .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let conn = state.sqlite.lock().await;
@@ -564,14 +677,19 @@ async fn agent_claim(
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
     if status != "dispatched" {
-        return Err((StatusCode::CONFLICT, format!("request status is {status}, cannot claim")));
+        return Err((
+            StatusCode::CONFLICT,
+            format!("request status is {status}, cannot claim"),
+        ));
     }
 
     let now = chrono::Utc::now().to_rfc3339();
     let lease_expires = (chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
     let exec_id = uuid::Uuid::new_v4().to_string();
 
-    let token = state.token_signer.issue(&id, &operation, &environment, &database, &detail);
+    let token = state
+        .token_signer
+        .issue(&id, &operation, &environment, &database, &detail);
     let token_json = serde_json::to_string(&token)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -624,7 +742,10 @@ async fn agent_result(
         .map_err(|_| (StatusCode::NOT_FOUND, "execution not found".into()))?;
 
     if exec_status != "claimed" {
-        return Err((StatusCode::CONFLICT, format!("execution status is {exec_status}")));
+        return Err((
+            StatusCode::CONFLICT,
+            format!("execution status is {exec_status}"),
+        ));
     }
 
     let new_status = if success { "completed" } else { "failed" };
@@ -668,12 +789,13 @@ async fn agent_result(
         "request_id": request_id,
     });
 
-    let slots = state.result_channels.slots.lock().await;
-    if let Some(slot) = slots.get(&request_id) {
+    if let Some(slot) = state.result_channels.get(&request_id).await {
         let mut r = slot.result.lock().await;
         *r = Some(payload);
-        slot.notify.notify_one();
+        slot.notify.notify_waiters();
     }
 
-    Ok(Json(json!({"status": req_status, "request_id": request_id})))
+    Ok(Json(
+        json!({"status": req_status, "request_id": request_id}),
+    ))
 }

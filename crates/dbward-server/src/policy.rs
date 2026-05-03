@@ -63,8 +63,15 @@ impl PolicyConfig {
         &self.default
     }
 
-    fn rule_matches(&self, rule: &PolicyRule, environment: &str, operation: &str, role: &str) -> bool {
-        let env_ok = rule.environments.is_empty() || rule.environments.iter().any(|e| e == environment);
+    fn rule_matches(
+        &self,
+        rule: &PolicyRule,
+        environment: &str,
+        operation: &str,
+        role: &str,
+    ) -> bool {
+        let env_ok =
+            rule.environments.is_empty() || rule.environments.iter().any(|e| e == environment);
         let op_ok = rule.operations.is_empty() || rule.operations.iter().any(|o| o == operation);
         let role_ok = rule.roles.is_empty() || rule.roles.iter().any(|r| r == role);
         env_ok && op_ok && role_ok
@@ -79,49 +86,78 @@ mod tests {
     fn default_policy_matches_hardcoded_behavior() {
         let p = PolicyConfig::default();
         // production + mutating → require_approval
-        assert_eq!(p.evaluate("production", "execute_query", "developer"), "require_approval");
-        assert_eq!(p.evaluate("production", "migrate_up", "developer"), "require_approval");
+        assert_eq!(
+            p.evaluate("production", "execute_query", "developer"),
+            "require_approval"
+        );
+        assert_eq!(
+            p.evaluate("production", "migrate_up", "developer"),
+            "require_approval"
+        );
         // production + read-only → auto_approve
-        assert_eq!(p.evaluate("production", "migrate_status", "developer"), "auto_approve");
-        assert_eq!(p.evaluate("production", "audit_search", "admin"), "auto_approve");
+        assert_eq!(
+            p.evaluate("production", "migrate_status", "developer"),
+            "auto_approve"
+        );
+        assert_eq!(
+            p.evaluate("production", "audit_search", "admin"),
+            "auto_approve"
+        );
         // non-production → auto_approve
-        assert_eq!(p.evaluate("staging", "execute_query", "developer"), "auto_approve");
-        assert_eq!(p.evaluate("development", "migrate_up", "admin"), "auto_approve");
+        assert_eq!(
+            p.evaluate("staging", "execute_query", "developer"),
+            "auto_approve"
+        );
+        assert_eq!(
+            p.evaluate("development", "migrate_up", "admin"),
+            "auto_approve"
+        );
     }
 
     #[test]
     fn custom_policy_staging_requires_approval() {
         let p = PolicyConfig {
             default: "require_approval".into(),
-            rules: vec![
-                PolicyRule {
-                    environments: vec!["development".into()],
-                    operations: vec![],
-                    roles: vec![],
-                    action: "auto_approve".into(),
-                },
-            ],
+            rules: vec![PolicyRule {
+                environments: vec!["development".into()],
+                operations: vec![],
+                roles: vec![],
+                action: "auto_approve".into(),
+            }],
         };
-        assert_eq!(p.evaluate("development", "execute_query", "developer"), "auto_approve");
-        assert_eq!(p.evaluate("staging", "execute_query", "developer"), "require_approval");
-        assert_eq!(p.evaluate("production", "execute_query", "developer"), "require_approval");
+        assert_eq!(
+            p.evaluate("development", "execute_query", "developer"),
+            "auto_approve"
+        );
+        assert_eq!(
+            p.evaluate("staging", "execute_query", "developer"),
+            "require_approval"
+        );
+        assert_eq!(
+            p.evaluate("production", "execute_query", "developer"),
+            "require_approval"
+        );
     }
 
     #[test]
     fn role_scoped_rule() {
         let p = PolicyConfig {
             default: "require_approval".into(),
-            rules: vec![
-                PolicyRule {
-                    environments: vec!["staging".into()],
-                    operations: vec![],
-                    roles: vec!["admin".into()],
-                    action: "auto_approve".into(),
-                },
-            ],
+            rules: vec![PolicyRule {
+                environments: vec!["staging".into()],
+                operations: vec![],
+                roles: vec!["admin".into()],
+                action: "auto_approve".into(),
+            }],
         };
-        assert_eq!(p.evaluate("staging", "execute_query", "admin"), "auto_approve");
-        assert_eq!(p.evaluate("staging", "execute_query", "developer"), "require_approval");
+        assert_eq!(
+            p.evaluate("staging", "execute_query", "admin"),
+            "auto_approve"
+        );
+        assert_eq!(
+            p.evaluate("staging", "execute_query", "developer"),
+            "require_approval"
+        );
     }
 
     #[test]
@@ -143,8 +179,14 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(p.evaluate("production", "migrate_status", "developer"), "auto_approve");
-        assert_eq!(p.evaluate("production", "execute_query", "developer"), "require_approval");
+        assert_eq!(
+            p.evaluate("production", "migrate_status", "developer"),
+            "auto_approve"
+        );
+        assert_eq!(
+            p.evaluate("production", "execute_query", "developer"),
+            "require_approval"
+        );
     }
 
     #[test]
@@ -157,7 +199,13 @@ mod tests {
             action = "require_approval"
         "#;
         let p: PolicyConfig = toml::from_str(toml).unwrap();
-        assert_eq!(p.evaluate("production", "execute_query", "developer"), "require_approval");
-        assert_eq!(p.evaluate("staging", "execute_query", "developer"), "auto_approve");
+        assert_eq!(
+            p.evaluate("production", "execute_query", "developer"),
+            "require_approval"
+        );
+        assert_eq!(
+            p.evaluate("staging", "execute_query", "developer"),
+            "auto_approve"
+        );
     }
 }

@@ -56,7 +56,8 @@ pub async fn run_stdio(
                     &client,
                     &db_name,
                     &migrations_dir,
-                ).await
+                )
+                .await
             }
             _ => json!({
                 "jsonrpc": "2.0",
@@ -112,12 +113,26 @@ async fn handle_tools_call(
         "dbward_migrate_up" => {
             let count = args["count"].as_u64().map(|n| n as usize);
             let db = args["database"].as_str().unwrap_or(db_name);
-            submit_and_wait(client, "migrate_up", env, db, &format!("count:{}", count.unwrap_or(0))).await
+            submit_and_wait(
+                client,
+                "migrate_up",
+                env,
+                db,
+                &format!("count:{}", count.unwrap_or(0)),
+            )
+            .await
         }
         "dbward_migrate_down" => {
             let count = args["count"].as_u64().map(|n| n as usize);
             let db = args["database"].as_str().unwrap_or(db_name);
-            submit_and_wait(client, "migrate_down", env, db, &format!("count:{}", count.unwrap_or(1))).await
+            submit_and_wait(
+                client,
+                "migrate_down",
+                env,
+                db,
+                &format!("count:{}", count.unwrap_or(1)),
+            )
+            .await
         }
         "dbward_migrate_create" => {
             let name = args["name"].as_str().unwrap_or("unnamed");
@@ -178,13 +193,11 @@ async fn submit_and_wait(
                 .map_err(|e| e.to_string())?;
             format_result(&resp)
         }
-        "pending" => {
-            Ok(format!(
-                "Request {req_id} requires approval. \
+        "pending" => Ok(format!(
+            "Request {req_id} requires approval. \
                  Use dbward_check_request to check status, \
                  then dbward_get_result to retrieve the result."
-            ))
-        }
+        )),
         _ => Err(format!("unexpected status: {status}")),
     }
 }
@@ -211,7 +224,10 @@ async fn check_request(
     if request_id.is_empty() {
         return Err("request_id is required".to_string());
     }
-    let resp = client.get_request(request_id).await.map_err(|e| e.to_string())?;
+    let resp = client
+        .get_request(request_id)
+        .await
+        .map_err(|e| e.to_string())?;
     let status = resp["status"].as_str().unwrap_or("unknown");
     match status {
         "pending" => Ok(format!("Request {request_id} is still pending approval.")),
@@ -219,7 +235,9 @@ async fn check_request(
             "Request {request_id} is approved. Agent will execute it. \
              Use dbward_get_result to retrieve the result."
         )),
-        "executed" => Ok(format!("Request {request_id} executed. Use dbward_get_result to see the result.")),
+        "executed" => Ok(format!(
+            "Request {request_id} executed. Use dbward_get_result to see the result."
+        )),
         "rejected" => Ok(format!("Request {request_id} was rejected.")),
         "failed" => Ok(format!("Request {request_id} execution failed.")),
         _ => Ok(format!("Request {request_id} status: {status}")),
@@ -233,16 +251,26 @@ async fn get_result(
     if request_id.is_empty() {
         return Err("request_id is required".to_string());
     }
-    let resp = client.get_request(request_id).await.map_err(|e| e.to_string())?;
+    let resp = client
+        .get_request(request_id)
+        .await
+        .map_err(|e| e.to_string())?;
     let status = resp["status"].as_str().unwrap_or("unknown");
     match status {
         "approved" | "auto_approved" | "break_glass" => {
-            let result = client.dispatch_and_wait(request_id).await.map_err(|e| e.to_string())?;
+            let result = client
+                .dispatch_and_wait(request_id)
+                .await
+                .map_err(|e| e.to_string())?;
             format_result(&result)
         }
-        "executed" => Ok("Request already executed. Result was delivered at execution time.".to_string()),
+        "executed" => {
+            Ok("Request already executed. Result was delivered at execution time.".to_string())
+        }
         "failed" => Err("Execution failed.".to_string()),
-        _ => Ok(format!("Request {request_id} is not yet approved (status: {status}).")),
+        _ => Ok(format!(
+            "Request {request_id} is not yet approved (status: {status})."
+        )),
     }
 }
 
@@ -346,7 +374,9 @@ mod tests {
     #[test]
     fn tools_definitions_include_all_tools() {
         let defs = tools_definitions();
-        let names: Vec<&str> = defs.as_array().unwrap()
+        let names: Vec<&str> = defs
+            .as_array()
+            .unwrap()
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();

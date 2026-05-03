@@ -1,5 +1,5 @@
-use dbward_core::token::ExecutionToken;
 use dbward_core::Error;
+use dbward_core::token::ExecutionToken;
 use reqwest::Client;
 use serde_json::Value;
 
@@ -56,7 +56,10 @@ impl ServerClient {
             .map_err(|e| Error::Server(format!("server request failed: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Server(format!("server returned {}: {}", status_code, text)));
+            return Err(Error::Server(format!(
+                "server returned {}: {}",
+                status_code, text
+            )));
         }
 
         let body: Value = serde_json::from_str(&text)
@@ -101,73 +104,38 @@ impl ServerClient {
             .map_err(|e| Error::Server(format!("invalid response: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Server(format!("get request failed ({}): {}", status_code, body)));
+            return Err(Error::Server(format!(
+                "get request failed ({}): {}",
+                status_code, body
+            )));
         }
         Ok(body)
-    }
-
-    /// Poll a request until it's no longer pending. Returns (status, optional token).
-    pub async fn poll_request(
-        &self,
-        request_id: &str,
-        poll_interval: std::time::Duration,
-        timeout: std::time::Duration,
-    ) -> Result<(String, Option<ExecutionToken>), Error> {
-        let start = std::time::Instant::now();
-
-        loop {
-            let resp = self
-                .client
-                .get(format!("{}/api/requests/{}", self.base_url, request_id))
-                .bearer_auth(&self.api_token)
-                .send()
-                .await
-                .map_err(|e| Error::Server(format!("poll failed: {e}")))?;
-
-            let body: Value = resp
-                .json()
-                .await
-                .map_err(|e| Error::Server(format!("invalid poll response: {e}")))?;
-
-            let status = body["status"].as_str().unwrap_or("").to_string();
-
-            match status.as_str() {
-                "pending" => {
-                    if start.elapsed() > timeout {
-                        return Err(Error::Server(
-                            "timed out waiting for approval".to_string(),
-                        ));
-                    }
-                    eprintln!("Waiting for approval... (request: {request_id})");
-                    tokio::time::sleep(poll_interval).await;
-                }
-                "approved" | "auto_approved" => {
-                    let token = serde_json::from_value(body["execution_token"].clone()).ok();
-                    return Ok((status, token));
-                }
-                _ => {
-                    return Err(Error::Server(format!("request {status}")));
-                }
-            }
-        }
     }
 
     /// Dispatch a request for execution (on-demand).
     pub async fn dispatch(&self, request_id: &str) -> Result<Value, Error> {
         let resp = self
             .client
-            .post(format!("{}/api/requests/{}/dispatch", self.base_url, request_id))
+            .post(format!(
+                "{}/api/requests/{}/dispatch",
+                self.base_url, request_id
+            ))
             .bearer_auth(&self.api_token)
             .send()
             .await
             .map_err(|e| Error::Server(format!("dispatch failed: {e}")))?;
 
         let status_code = resp.status();
-        let body: Value = resp.json().await
+        let body: Value = resp
+            .json()
+            .await
             .map_err(|e| Error::Server(format!("dispatch parse failed: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Server(format!("dispatch failed ({}): {}", status_code, body)));
+            return Err(Error::Server(format!(
+                "dispatch failed ({}): {}",
+                status_code, body
+            )));
         }
         Ok(body)
     }
@@ -176,18 +144,26 @@ impl ServerClient {
     pub async fn stream_result(&self, request_id: &str) -> Result<Value, Error> {
         let resp = self
             .client
-            .get(format!("{}/api/requests/{}/result/stream", self.base_url, request_id))
+            .get(format!(
+                "{}/api/requests/{}/result/stream",
+                self.base_url, request_id
+            ))
             .bearer_auth(&self.api_token)
             .send()
             .await
             .map_err(|e| Error::Server(format!("stream result failed: {e}")))?;
 
         let status_code = resp.status();
-        let body: Value = resp.json().await
+        let body: Value = resp
+            .json()
+            .await
             .map_err(|e| Error::Server(format!("stream result parse failed: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Server(format!("stream result failed ({}): {}", status_code, body)));
+            return Err(Error::Server(format!(
+                "stream result failed ({}): {}",
+                status_code, body
+            )));
         }
         Ok(body)
     }
@@ -243,10 +219,16 @@ impl ServerClient {
             .map_err(|e| Error::Server(format!("approve failed: {e}")))?;
 
         let status_code = resp.status();
-        let text = resp.text().await.map_err(|e| Error::Server(format!("approve failed: {e}")))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| Error::Server(format!("approve failed: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Server(format!("approve failed ({}): {}", status_code, text)));
+            return Err(Error::Server(format!(
+                "approve failed ({}): {}",
+                status_code, text
+            )));
         }
         serde_json::from_str(&text).map_err(|e| Error::Server(format!("invalid response: {e}")))
     }
@@ -265,50 +247,17 @@ impl ServerClient {
             .map_err(|e| Error::Server(format!("reject failed: {e}")))?;
 
         let status_code = resp.status();
-        let text = resp.text().await.map_err(|e| Error::Server(format!("reject failed: {e}")))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| Error::Server(format!("reject failed: {e}")))?;
 
         if !status_code.is_success() {
-            return Err(Error::Server(format!("reject failed ({}): {}", status_code, text)));
+            return Err(Error::Server(format!(
+                "reject failed ({}): {}",
+                status_code, text
+            )));
         }
         serde_json::from_str(&text).map_err(|e| Error::Server(format!("invalid response: {e}")))
-    }
-
-    /// Poll for execution result (agent posts result, client retrieves it).
-    pub async fn poll_result(
-        &self,
-        request_id: &str,
-        poll_interval: std::time::Duration,
-        timeout: std::time::Duration,
-    ) -> Result<Value, Error> {
-        let start = std::time::Instant::now();
-        loop {
-            let resp = self.get_request(request_id).await?;
-            let status = resp["status"].as_str().unwrap_or("");
-            match status {
-                "executed" => return Ok(resp),
-                "failed" => {
-                    let err = resp["execution_error"].as_str().unwrap_or("unknown error");
-                    return Err(Error::Server(format!("execution failed: {err}")));
-                }
-                "rejected" => return Err(Error::Server("request was rejected".into())),
-                "pending" | "approved" | "auto_approved" | "running" => {
-                    if start.elapsed() > timeout {
-                        return Err(Error::Server(format!(
-                            "timed out waiting for result (status: {status})"
-                        )));
-                    }
-                    eprintln!("Waiting for agent to execute... (request: {request_id}, status: {status})");
-                    tokio::select! {
-                        _ = tokio::time::sleep(poll_interval) => {}
-                        _ = tokio::signal::ctrl_c() => {
-                            eprintln!("\nInterrupted. Request {request_id} is still {status}.");
-                            eprintln!("Run: dbward resume {request_id}");
-                            return Err(Error::Server("interrupted".into()));
-                        }
-                    }
-                }
-                _ => return Err(Error::Server(format!("unexpected status: {status}"))),
-            }
-        }
     }
 }

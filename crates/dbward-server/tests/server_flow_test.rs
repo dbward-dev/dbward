@@ -46,7 +46,9 @@ async fn health_check() {
 #[tokio::test]
 async fn auto_approve_non_production() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
+    let (_, token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let resp = app
@@ -71,8 +73,12 @@ async fn auto_approve_non_production() {
 #[tokio::test]
 async fn production_requires_approval() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
-    let (_, bob_token) = auth::create_token(&state, "bob", Role::Admin).await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
+    let (_, bob_token) = auth::create_token(&state, "bob", Role::Admin)
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     // Alice creates a production request
@@ -122,7 +128,9 @@ async fn production_requires_approval() {
 #[tokio::test]
 async fn self_approve_rejected() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Admin).await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Admin)
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let resp = app
@@ -159,7 +167,9 @@ async fn self_approve_rejected() {
 #[tokio::test]
 async fn complete_flow() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     // Create auto-approved request
@@ -232,8 +242,12 @@ async fn public_key_endpoint() {
 async fn agent_full_flow() {
     // Setup: server with alice (developer) and agent tokens
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
-    let (_, agent_token) = auth::create_token(&state, "agent-1", Role::Admin).await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token(&state, "agent-1", Role::Admin)
+        .await
+        .unwrap();
 
     // 1. Alice creates a request (development → auto_approved)
     let app = routes::router(state.clone());
@@ -374,9 +388,95 @@ async fn agent_full_flow() {
 }
 
 #[tokio::test]
+async fn stream_result_after_agent_posts_still_succeeds() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token(&state, "agent-1", Role::Admin)
+        .await
+        .unwrap();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "development", "database": "app", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post(&format!("/api/agent/jobs/{request_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"agent_id": "agent-1"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    let exec_id = body["execution_id"].as_str().unwrap().to_string();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post(&format!("/api/agent/jobs/{exec_id}/result"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"success": true, "result": [{"late": true}]}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let app = routes::router(state);
+    let resp = app
+        .oneshot(
+            Request::get(&format!("/api/requests/{request_id}/result/stream"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["result"], json!([{"late": true}]));
+}
+
+#[tokio::test]
 async fn agent_poll_empty_when_no_approved() {
     let state = test_state();
-    let (_, agent_token) = auth::create_token(&state, "agent-1", Role::Admin).await.unwrap();
+    let (_, agent_token) = auth::create_token(&state, "agent-1", Role::Admin)
+        .await
+        .unwrap();
 
     let app = routes::router(state);
     let resp = app
@@ -397,8 +497,12 @@ async fn agent_poll_empty_when_no_approved() {
 #[tokio::test]
 async fn agent_cannot_claim_pending() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
-    let (_, agent_token) = auth::create_token(&state, "agent-1", Role::Admin).await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token(&state, "agent-1", Role::Admin)
+        .await
+        .unwrap();
 
     // Create production request (pending)
     let app = routes::router(state.clone());

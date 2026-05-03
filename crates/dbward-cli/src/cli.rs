@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
@@ -9,9 +8,6 @@ use crate::config_loader;
 use crate::mcp;
 use crate::oidc_login;
 use crate::server_client;
-
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
-const POLL_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Parser)]
 #[command(name = "dbward", about = "DB operations workflow + approval engine")]
@@ -138,7 +134,9 @@ enum MigrateAction {
         count: usize,
     },
     Status,
-    Create { name: String },
+    Create {
+        name: String,
+    },
 }
 
 fn parse_role(s: &str) -> Result<dbward_core::Role, String> {
@@ -182,9 +180,14 @@ async fn authenticate(config: &ClientConfig) -> Result<(String, String), dbward_
 pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
     // Commands that don't need config/auth
     match &cli.command {
-        Command::Init { non_interactive, force } => return run_init(&cli, *non_interactive, *force),
+        Command::Init {
+            non_interactive,
+            force,
+        } => return run_init(&cli, *non_interactive, *force),
         Command::Logout => {
-            oidc_login::logout().await.map_err(dbward_core::Error::Auth)?;
+            oidc_login::logout()
+                .await
+                .map_err(dbward_core::Error::Auth)?;
             return Ok(());
         }
         Command::Whoami => {
@@ -192,11 +195,15 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             return Ok(());
         }
         Command::Server { action } => return run_server_command(action).await,
-        Command::Agent { config: agent_config_path } => {
-            let content = std::fs::read_to_string(&agent_config_path)
-                .map_err(|e| dbward_core::Error::Config(format!("{}: {e}", agent_config_path.display())))?;
-            let agent_config: dbward_core::AgentConfig = toml::from_str(&content)
-                .map_err(|e| dbward_core::Error::Config(format!("{}: {e}", agent_config_path.display())))?;
+        Command::Agent {
+            config: agent_config_path,
+        } => {
+            let content = std::fs::read_to_string(&agent_config_path).map_err(|e| {
+                dbward_core::Error::Config(format!("{}: {e}", agent_config_path.display()))
+            })?;
+            let agent_config: dbward_core::AgentConfig = toml::from_str(&content).map_err(|e| {
+                dbward_core::Error::Config(format!("{}: {e}", agent_config_path.display()))
+            })?;
             return dbward_agent::run(agent_config).await;
         }
         _ => {}
@@ -206,18 +213,25 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
 
     // Login needs OIDC config but not full auth
     if let Command::Login { device } = &cli.command {
-        let oc = config.server.oidc.as_ref()
+        let oc = config
+            .server
+            .oidc
+            .as_ref()
             .ok_or_else(|| dbward_core::Error::Config("[server.oidc] not configured".into()))?;
         if *device {
             oidc_login::login_device(&oc.issuer, &oc.client_id, oc.discovery_url.as_deref()).await
         } else {
             oidc_login::login(&oc.issuer, &oc.client_id, oc.discovery_url.as_deref()).await
-        }.map_err(dbward_core::Error::Auth)?;
+        }
+        .map_err(dbward_core::Error::Auth)?;
         return Ok(());
     }
 
     // Migrate create is local-only (just creates a file)
-    if let Command::Migrate { action: MigrateAction::Create { ref name } } = cli.command {
+    if let Command::Migrate {
+        action: MigrateAction::Create { ref name },
+    } = cli.command
+    {
         let db_name = config.resolve_database_name(cli.database.as_deref())?;
         let migrations_dir = config.migrations_dir_for(&db_name);
         let migrator = dbward_migrate::Migrator::new_local(migrations_dir);
@@ -232,9 +246,20 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
     let env_str = cli.environment.as_deref().unwrap_or("development");
 
     match cli.command {
-        Command::Execute { ref sql, emergency, ref reason } => {
+        Command::Execute {
+            ref sql,
+            emergency,
+            ref reason,
+        } => {
             let (id, status, _token) = sc
-                .create_request("execute_query", env_str, &db_name, sql, emergency, reason.as_deref())
+                .create_request(
+                    "execute_query",
+                    env_str,
+                    &db_name,
+                    sql,
+                    emergency,
+                    reason.as_deref(),
+                )
                 .await?;
 
             match status.as_str() {
@@ -246,13 +271,19 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     eprintln!("Request {id} requires approval.");
                     eprintln!("Run: dbward resume {id}");
                 }
-                _ => return Err(dbward_core::Error::Server(format!("unexpected status: {status}"))),
+                _ => {
+                    return Err(dbward_core::Error::Server(format!(
+                        "unexpected status: {status}"
+                    )));
+                }
             }
             Ok(())
         }
         Command::Migrate { ref action } => {
             let (operation, detail) = match action {
-                MigrateAction::Up { count } => ("migrate_up", format!("count:{}", count.unwrap_or(0))),
+                MigrateAction::Up { count } => {
+                    ("migrate_up", format!("count:{}", count.unwrap_or(0)))
+                }
                 MigrateAction::Down { count } => ("migrate_down", format!("count:{count}")),
                 MigrateAction::Status => ("migrate_status", String::new()),
                 MigrateAction::Create { .. } => unreachable!(),
@@ -271,7 +302,11 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     eprintln!("Request {id} requires approval.");
                     eprintln!("Run: dbward resume {id}");
                 }
-                _ => return Err(dbward_core::Error::Server(format!("unexpected status: {status}"))),
+                _ => {
+                    return Err(dbward_core::Error::Server(format!(
+                        "unexpected status: {status}"
+                    )));
+                }
             }
             Ok(())
         }
@@ -288,7 +323,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         Command::List => {
             let body = sc.list_requests().await?;
             let empty = vec![];
-            let requests = body["requests"].as_array()
+            let requests = body["requests"]
+                .as_array()
                 .or_else(|| body.as_array())
                 .unwrap_or(&empty);
             if requests.is_empty() {
@@ -301,7 +337,11 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     let op = r["operation"].as_str().unwrap_or("?");
                     let env = r["environment"].as_str().unwrap_or("?");
                     let detail = r["detail"].as_str().unwrap_or("");
-                    let short = if detail.len() > 60 { &detail[..60] } else { detail };
+                    let short = if detail.len() > 60 {
+                        &detail[..60]
+                    } else {
+                        detail
+                    };
                     println!("[{status}] {id}  {user}  {op}  {env}  {short}");
                 }
             }
@@ -312,16 +352,18 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             print_execution_result(&resp);
             Ok(())
         }
-        Command::Mcp => {
-            mcp::run_stdio(config, cli.database.as_deref(), sc).await
-        }
+        Command::Mcp => mcp::run_stdio(config, cli.database.as_deref(), sc).await,
         Command::Audit => {
             println!("Audit search: not yet implemented.");
             Ok(())
         }
         // Handled above
-        Command::Init { .. } | Command::Login { .. } | Command::Logout
-        | Command::Whoami | Command::Server { .. } | Command::Agent { .. } => unreachable!(),
+        Command::Init { .. }
+        | Command::Login { .. }
+        | Command::Logout
+        | Command::Whoami
+        | Command::Server { .. }
+        | Command::Agent { .. } => unreachable!(),
     }
 }
 
@@ -337,7 +379,10 @@ fn print_execution_result(resp: &serde_json::Value) {
         } else if let Some(text) = result.as_str() {
             println!("{text}");
         } else {
-            println!("{}", serde_json::to_string_pretty(result).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(result).unwrap_or_default()
+            );
         }
     } else {
         println!("Executed successfully.");
@@ -350,10 +395,15 @@ fn print_execution_result(resp: &serde_json::Value) {
 
 async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Error> {
     match action {
-        ServerAction::Start { listen, data, config: server_config_path } => {
+        ServerAction::Start {
+            listen,
+            data,
+            config: server_config_path,
+        } => {
             let server_cfg = dbward_server::server_config::ServerConfig::load(
                 std::path::Path::new(server_config_path),
-            ).map_err(dbward_core::Error::Server)?;
+            )
+            .map_err(dbward_core::Error::Server)?;
 
             let conn = rusqlite::Connection::open(data)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
@@ -384,7 +434,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 policy: std::sync::Arc::new(server_cfg.policy),
                 result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
             };
-            let addr: std::net::SocketAddr = listen.parse()
+            let addr: std::net::SocketAddr = listen
+                .parse()
                 .map_err(|e: std::net::AddrParseError| dbward_core::Error::Server(e.to_string()))?;
             dbward_server::start(addr, state).await
         }
@@ -402,13 +453,16 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 let state = dbward_server::AppState {
                     sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
-                    webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+                    webhooks: std::sync::Arc::new(
+                        dbward_server::webhook::WebhookDispatcher::empty(),
+                    ),
                     oidc: None,
                     auth_mode: "token".to_string(),
                     policy: std::sync::Arc::new(Default::default()),
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                 };
-                let (token_id, raw_token) = dbward_server::auth::create_token(&state, user, *role).await
+                let (token_id, raw_token) = dbward_server::auth::create_token(&state, user, *role)
+                    .await
                     .map_err(dbward_core::Error::Server)?;
                 println!("Token created:");
                 println!("  ID:    {token_id}");
@@ -429,13 +483,16 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 let state = dbward_server::AppState {
                     sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
-                    webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+                    webhooks: std::sync::Arc::new(
+                        dbward_server::webhook::WebhookDispatcher::empty(),
+                    ),
                     oidc: None,
                     auth_mode: "token".to_string(),
                     policy: std::sync::Arc::new(Default::default()),
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                 };
-                dbward_server::auth::revoke_token(&state, id).await
+                dbward_server::auth::revoke_token(&state, id)
+                    .await
                     .map_err(dbward_core::Error::Server)?;
                 println!("Token {id} revoked.");
                 Ok(())
@@ -460,13 +517,19 @@ fn run_init(cli: &Cli, non_interactive: bool, force: bool) -> Result<(), dbward_
     }
 
     let prompt = |msg: &str, default: &str| -> String {
-        if non_interactive { return default.to_string(); }
+        if non_interactive {
+            return default.to_string();
+        }
         eprint!("{msg} [{default}]: ");
         io::stderr().flush().ok();
         let mut line = String::new();
         io::stdin().lock().read_line(&mut line).ok();
         let trimmed = line.trim();
-        if trimmed.is_empty() { default.to_string() } else { trimmed.to_string() }
+        if trimmed.is_empty() {
+            default.to_string()
+        } else {
+            trimmed.to_string()
+        }
     };
 
     let server_url = prompt("Server URL", "http://localhost:3000");
@@ -495,8 +558,14 @@ mod tests {
     #[test]
     fn parse_role_valid() {
         assert!(matches!(parse_role("admin"), Ok(dbward_core::Role::Admin)));
-        assert!(matches!(parse_role("developer"), Ok(dbward_core::Role::Developer)));
-        assert!(matches!(parse_role("readonly"), Ok(dbward_core::Role::Readonly)));
+        assert!(matches!(
+            parse_role("developer"),
+            Ok(dbward_core::Role::Developer)
+        ));
+        assert!(matches!(
+            parse_role("readonly"),
+            Ok(dbward_core::Role::Readonly)
+        ));
     }
 
     #[test]

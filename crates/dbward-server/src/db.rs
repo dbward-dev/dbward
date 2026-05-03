@@ -90,6 +90,25 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
         ",
     )?;
 
+    recover_in_flight_requests(conn)?;
+
+    Ok(())
+}
+
+fn recover_in_flight_requests(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE requests
+         SET status = 'approved', updated_at = ?1
+         WHERE status IN ('dispatched', 'running')",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "UPDATE agent_executions
+         SET status = 'failed', finished_at = ?1, error_message = COALESCE(error_message, 'server restarted before result relay completed')
+         WHERE status = 'claimed'",
+        rusqlite::params![now],
+    )?;
     Ok(())
 }
 
@@ -123,5 +142,59 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         init(&conn).unwrap();
         init(&conn).unwrap();
+    }
+
+    #[test]
+    fn init_recovers_in_flight_requests() {
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at)
+             VALUES ('req-1', 'alice', 'execute_query', 'development', 'app', 'dispatched', 'SELECT 1', 't1', 't1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at)
+             VALUES ('req-2', 'alice', 'execute_query', 'development', 'app', 'running', 'SELECT 1', 't1', 't1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_executions (id, request_id, agent_id, status, execution_token_json, lease_expires_at, started_at, created_at)
+             VALUES ('exec-1', 'req-2', 'agent-1', 'claimed', '{}', 't2', 't1', 't1')",
+            [],
+        )
+        .unwrap();
+
+        init(&conn).unwrap();
+
+        let req1: String = conn
+            .query_row(
+                "SELECT status FROM requests WHERE id = 'req-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let req2: String = conn
+            .query_row(
+                "SELECT status FROM requests WHERE id = 'req-2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let exec1: (String, Option<String>) = conn
+            .query_row(
+                "SELECT status, error_message FROM agent_executions WHERE id = 'exec-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+
+        assert_eq!(req1, "approved");
+        assert_eq!(req2, "approved");
+        assert_eq!(exec1.0, "failed");
+        assert!(exec1.1.unwrap().contains("server restarted"));
     }
 }

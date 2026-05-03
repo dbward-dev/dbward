@@ -26,8 +26,7 @@ impl TokenSigner {
             let mut rng = rand::rngs::OsRng {};
             let key = SigningKey::generate(&mut rng);
             std::fs::write(&key_path, key.to_bytes()).map_err(|e| e.to_string())?;
-            std::fs::write(&pub_path, key.verifying_key().to_bytes())
-                .map_err(|e| e.to_string())?;
+            std::fs::write(&pub_path, key.verifying_key().to_bytes()).map_err(|e| e.to_string())?;
             eprintln!("Generated signing keypair: {}", pub_path.display());
             key
         };
@@ -58,7 +57,14 @@ impl TokenSigner {
         let issued_at = Utc::now().to_rfc3339();
         let expires_at = (Utc::now() + Duration::hours(1)).to_rfc3339();
 
-        let message = token_message(request_id, operation, environment, database, &detail_hash, &expires_at);
+        let message = token_message(
+            request_id,
+            operation,
+            environment,
+            database,
+            &detail_hash,
+            &expires_at,
+        );
         let signature = self.signing_key.sign(message.as_bytes());
 
         ExecutionToken {
@@ -81,7 +87,13 @@ mod tests {
     #[test]
     fn issue_and_verify() {
         let signer = TokenSigner::generate();
-        let token = signer.issue("req_1", "migrate_up", "production", "default", "20260501_create_users.sql");
+        let token = signer.issue(
+            "req_1",
+            "migrate_up",
+            "production",
+            "default",
+            "20260501_create_users.sql",
+        );
 
         let result = verify_token(
             &token,

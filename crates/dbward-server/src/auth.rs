@@ -62,15 +62,22 @@ pub async fn revoke_token(state: &AppState, token_id: &str) -> Result<(), String
 
 /// Authenticate a request by extracting and verifying the Bearer token.
 /// Supports both API tokens (dbw_) and OIDC JWTs (eyJ).
-pub async fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<AuthUser, (StatusCode, String)> {
+pub async fn authenticate(
+    headers: &HeaderMap,
+    state: &AppState,
+) -> Result<AuthUser, (StatusCode, String)> {
     let header = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
-        .ok_or((StatusCode::UNAUTHORIZED, "missing Authorization header".into()))?;
+        .ok_or((
+            StatusCode::UNAUTHORIZED,
+            "missing Authorization header".into(),
+        ))?;
 
-    let raw_token = header
-        .strip_prefix("Bearer ")
-        .ok_or((StatusCode::UNAUTHORIZED, "invalid Authorization format".into()))?;
+    let raw_token = header.strip_prefix("Bearer ").ok_or((
+        StatusCode::UNAUTHORIZED,
+        "invalid Authorization format".into(),
+    ))?;
 
     // Route by token prefix
     if raw_token.starts_with("eyJ") {
@@ -78,9 +85,13 @@ pub async fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<AuthU
         if state.auth_mode == "token" {
             return Err((StatusCode::UNAUTHORIZED, "OIDC not configured".into()));
         }
-        let oidc = state.oidc.as_ref()
-            .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "OIDC verifier not initialized".into()))?;
-        let (identity, role) = oidc.verify(raw_token).await
+        let oidc = state.oidc.as_ref().ok_or((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "OIDC verifier not initialized".into(),
+        ))?;
+        let (identity, role) = oidc
+            .verify(raw_token)
+            .await
             .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
         Ok(AuthUser {
             token_id: format!("oidc:{identity}"),
@@ -90,13 +101,19 @@ pub async fn authenticate(headers: &HeaderMap, state: &AppState) -> Result<AuthU
     } else {
         // API token
         if state.auth_mode == "oidc" {
-            return Err((StatusCode::UNAUTHORIZED, "API tokens disabled, use OIDC".into()));
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                "API tokens disabled, use OIDC".into(),
+            ));
         }
         authenticate_api_token(raw_token, state).await
     }
 }
 
-async fn authenticate_api_token(raw_token: &str, state: &AppState) -> Result<AuthUser, (StatusCode, String)> {
+async fn authenticate_api_token(
+    raw_token: &str,
+    state: &AppState,
+) -> Result<AuthUser, (StatusCode, String)> {
     let prefix = token_prefix(raw_token);
     let hash = hash_token(raw_token);
 
@@ -114,7 +131,12 @@ async fn authenticate_api_token(raw_token: &str, state: &AppState) -> Result<Aut
                 "admin" => Role::Admin,
                 "developer" => Role::Developer,
                 "readonly" => Role::Readonly,
-                _ => return Err((StatusCode::INTERNAL_SERVER_ERROR, "invalid role in db".into())),
+                _ => {
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "invalid role in db".into(),
+                    ));
+                }
             };
             Ok(AuthUser {
                 token_id: id,
@@ -150,10 +172,15 @@ mod tests {
     #[tokio::test]
     async fn create_and_verify_token() {
         let state = test_state();
-        let (token_id, raw_token) = create_token(&state, "alice", Role::Developer).await.unwrap();
+        let (token_id, raw_token) = create_token(&state, "alice", Role::Developer)
+            .await
+            .unwrap();
 
         let mut headers = HeaderMap::new();
-        headers.insert("authorization", format!("Bearer {raw_token}").parse().unwrap());
+        headers.insert(
+            "authorization",
+            format!("Bearer {raw_token}").parse().unwrap(),
+        );
 
         let user = authenticate(&headers, &state).await.unwrap();
         assert_eq!(user.user, "alice");
@@ -168,7 +195,10 @@ mod tests {
         revoke_token(&state, &token_id).await.unwrap();
 
         let mut headers = HeaderMap::new();
-        headers.insert("authorization", format!("Bearer {raw_token}").parse().unwrap());
+        headers.insert(
+            "authorization",
+            format!("Bearer {raw_token}").parse().unwrap(),
+        );
 
         assert!(authenticate(&headers, &state).await.is_err());
     }
@@ -185,10 +215,15 @@ mod tests {
     #[tokio::test]
     async fn wrong_token_rejected() {
         let state = test_state();
-        create_token(&state, "alice", Role::Developer).await.unwrap();
+        create_token(&state, "alice", Role::Developer)
+            .await
+            .unwrap();
 
         let mut headers = HeaderMap::new();
-        headers.insert("authorization", "Bearer dbw_00000000aaaabbbbccccddddeeee".parse().unwrap());
+        headers.insert(
+            "authorization",
+            "Bearer dbw_00000000aaaabbbbccccddddeeee".parse().unwrap(),
+        );
 
         assert!(authenticate(&headers, &state).await.is_err());
     }
@@ -196,7 +231,9 @@ mod tests {
     #[tokio::test]
     async fn prefix_collision_still_authenticates() {
         let state = test_state();
-        let (_, token_a) = create_token(&state, "alice", Role::Developer).await.unwrap();
+        let (_, token_a) = create_token(&state, "alice", Role::Developer)
+            .await
+            .unwrap();
 
         // Insert a second token with the same prefix but different hash
         let prefix_a = token_prefix(&token_a);
@@ -210,7 +247,10 @@ mod tests {
 
         // alice's token should still work despite prefix collision
         let mut h = HeaderMap::new();
-        h.insert("authorization", format!("Bearer {token_a}").parse().unwrap());
+        h.insert(
+            "authorization",
+            format!("Bearer {token_a}").parse().unwrap(),
+        );
         let user = authenticate(&h, &state).await.unwrap();
         assert_eq!(user.user, "alice");
     }

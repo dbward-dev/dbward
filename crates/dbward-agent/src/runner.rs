@@ -38,7 +38,13 @@ async fn poll_once(
     client: &AgentClient,
     public_key: &ed25519_dalek::VerifyingKey,
 ) {
-    let jobs = match client.poll(&config.capabilities.databases, &config.capabilities.environments).await {
+    let jobs = match client
+        .poll(
+            &config.capabilities.databases,
+            &config.capabilities.environments,
+        )
+        .await
+    {
         Ok(j) => j,
         Err(e) => {
             error!("poll failed: {e}");
@@ -67,7 +73,8 @@ async fn execute_job(
 ) -> Result<(), Error> {
     // Claim
     let claim = client.claim(request_id, &config.agent_id).await?;
-    let exec_id = claim["execution_id"].as_str()
+    let exec_id = claim["execution_id"]
+        .as_str()
         .ok_or_else(|| Error::Server("missing execution_id in claim".into()))?;
     let operation = claim["operation"].as_str().unwrap_or("");
     let environment = claim["environment"].as_str().unwrap_or("");
@@ -94,8 +101,8 @@ async fn execute_job(
 
     let (result_value, success) = match execute_operation(&resolved, env, operation, detail).await {
         Ok(text) => {
-            let val: serde_json::Value = serde_json::from_str(&text)
-                .unwrap_or(serde_json::Value::String(text));
+            let val: serde_json::Value =
+                serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
             (Some(val), true)
         }
         Err(e) => {
@@ -107,7 +114,9 @@ async fn execute_job(
     };
 
     info!(request_id, "execution completed");
-    client.send_result(exec_id, success, result_value, None).await?;
+    client
+        .send_result(exec_id, success, result_value, None)
+        .await?;
     Ok(())
 }
 
@@ -120,12 +129,13 @@ async fn execute_operation(
     match operation {
         "execute_query" => {
             let mut engine = Engine::new(resolved, env).await?;
-            let result = engine.execute_query("agent", Role::Developer, detail).await?;
+            let result = engine
+                .execute_query("agent", Role::Developer, detail)
+                .await?;
             if result.rows.is_empty() {
                 Ok(format!("Rows affected: {}", result.rows_affected))
             } else {
-                serde_json::to_string_pretty(&result.rows)
-                    .map_err(|e| Error::Server(e.to_string()))
+                serde_json::to_string_pretty(&result.rows).map_err(|e| Error::Server(e.to_string()))
             }
         }
         "migrate_up" => {
@@ -137,7 +147,11 @@ async fn execute_operation(
             if r.applied.is_empty() {
                 Ok("No pending migrations.".into())
             } else {
-                Ok(format!("Applied {} migration(s):\n{}", r.applied.len(), r.applied.join("\n")))
+                Ok(format!(
+                    "Applied {} migration(s):\n{}",
+                    r.applied.len(),
+                    r.applied.join("\n")
+                ))
             }
         }
         "migrate_down" => {
@@ -158,10 +172,14 @@ async fn execute_operation(
             if statuses.is_empty() {
                 Ok("No migration files found.".into())
             } else {
-                Ok(statuses.iter().map(|s| {
-                    let mark = if s.applied { "[x]" } else { "[ ]" };
-                    format!("{mark} {}_{}", s.version, s.name)
-                }).collect::<Vec<_>>().join("\n"))
+                Ok(statuses
+                    .iter()
+                    .map(|s| {
+                        let mark = if s.applied { "[x]" } else { "[ ]" };
+                        format!("{mark} {}_{}", s.version, s.name)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"))
             }
         }
         _ => Err(Error::Server(format!("unsupported operation: {operation}"))),

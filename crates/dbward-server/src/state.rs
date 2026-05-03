@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use dbward_core::Role;
@@ -14,6 +15,7 @@ use crate::webhook::WebhookDispatcher;
 pub struct ResultSlot {
     pub result: Mutex<Option<serde_json::Value>>,
     pub notify: tokio::sync::Notify,
+    pub created_at: Instant,
 }
 
 /// In-memory channels for relaying query results from agent to CLI.
@@ -22,10 +24,34 @@ pub struct ResultChannels {
 }
 
 impl ResultChannels {
+    const SLOT_TTL: Duration = Duration::from_secs(600);
+
     pub fn new() -> Self {
         Self {
             slots: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub async fn insert(&self, request_id: String, slot: Arc<ResultSlot>) {
+        self.cleanup_expired().await;
+        self.slots.lock().await.insert(request_id, slot);
+    }
+
+    pub async fn get(&self, request_id: &str) -> Option<Arc<ResultSlot>> {
+        self.cleanup_expired().await;
+        self.slots.lock().await.get(request_id).cloned()
+    }
+
+    pub async fn remove(&self, request_id: &str) -> Option<Arc<ResultSlot>> {
+        self.slots.lock().await.remove(request_id)
+    }
+
+    async fn cleanup_expired(&self) {
+        let now = Instant::now();
+        self.slots
+            .lock()
+            .await
+            .retain(|_, slot| now.duration_since(slot.created_at) < Self::SLOT_TTL);
     }
 }
 
