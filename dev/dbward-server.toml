@@ -16,3 +16,22 @@ role = "admin"
 claim = "groups"
 value = "dbward-developers"
 role = "developer"
+
+# Workflow definitions (synced to SQLite on startup)
+[[workflows]]
+database = "*"
+environment = "development"
+steps = []
+
+[[workflows]]
+database = "*"
+environment = "staging"
+steps = []
+
+[[workflows]]
+database = "*"
+environment = "production"
+
+[[workflows.steps]]
+type = "approval"
+min_approvals = 1

@@ -43,6 +43,16 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/audit", get(list_audit))
         .route("/api/public-key", get(get_public_key))
+        .route(
+            "/api/workflows",
+            get(list_workflows).post(create_workflow),
+        )
+        .route(
+            "/api/workflows/{id}",
+            get(get_workflow)
+                .put(update_workflow)
+                .delete(delete_workflow),
+        )
         .with_state(state)
 }
 
@@ -124,12 +134,10 @@ async fn create_request(
         ));
     }
 
-    // Policy evaluation
-    let needs_approval = !emergency
-        && state
-            .policy
-            .evaluate(environment, operation, &user.role.to_string())
-            == "require_approval";
+    // Workflow evaluation: check workflows table first, fall back to static policy
+    let conn = state.sqlite.lock().await;
+    let workflow_action = crate::db::evaluate_workflow(&conn, database_name, environment, operation);
+    let needs_approval = !emergency && workflow_action == "require_approval";
 
     let status = if emergency {
         "break_glass"
@@ -142,7 +150,6 @@ async fn create_request(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    let conn = state.sqlite.lock().await;
     conn.execute(
         "INSERT INTO requests (id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, emergency, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![id, user.user, operation, environment, database_name, detail, status, now, now, emergency, reason],
@@ -798,4 +805,170 @@ async fn agent_result(
     Ok(Json(
         json!({"status": req_status, "request_id": request_id}),
     ))
+}
+
+// ---------------------------------------------------------------------------
+// Workflow CRUD (admin only)
+// ---------------------------------------------------------------------------
+
+async fn list_workflows(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let _user = auth::authenticate(&headers, &state).await?;
+
+    let conn = state.sqlite.lock().await;
+    let mut stmt = conn
+        .prepare("SELECT id, database_name, environment, operations_json, steps_json, source, created_at, updated_at FROM workflows ORDER BY database_name, environment")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map([], |row| {
+            let ops: serde_json::Value = serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
+            let steps: serde_json::Value = serde_json::from_str(row.get::<_, String>(4)?.as_str()).unwrap_or_default();
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "database": row.get::<_, String>(1)?,
+                "environment": row.get::<_, String>(2)?,
+                "operations": ops,
+                "steps": steps,
+                "source": row.get::<_, String>(5)?,
+                "created_at": row.get::<_, String>(6)?,
+                "updated_at": row.get::<_, String>(7)?,
+            }))
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(Json(json!({"workflows": rows})))
+}
+
+async fn get_workflow(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let _user = auth::authenticate(&headers, &state).await?;
+
+    let conn = state.sqlite.lock().await;
+    let row = conn
+        .query_row(
+            "SELECT id, database_name, environment, operations_json, steps_json, source, created_at, updated_at FROM workflows WHERE id = ?1",
+            rusqlite::params![id],
+            |row| {
+                let ops: serde_json::Value = serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
+                let steps: serde_json::Value = serde_json::from_str(row.get::<_, String>(4)?.as_str()).unwrap_or_default();
+                Ok(json!({
+                    "id": row.get::<_, String>(0)?,
+                    "database": row.get::<_, String>(1)?,
+                    "environment": row.get::<_, String>(2)?,
+                    "operations": ops,
+                    "steps": steps,
+                    "source": row.get::<_, String>(5)?,
+                    "created_at": row.get::<_, String>(6)?,
+                    "updated_at": row.get::<_, String>(7)?,
+                }))
+            },
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "workflow not found".into()))?;
+
+    Ok(Json(row))
+}
+
+async fn create_workflow(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user = auth::authenticate(&headers, &state).await?;
+    if user.role != dbward_core::Role::Admin {
+        return Err((StatusCode::FORBIDDEN, "admin only".into()));
+    }
+
+    let database = body["database"].as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
+    let environment = body["environment"].as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
+    let operations = body.get("operations").cloned().unwrap_or(json!([]));
+    let steps = body.get("steps").cloned().unwrap_or(json!([]));
+
+    let id = format!("{database}:{environment}");
+    let ops_json = operations.to_string();
+    let steps_json = steps.to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let conn = state.sqlite.lock().await;
+    conn.execute(
+        "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, source, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'api', ?6, ?6)",
+        rusqlite::params![id, database, environment, ops_json, steps_json, now],
+    )
+    .map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            (StatusCode::CONFLICT, format!("workflow for {database}:{environment} already exists"))
+        } else {
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        }
+    })?;
+
+    Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
+}
+
+async fn update_workflow(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user = auth::authenticate(&headers, &state).await?;
+    if user.role != dbward_core::Role::Admin {
+        return Err((StatusCode::FORBIDDEN, "admin only".into()));
+    }
+
+    let conn = state.sqlite.lock().await;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    // Check exists
+    conn.query_row("SELECT id FROM workflows WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
+        .map_err(|_| (StatusCode::NOT_FOUND, "workflow not found".into()))?;
+
+    if let Some(steps) = body.get("steps") {
+        conn.execute(
+            "UPDATE workflows SET steps_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![steps.to_string(), now, id],
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    if let Some(ops) = body.get("operations") {
+        conn.execute(
+            "UPDATE workflows SET operations_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![ops.to_string(), now, id],
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    Ok(Json(json!({"id": id, "updated": true})))
+}
+
+async fn delete_workflow(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user = auth::authenticate(&headers, &state).await?;
+    if user.role != dbward_core::Role::Admin {
+        return Err((StatusCode::FORBIDDEN, "admin only".into()));
+    }
+
+    let conn = state.sqlite.lock().await;
+    let changes = conn
+        .execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if changes == 0 {
+        return Err((StatusCode::NOT_FOUND, "workflow not found".into()));
+    }
+
+    Ok(Json(json!({"id": id, "deleted": true})))
 }

@@ -87,6 +87,18 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_agent_exec_request ON agent_executions(request_id);
         CREATE INDEX IF NOT EXISTS idx_agent_exec_agent ON agent_executions(agent_id, status);
         CREATE INDEX IF NOT EXISTS idx_audit_request ON audit_log(request_id);
+
+        CREATE TABLE IF NOT EXISTS workflows (
+            id TEXT PRIMARY KEY,
+            database_name TEXT NOT NULL,
+            environment TEXT NOT NULL,
+            operations_json TEXT NOT NULL DEFAULT '[]',
+            steps_json TEXT NOT NULL DEFAULT '[]',
+            source TEXT NOT NULL DEFAULT 'api',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(database_name, environment)
+        );
         ",
     )?;
 
@@ -110,6 +122,89 @@ fn recover_in_flight_requests(conn: &Connection) -> Result<(), rusqlite::Error> 
         rusqlite::params![now],
     )?;
     Ok(())
+}
+
+/// Sync workflows from TOML config into SQLite. Only touches source='toml' rows.
+pub fn sync_workflows(
+    conn: &Connection,
+    workflows: &[crate::server_config::WorkflowDef],
+) -> Result<(), rusqlite::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    for w in workflows {
+        let id = format!("{}:{}", w.database, w.environment);
+        let ops_json = serde_json::to_string(&w.operations).unwrap_or_else(|_| "[]".into());
+        let steps_json = serde_json::to_string(&w.steps).unwrap_or_else(|_| "[]".into());
+        conn.execute(
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'toml', ?6, ?6)
+             ON CONFLICT(database_name, environment) DO UPDATE SET
+               operations_json = ?4, steps_json = ?5, updated_at = ?6
+             WHERE source = 'toml'",
+            rusqlite::params![id, w.database, w.environment, ops_json, steps_json, now],
+        )?;
+    }
+    Ok(())
+}
+
+/// Evaluate workflow for a request. Returns "auto_approve" or "require_approval".
+pub fn evaluate_workflow(
+    conn: &Connection,
+    database: &str,
+    environment: &str,
+    _operation: &str,
+) -> String {
+    // Try exact match: database + environment
+    let result: Option<String> = conn
+        .query_row(
+            "SELECT steps_json FROM workflows WHERE database_name = ?1 AND environment = ?2",
+            rusqlite::params![database, environment],
+            |row| row.get(0),
+        )
+        .ok();
+
+    // Try wildcard: * + environment
+    let result = result.or_else(|| {
+        conn.query_row(
+            "SELECT steps_json FROM workflows WHERE database_name = '*' AND environment = ?1",
+            rusqlite::params![environment],
+            |row| row.get(0),
+        )
+        .ok()
+    });
+
+    // Try wildcard: database + *
+    let result = result.or_else(|| {
+        conn.query_row(
+            "SELECT steps_json FROM workflows WHERE database_name = ?1 AND environment = '*'",
+            rusqlite::params![database],
+            |row| row.get(0),
+        )
+        .ok()
+    });
+
+    // Try wildcard: * + *
+    let result = result.or_else(|| {
+        conn.query_row(
+            "SELECT steps_json FROM workflows WHERE database_name = '*' AND environment = '*'",
+            rusqlite::params![],
+            |row| row.get(0),
+        )
+        .ok()
+    });
+
+    match result {
+        Some(steps_json) => {
+            let steps: Vec<serde_json::Value> =
+                serde_json::from_str(&steps_json).unwrap_or_default();
+            if steps.is_empty() {
+                "auto_approve".into()
+            } else {
+                "require_approval".into()
+            }
+        }
+        // No workflow defined → fall back to require_approval (safe default)
+        None => "require_approval".into(),
+    }
 }
 
 #[cfg(test)]

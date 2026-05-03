@@ -13,6 +13,33 @@ use dbward_server::{AppState, ResultChannels, auth, db, routes, token::TokenSign
 fn test_state() -> AppState {
     let conn = Connection::open_in_memory().unwrap();
     db::init(&conn).unwrap();
+    // Register default workflows matching previous hardcoded behavior
+    let workflows = vec![
+        dbward_server::server_config::WorkflowDef {
+            database: "*".into(),
+            environment: "development".into(),
+            operations: vec![],
+            steps: vec![],
+        },
+        dbward_server::server_config::WorkflowDef {
+            database: "*".into(),
+            environment: "staging".into(),
+            operations: vec![],
+            steps: vec![],
+        },
+        dbward_server::server_config::WorkflowDef {
+            database: "*".into(),
+            environment: "production".into(),
+            operations: vec![],
+            steps: vec![dbward_server::server_config::WorkflowStep {
+                step_type: "approval".into(),
+                min_approvals: 1,
+                allowed_roles: vec![],
+                require_distinct_actors: true,
+            }],
+        },
+    ];
+    db::sync_workflows(&conn, &workflows).unwrap();
     AppState {
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),

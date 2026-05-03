@@ -3,6 +3,32 @@ use serde::Deserialize;
 use crate::policy::PolicyConfig;
 use crate::webhook::WebhookConfig;
 
+/// Workflow definition from TOML config.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkflowDef {
+    pub database: String,
+    pub environment: String,
+    #[serde(default)]
+    pub operations: Vec<String>,
+    #[serde(default)]
+    pub steps: Vec<WorkflowStep>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct WorkflowStep {
+    #[serde(rename = "type")]
+    pub step_type: String,
+    #[serde(default = "default_min_approvals")]
+    pub min_approvals: u32,
+    #[serde(default)]
+    pub allowed_roles: Vec<String>,
+    #[serde(default = "default_true")]
+    pub require_distinct_actors: bool,
+}
+
+fn default_min_approvals() -> u32 { 1 }
+fn default_true() -> bool { true }
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ServerConfig {
     #[serde(default = "default_listen")]
@@ -14,6 +40,8 @@ pub struct ServerConfig {
     pub auth: Option<AuthConfig>,
     #[serde(default)]
     pub policy: PolicyConfig,
+    #[serde(default)]
+    pub workflows: Vec<WorkflowDef>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
