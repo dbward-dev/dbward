@@ -142,6 +142,7 @@ mod tests {
             webhooks: Arc::new(crate::webhook::WebhookDispatcher::empty()),
             oidc: None,
             auth_mode: "token".to_string(),
+            policy: Arc::new(Default::default()),
         }
     }
 

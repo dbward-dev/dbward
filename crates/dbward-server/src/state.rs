@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 use dbward_core::Role;
 
 use crate::oidc::OidcVerifier;
+use crate::policy::PolicyConfig;
 use crate::token::TokenSigner;
 use crate::webhook::WebhookDispatcher;
 
@@ -15,6 +16,7 @@ pub struct AppState {
     pub webhooks: Arc<WebhookDispatcher>,
     pub oidc: Option<Arc<OidcVerifier>>,
     pub auth_mode: String,
+    pub policy: Arc<PolicyConfig>,
 }
 
 #[derive(Debug, Clone)]

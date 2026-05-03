@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod db;
 pub mod oidc;
+pub mod policy;
 pub mod routes;
 pub mod server_config;
 mod state;

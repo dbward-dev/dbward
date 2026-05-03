@@ -1,5 +1,6 @@
 use serde::Deserialize;
 
+use crate::policy::PolicyConfig;
 use crate::webhook::WebhookConfig;
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -11,6 +12,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub webhooks: Vec<WebhookConfig>,
     pub auth: Option<AuthConfig>,
+    #[serde(default)]
+    pub policy: PolicyConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]

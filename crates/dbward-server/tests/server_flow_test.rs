@@ -19,6 +19,7 @@ fn test_state() -> AppState {
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
         oidc: None,
         auth_mode: "token".to_string(),
+        policy: Arc::new(Default::default()),
     }
 }
 

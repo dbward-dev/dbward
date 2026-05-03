@@ -99,10 +99,9 @@ async fn create_request(
         return Err((StatusCode::FORBIDDEN, "readonly users cannot use break-glass".into()));
     }
 
-    // MVP policy: production + mutating ops require approval (unless emergency)
+    // Policy evaluation
     let needs_approval = !emergency
-        && environment == "production"
-        && !matches!(operation, "migrate_status" | "audit_search");
+        && state.policy.evaluate(environment, operation, &user.role.to_string()) == "require_approval";
 
     let status = if emergency { "break_glass" } else if needs_approval { "pending" } else { "auto_approved" };
 

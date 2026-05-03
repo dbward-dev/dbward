@@ -649,6 +649,7 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                     webhooks: std::sync::Arc::new(webhooks),
                     oidc,
                     auth_mode,
+                    policy: std::sync::Arc::new(server_cfg.policy),
                 };
                 let addr: std::net::SocketAddr = listen
                     .parse()
@@ -673,6 +674,7 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                         webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
                         oidc: None,
                         auth_mode: "token".to_string(),
+                        policy: std::sync::Arc::new(Default::default()),
                     };
                     let (token_id, raw_token) =
                         dbward_server::auth::create_token(&state, &user, role).await
@@ -700,6 +702,7 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                         webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
                         oidc: None,
                         auth_mode: "token".to_string(),
+                        policy: std::sync::Arc::new(Default::default()),
                     };
                     dbward_server::auth::revoke_token(&state, &id).await
                         .map_err(|e| dbward_core::Error::Server(e))?;
