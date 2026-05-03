@@ -102,17 +102,14 @@ async fn authenticate_api_token(raw_token: &str, state: &AppState) -> Result<Aut
 
     let conn = state.sqlite.lock().await;
 
-    let result: Result<(String, String, String, String), _> = conn.query_row(
-        "SELECT id, user, role, hash FROM tokens WHERE prefix = ?1 AND revoked = 0",
-        params![prefix],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    let result: Result<(String, String, String), _> = conn.query_row(
+        "SELECT id, user, role FROM tokens WHERE prefix = ?1 AND hash = ?2 AND revoked = 0",
+        params![prefix, hash],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     );
 
     match result {
-        Ok((id, user, role_str, stored_hash)) => {
-            if hash != stored_hash {
-                return Err((StatusCode::UNAUTHORIZED, "invalid token".into()));
-            }
+        Ok((id, user, role_str)) => {
             let role = match role_str.as_str() {
                 "admin" => Role::Admin,
                 "developer" => Role::Developer,
@@ -192,5 +189,27 @@ mod tests {
         headers.insert("authorization", "Bearer dbw_00000000aaaabbbbccccddddeeee".parse().unwrap());
 
         assert!(authenticate(&headers, &state).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn prefix_collision_still_authenticates() {
+        let state = test_state();
+        let (_, token_a) = create_token(&state, "alice", Role::Developer).await.unwrap();
+
+        // Insert a second token with the same prefix but different hash
+        let prefix_a = token_prefix(&token_a);
+        {
+            let conn = state.sqlite.lock().await;
+            conn.execute(
+                "INSERT INTO tokens (id, user, role, hash, prefix, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params!["fake-id", "eve", "admin", "fakehash000", prefix_a, "2024-01-01T00:00:00Z"],
+            ).unwrap();
+        }
+
+        // alice's token should still work despite prefix collision
+        let mut h = HeaderMap::new();
+        h.insert("authorization", format!("Bearer {token_a}").parse().unwrap());
+        let user = authenticate(&h, &state).await.unwrap();
+        assert_eq!(user.user, "alice");
     }
 }
