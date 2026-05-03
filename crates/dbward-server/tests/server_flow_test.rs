@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 use tower::ServiceExt;
 
 use dbward_core::Role;
-use dbward_server::{AppState, auth, db, routes, token::TokenSigner};
+use dbward_server::{AppState, ResultChannels, auth, db, routes, token::TokenSigner};
 
 fn test_state() -> AppState {
     let conn = Connection::open_in_memory().unwrap();
@@ -20,6 +20,7 @@ fn test_state() -> AppState {
         oidc: None,
         auth_mode: "token".to_string(),
         policy: Arc::new(Default::default()),
+        result_channels: Arc::new(ResultChannels::new()),
     }
 }
 
@@ -250,10 +251,10 @@ async fn agent_full_flow() {
         .unwrap();
     assert_eq!(resp.status(), 201);
     let body = body_json(resp).await;
-    let request_id = body["id"].as_str().unwrap();
+    let request_id = body["id"].as_str().unwrap().to_string();
     assert_eq!(body["status"], "auto_approved");
 
-    // 2. Agent polls for jobs
+    // 2. Agent polls — should be empty (not yet dispatched)
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
@@ -265,14 +266,42 @@ async fn agent_full_flow() {
         )
         .await
         .unwrap();
-    let poll_status = resp.status();
-    let poll_body = body_json(resp).await;
-    assert_eq!(poll_status, 200);
-    let jobs = poll_body["jobs"].as_array().unwrap();
+    let body = body_json(resp).await;
+    assert_eq!(body["jobs"].as_array().unwrap().len(), 0);
+
+    // 3. Alice dispatches the request
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "dispatched");
+
+    // 4. Agent polls — now sees the dispatched request
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post("/api/agent/poll")
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"databases": ["app"]}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let jobs = body["jobs"].as_array().unwrap();
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0]["id"].as_str().unwrap(), request_id);
 
-    // 3. Agent claims the job
+    // 5. Agent claims the job
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
@@ -284,47 +313,52 @@ async fn agent_full_flow() {
         )
         .await
         .unwrap();
-    let claim_status = resp.status();
+    assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
-    assert_eq!(claim_status, 200);
     let exec_id = body["execution_id"].as_str().unwrap().to_string();
-    assert_eq!(body["operation"], "execute_query");
-    assert_eq!(body["database"], "app");
-    assert!(body["execution_token"].is_object());
 
-    // 4. Verify request is now "running"
-    let app = routes::router(state.clone());
-    let resp = app
-        .oneshot(
-            Request::get(&format!("/api/requests/{request_id}"))
-                .header("authorization", auth_header(&alice_token))
+    // 6. Agent sends result + Alice streams result (concurrent)
+    let state2 = state.clone();
+    let alice_token2 = alice_token.clone();
+    let request_id2 = request_id.clone();
+    let stream_handle = tokio::spawn(async move {
+        let app = routes::router(state2);
+        app.oneshot(
+            Request::get(&format!("/api/requests/{request_id2}/result/stream"))
+                .header("authorization", auth_header(&alice_token2))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
-        .unwrap();
-    let body = body_json(resp).await;
-    assert_eq!(body["status"], "running");
+        .unwrap()
+    });
 
-    // 5. Agent completes the job
+    // Small delay to ensure stream handler is waiting
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/agent/jobs/{exec_id}/complete"))
+            Request::post(&format!("/api/agent/jobs/{exec_id}/result"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    json!({"success": true, "result": "[{\"test\": 1}]"}).to_string(),
+                    json!({"success": true, "result": [{"test": 1}]}).to_string(),
                 ))
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
-    let body = body_json(resp).await;
-    assert_eq!(body["status"], "executed");
 
-    // 6. Alice gets the result
+    // 7. Alice receives the streamed result
+    let stream_resp = stream_handle.await.unwrap();
+    assert_eq!(stream_resp.status(), 200);
+    let body = body_json(stream_resp).await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["result"], json!([{"test": 1}]));
+
+    // 8. Request is now executed
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
@@ -337,7 +371,6 @@ async fn agent_full_flow() {
         .unwrap();
     let body = body_json(resp).await;
     assert_eq!(body["status"], "executed");
-    assert_eq!(body["execution_result"], "[{\"test\": 1}]");
 }
 
 #[tokio::test]

@@ -152,6 +152,62 @@ impl ServerClient {
         }
     }
 
+    /// Dispatch a request for execution (on-demand).
+    pub async fn dispatch(&self, request_id: &str) -> Result<Value, Error> {
+        let resp = self
+            .client
+            .post(format!("{}/api/requests/{}/dispatch", self.base_url, request_id))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| Error::Server(format!("dispatch failed: {e}")))?;
+
+        let status_code = resp.status();
+        let body: Value = resp.json().await
+            .map_err(|e| Error::Server(format!("dispatch parse failed: {e}")))?;
+
+        if !status_code.is_success() {
+            return Err(Error::Server(format!("dispatch failed ({}): {}", status_code, body)));
+        }
+        Ok(body)
+    }
+
+    /// Wait for execution result via long poll.
+    pub async fn stream_result(&self, request_id: &str) -> Result<Value, Error> {
+        let resp = self
+            .client
+            .get(format!("{}/api/requests/{}/result/stream", self.base_url, request_id))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| Error::Server(format!("stream result failed: {e}")))?;
+
+        let status_code = resp.status();
+        let body: Value = resp.json().await
+            .map_err(|e| Error::Server(format!("stream result parse failed: {e}")))?;
+
+        if !status_code.is_success() {
+            return Err(Error::Server(format!("stream result failed ({}): {}", status_code, body)));
+        }
+        Ok(body)
+    }
+
+    /// Dispatch and wait for result in one flow.
+    pub async fn dispatch_and_wait(&self, request_id: &str) -> Result<Value, Error> {
+        eprintln!("Dispatching request {request_id}...");
+        self.dispatch(request_id).await?;
+        eprintln!("Waiting for agent to execute...");
+
+        tokio::select! {
+            result = self.stream_result(request_id) => result,
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("\nInterrupted. Request {request_id} is dispatched.");
+                eprintln!("Run: dbward resume {request_id}");
+                Err(Error::Server("interrupted".into()))
+            }
+        }
+    }
+
     /// Report completion of an executed request.
     pub async fn complete_request(&self, request_id: &str, success: bool) -> Result<(), Error> {
         let resp = self

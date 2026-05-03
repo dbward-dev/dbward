@@ -27,8 +27,6 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             detail TEXT NOT NULL,
             emergency INTEGER NOT NULL DEFAULT 0,
             reason TEXT,
-            execution_result TEXT,
-            execution_error TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             resolved_at TEXT
@@ -64,7 +62,6 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             lease_expires_at TEXT NOT NULL,
             started_at TEXT,
             finished_at TEXT,
-            result_json TEXT,
             error_message TEXT,
             created_at TEXT NOT NULL,
             FOREIGN KEY (request_id) REFERENCES requests(id)

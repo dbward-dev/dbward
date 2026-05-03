@@ -157,7 +157,7 @@ async fn handle_tools_call(
     }
 }
 
-/// Submit request, if auto-approved wait for agent result, if pending return request_id.
+/// Submit request, if auto-approved dispatch and wait for result, if pending return request_id.
 async fn submit_and_wait(
     client: &crate::server_client::ServerClient,
     operation: &str,
@@ -173,17 +173,10 @@ async fn submit_and_wait(
     match status.as_str() {
         "auto_approved" | "break_glass" => {
             let resp = client
-                .poll_result(
-                    &req_id,
-                    std::time::Duration::from_millis(300),
-                    std::time::Duration::from_secs(120),
-                )
+                .dispatch_and_wait(&req_id)
                 .await
                 .map_err(|e| e.to_string())?;
-            let result = resp.get("execution_result")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Executed successfully.");
-            Ok(result.to_string())
+            format_result(&resp)
         }
         "pending" => {
             Ok(format!(
@@ -193,6 +186,21 @@ async fn submit_and_wait(
             ))
         }
         _ => Err(format!("unexpected status: {status}")),
+    }
+}
+
+fn format_result(resp: &Value) -> Result<String, String> {
+    if resp["success"].as_bool() == Some(false) {
+        let err = resp["error"].as_str().unwrap_or("unknown error");
+        return Err(format!("Execution failed: {err}"));
+    }
+    let result = &resp["result"];
+    if result.is_null() {
+        Ok("Executed successfully.".to_string())
+    } else if let Some(text) = result.as_str() {
+        Ok(text.to_string())
+    } else {
+        Ok(serde_json::to_string_pretty(result).unwrap_or_default())
     }
 }
 
@@ -228,17 +236,13 @@ async fn get_result(
     let resp = client.get_request(request_id).await.map_err(|e| e.to_string())?;
     let status = resp["status"].as_str().unwrap_or("unknown");
     match status {
-        "executed" => {
-            let result = resp.get("execution_result")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Executed successfully.");
-            Ok(result.to_string())
+        "approved" | "auto_approved" | "break_glass" => {
+            let result = client.dispatch_and_wait(request_id).await.map_err(|e| e.to_string())?;
+            format_result(&result)
         }
-        "failed" => {
-            let err = resp["execution_error"].as_str().unwrap_or("unknown error");
-            Err(format!("Execution failed: {err}"))
-        }
-        _ => Ok(format!("Request {request_id} is not yet executed (status: {status}).")),
+        "executed" => Ok("Request already executed. Result was delivered at execution time.".to_string()),
+        "failed" => Err("Execution failed.".to_string()),
+        _ => Ok(format!("Request {request_id} is not yet approved (status: {status}).")),
     }
 }
 

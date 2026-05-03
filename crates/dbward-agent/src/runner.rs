@@ -92,18 +92,22 @@ async fn execute_job(
         other => dbward_core::Environment::Custom(other.to_string()),
     };
 
-    let (result_text, success) = match execute_operation(&resolved, env, operation, detail).await {
-        Ok(text) => (Some(text), true),
+    let (result_value, success) = match execute_operation(&resolved, env, operation, detail).await {
+        Ok(text) => {
+            let val: serde_json::Value = serde_json::from_str(&text)
+                .unwrap_or(serde_json::Value::String(text));
+            (Some(val), true)
+        }
         Err(e) => {
             let msg = e.to_string();
             error!(request_id, "execution failed: {msg}");
-            client.complete(exec_id, false, None, Some(&msg)).await?;
+            client.send_result(exec_id, false, None, Some(&msg)).await?;
             return Ok(());
         }
     };
 
     info!(request_id, "execution completed");
-    client.complete(exec_id, success, result_text.as_deref(), None).await?;
+    client.send_result(exec_id, success, result_value, None).await?;
     Ok(())
 }
 

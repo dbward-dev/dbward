@@ -239,8 +239,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
 
             match status.as_str() {
                 "auto_approved" | "break_glass" => {
-                    // Agent will pick it up; poll for result
-                    let resp = sc.poll_result(&id, POLL_INTERVAL, POLL_TIMEOUT).await?;
+                    let resp = sc.dispatch_and_wait(&id).await?;
                     print_execution_result(&resp);
                 }
                 "pending" => {
@@ -265,7 +264,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
 
             match status.as_str() {
                 "auto_approved" | "break_glass" => {
-                    let resp = sc.poll_result(&id, POLL_INTERVAL, POLL_TIMEOUT).await?;
+                    let resp = sc.dispatch_and_wait(&id).await?;
                     print_execution_result(&resp);
                 }
                 "pending" => {
@@ -309,7 +308,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             Ok(())
         }
         Command::Resume { ref id } => {
-            let resp = sc.poll_result(id, POLL_INTERVAL, POLL_TIMEOUT).await?;
+            let resp = sc.dispatch_and_wait(id).await?;
             print_execution_result(&resp);
             Ok(())
         }
@@ -327,8 +326,15 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
 }
 
 fn print_execution_result(resp: &serde_json::Value) {
-    if let Some(result) = resp.get("execution_result") {
-        if let Some(text) = result.as_str() {
+    if let Some(false) = resp["success"].as_bool() {
+        let err = resp["error"].as_str().unwrap_or("unknown error");
+        eprintln!("Execution failed: {err}");
+        return;
+    }
+    if let Some(result) = resp.get("result") {
+        if result.is_null() {
+            println!("Executed successfully.");
+        } else if let Some(text) = result.as_str() {
             println!("{text}");
         } else {
             println!("{}", serde_json::to_string_pretty(result).unwrap_or_default());
@@ -376,6 +382,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 oidc,
                 auth_mode,
                 policy: std::sync::Arc::new(server_cfg.policy),
+                result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
             };
             let addr: std::net::SocketAddr = listen.parse()
                 .map_err(|e: std::net::AddrParseError| dbward_core::Error::Server(e.to_string()))?;
@@ -399,6 +406,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     oidc: None,
                     auth_mode: "token".to_string(),
                     policy: std::sync::Arc::new(Default::default()),
+                    result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                 };
                 let (token_id, raw_token) = dbward_server::auth::create_token(&state, user, *role).await
                     .map_err(dbward_core::Error::Server)?;
@@ -425,6 +433,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     oidc: None,
                     auth_mode: "token".to_string(),
                     policy: std::sync::Arc::new(Default::default()),
+                    result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                 };
                 dbward_server::auth::revoke_token(&state, id).await
                     .map_err(dbward_core::Error::Server)?;

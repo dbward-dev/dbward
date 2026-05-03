@@ -143,6 +143,7 @@ mod tests {
             oidc: None,
             auth_mode: "token".to_string(),
             policy: Arc::new(Default::default()),
+            result_channels: Arc::new(crate::state::ResultChannels::new()),
         }
     }
 

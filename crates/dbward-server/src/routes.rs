@@ -25,14 +25,22 @@ pub fn router(state: AppState) -> Router {
             "/api/requests/{id}/complete",
             axum::routing::post(complete_request),
         )
+        .route(
+            "/api/requests/{id}/dispatch",
+            axum::routing::post(dispatch_request),
+        )
+        .route(
+            "/api/requests/{id}/result/stream",
+            get(stream_result),
+        )
         .route("/api/agent/poll", axum::routing::post(agent_poll))
         .route(
             "/api/agent/jobs/{id}/claim",
             axum::routing::post(agent_claim),
         )
         .route(
-            "/api/agent/jobs/{id}/complete",
-            axum::routing::post(agent_complete),
+            "/api/agent/jobs/{id}/result",
+            axum::routing::post(agent_result),
         )
         .route("/api/audit", get(list_audit))
         .route("/api/public-key", get(get_public_key))
@@ -274,11 +282,11 @@ async fn get_request(
 
     let conn = state.sqlite.lock().await;
 
-    let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, execution_result, execution_error): (String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, Option<String>) = conn
+    let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at): (String, String, String, String, String, String, String, String, String, Option<String>) = conn
         .query_row(
-            "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, execution_result, execution_error FROM requests WHERE id = ?1",
+            "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at FROM requests WHERE id = ?1",
             rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
@@ -286,7 +294,6 @@ async fn get_request(
         "id": id_val, "created_by": created_by, "operation": operation,
         "environment": environment, "database_name": database_name, "detail": detail, "status": status,
         "created_at": created_at, "updated_at": updated_at, "resolved_at": resolved_at,
-        "execution_result": execution_result, "execution_error": execution_error,
     });
 
     // Only issue token for approved/auto_approved (not executed/failed/rejected)
@@ -329,12 +336,11 @@ async fn complete_request(
     let success = body["success"].as_bool().unwrap_or(false);
     let new_status = if success { "executed" } else { "failed" };
     let now = chrono::Utc::now().to_rfc3339();
-    let result_str = body["result"].as_str().map(|s| s.to_string());
     let error_msg = body["error_message"].as_str().map(|s| s.to_string());
 
     conn.execute(
-        "UPDATE requests SET status = ?1, updated_at = ?2, resolved_at = ?3, execution_result = ?4, execution_error = ?5 WHERE id = ?6",
-        rusqlite::params![new_status, now, now, result_str, error_msg, id],
+        "UPDATE requests SET status = ?1, updated_at = ?2, resolved_at = ?3 WHERE id = ?4",
+        rusqlite::params![new_status, now, now, id],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -349,9 +355,9 @@ async fn complete_request(
         .unwrap_or_default();
 
     conn.execute(
-        "INSERT INTO audit_log (id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO audit_log (id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10)",
         rusqlite::params![
-            audit_id, id, req_user, operation, environment, database_name, detail, new_status, result_str, error_msg, now
+            audit_id, id, req_user, operation, environment, database_name, detail, new_status, error_msg, now
         ],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -402,6 +408,86 @@ async fn list_audit(
 }
 
 // ---------------------------------------------------------------------------
+// On-demand execution: dispatch + result stream
+// ---------------------------------------------------------------------------
+
+/// Client dispatches a request for execution. Creates a result channel.
+async fn dispatch_request(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let _user = auth::authenticate(&headers, &state).await?;
+
+    let conn = state.sqlite.lock().await;
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM requests WHERE id = ?1",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+
+    match status.as_str() {
+        "approved" | "auto_approved" | "break_glass" => {}
+        "dispatched" | "running" => {
+            return Err((StatusCode::CONFLICT, format!("request already {status}")));
+        }
+        _ => {
+            return Err((StatusCode::CONFLICT, format!("request status is {status}, cannot dispatch")));
+        }
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "UPDATE requests SET status = 'dispatched', updated_at = ?1 WHERE id = ?2",
+        rusqlite::params![now, id],
+    )
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    drop(conn);
+
+    // Create result slot for this request
+    let slot = std::sync::Arc::new(crate::state::ResultSlot {
+        result: tokio::sync::Mutex::new(None),
+        notify: tokio::sync::Notify::new(),
+    });
+    state.result_channels.slots.lock().await.insert(id.clone(), slot);
+
+    Ok(Json(json!({"id": id, "status": "dispatched"})))
+}
+
+/// Client waits for execution result (long poll).
+async fn stream_result(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let _user = auth::authenticate(&headers, &state).await?;
+
+    let slot = {
+        let slots = state.result_channels.slots.lock().await;
+        slots.get(&id).cloned()
+    };
+
+    let slot = slot.ok_or((StatusCode::NOT_FOUND, "no pending result for this request".into()))?;
+
+    // Wait up to 5 minutes for agent to deliver result
+    let timeout = tokio::time::timeout(std::time::Duration::from_secs(300), slot.notify.notified()).await;
+    if timeout.is_err() {
+        return Err((StatusCode::GATEWAY_TIMEOUT, "timed out waiting for result".into()));
+    }
+
+    let result = slot.result.lock().await.take();
+    // Clean up the slot
+    state.result_channels.slots.lock().await.remove(&id);
+
+    match result {
+        Some(payload) => Ok(Json(payload)),
+        None => Err((StatusCode::INTERNAL_SERVER_ERROR, "result was empty".into())),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Agent endpoints
 // ---------------------------------------------------------------------------
 
@@ -427,7 +513,7 @@ async fn agent_poll(
         .prepare(
             "SELECT id, created_by, operation, environment, database_name, detail
              FROM requests
-             WHERE status IN ('approved', 'auto_approved', 'break_glass')
+             WHERE status = 'dispatched'
              ORDER BY created_at ASC
              LIMIT 10",
         )
@@ -477,7 +563,7 @@ async fn agent_claim(
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
-    if status != "approved" && status != "auto_approved" && status != "break_glass" {
+    if status != "dispatched" {
         return Err((StatusCode::CONFLICT, format!("request status is {status}, cannot claim")));
     }
 
@@ -513,8 +599,8 @@ async fn agent_claim(
     })))
 }
 
-/// Agent reports execution result.
-async fn agent_complete(
+/// Agent sends execution result. Server relays to waiting CLI via channel.
+async fn agent_result(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -523,13 +609,12 @@ async fn agent_complete(
     let _user = auth::authenticate(&headers, &state).await?;
 
     let success = body["success"].as_bool().unwrap_or(false);
-    let result = body["result"].as_str().map(|s| s.to_string());
+    let result = body["result"].clone();
     let error_msg = body["error"].as_str().map(|s| s.to_string());
 
     let conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
 
-    // Find the request_id from agent_executions
     let (request_id, exec_status): (String, String) = conn
         .query_row(
             "SELECT request_id, status FROM agent_executions WHERE id = ?1",
@@ -544,17 +629,51 @@ async fn agent_complete(
 
     let new_status = if success { "completed" } else { "failed" };
     conn.execute(
-        "UPDATE agent_executions SET status = ?1, finished_at = ?2, result_json = ?3, error_message = ?4 WHERE id = ?5",
-        rusqlite::params![new_status, now, result, error_msg, id],
+        "UPDATE agent_executions SET status = ?1, finished_at = ?2, error_message = ?3 WHERE id = ?4",
+        rusqlite::params![new_status, now, error_msg, id],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let req_status = if success { "executed" } else { "failed" };
     conn.execute(
-        "UPDATE requests SET status = ?1, execution_result = ?2, execution_error = ?3, updated_at = ?4, resolved_at = ?4 WHERE id = ?5",
-        rusqlite::params![req_status, result, error_msg, now, request_id],
+        "UPDATE requests SET status = ?1, updated_at = ?2, resolved_at = ?2 WHERE id = ?3",
+        rusqlite::params![req_status, now, request_id],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Write audit log
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let (operation, environment, database_name, detail, actor) = conn
+        .query_row(
+            "SELECT operation, environment, database_name, detail, created_by FROM requests WHERE id = ?1",
+            rusqlite::params![request_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
+        )
+        .unwrap_or_default();
+
+    conn.execute(
+        "INSERT INTO audit_log (id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11)",
+        rusqlite::params![audit_id, request_id, id, actor, operation, environment, database_name, detail, req_status, error_msg, now],
+    )
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Drop the SQLite lock before touching the channel
+    drop(conn);
+
+    // Relay result to waiting CLI
+    let payload = json!({
+        "success": success,
+        "result": result,
+        "error": error_msg,
+        "request_id": request_id,
+    });
+
+    let slots = state.result_channels.slots.lock().await;
+    if let Some(slot) = slots.get(&request_id) {
+        let mut r = slot.result.lock().await;
+        *r = Some(payload);
+        slot.notify.notify_one();
+    }
 
     Ok(Json(json!({"status": req_status, "request_id": request_id})))
 }

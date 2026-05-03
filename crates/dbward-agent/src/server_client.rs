@@ -56,16 +56,16 @@ impl AgentClient {
         Ok(body)
     }
 
-    pub async fn complete(
+    pub async fn send_result(
         &self,
         execution_id: &str,
         success: bool,
-        result: Option<&str>,
+        result: Option<serde_json::Value>,
         error: Option<&str>,
     ) -> Result<(), Error> {
         let resp = self
             .client
-            .post(format!("{}/api/agent/jobs/{}/complete", self.base_url, execution_id))
+            .post(format!("{}/api/agent/jobs/{}/result", self.base_url, execution_id))
             .bearer_auth(&self.agent_token)
             .json(&serde_json::json!({
                 "success": success,
@@ -74,11 +74,11 @@ impl AgentClient {
             }))
             .send()
             .await
-            .map_err(|e| Error::Server(format!("complete failed: {e}")))?;
+            .map_err(|e| Error::Server(format!("send result failed: {e}")))?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(Error::Server(format!("complete failed: {text}")));
+            return Err(Error::Server(format!("send result failed: {text}")));
         }
         Ok(())
     }
