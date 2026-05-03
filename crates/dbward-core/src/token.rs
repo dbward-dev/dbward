@@ -10,6 +10,7 @@ pub struct ExecutionToken {
     pub request_id: String,
     pub operation: String,
     pub environment: String,
+    pub database: String,
     pub detail_hash: String,
     pub issued_at: String,
     pub expires_at: String,
@@ -26,10 +27,11 @@ pub fn token_message(
     request_id: &str,
     operation: &str,
     environment: &str,
+    database: &str,
     detail_hash: &str,
     expires_at: &str,
 ) -> String {
-    format!("{request_id}|{operation}|{environment}|{detail_hash}|{expires_at}")
+    format!("{request_id}|{operation}|{environment}|{database}|{detail_hash}|{expires_at}")
 }
 
 /// Verify an execution token using the server's public key.
@@ -38,6 +40,7 @@ pub fn verify_token(
     public_key: &VerifyingKey,
     expected_operation: &str,
     expected_environment: &str,
+    expected_database: &str,
     expected_detail: &str,
 ) -> Result<(), Error> {
     // Check expiry
@@ -59,6 +62,12 @@ pub fn verify_token(
             token.environment, expected_environment
         )));
     }
+    if token.database != expected_database {
+        return Err(Error::Token(format!(
+            "database mismatch: token={}, expected={}",
+            token.database, expected_database
+        )));
+    }
 
     let expected_hash = hash_detail(expected_detail);
     if token.detail_hash != expected_hash {
@@ -71,6 +80,7 @@ pub fn verify_token(
         &token.request_id,
         &token.operation,
         &token.environment,
+        &token.database,
         &token.detail_hash,
         &token.expires_at,
     );
@@ -106,12 +116,13 @@ mod tests {
     fn make_token(signing_key: &SigningKey, op: &str, env: &str, detail: &str, expires_at: chrono::DateTime<Utc>) -> ExecutionToken {
         let detail_hash = hash_detail(detail);
         let expires_str = expires_at.to_rfc3339();
-        let msg = token_message("req-1", op, env, &detail_hash, &expires_str);
+        let msg = token_message("req-1", op, env, "default", &detail_hash, &expires_str);
         let sig = signing_key.sign(msg.as_bytes());
         ExecutionToken {
             request_id: "req-1".into(),
             operation: op.into(),
             environment: env.into(),
+            database: "default".into(),
             detail_hash,
             issued_at: Utc::now().to_rfc3339(),
             expires_at: expires_str,
@@ -129,14 +140,14 @@ mod tests {
     fn valid_token_passes() {
         let (sk, vk) = keypair();
         let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
-        assert!(verify_token(&token, &vk, "execute", "production", "SELECT 1").is_ok());
+        assert!(verify_token(&token, &vk, "execute", "production", "default", "SELECT 1").is_ok());
     }
 
     #[test]
     fn expired_token_rejected() {
         let (sk, vk) = keypair();
         let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() - Duration::seconds(1));
-        let err = verify_token(&token, &vk, "execute", "production", "SELECT 1").unwrap_err();
+        let err = verify_token(&token, &vk, "execute", "production", "default", "SELECT 1").unwrap_err();
         assert!(err.to_string().contains("expired"));
     }
 
@@ -144,7 +155,7 @@ mod tests {
     fn operation_mismatch_rejected() {
         let (sk, vk) = keypair();
         let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
-        let err = verify_token(&token, &vk, "migrate", "production", "SELECT 1").unwrap_err();
+        let err = verify_token(&token, &vk, "migrate", "production", "default", "SELECT 1").unwrap_err();
         assert!(err.to_string().contains("operation mismatch"));
     }
 
@@ -152,7 +163,7 @@ mod tests {
     fn environment_mismatch_rejected() {
         let (sk, vk) = keypair();
         let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
-        let err = verify_token(&token, &vk, "execute", "staging", "SELECT 1").unwrap_err();
+        let err = verify_token(&token, &vk, "execute", "staging", "default", "SELECT 1").unwrap_err();
         assert!(err.to_string().contains("environment mismatch"));
     }
 
@@ -160,7 +171,7 @@ mod tests {
     fn detail_mismatch_rejected() {
         let (sk, vk) = keypair();
         let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
-        let err = verify_token(&token, &vk, "execute", "production", "DROP TABLE users").unwrap_err();
+        let err = verify_token(&token, &vk, "execute", "production", "default", "DROP TABLE users").unwrap_err();
         assert!(err.to_string().contains("detail_hash mismatch"));
     }
 
@@ -172,7 +183,7 @@ mod tests {
         let mut sig_bytes = hex::decode(&token.signature).unwrap();
         sig_bytes[0] ^= 0xff;
         token.signature = hex::encode(sig_bytes);
-        let err = verify_token(&token, &vk, "execute", "production", "SELECT 1").unwrap_err();
+        let err = verify_token(&token, &vk, "execute", "production", "default", "SELECT 1").unwrap_err();
         assert!(err.to_string().contains("invalid signature"));
     }
 
@@ -181,7 +192,7 @@ mod tests {
         let (sk, _) = keypair();
         let (_, other_vk) = keypair();
         let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
-        let err = verify_token(&token, &other_vk, "execute", "production", "SELECT 1").unwrap_err();
+        let err = verify_token(&token, &other_vk, "execute", "production", "default", "SELECT 1").unwrap_err();
         assert!(err.to_string().contains("invalid signature"));
     }
 

@@ -88,6 +88,7 @@ async fn create_request(
         .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
     let detail = body["detail"].as_str().unwrap_or("");
+    let database = body["database"].as_str().unwrap_or("default");
     let emergency = body["emergency"].as_bool().unwrap_or(false);
     let reason = body["reason"].as_str().map(|s| s.to_string());
 
@@ -110,13 +111,13 @@ async fn create_request(
 
     let conn = state.sqlite.lock().await;
     conn.execute(
-        "INSERT INTO requests (id, user, operation, environment, detail, status, created_at, emergency, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        rusqlite::params![id, user.user, operation, environment, detail, status, now, emergency, reason],
+        "INSERT INTO requests (id, user, operation, environment, database, detail, status, created_at, emergency, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        rusqlite::params![id, user.user, operation, environment, database, detail, status, now, emergency, reason],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if emergency {
-        let token = state.token_signer.issue(&id, operation, environment, detail);
+        let token = state.token_signer.issue(&id, operation, environment, database, detail);
         state.webhooks.dispatch(crate::webhook::WebhookEvent {
             event: "break_glass".into(),
             request_id: id.clone(), user: user.user.clone(),
@@ -139,7 +140,7 @@ async fn create_request(
             Json(json!({"id": id, "status": "pending"})),
         ))
     } else {
-        let token = state.token_signer.issue(&id, operation, environment, detail);
+        let token = state.token_signer.issue(&id, operation, environment, database, detail);
         Ok((
             StatusCode::CREATED,
             Json(json!({"id": id, "status": "auto_approved", "execution_token": token})),
@@ -157,11 +158,11 @@ async fn approve_request(
     let conn = state.sqlite.lock().await;
 
     // Fetch request
-    let (req_user, status, operation, environment, detail): (String, String, String, String, String) = conn
+    let (req_user, status, operation, environment, database, detail): (String, String, String, String, String, String) = conn
         .query_row(
-            "SELECT user, status, operation, environment, detail FROM requests WHERE id = ?1",
+            "SELECT user, status, operation, environment, database, detail FROM requests WHERE id = ?1",
             rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
@@ -184,7 +185,7 @@ async fn approve_request(
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let token = state.token_signer.issue(&id, &operation, &environment, &detail);
+    let token = state.token_signer.issue(&id, &operation, &environment, &database, &detail);
 
     state.webhooks.dispatch(crate::webhook::WebhookEvent {
         event: "request_approved".into(),
@@ -248,23 +249,23 @@ async fn get_request(
 
     let conn = state.sqlite.lock().await;
 
-    let (id_val, user, operation, environment, detail, status, approved_by, created_at, resolved_at): (String, String, String, String, String, String, Option<String>, String, Option<String>) = conn
+    let (id_val, user, operation, environment, database, detail, status, approved_by, created_at, resolved_at): (String, String, String, String, String, String, String, Option<String>, String, Option<String>) = conn
         .query_row(
-            "SELECT id, user, operation, environment, detail, status, approved_by, created_at, resolved_at FROM requests WHERE id = ?1",
+            "SELECT id, user, operation, environment, database, detail, status, approved_by, created_at, resolved_at FROM requests WHERE id = ?1",
             rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
     let mut resp = json!({
         "id": id_val, "user": user, "operation": operation,
-        "environment": environment, "detail": detail, "status": status,
+        "environment": environment, "database": database, "detail": detail, "status": status,
         "approved_by": approved_by, "created_at": created_at, "resolved_at": resolved_at,
     });
 
     // Only issue token for approved/auto_approved (not executed/failed/rejected)
     if status == "approved" || status == "auto_approved" || status == "break_glass" {
-        let token = state.token_signer.issue(&id, &operation, &environment, &detail);
+        let token = state.token_signer.issue(&id, &operation, &environment, &database, &detail);
         resp["execution_token"] = serde_json::to_value(token)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }

@@ -5,11 +5,13 @@ use serde_json::{Value, json};
 use dbward_core::{Config, Engine, Role};
 use dbward_migrate::Migrator;
 
-pub async fn run_stdio(config: Config) -> Result<(), dbward_core::Error> {
-    let mut engine = Engine::new(config.clone()).await?;
+pub async fn run_stdio(config: Config, database: Option<&str>) -> Result<(), dbward_core::Error> {
+    let resolved = config.resolve_database(database)?;
+    let migrations_dir = resolved.migrations_dir.clone();
+    let mut engine = Engine::new(&resolved, config.environment.clone()).await?;
     // MCP uses stdout for JSON-RPC, so audit log goes to stderr
     engine.set_audit_logger(dbward_core::AuditLogger::stderr());
-    let migrator = Migrator::new(engine.driver().clone(), config.migrations_dir.clone());
+    let migrator = Migrator::new(engine.driver().clone(), migrations_dir);
 
     let stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -298,12 +300,15 @@ fn tools_definitions_server() -> Value {
 
 pub async fn run_stdio_server_mode(
     config: Config,
+    database: Option<&str>,
     client: crate::server_client::ServerClient,
     public_key: ed25519_dalek::VerifyingKey,
 ) -> Result<(), dbward_core::Error> {
-    let mut engine = Engine::new(config.clone()).await?;
+    let resolved = config.resolve_database(database)?;
+    let migrations_dir = resolved.migrations_dir.clone();
+    let mut engine = Engine::new(&resolved, config.environment.clone()).await?;
     engine.set_audit_logger(dbward_core::AuditLogger::stderr());
-    let migrator = Migrator::new(engine.driver().clone(), config.migrations_dir.clone());
+    let migrator = Migrator::new(engine.driver().clone(), migrations_dir);
     let env_str = config.environment.to_string();
 
     // Track pending requests for resume
@@ -561,6 +566,7 @@ async fn resume_execution(
         public_key,
         &pr.operation,
         &pr.environment,
+        &token.database,
         &pr.detail,
     )
     .map_err(|e| e.to_string())?;

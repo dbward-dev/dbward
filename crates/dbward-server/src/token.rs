@@ -51,19 +51,21 @@ impl TokenSigner {
         request_id: &str,
         operation: &str,
         environment: &str,
+        database: &str,
         detail: &str,
     ) -> ExecutionToken {
         let detail_hash = hash_detail(detail);
         let issued_at = Utc::now().to_rfc3339();
         let expires_at = (Utc::now() + Duration::hours(1)).to_rfc3339();
 
-        let message = token_message(request_id, operation, environment, &detail_hash, &expires_at);
+        let message = token_message(request_id, operation, environment, database, &detail_hash, &expires_at);
         let signature = self.signing_key.sign(message.as_bytes());
 
         ExecutionToken {
             request_id: request_id.to_string(),
             operation: operation.to_string(),
             environment: environment.to_string(),
+            database: database.to_string(),
             detail_hash,
             issued_at,
             expires_at,
@@ -79,13 +81,14 @@ mod tests {
     #[test]
     fn issue_and_verify() {
         let signer = TokenSigner::generate();
-        let token = signer.issue("req_1", "migrate_up", "production", "20260501_create_users.sql");
+        let token = signer.issue("req_1", "migrate_up", "production", "default", "20260501_create_users.sql");
 
         let result = verify_token(
             &token,
             &signer.verifying_key(),
             "migrate_up",
             "production",
+            "default",
             "20260501_create_users.sql",
         );
         assert!(result.is_ok());
@@ -94,13 +97,14 @@ mod tests {
     #[test]
     fn rejects_wrong_detail() {
         let signer = TokenSigner::generate();
-        let token = signer.issue("req_1", "execute_query", "staging", "SELECT 1");
+        let token = signer.issue("req_1", "execute_query", "staging", "default", "SELECT 1");
 
         let result = verify_token(
             &token,
             &signer.verifying_key(),
             "execute_query",
             "staging",
+            "default",
             "DELETE FROM users",
         );
         assert!(result.is_err());
@@ -109,13 +113,14 @@ mod tests {
     #[test]
     fn rejects_wrong_environment() {
         let signer = TokenSigner::generate();
-        let token = signer.issue("req_1", "migrate_up", "staging", "test.sql");
+        let token = signer.issue("req_1", "migrate_up", "staging", "default", "test.sql");
 
         let result = verify_token(
             &token,
             &signer.verifying_key(),
             "migrate_up",
             "production",
+            "default",
             "test.sql",
         );
         assert!(result.is_err());
@@ -124,7 +129,7 @@ mod tests {
     #[test]
     fn rejects_tampered_signature() {
         let signer = TokenSigner::generate();
-        let mut token = signer.issue("req_1", "migrate_up", "production", "test.sql");
+        let mut token = signer.issue("req_1", "migrate_up", "production", "default", "test.sql");
         token.operation = "execute_query".to_string();
 
         let result = verify_token(
@@ -132,6 +137,7 @@ mod tests {
             &signer.verifying_key(),
             "execute_query",
             "production",
+            "default",
             "test.sql",
         );
         assert!(result.is_err());

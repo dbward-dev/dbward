@@ -3,31 +3,24 @@ use std::sync::Arc;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
-use dbward_core::{Config, DatabaseConfig, Engine, Environment, Role};
+use dbward_core::{Engine, Environment, Role};
 use dbward_core::driver;
 
-async fn setup() -> (testcontainers::ContainerAsync<Postgres>, Arc<dyn driver::DatabaseDriver>, Config) {
+async fn setup() -> (testcontainers::ContainerAsync<Postgres>, Arc<dyn driver::DatabaseDriver>, String) {
     let container = Postgres::default().start().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
     let drv = driver::connect(&url).await.unwrap();
-    let config = Config {
-        database: DatabaseConfig { url },
-        environment: Environment::Development,
-        role: Role::Admin,
-        migrations_dir: "db/migrations".into(),
-        server: None,
-    };
 
-    (container, drv, config)
+    (container, drv, "test".to_string())
 }
 
 #[tokio::test]
 #[ignore]
 async fn execute_select() {
-    let (_container, drv, config) = setup().await;
-    let mut engine = Engine::from_driver(drv, config);
+    let (_container, drv, db_name) = setup().await;
+    let mut engine = Engine::from_driver(drv, &db_name, Environment::Development);
 
     let result = engine
         .execute_query("test_user", Role::Admin, "SELECT 1 AS num, 'hello' AS msg")
@@ -42,11 +35,11 @@ async fn execute_select() {
 #[tokio::test]
 #[ignore]
 async fn execute_dml() {
-    let (_container, drv, config) = setup().await;
+    let (_container, drv, db_name) = setup().await;
     // Create table via driver directly
     drv.execute("CREATE TABLE test_dml (id SERIAL, val TEXT)").await.unwrap();
 
-    let mut engine = Engine::from_driver(drv, config);
+    let mut engine = Engine::from_driver(drv, &db_name, Environment::Development);
     let result = engine
         .execute_query(
             "test_user",
@@ -62,8 +55,8 @@ async fn execute_dml() {
 #[tokio::test]
 #[ignore]
 async fn readonly_cannot_dml() {
-    let (_container, drv, config) = setup().await;
-    let mut engine = Engine::from_driver(drv, config);
+    let (_container, drv, db_name) = setup().await;
+    let mut engine = Engine::from_driver(drv, &db_name, Environment::Development);
 
     let err = engine
         .execute_query("readonly_user", Role::Readonly, "DELETE FROM nonexistent")
@@ -75,8 +68,8 @@ async fn readonly_cannot_dml() {
 #[tokio::test]
 #[ignore]
 async fn ddl_rejected() {
-    let (_container, drv, config) = setup().await;
-    let mut engine = Engine::from_driver(drv, config);
+    let (_container, drv, db_name) = setup().await;
+    let mut engine = Engine::from_driver(drv, &db_name, Environment::Development);
 
     let err = engine
         .execute_query("admin", Role::Admin, "CREATE TABLE bad (id INT)")
@@ -89,7 +82,7 @@ async fn ddl_rejected() {
 #[tokio::test]
 #[ignore]
 async fn pg_type_mapping_timestamptz() {
-    let (_container, drv, _config) = setup().await;
+    let (_container, drv, _) = setup().await;
     let rows = drv.query("SELECT '2024-01-15 10:30:00+00'::timestamptz AS ts").await.unwrap();
     assert!(rows[0]["ts"].is_string());
     let ts = rows[0]["ts"].as_str().unwrap();
@@ -99,7 +92,7 @@ async fn pg_type_mapping_timestamptz() {
 #[tokio::test]
 #[ignore]
 async fn pg_type_mapping_uuid() {
-    let (_container, drv, _config) = setup().await;
+    let (_container, drv, _) = setup().await;
     let rows = drv.query("SELECT 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid AS id").await.unwrap();
     assert_eq!(rows[0]["id"].as_str().unwrap(), "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
 }
@@ -107,7 +100,7 @@ async fn pg_type_mapping_uuid() {
 #[tokio::test]
 #[ignore]
 async fn pg_type_mapping_jsonb() {
-    let (_container, drv, _config) = setup().await;
+    let (_container, drv, _) = setup().await;
     let rows = drv.query(r#"SELECT '{"key": "value"}'::jsonb AS data"#).await.unwrap();
     assert_eq!(rows[0]["data"]["key"], "value");
 }
@@ -115,7 +108,7 @@ async fn pg_type_mapping_jsonb() {
 #[tokio::test]
 #[ignore]
 async fn pg_type_mapping_date() {
-    let (_container, drv, _config) = setup().await;
+    let (_container, drv, _) = setup().await;
     let rows = drv.query("SELECT '2024-06-15'::date AS d").await.unwrap();
     assert!(rows[0]["d"].as_str().unwrap().contains("2024-06-15"));
 }
@@ -123,7 +116,7 @@ async fn pg_type_mapping_date() {
 #[tokio::test]
 #[ignore]
 async fn pg_type_mapping_numeric_as_string() {
-    let (_container, drv, _config) = setup().await;
+    let (_container, drv, _) = setup().await;
     let rows = drv.query("SELECT 123.456::numeric AS n").await.unwrap();
     // NUMERIC falls through to String fallback
     assert!(rows[0]["n"].is_string());

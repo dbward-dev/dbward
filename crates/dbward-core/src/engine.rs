@@ -1,29 +1,33 @@
 use std::sync::Arc;
 
+use crate::config::ResolvedDatabaseConfig;
 use crate::driver::DatabaseDriver;
 use crate::query::{QueryResult, QueryType, classify_query};
-use crate::{AuditEntry, AuditLogger, Config, Error, Operation, Role, check_permission};
+use crate::{AuditEntry, AuditLogger, Error, Environment, Operation, Role, check_permission};
 
 pub struct Engine {
     driver: Arc<dyn DatabaseDriver>,
-    config: Config,
+    database_name: String,
+    environment: Environment,
     audit: AuditLogger,
 }
 
 impl Engine {
-    pub async fn new(config: Config) -> Result<Self, Error> {
-        let driver = crate::driver::connect(&config.database.url).await?;
+    pub async fn new(resolved: &ResolvedDatabaseConfig, environment: Environment) -> Result<Self, Error> {
+        let driver = crate::driver::connect(&resolved.url).await?;
         Ok(Self {
             driver,
-            config,
+            database_name: resolved.name.clone(),
+            environment,
             audit: AuditLogger::stdout(),
         })
     }
 
-    pub fn from_driver(driver: Arc<dyn DatabaseDriver>, config: Config) -> Self {
+    pub fn from_driver(driver: Arc<dyn DatabaseDriver>, database_name: &str, environment: Environment) -> Self {
         Self {
             driver,
-            config,
+            database_name: database_name.to_string(),
+            environment,
             audit: AuditLogger::stdout(),
         }
     }
@@ -32,8 +36,8 @@ impl Engine {
         &self.driver
     }
 
-    pub fn config(&self) -> &Config {
-        &self.config
+    pub fn database_name(&self) -> &str {
+        &self.database_name
     }
 
     pub fn set_audit_logger(&mut self, logger: AuditLogger) {
@@ -79,7 +83,7 @@ impl Engine {
             user,
             role,
             Operation::ExecuteQuery,
-            self.config.environment.clone(),
+            self.environment.clone(),
             sql,
         );
         entry.success = true;

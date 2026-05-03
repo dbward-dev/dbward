@@ -2,13 +2,23 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use dbward_core::{Engine, Role};
+use dbward_core::{Config, Engine, Role};
 use dbward_migrate::Migrator;
 
 use crate::config_loader;
 use crate::mcp;
 use crate::oidc_login;
 use crate::server_client;
+
+/// Resolve database from config and create Engine + Migrator.
+async fn resolve_engine(config: &Config, database: Option<&str>) -> Result<(Engine, Migrator, String), dbward_core::Error> {
+    let resolved = config.resolve_database(database)?;
+    let db_name = resolved.name.clone();
+    let migrations_dir = resolved.migrations_dir.clone();
+    let engine = Engine::new(&resolved, config.environment.clone()).await?;
+    let migrator = Migrator::new(engine.driver().clone(), migrations_dir);
+    Ok((engine, migrator, db_name))
+}
 
 fn parse_role(s: &str) -> Result<Role, String> {
     match s {
@@ -29,6 +39,10 @@ pub struct Cli {
     /// Override database URL
     #[arg(long, env = "DBWARD_DATABASE_URL")]
     database_url: Option<String>,
+
+    /// Select named database from config
+    #[arg(long, env = "DBWARD_DATABASE")]
+    database: Option<String>,
 
     /// Override environment
     #[arg(long, env = "DBWARD_ENV")]
@@ -192,7 +206,7 @@ async fn require_server_flags(cli: &Cli) -> Result<(String, String), dbward_core
 
     // Try loading OIDC token from ~/.dbward/credentials.json
     let oidc_config = cli.config.exists().then(|| {
-        config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role).ok()
+        config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database).ok()
     }).flatten().and_then(|c| c.server).and_then(|s| s.oidc);
 
     if let Some(ref oc) = oidc_config {
@@ -224,7 +238,7 @@ fn apply_server_config(cli: &mut Cli, config: &dbward_core::Config) {
 
 pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
     // Load config early to merge server settings
-    if let Ok(config) = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role) {
+    if let Ok(config) = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database) {
         apply_server_config(&mut cli, &config);
     }
     // Handle init before anything else
@@ -234,7 +248,7 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
 
     if let Command::Login { device } = &cli.command {
         // Login only needs OIDC config, not database
-        let config = config_loader::load(&cli.config, &Some("dummy://localhost/x".into()), &cli.environment, &cli.role)
+        let config = config_loader::load(&cli.config, &Some("dummy://localhost/x".into()), &cli.environment, &cli.role, &None)
             .map_err(|e| dbward_core::Error::Config(format!("failed to load config: {e}")))?;
         let sc = config.server.as_ref()
             .and_then(|s| s.oidc.as_ref())
@@ -319,10 +333,10 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
             let environment = resp["environment"].as_str().unwrap_or("");
             let detail = resp["detail"].as_str().unwrap_or("");
 
-            dbward_core::token::verify_token(&exec_token, &public_key, operation, environment, detail)?;
+            dbward_core::token::verify_token(&exec_token, &public_key, operation, environment, &exec_token.database, detail)?;
 
-            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?;
-            let mut engine = Engine::new(config.clone()).await?;
+            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database)?;
+            let (mut engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
             let role = cli.role.unwrap_or(Role::Developer);
 
             let result_text = match operation {
@@ -335,7 +349,6 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
                     }
                 }
                 "migrate_up" => {
-                    let migrator = dbward_migrate::Migrator::new(engine.driver().clone(), config.migrations_dir.clone());
                     let count = detail.strip_prefix("count:").and_then(|s| s.parse().ok());
                     let count = if count == Some(0) { None } else { count };
                     let r = migrator.up(count).await?;
@@ -343,7 +356,6 @@ pub async fn run(mut cli: Cli) -> Result<(), dbward_core::Error> {
                     else { format!("Applied {} migration(s):\n{}", r.applied.len(), r.applied.join("\n")) }
                 }
                 "migrate_down" => {
-                    let migrator = dbward_migrate::Migrator::new(engine.driver().clone(), config.migrations_dir.clone());
                     let count = detail.strip_prefix("count:").and_then(|s| s.parse().ok());
                     let r = migrator.down(count).await?;
                     if r.rolled_back.is_empty() { "Nothing to rollback.".into() }
@@ -378,7 +390,7 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
         .ok_or_else(|| dbward_core::Error::Config("--public-key is required in server mode".into()))?;
     let public_key = dbward_core::token::load_public_key(public_key_path)?;
 
-    let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?;
+    let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database)?;
     let env_str = config.environment.to_string();
 
     match cli.command {
@@ -397,9 +409,9 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 _ => return Err(dbward_core::Error::Server(format!("unexpected status: {status}"))),
             };
 
-            dbward_core::token::verify_token(&token, &public_key, "execute_query", &env_str, sql)?;
+            dbward_core::token::verify_token(&token, &public_key, "execute_query", &env_str, &token.database, sql)?;
 
-            let mut engine = Engine::new(config).await?;
+            let (mut engine, _migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
             let role = cli.role.unwrap_or(Role::Developer);
             let result = engine.execute_query("cli_user", role, sql).await?;
 
@@ -427,10 +439,9 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                         Some(t) => t,
                         None => return Ok(()),
                     };
-                    dbward_core::token::verify_token(&token, &public_key, "migrate_status", &env_str, "")?;
+                    dbward_core::token::verify_token(&token, &public_key, "migrate_status", &env_str, &token.database, "")?;
 
-                    let engine = Engine::new(config).await?;
-                    let migrator = Migrator::new(engine.driver().clone(), config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?.migrations_dir);
+                    let (_engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
                     let statuses = migrator.status().await?;
                     sc.complete_request(&id, true).await?;
 
@@ -446,10 +457,7 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 }
                 MigrateAction::Create { .. } => {
                     // Create is local-only (no DB operation)
-                    let migrator = Migrator::new(
-                        Engine::new(config).await?.driver().clone(),
-                        config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?.migrations_dir,
-                    );
+                    let (_engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
                     if let MigrateAction::Create { name } = action {
                         let path = migrator.create(name)?;
                         println!("Created: {}", path.display());
@@ -463,10 +471,9 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
                 Some(t) => t,
                 None => return Ok(()),
             };
-            dbward_core::token::verify_token(&token, &public_key, operation, &env_str, &detail)?;
+            dbward_core::token::verify_token(&token, &public_key, operation, &env_str, &token.database, &detail)?;
 
-            let engine = Engine::new(config.clone()).await?;
-            let migrator = Migrator::new(engine.driver().clone(), config.migrations_dir.clone());
+            let (_engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
 
             match action {
                 MigrateAction::Up { count } => {
@@ -499,6 +506,7 @@ async fn run_server_mode(cli: Cli) -> Result<(), dbward_core::Error> {
         Command::Mcp => {
             mcp::run_stdio_server_mode(
                 config,
+                cli.database.as_deref(),
                 server_client::ServerClient::new(&server_url, &api_token),
                 public_key,
             )
@@ -539,7 +547,7 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
         }
     }
     // Also check config file
-    if let Ok(config) = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role) {
+    if let Ok(config) = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database) {
         if config.environment != dbward_core::Environment::Development {
             return Err(dbward_core::Error::Config(format!(
                 "direct mode is only allowed for development environment (got: {}). Use --server for non-development environments.",
@@ -550,13 +558,12 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
 
     match cli.command {
         Command::Mcp => {
-            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?;
-            mcp::run_stdio(config).await
+            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database)?;
+            mcp::run_stdio(config, cli.database.as_deref()).await
         }
         Command::Migrate { action } => {
-            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?;
-            let engine = Engine::new(config.clone()).await?;
-            let migrator = Migrator::new(engine.driver().clone(), config.migrations_dir.clone());
+            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database)?;
+            let (_engine, migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
 
             match action {
                 MigrateAction::Up { count } => {
@@ -599,9 +606,9 @@ async fn run_direct_mode(cli: Cli) -> Result<(), dbward_core::Error> {
             Ok(())
         }
         Command::Execute { sql, .. } => {
-            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role)?;
+            let config = config_loader::load(&cli.config, &cli.database_url, &cli.environment, &cli.role, &cli.database)?;
             let role = config.role;
-            let mut engine = Engine::new(config).await?;
+            let (mut engine, _migrator, _db_name) = resolve_engine(&config, cli.database.as_deref()).await?;
             let result = engine.execute_query("cli_user", role, &sql).await?;
 
             if result.rows.is_empty() {
@@ -851,7 +858,10 @@ mod tests {
     fn apply_server_config_fills_missing() {
         let mut cli = Cli::parse_from(["dbward", "execute", "SELECT 1"]);
         let config = dbward_core::Config {
-            database: dbward_core::DatabaseConfig { url: "postgres://localhost/db".into() },
+            databases: std::collections::BTreeMap::from([
+                ("default".into(), dbward_core::DatabaseConfig { url: "postgres://localhost/db".into(), migrations_dir: None }),
+            ]),
+            default_database: None,
             environment: dbward_core::Environment::Development,
             role: Role::Developer,
             migrations_dir: "db/migrations".into(),
@@ -871,7 +881,10 @@ mod tests {
     fn apply_server_config_cli_takes_precedence() {
         let mut cli = Cli::parse_from(["dbward", "--server", "http://override:3000", "execute", "SELECT 1"]);
         let config = dbward_core::Config {
-            database: dbward_core::DatabaseConfig { url: "postgres://localhost/db".into() },
+            databases: std::collections::BTreeMap::from([
+                ("default".into(), dbward_core::DatabaseConfig { url: "postgres://localhost/db".into(), migrations_dir: None }),
+            ]),
+            default_database: None,
             environment: dbward_core::Environment::Development,
             role: Role::Developer,
             migrations_dir: "db/migrations".into(),
