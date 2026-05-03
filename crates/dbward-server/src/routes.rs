@@ -91,6 +91,16 @@ pub fn router(state: AppState) -> Router {
                 .put(update_result_policy)
                 .delete(delete_result_policy),
         )
+        .route(
+            "/api/notification-policies",
+            get(list_notification_policies).post(create_notification_policy),
+        )
+        .route(
+            "/api/notification-policies/{id}",
+            get(get_notification_policy)
+                .put(update_notification_policy)
+                .delete(delete_notification_policy),
+        )
         .with_state(state)
 }
 
@@ -235,6 +245,7 @@ async fn create_request(
             operation: operation.into(),
             environment: environment.into(),
             detail: detail.into(),
+            database: database_name.into(),
             approved_by: None,
             reason: reason.clone(),
         });
@@ -250,6 +261,7 @@ async fn create_request(
             operation: operation.into(),
             environment: environment.into(),
             detail: detail.into(),
+            database: database_name.into(),
             approved_by: None,
             reason: None,
         });
@@ -324,6 +336,7 @@ async fn approve_request(
         operation: operation.clone(),
         environment: environment.clone(),
         detail: detail.clone(),
+            database: database_name.clone(),
         approved_by: Some(approver.user.clone()),
         reason: None,
     });
@@ -382,6 +395,7 @@ async fn reject_request(
         user: user.user.clone(),
         operation: "".into(),
         environment: "".into(),
+        database: "".into(),
         detail: "".into(),
         approved_by: None,
         reason: None,
@@ -506,6 +520,7 @@ async fn complete_request(
         operation: operation.clone(),
         environment: environment.clone(),
         detail: detail.clone(),
+            database: database_name.clone(),
         approved_by: None,
         reason: None,
     });
@@ -1426,6 +1441,151 @@ async fn delete_result_policy(
 
     if changes == 0 {
         return Err((StatusCode::NOT_FOUND, "result policy not found".into()));
+    }
+
+    Ok(Json(json!({"id": id, "deleted": true})))
+}
+
+// ---------------------------------------------------------------------------
+// Notification Policy CRUD (admin only for mutations)
+// ---------------------------------------------------------------------------
+
+async fn list_notification_policies(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let _user = auth::authenticate(&headers, &state).await?;
+
+    let conn = state.sqlite.lock().await;
+    let mut stmt = conn
+        .prepare("SELECT id, database_name, environment, webhooks_json, source, created_at, updated_at FROM notification_policies ORDER BY database_name, environment")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map([], |row| {
+            let webhooks: serde_json::Value = serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "database": row.get::<_, String>(1)?,
+                "environment": row.get::<_, String>(2)?,
+                "webhooks": webhooks,
+                "source": row.get::<_, String>(4)?,
+                "created_at": row.get::<_, String>(5)?,
+                "updated_at": row.get::<_, String>(6)?,
+            }))
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(Json(json!({"notification_policies": rows})))
+}
+
+async fn get_notification_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let _user = auth::authenticate(&headers, &state).await?;
+
+    let conn = state.sqlite.lock().await;
+    let row = conn
+        .query_row(
+            "SELECT id, database_name, environment, webhooks_json, source, created_at, updated_at FROM notification_policies WHERE id = ?1",
+            rusqlite::params![id],
+            |row| {
+                let webhooks: serde_json::Value = serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
+                Ok(json!({
+                    "id": row.get::<_, String>(0)?,
+                    "database": row.get::<_, String>(1)?,
+                    "environment": row.get::<_, String>(2)?,
+                    "webhooks": webhooks,
+                    "source": row.get::<_, String>(4)?,
+                    "created_at": row.get::<_, String>(5)?,
+                    "updated_at": row.get::<_, String>(6)?,
+                }))
+            },
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "notification policy not found".into()))?;
+
+    Ok(Json(row))
+}
+
+async fn create_notification_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
+
+    let database = body["database"].as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
+    let environment = body["environment"].as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
+    let webhooks = body.get("webhooks").cloned().unwrap_or(json!([]));
+
+    let id = format!("{database}:{environment}");
+    let webhooks_json = webhooks.to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let conn = state.sqlite.lock().await;
+    conn.execute(
+        "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, source, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, 'api', ?5, ?5)",
+        rusqlite::params![id, database, environment, webhooks_json, now],
+    )
+    .map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            (StatusCode::CONFLICT, format!("notification policy for {database}:{environment} already exists"))
+        } else {
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        }
+    })?;
+
+    Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
+}
+
+async fn update_notification_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
+
+    let conn = state.sqlite.lock().await;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.query_row("SELECT id FROM notification_policies WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
+        .map_err(|_| (StatusCode::NOT_FOUND, "notification policy not found".into()))?;
+
+    if let Some(v) = body.get("webhooks") {
+        conn.execute(
+            "UPDATE notification_policies SET webhooks_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![v.to_string(), now, id],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    Ok(Json(json!({"id": id, "updated": true})))
+}
+
+async fn delete_notification_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
+
+    let conn = state.sqlite.lock().await;
+    let changes = conn
+        .execute("DELETE FROM notification_policies WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if changes == 0 {
+        return Err((StatusCode::NOT_FOUND, "notification policy not found".into()));
     }
 
     Ok(Json(json!({"id": id, "deleted": true})))

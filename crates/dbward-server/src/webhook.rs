@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WebhookConfig {
     pub url: String,
     #[serde(default = "default_events")]
@@ -32,6 +32,7 @@ pub struct WebhookEvent {
     pub user: String,
     pub operation: String,
     pub environment: String,
+    pub database: String,
     pub detail: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approved_by: Option<String>,
@@ -59,8 +60,21 @@ impl WebhookDispatcher {
     }
 
     /// Fire-and-forget: spawn a task for each matching webhook.
+    /// Uses global hooks (legacy) — prefer dispatch_with_policy for DB×env routing.
     pub fn dispatch(&self, event: WebhookEvent) {
-        for hook in &self.hooks {
+        self.dispatch_hooks(&self.hooks, &event);
+    }
+
+    /// Fire-and-forget using notification policy webhooks.
+    pub fn dispatch_with_policy(&self, hooks: Vec<WebhookConfig>, event: WebhookEvent) {
+        // Merge global hooks + policy hooks
+        let mut all = self.hooks.clone();
+        all.extend(hooks);
+        self.dispatch_hooks(&all, &event);
+    }
+
+    fn dispatch_hooks(&self, hooks: &[WebhookConfig], event: &WebhookEvent) {
+        for hook in hooks {
             if !hook.events.iter().any(|e| e == &event.event) {
                 continue;
             }
@@ -158,6 +172,7 @@ mod tests {
             user: "alice".into(),
             operation: "execute".into(),
             environment: "production".into(),
+            database: "app".into(),
             detail: "SELECT 1".into(),
             approved_by: None,
             reason: None,

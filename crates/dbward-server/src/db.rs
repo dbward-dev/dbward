@@ -125,6 +125,17 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             updated_at TEXT NOT NULL,
             UNIQUE(database_name, environment)
         );
+
+        CREATE TABLE IF NOT EXISTS notification_policies (
+            id TEXT PRIMARY KEY,
+            database_name TEXT NOT NULL,
+            environment TEXT NOT NULL,
+            webhooks_json TEXT NOT NULL DEFAULT '[]',
+            source TEXT NOT NULL DEFAULT 'api',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(database_name, environment)
+        );
         ",
     )?;
 
@@ -301,6 +312,46 @@ pub fn get_result_policy(conn: &Connection, database: &str, environment: &str) -
         .unwrap_or(("direct".into(), r#"["requester","admin"]"#.into()));
     let access: Vec<String> = serde_json::from_str(&access_json).unwrap_or_default();
     (mode, access)
+}
+
+/// Sync notification policies from TOML config into SQLite.
+pub fn sync_notification_policies(
+    conn: &Connection,
+    policies: &[crate::server_config::NotificationPolicyDef],
+) -> Result<(), rusqlite::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    for p in policies {
+        let id = format!("{}:{}", p.database, p.environment);
+        let webhooks_json = serde_json::to_string(&p.webhooks).unwrap_or_else(|_| "[]".into());
+        conn.execute(
+            "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 'toml', ?5, ?5)
+             ON CONFLICT(database_name, environment) DO UPDATE SET
+               webhooks_json = ?4, updated_at = ?5
+             WHERE source = 'toml'",
+            rusqlite::params![id, p.database, p.environment, webhooks_json, now],
+        )?;
+    }
+    Ok(())
+}
+
+/// Lookup notification webhooks for a database×environment.
+pub fn get_notification_webhooks(conn: &Connection, database: &str, environment: &str) -> Vec<crate::webhook::WebhookConfig> {
+    let query = |db: &str, env: &str| -> Option<String> {
+        conn.query_row(
+            "SELECT webhooks_json FROM notification_policies WHERE database_name = ?1 AND environment = ?2",
+            rusqlite::params![db, env],
+            |row| row.get(0),
+        ).ok()
+    };
+    let json = query(database, environment)
+        .or_else(|| query("*", environment))
+        .or_else(|| query(database, "*"))
+        .or_else(|| query("*", "*"));
+    match json {
+        Some(j) => serde_json::from_str(&j).unwrap_or_default(),
+        None => vec![],
+    }
 }
 
 #[cfg(test)]

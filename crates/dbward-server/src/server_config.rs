@@ -46,6 +46,16 @@ pub struct ServerConfig {
     pub execution_policies: Vec<ExecutionPolicyDef>,
     #[serde(default)]
     pub result_policies: Vec<ResultPolicyDef>,
+    #[serde(default)]
+    pub notification_policies: Vec<NotificationPolicyDef>,
+}
+
+/// Notification policy definition from TOML config.
+#[derive(Debug, Clone, Deserialize)]
+pub struct NotificationPolicyDef {
+    pub database: String,
+    pub environment: String,
+    pub webhooks: Vec<crate::webhook::WebhookConfig>,
 }
 
 /// Execution policy definition from TOML config.
