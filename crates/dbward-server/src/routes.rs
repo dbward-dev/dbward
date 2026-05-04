@@ -352,15 +352,8 @@ fn get_approvals_for_request(
     conn: &rusqlite::Connection,
     request_id: &str,
 ) -> Result<Vec<(i64, String, String)>, crate::api_error::ApiError> {
-    let mut stmt = conn
-        .prepare("SELECT step_index, actor_id, actor_role FROM approvals WHERE request_id = ?1 AND action = 'approve'")
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    stmt.query_map(rusqlite::params![request_id], |row| {
-        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-    })
-    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))
+    crate::db::request_repo::get_approvals(conn, request_id)
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))
 }
 
 fn current_approval_resource(
@@ -512,13 +505,13 @@ async fn create_request(
     };
 
     let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
 
-    conn.execute(
-        "INSERT INTO requests (id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, emergency, reason, workflow_id, workflow_snapshot_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        rusqlite::params![id, user.user, operation, environment, database_name, detail, status, now, now, emergency, reason, decision.workflow_id, decision.workflow_snapshot_json],
-    )
-    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+    crate::db::request_repo::insert_request(&conn, &crate::db::request_repo::NewRequest {
+        id: &id, created_by: &user.user, operation, environment, database_name,
+        detail, status, emergency, reason: reason.as_deref(),
+        workflow_id: decision.workflow_id.as_deref(),
+        workflow_snapshot_json: decision.workflow_snapshot_json.as_deref(),
+    })?;
 
     if emergency {
         let token = state
@@ -627,13 +620,10 @@ async fn approve_request_inner(
 ) -> Result<ApproveResult, crate::api_error::ApiError> {
     let mut conn = state.sqlite.lock().await;
 
-    let (req_user, status, operation, environment, database_name, detail, workflow_snapshot_json): (String, String, String, String, String, String, Option<String>) = conn
-        .query_row(
-            "SELECT created_by, status, operation, environment, database_name, detail, workflow_snapshot_json FROM requests WHERE id = ?1",
-            rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
-        )
+    let ctx = crate::db::request_repo::get_request_context(&conn, id)
         .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
+    let (req_user, status, operation, environment, database_name, detail, workflow_snapshot_json) =
+        (ctx.created_by, ctx.status, ctx.operation, ctx.environment, ctx.database_name, ctx.detail, ctx.workflow_snapshot_json);
 
     if status != "pending" {
         return Err(crate::api_error::ApiError::conflict(format!(
@@ -660,15 +650,8 @@ async fn approve_request_inner(
         let tx = conn
             .transaction()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.execute(
-            "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
-            rusqlite::params![now, now, id],
-        ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        let approval_id = uuid::Uuid::new_v4().to_string();
-        tx.execute(
-            "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, 'approve', ?3, 0, ?4, NULL, ?5)",
-            rusqlite::params![approval_id, id, approver.user, approver.effective_permission(), now],
-        ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::request_repo::mark_approved(&tx, id)?;
+        crate::db::request_repo::insert_approval(&tx, id, "approve", &approver.user, 0, approver.effective_permission())?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
@@ -805,15 +788,10 @@ async fn approve_request_inner(
         }
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
-    let approval_id = uuid::Uuid::new_v4().to_string();
     let tx = conn
         .transaction()
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    tx.execute(
-        "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, 'approve', ?3, ?4, ?5, NULL, ?6)",
-        rusqlite::params![approval_id, id, approver.user, current_step as i64, actor_role, now],
-    ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+    crate::db::request_repo::insert_approval(&tx, id, "approve", &approver.user, current_step as i64, &actor_role)?;
 
     let mut updated_approvals = existing_approvals.clone();
     updated_approvals.push((
@@ -830,10 +808,7 @@ async fn approve_request_inner(
             .all(|(i, s)| is_step_satisfied(s, &updated_approvals, i as i64));
 
     if all_satisfied {
-        tx.execute(
-            "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
-            rusqlite::params![now, now, id],
-        ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::request_repo::mark_approved(&tx, id)?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
@@ -862,11 +837,7 @@ async fn approve_request_inner(
             }),
         })
     } else {
-        tx.execute(
-            "UPDATE requests SET updated_at = ?1 WHERE id = ?2",
-            rusqlite::params![now, id],
-        )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::request_repo::touch_updated_at(&tx, id)?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
@@ -962,13 +933,11 @@ async fn reject_request(
     {
         let mut conn = state.sqlite.lock().await;
 
-        let (req_user, status, database_name, environment): (String, String, String, String) = conn
-            .query_row(
-                "SELECT created_by, status, database_name, environment FROM requests WHERE id = ?1",
-                rusqlite::params![id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
+        let (req_user, status, database_name, environment): (String, String, String, String) = {
+            let ctx = crate::db::request_repo::get_request_context(&conn, &id)
+                .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
+            (ctx.created_by, ctx.status, ctx.database_name, ctx.environment)
+        };
 
         if status != "pending" {
             return Err(crate::api_error::ApiError::conflict(format!(
@@ -976,14 +945,9 @@ async fn reject_request(
             )));
         }
 
-        let workflow_snapshot_json = conn
-            .query_row(
-                "SELECT workflow_snapshot_json FROM requests WHERE id = ?1",
-                rusqlite::params![id],
-                |row| row.get::<_, Option<String>>(0),
-            )
+        let workflow_snapshot_json = crate::db::request_repo::get_request_context(&conn, &id)
             .ok()
-            .flatten();
+            .and_then(|c| c.workflow_snapshot_json);
         let (approval_resource, step_idx, step_roles, total_steps) = current_approval_resource(
             &conn,
             &id,
@@ -1004,18 +968,8 @@ async fn reject_request(
         let tx = conn
             .transaction()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.execute(
-            "UPDATE requests SET status = 'rejected', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
-            rusqlite::params![now, now, id],
-        )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-        let approval_id = uuid::Uuid::new_v4().to_string();
-        tx.execute(
-            "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, 'reject', ?3, 0, ?4, NULL, ?5)",
-            rusqlite::params![approval_id, id, user.user, user.effective_permission(), now],
-        )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::request_repo::mark_rejected(&tx, &id)?;
+        crate::db::request_repo::insert_approval(&tx, &id, "reject", &user.user, 0, user.effective_permission())?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
@@ -1309,13 +1263,11 @@ async fn dispatch_request(
         String,
         String,
         Option<String>,
-    ) = conn
-        .query_row(
-            "SELECT created_by, status, database_name, environment, resolved_at FROM requests WHERE id = ?1",
-            rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-        )
-        .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
+    ) = {
+        let ctx = crate::db::request_repo::get_request_context(&conn, &id)
+            .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
+        (ctx.created_by, ctx.status, ctx.database_name, ctx.environment, ctx.resolved_at)
+    };
 
     authz::authorize_sync(
         &user,
@@ -1345,13 +1297,7 @@ async fn dispatch_request(
             }
         }
 
-        let exec_count: u32 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM agent_executions WHERE request_id = ?1",
-                rusqlite::params![id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
+        let exec_count = crate::db::request_repo::count_executions(&conn, &id);
         if status == "failed" && !retry {
             return Err(crate::api_error::ApiError::conflict(
                 "retry on failure is disabled",
@@ -1364,14 +1310,7 @@ async fn dispatch_request(
         }
     }
 
-    // Atomic status transition
-    let now = chrono::Utc::now().to_rfc3339();
-    let rows = conn.execute(
-        "UPDATE requests SET status = 'dispatched', updated_at = ?1 WHERE id = ?2 AND status IN ('approved', 'auto_approved', 'break_glass', 'executed', 'failed')",
-        rusqlite::params![now, id],
-    ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-    if rows == 0 {
+    if !crate::db::request_repo::mark_dispatched(&conn, &id)? {
         return Err(crate::api_error::ApiError::conflict(
             "request cannot be dispatched (wrong status)",
         ));
@@ -1528,12 +1467,7 @@ async fn agent_poll(
          ON CONFLICT(id) DO UPDATE SET capabilities_json = ?3, last_seen_at = ?4",
         rusqlite::params![user.user, user.token_id, caps_json, now],
     )
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("agent registration failed: {e}"),
-        )
-    })?;
+    .map_err(|e| crate::api_error::ApiError::internal(format!("agent registration failed: {e}")))?;
 
     // Build dynamic WHERE clause for capability filtering
     let mut where_clauses = vec!["status = 'dispatched'".to_string()];
@@ -1608,13 +1542,10 @@ async fn agent_claim(
 
     let mut conn = state.sqlite.lock().await;
 
-    let (operation, environment, database, detail, status): (String, String, String, String, String) = conn
-        .query_row(
-            "SELECT operation, environment, database_name, detail, status FROM requests WHERE id = ?1",
-            rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-        )
+    let ctx = crate::db::request_repo::get_request_context(&conn, &id)
         .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
+    let (operation, environment, database, detail, status) =
+        (ctx.operation, ctx.environment, ctx.database_name, ctx.detail, ctx.status);
 
     if status != "dispatched" {
         return Err(crate::api_error::ApiError::conflict(format!(
@@ -1631,11 +1562,7 @@ async fn agent_claim(
     )?;
 
     // Verify agent has capability for this job
-    if let Ok(caps_json) = conn.query_row(
-        "SELECT capabilities_json FROM agents WHERE id = ?1",
-        rusqlite::params![agent_id],
-        |row| row.get::<_, String>(0),
-    ) {
+    if let Some(caps_json) = crate::db::agent_repo::get_agent_capabilities(&conn, &agent_id) {
         if let Ok(caps) = serde_json::from_str::<serde_json::Value>(&caps_json) {
             let matches = |arr: &serde_json::Value, val: &str| -> bool {
                 arr.as_array().map_or(true, |a| {
@@ -1655,33 +1582,15 @@ async fn agent_claim(
         }
     }
 
-    let now = chrono::Utc::now().to_rfc3339();
-    let lease_expires = (chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
-    let exec_id = uuid::Uuid::new_v4().to_string();
-
     let token = state
         .token_signer
         .issue(&id, &operation, &environment, &database, &detail);
     let token_json = serde_json::to_string(&token)
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
-    let tx = conn
-        .transaction()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    tx.execute(
-        "INSERT INTO agent_executions (id, request_id, agent_id, status, execution_token_json, lease_expires_at, started_at, created_at)
-         VALUES (?1, ?2, ?3, 'claimed', ?4, ?5, ?6, ?6)",
-        rusqlite::params![exec_id, id, agent_id, token_json, lease_expires, now],
-    )
-    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-    tx.execute(
-        "UPDATE requests SET status = 'running', updated_at = ?1 WHERE id = ?2",
-        rusqlite::params![now, id],
-    )
-    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    tx.commit()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+    let exec_id = crate::db::agent_repo::create_execution_and_mark_running(
+        &conn, &id, &agent_id, &token_json,
+    )?;
 
     Ok(Json(json!({
         "execution_id": exec_id,
@@ -1712,17 +1621,12 @@ async fn agent_result(
         let mut conn = state.sqlite.lock().await;
         let now = chrono::Utc::now().to_rfc3339();
 
-        let (request_id, exec_status, agent_id): (String, String, String) = conn
-            .query_row(
-                "SELECT request_id, status, agent_id FROM agent_executions WHERE id = ?1",
-                rusqlite::params![id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .map_err(|_| (StatusCode::NOT_FOUND, "execution not found".into()))?;
+        let exec_ctx = crate::db::agent_repo::get_execution_context(&conn, &id)
+            .map_err(|_| crate::api_error::ApiError::not_found("execution not found"))?;
 
-        if exec_status != "claimed" {
+        if exec_ctx.status != "claimed" {
             return Err(crate::api_error::ApiError::conflict(format!(
-                "execution status is {exec_status}"
+                "execution status is {}", exec_ctx.status
             )));
         }
 
@@ -1730,46 +1634,20 @@ async fn agent_result(
             &user,
             Action::AgentSubmitResult,
             Resource::AgentExecution {
-                agent_id: agent_id.clone(),
+                agent_id: exec_ctx.agent_id.clone(),
             },
         )?;
 
-        let new_status = if success { "completed" } else { "failed" };
-        let req_status = if success { "executed" } else { "failed" };
-
-        let (operation, environment, database_name, detail, actor) = conn
-            .query_row(
-                "SELECT operation, environment, database_name, detail, created_by FROM requests WHERE id = ?1",
-                rusqlite::params![request_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
-            )
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("request lookup failed: {e}")))?;
-
-        let audit_id = uuid::Uuid::new_v4().to_string();
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.execute(
-            "UPDATE agent_executions SET status = ?1, finished_at = ?2, error_message = ?3 WHERE id = ?4",
-            rusqlite::params![new_status, now, error_msg, id],
-        )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-        tx.execute(
-            "UPDATE requests SET status = ?1, updated_at = ?2, resolved_at = ?2 WHERE id = ?3",
-            rusqlite::params![req_status, now, request_id],
-        )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-        tx.execute(
-            "INSERT INTO audit_log (id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11)",
-            rusqlite::params![audit_id, request_id, id, actor, operation, environment, database_name, detail, req_status, error_msg, now],
-        )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
+        let req_ctx = crate::db::request_repo::get_request_context(&conn, &exec_ctx.request_id)
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
-        (request_id, req_status.to_string())
+        let req_status = crate::db::agent_repo::finish_execution(
+            &conn, &id, &exec_ctx.request_id, success, error_msg.as_deref(),
+            &req_ctx.operation, &req_ctx.environment, &req_ctx.database_name,
+            &req_ctx.detail, &req_ctx.created_by,
+        )?;
+
+        (exec_ctx.request_id, req_status)
     };
 
     // Relay result to waiting CLI

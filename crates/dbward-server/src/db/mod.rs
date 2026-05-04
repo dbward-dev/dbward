@@ -1,6 +1,8 @@
 pub(crate) mod maintenance;
+pub mod agent_repo;
 pub mod audit_repo;
 pub mod policy_repo;
+pub mod request_repo;
 
 use rusqlite::Connection;
 
