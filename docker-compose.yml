@@ -141,6 +141,14 @@ services:
     profiles:
       - dev
 
+  webhook-receiver:
+    image: python:3.12-slim
+    command: ["python3", "/app/webhook-receiver.py"]
+    volumes:
+      - ./dev/webhook-receiver.py:/app/webhook-receiver.py:ro
+    ports:
+      - "9999:9999"
+
 volumes:
   pgdata:
   server-data:
