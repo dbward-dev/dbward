@@ -13,5 +13,5 @@ databases = ["app"]
 operations = ["execute_query", "migrate_up", "migrate_down", "migrate_status"]
 
 [databases.app]
-url = "postgres://dbward:dbward@postgres:5432/dbward_dev"
+url = "postgres://${DB_USER:-dbward}:${DB_PASS:-dbward}@postgres:5432/dbward_dev"
 migrations_dir = "/workspace/db/migrations/app"
