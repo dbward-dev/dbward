@@ -291,25 +291,48 @@ fn list_requests_pending_for_me(
         .filter_map(|r| r.ok())
         .collect();
 
+    // Batch-load all approvals for pending requests (eliminates N+1)
+    let all_approvals: HashMap<String, Vec<(i64, String, String)>> = {
+        let mut stmt = conn
+            .prepare("SELECT request_id, step_index, actor_id, actor_role FROM approvals WHERE action = 'approve' AND request_id IN (SELECT id FROM requests WHERE status = 'pending')")
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)))
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .filter_map(|r| r.ok());
+        let mut map: HashMap<String, Vec<(i64, String, String)>> = HashMap::new();
+        for (req_id, step, actor, role) in rows {
+            map.entry(req_id).or_default().push((step, actor, role));
+        }
+        map
+    };
+
     let mut filtered: Vec<serde_json::Value> = Vec::new();
     for (row, created_by, ws_json) in &candidates {
         let req_id = row["id"].as_str().unwrap_or("");
-        let approvals = get_approvals_for_request(conn, req_id)?;
-        let (approval_resource, _, _, _) =
-            current_approval_resource(conn, req_id, created_by.clone(), ws_json.as_deref())?;
+        let approvals = all_approvals.get(req_id).cloned().unwrap_or_default();
+
+        let steps: Vec<crate::server_config::WorkflowStep> = ws_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+
+        let current_step_idx = steps.iter().enumerate().find_map(|(i, step)| {
+            if !is_step_satisfied(step, &approvals, i as i64) { Some(i) } else { None }
+        });
+
+        let allowed_roles: Vec<String> = current_step_idx
+            .and_then(|i| steps.get(i))
+            .map(|step| step.approvers.iter().map(|g| g.role.clone()).collect())
+            .unwrap_or_default();
+
+        let approval_resource = authz::Resource::ApprovalStep {
+            requester_id: created_by.clone(),
+            allowed_roles,
+        };
+
         if authz::authorize_sync(user, Action::ApproveRequest, approval_resource).is_ok() {
-            let steps: Vec<crate::server_config::WorkflowStep> = ws_json
-                .as_deref()
-                .and_then(|s| serde_json::from_str(s).ok())
-                .unwrap_or_default();
-            let current_step = steps.iter().enumerate().find_map(|(i, step)| {
-                if !is_step_satisfied(step, &approvals, i as i64) {
-                    Some(i)
-                } else {
-                    None
-                }
-            });
-            if let Some(idx) = current_step {
+            if let Some(idx) = current_step_idx {
                 let already_approved = approvals
                     .iter()
                     .any(|(si, aid, _)| *si == idx as i64 && aid == &user.user);
