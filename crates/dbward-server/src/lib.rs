@@ -6,6 +6,7 @@ pub mod oidc;
 pub mod policy;
 pub mod routes;
 pub mod server_config;
+pub mod services;
 mod state;
 pub mod token;
 pub mod webhook;
