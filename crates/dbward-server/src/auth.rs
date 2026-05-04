@@ -52,20 +52,6 @@ pub async fn create_token_with_type(
     Ok((token_id, raw_token))
 }
 
-pub fn require_agent(user: &AuthUser) -> Result<(), (StatusCode, String)> {
-    if user.subject_type != "agent" {
-        return Err((StatusCode::FORBIDDEN, "agent token required".into()));
-    }
-    Ok(())
-}
-
-pub fn require_human(user: &AuthUser) -> Result<(), (StatusCode, String)> {
-    if user.subject_type != "user" {
-        return Err((StatusCode::FORBIDDEN, "user token required".into()));
-    }
-    Ok(())
-}
-
 /// Revoke a token by ID.
 pub async fn revoke_token(state: &AppState, token_id: &str) -> Result<(), String> {
     let conn = state.sqlite.lock().await;

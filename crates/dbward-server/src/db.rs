@@ -223,11 +223,24 @@ pub fn reclaim_expired_leases(conn: &Connection) -> Result<usize, rusqlite::Erro
 }
 
 /// Sync workflows from TOML config into SQLite. Only touches source='toml' rows.
+fn delete_stale_toml_records(conn: &Connection, table: &str, keep_ids: &[String]) -> Result<(), rusqlite::Error> {
+    if keep_ids.is_empty() {
+        conn.execute(&format!("DELETE FROM {table} WHERE source = 'toml'"), [])?;
+    } else {
+        let placeholders: Vec<String> = (1..=keep_ids.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!("DELETE FROM {table} WHERE source = 'toml' AND id NOT IN ({})", placeholders.join(","));
+        let params: Vec<&dyn rusqlite::types::ToSql> = keep_ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+        conn.execute(&sql, params.as_slice())?;
+    }
+    Ok(())
+}
+
 pub fn sync_workflows(
     conn: &Connection,
     workflows: &[crate::server_config::WorkflowDef],
 ) -> Result<(), rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
+    let mut toml_ids: Vec<String> = Vec::new();
     for w in workflows {
         let mut sorted_ops = w.operations.clone();
         sorted_ops.sort();
@@ -247,7 +260,10 @@ pub fn sync_workflows(
              WHERE source = 'toml'",
             rusqlite::params![id, w.database, w.environment, ops_json, steps_json, w.require_reason, now],
         )?;
+        toml_ids.push(id);
     }
+    // Remove TOML-sourced workflows that no longer exist in config
+    delete_stale_toml_records(conn, "workflows", &toml_ids)?;
     Ok(())
 }
 
@@ -267,7 +283,7 @@ pub fn evaluate_workflow(
 
     for (db_name, env_name) in candidates {
         let mut stmt = conn
-            .prepare("SELECT id, operations_json, steps_json, require_reason FROM workflows WHERE database_name = ?1 AND environment = ?2")
+            .prepare("SELECT id, operations_json, steps_json, require_reason FROM workflows WHERE database_name = ?1 AND environment = ?2 ORDER BY id ASC")
             .ok()?;
         let rows: Vec<(String, String, String, bool)> = stmt
             .query_map(rusqlite::params![db_name, env_name], |row| {
@@ -311,6 +327,7 @@ pub fn sync_execution_policies(
     policies: &[crate::server_config::ExecutionPolicyDef],
 ) -> Result<(), rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
+    let mut toml_ids: Vec<String> = Vec::new();
     for p in policies {
         let id = format!("{}:{}", p.database, p.environment);
         conn.execute(
@@ -321,7 +338,9 @@ pub fn sync_execution_policies(
              WHERE source = 'toml'",
             rusqlite::params![id, p.database, p.environment, p.max_executions, p.execution_window_secs, p.retry_on_failure, now],
         )?;
+        toml_ids.push(id);
     }
+    delete_stale_toml_records(conn, "execution_policies", &toml_ids)?;
     Ok(())
 }
 
@@ -331,6 +350,7 @@ pub fn sync_result_policies(
     policies: &[crate::server_config::ResultPolicyDef],
 ) -> Result<(), rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
+    let mut toml_ids: Vec<String> = Vec::new();
     for p in policies {
         let id = format!("{}:{}", p.database, p.environment);
         let config_json = p
@@ -347,7 +367,9 @@ pub fn sync_result_policies(
              WHERE source = 'toml'",
             rusqlite::params![id, p.database, p.environment, p.delivery_mode, config_json, access_json, now],
         )?;
+        toml_ids.push(id);
     }
+    delete_stale_toml_records(conn, "result_policies", &toml_ids)?;
     Ok(())
 }
 
@@ -399,6 +421,7 @@ pub fn sync_notification_policies(
     policies: &[crate::server_config::NotificationPolicyDef],
 ) -> Result<(), rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
+    let mut toml_ids: Vec<String> = Vec::new();
     for p in policies {
         let id = format!("{}:{}", p.database, p.environment);
         let webhooks_json = serde_json::to_string(&p.webhooks).unwrap_or_else(|_| "[]".into());
@@ -410,7 +433,9 @@ pub fn sync_notification_policies(
              WHERE source = 'toml'",
             rusqlite::params![id, p.database, p.environment, webhooks_json, now],
         )?;
+        toml_ids.push(id);
     }
+    delete_stale_toml_records(conn, "notification_policies", &toml_ids)?;
     Ok(())
 }
 

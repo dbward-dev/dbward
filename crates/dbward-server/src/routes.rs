@@ -1536,18 +1536,44 @@ async fn agent_poll(
         )
     })?;
 
+    // Build dynamic WHERE clause for capability filtering
+    let mut where_clauses = vec!["status = 'dispatched'".to_string()];
+    let mut bind_values: Vec<String> = Vec::new();
+
+    if !databases.is_empty() {
+        let placeholders: Vec<String> = databases.iter().enumerate()
+            .map(|(i, _)| format!("?{}", bind_values.len() + i + 1))
+            .collect();
+        where_clauses.push(format!("database_name IN ({})", placeholders.join(",")));
+        bind_values.extend(databases.clone());
+    }
+    if !environments.is_empty() {
+        let placeholders: Vec<String> = environments.iter().enumerate()
+            .map(|(i, _)| format!("?{}", bind_values.len() + i + 1))
+            .collect();
+        where_clauses.push(format!("environment IN ({})", placeholders.join(",")));
+        bind_values.extend(environments.clone());
+    }
+    if !operations.is_empty() {
+        let placeholders: Vec<String> = operations.iter().enumerate()
+            .map(|(i, _)| format!("?{}", bind_values.len() + i + 1))
+            .collect();
+        where_clauses.push(format!("operation IN ({})", placeholders.join(",")));
+        bind_values.extend(operations.clone());
+    }
+
+    let where_sql = where_clauses.join(" AND ");
+    let query_sql = format!(
+        "SELECT id, created_by, operation, environment, database_name, detail
+         FROM requests WHERE {where_sql} ORDER BY created_at ASC LIMIT 10"
+    );
+
     let mut stmt = conn
-        .prepare(
-            "SELECT id, created_by, operation, environment, database_name, detail
-             FROM requests
-             WHERE status = 'dispatched'
-             ORDER BY created_at ASC
-             LIMIT 10",
-        )
+        .prepare(&query_sql)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let rows: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
+        .query_map(rusqlite::params_from_iter(&bind_values), |row| {
             Ok(json!({
                 "id": row.get::<_, String>(0)?,
                 "created_by": row.get::<_, String>(1)?,
@@ -1559,15 +1585,7 @@ async fn agent_poll(
         })
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .into_iter()
-        .filter(|r| {
-            let db = r["database_name"].as_str().unwrap_or("");
-            let env = r["environment"].as_str().unwrap_or("");
-            (databases.is_empty() || databases.iter().any(|d| d == db))
-                && (environments.is_empty() || environments.iter().any(|e| e == env))
-        })
-        .collect();
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({"jobs": rows})))
 }
