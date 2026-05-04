@@ -146,6 +146,7 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
 
 fn recover_in_flight_requests(conn: &Connection) -> Result<(), rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
+    conn.execute_batch("BEGIN")?;
     conn.execute(
         "UPDATE requests
          SET status = 'approved', updated_at = ?1
@@ -158,7 +159,30 @@ fn recover_in_flight_requests(conn: &Connection) -> Result<(), rusqlite::Error> 
          WHERE status = 'claimed'",
         rusqlite::params![now],
     )?;
+    conn.execute_batch("COMMIT")?;
     Ok(())
+}
+
+/// Reclaim expired leases: reset running→approved so client can re-dispatch.
+pub fn reclaim_expired_leases(conn: &Connection) -> Result<usize, rusqlite::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute_batch("BEGIN")?;
+    let count = conn.execute(
+        "UPDATE requests SET status = 'approved', updated_at = ?1
+         WHERE status = 'running' AND id IN (
+           SELECT request_id FROM agent_executions
+           WHERE status = 'claimed' AND lease_expires_at < ?1
+         )",
+        rusqlite::params![now],
+    )?;
+    conn.execute(
+        "UPDATE agent_executions SET status = 'failed', finished_at = ?1,
+         error_message = 'lease expired'
+         WHERE status = 'claimed' AND lease_expires_at < ?1",
+        rusqlite::params![now],
+    )?;
+    conn.execute_batch("COMMIT")?;
+    Ok(count)
 }
 
 /// Sync workflows from TOML config into SQLite. Only touches source='toml' rows.

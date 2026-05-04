@@ -13,6 +13,21 @@ pub use state::{AppState, ResultChannels};
 use std::net::SocketAddr;
 
 pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core::Error> {
+    // Background task: reclaim expired agent leases every 60s
+    let sqlite = state.sqlite.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            let conn = sqlite.lock().await;
+            if let Ok(n) = db::reclaim_expired_leases(&conn) {
+                if n > 0 {
+                    eprintln!("reclaimed {n} expired lease(s)");
+                }
+            }
+        }
+    });
+
     let app = routes::router(state);
 
     let listener = tokio::net::TcpListener::bind(addr)

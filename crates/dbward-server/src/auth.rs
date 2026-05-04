@@ -23,11 +23,21 @@ fn token_prefix(raw: &str) -> String {
         .collect()
 }
 
-/// Create a new API token for a user.
+/// Create a new API token for a user or agent.
 pub async fn create_token(
     state: &AppState,
     user: &str,
     role: Role,
+) -> Result<(String, String), String> {
+    create_token_with_type(state, user, role, "user").await
+}
+
+/// Create a new API token with explicit subject_type ("user" or "agent").
+pub async fn create_token_with_type(
+    state: &AppState,
+    user: &str,
+    role: Role,
+    subject_type: &str,
 ) -> Result<(String, String), String> {
     let token_id = Uuid::new_v4().to_string();
     let raw_token = format!("dbw_{}", Uuid::new_v4().to_string().replace('-', ""));
@@ -37,11 +47,25 @@ pub async fn create_token(
     let conn = state.sqlite.lock().await;
     conn.execute(
         "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, role, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![token_id, "user", user, hash, prefix, role.to_string(), "active", Utc::now().to_rfc3339()],
+        params![token_id, subject_type, user, hash, prefix, role.to_string(), "active", Utc::now().to_rfc3339()],
     )
     .map_err(|e| e.to_string())?;
 
     Ok((token_id, raw_token))
+}
+
+pub fn require_agent(user: &AuthUser) -> Result<(), (StatusCode, String)> {
+    if user.subject_type != "agent" {
+        return Err((StatusCode::FORBIDDEN, "agent token required".into()));
+    }
+    Ok(())
+}
+
+pub fn require_human(user: &AuthUser) -> Result<(), (StatusCode, String)> {
+    if user.subject_type != "user" {
+        return Err((StatusCode::FORBIDDEN, "user token required".into()));
+    }
+    Ok(())
 }
 
 /// Revoke a token by ID.
@@ -97,6 +121,7 @@ pub async fn authenticate(
             token_id: format!("oidc:{identity}"),
             user: identity,
             role,
+            subject_type: "user".into(),
         })
     } else {
         // API token
@@ -119,14 +144,14 @@ async fn authenticate_api_token(
 
     let conn = state.sqlite.lock().await;
 
-    let result: Result<(String, String, String), _> = conn.query_row(
-        "SELECT id, subject_id, role FROM tokens WHERE token_prefix = ?1 AND token_hash = ?2 AND status = 'active'",
+    let result: Result<(String, String, String, String), _> = conn.query_row(
+        "SELECT id, subject_id, role, subject_type FROM tokens WHERE token_prefix = ?1 AND token_hash = ?2 AND status = 'active'",
         params![prefix, hash],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     );
 
     match result {
-        Ok((id, user, role_str)) => {
+        Ok((id, user, role_str, subject_type)) => {
             let role = match role_str.as_str() {
                 "admin" => Role::Admin,
                 "developer" => Role::Developer,
@@ -142,6 +167,7 @@ async fn authenticate_api_token(
                 token_id: id,
                 user,
                 role,
+                subject_type,
             })
         }
         Err(_) => Err((StatusCode::UNAUTHORIZED, "invalid token".into())),

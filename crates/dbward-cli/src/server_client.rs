@@ -184,27 +184,6 @@ impl ServerClient {
         }
     }
 
-    /// Report completion of an executed request.
-    pub async fn complete_request(&self, request_id: &str, success: bool) -> Result<(), Error> {
-        let resp = self
-            .client
-            .post(format!(
-                "{}/api/requests/{}/complete",
-                self.base_url, request_id
-            ))
-            .bearer_auth(&self.api_token)
-            .json(&serde_json::json!({"success": success}))
-            .send()
-            .await
-            .map_err(|e| Error::Server(format!("complete failed: {e}")))?;
-
-        if !resp.status().is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(Error::Server(format!("complete failed: {text}")));
-        }
-        Ok(())
-    }
-
     /// Approve a request.
     pub async fn approve(&self, request_id: &str) -> Result<Value, Error> {
         let resp = self

@@ -130,6 +130,9 @@ enum TokenAction {
         user: String,
         #[arg(long, value_parser = parse_role)]
         role: dbward_core::Role,
+        /// Create an agent token instead of a user token
+        #[arg(long)]
+        agent: bool,
         #[arg(long, default_value = "dbward.db")]
         data: String,
     },
@@ -436,17 +439,40 @@ fn save_result(
             if std::fs::create_dir_all(&dir).is_err() {
                 return None;
             }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            }
             dir.join(format!("{request_id}.json"))
         }
     };
     let content = serde_json::to_string_pretty(resp).unwrap_or_default();
-    if std::fs::write(&path, &content).is_ok() {
+    if write_secure(&path, content.as_bytes()).is_ok() {
         eprintln!("Result saved to {}", path.display());
         Some(path)
     } else {
         eprintln!("Warning: failed to save result to {}", path.display());
         None
     }
+}
+
+#[cfg(unix)]
+fn write_secure(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?
+        .write_all(content)
+}
+
+#[cfg(not(unix))]
+fn write_secure(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, content)
 }
 
 /// Load a previously saved result from local storage.
@@ -521,7 +547,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
             dbward_server::start(addr, state).await
         }
         ServerAction::Token { action } => match action {
-            TokenAction::Create { user, role, data } => {
+            TokenAction::Create { user, role, agent, data } => {
                 let conn = rusqlite::Connection::open(data)
                     .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
                 dbward_server::db::init(&conn)
@@ -542,14 +568,17 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     policy: std::sync::Arc::new(Default::default()),
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                 };
-                let (token_id, raw_token) = dbward_server::auth::create_token(&state, user, *role)
+                let subject_type = if *agent { "agent" } else { "user" };
+                let (token_id, raw_token) = dbward_server::auth::create_token_with_type(&state, user, *role, subject_type)
                     .await
                     .map_err(dbward_core::Error::Server)?;
+                let type_label = if *agent { "agent" } else { "user" };
                 println!("Token created:");
                 println!("  ID:    {token_id}");
                 println!("  Token: {raw_token}");
                 println!("  User:  {user}");
                 println!("  Role:  {role}");
+                println!("  Type:  {type_label}");
                 println!("\nSave this token — it cannot be retrieved later.");
                 Ok(())
             }

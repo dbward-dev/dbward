@@ -42,10 +42,6 @@ pub fn router(state: AppState) -> Router {
             axum::routing::post(reject_request),
         )
         .route(
-            "/api/requests/{id}/complete",
-            axum::routing::post(complete_request),
-        )
-        .route(
             "/api/requests/{id}/dispatch",
             axum::routing::post(dispatch_request),
         )
@@ -180,6 +176,7 @@ async fn create_request(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
 
     let operation = body["operation"]
         .as_str()
@@ -286,9 +283,10 @@ async fn approve_request(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let approver = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&approver)?;
     require_admin_role(&approver)?;
 
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
 
     // Fetch request
     let (req_user, status, operation, environment, database_name, detail): (String, String, String, String, String, String) = conn
@@ -312,18 +310,20 @@ async fn approve_request(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
+    let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    tx.execute(
         "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
         rusqlite::params![now, now, id],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let approval_id = uuid::Uuid::new_v4().to_string();
-    conn.execute(
+    tx.execute(
         "INSERT INTO approvals (id, request_id, action, actor_id, comment, created_at) VALUES (?1, ?2, 'approve', ?3, NULL, ?4)",
         rusqlite::params![approval_id, id, approver.user, now],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let token = state
         .token_signer
@@ -352,8 +352,9 @@ async fn reject_request(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
 
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
 
     let (req_user, status): (String, String) = conn
         .query_row(
@@ -376,18 +377,20 @@ async fn reject_request(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
+    let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    tx.execute(
         "UPDATE requests SET status = 'rejected', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
         rusqlite::params![now, now, id],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let approval_id = uuid::Uuid::new_v4().to_string();
-    conn.execute(
+    tx.execute(
         "INSERT INTO approvals (id, request_id, action, actor_id, comment, created_at) VALUES (?1, ?2, 'reject', ?3, NULL, ?4)",
         rusqlite::params![approval_id, id, user.user, now],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     state.webhooks.dispatch(crate::webhook::WebhookEvent {
         event: "request_rejected".into(),
@@ -444,95 +447,12 @@ async fn get_request(
     Ok(Json(resp))
 }
 
-async fn complete_request(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let user = auth::authenticate(&headers, &state).await?;
-
-    let conn = state.sqlite.lock().await;
-
-    let (req_user, status): (String, String) = conn
-        .query_row(
-            "SELECT created_by, status FROM requests WHERE id = ?1",
-            rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
-
-    // Only the requester (or admin) can report completion
-    if req_user != user.user && user.role != dbward_core::Role::Admin {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "only the requester can report completion".into(),
-        ));
-    }
-
-    if status != "approved" && status != "auto_approved" {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("request status is {status}, expected approved"),
-        ));
-    }
-
-    let success = body["success"].as_bool().unwrap_or(false);
-    let new_status = if success { "executed" } else { "failed" };
-    let now = chrono::Utc::now().to_rfc3339();
-    let error_msg = body["error_message"].as_str().map(|s| s.to_string());
-
-    conn.execute(
-        "UPDATE requests SET status = ?1, updated_at = ?2, resolved_at = ?3 WHERE id = ?4",
-        rusqlite::params![new_status, now, now, id],
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // Write audit log
-    let audit_id = uuid::Uuid::new_v4().to_string();
-    let (operation, environment, database_name, detail) = conn
-        .query_row(
-            "SELECT operation, environment, database_name, detail FROM requests WHERE id = ?1",
-            rusqlite::params![id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            },
-        )
-        .unwrap_or_default();
-
-    conn.execute(
-        "INSERT INTO audit_log (id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10)",
-        rusqlite::params![
-            audit_id, id, req_user, operation, environment, database_name, detail, new_status, error_msg, now
-        ],
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    state.webhooks.dispatch(crate::webhook::WebhookEvent {
-        event: "request_completed".into(),
-        request_id: id.clone(),
-        user: req_user.clone(),
-        operation: operation.clone(),
-        environment: environment.clone(),
-        detail: detail.clone(),
-            database: database_name.clone(),
-        approved_by: None,
-        reason: None,
-    });
-
-    Ok(Json(json!({"id": id, "status": new_status})))
-}
-
 async fn list_audit(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -574,6 +494,7 @@ async fn dispatch_request(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
 
     let (requester, status, database_name, environment, resolved_at): (
         String,
@@ -671,6 +592,7 @@ async fn stream_result(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
 
     let (requester, database_name, environment, status): (String, String, String, String) = {
         let conn = state.sqlite.lock().await;
@@ -753,6 +675,7 @@ async fn agent_poll(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_agent(&user)?;
     require_admin_role(&user)?;
 
     let databases: Vec<String> = body["databases"]
@@ -771,8 +694,31 @@ async fn agent_poll(
                 .collect()
         })
         .unwrap_or_default();
+    let operations: Vec<String> = body["operations"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
 
     let conn = state.sqlite.lock().await;
+
+    // Record agent capabilities for claim-time verification
+    let now = chrono::Utc::now().to_rfc3339();
+    let caps_json = serde_json::to_string(&json!({
+        "databases": databases,
+        "environments": environments,
+        "operations": operations,
+    })).unwrap_or_else(|_| "{}".into());
+    conn.execute(
+        "INSERT INTO agents (id, token_id, capabilities_json, last_seen_at, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)
+         ON CONFLICT(id) DO UPDATE SET capabilities_json = ?3, last_seen_at = ?4",
+        rusqlite::params![user.user, user.token_id, caps_json, now],
+    ).ok();
+
     let mut stmt = conn
         .prepare(
             "SELECT id, created_by, operation, environment, database_name, detail
@@ -815,10 +761,11 @@ async fn agent_claim(
     Json(_body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_agent(&user)?;
     require_admin_role(&user)?;
     let agent_id = user.user.clone();
 
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
 
     let (operation, environment, database, detail, status): (String, String, String, String, String) = conn
         .query_row(
@@ -835,6 +782,25 @@ async fn agent_claim(
         ));
     }
 
+    // Verify agent has capability for this job
+    if let Ok(caps_json) = conn.query_row(
+        "SELECT capabilities_json FROM agents WHERE id = ?1",
+        rusqlite::params![agent_id],
+        |row| row.get::<_, String>(0),
+    ) {
+        if let Ok(caps) = serde_json::from_str::<serde_json::Value>(&caps_json) {
+            let matches = |arr: &serde_json::Value, val: &str| -> bool {
+                arr.as_array().map_or(true, |a| a.is_empty() || a.iter().any(|v| v.as_str() == Some(val) || v.as_str() == Some("*")))
+            };
+            if !matches(&caps["databases"], &database)
+                || !matches(&caps["environments"], &environment)
+                || !matches(&caps["operations"], &operation)
+            {
+                return Err((StatusCode::FORBIDDEN, "agent lacks capability for this job".into()));
+            }
+        }
+    }
+
     let now = chrono::Utc::now().to_rfc3339();
     let lease_expires = (chrono::Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
     let exec_id = uuid::Uuid::new_v4().to_string();
@@ -845,18 +811,20 @@ async fn agent_claim(
     let token_json = serde_json::to_string(&token)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    conn.execute(
+    let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    tx.execute(
         "INSERT INTO agent_executions (id, request_id, agent_id, status, execution_token_json, lease_expires_at, started_at, created_at)
          VALUES (?1, ?2, ?3, 'claimed', ?4, ?5, ?6, ?6)",
         rusqlite::params![exec_id, id, agent_id, token_json, lease_expires, now],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    conn.execute(
+    tx.execute(
         "UPDATE requests SET status = 'running', updated_at = ?1 WHERE id = ?2",
         rusqlite::params![now, id],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({
         "execution_id": exec_id,
@@ -877,69 +845,73 @@ async fn agent_result(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_agent(&user)?;
     require_admin_role(&user)?;
 
     let success = body["success"].as_bool().unwrap_or(false);
     let result = body["result"].clone();
     let error_msg = body["error"].as_str().map(|s| s.to_string());
 
-    let conn = state.sqlite.lock().await;
-    let now = chrono::Utc::now().to_rfc3339();
+    let (request_id, req_status) = {
+        let mut conn = state.sqlite.lock().await;
+        let now = chrono::Utc::now().to_rfc3339();
 
-    let (request_id, exec_status, agent_id): (String, String, String) = conn
-        .query_row(
-            "SELECT request_id, status, agent_id FROM agent_executions WHERE id = ?1",
-            rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        let (request_id, exec_status, agent_id): (String, String, String) = conn
+            .query_row(
+                "SELECT request_id, status, agent_id FROM agent_executions WHERE id = ?1",
+                rusqlite::params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|_| (StatusCode::NOT_FOUND, "execution not found".into()))?;
+
+        if exec_status != "claimed" {
+            return Err((
+                StatusCode::CONFLICT,
+                format!("execution status is {exec_status}"),
+            ));
+        }
+
+        if user.user != agent_id {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "only the claiming agent can submit this result".into(),
+            ));
+        }
+
+        let new_status = if success { "completed" } else { "failed" };
+        let req_status = if success { "executed" } else { "failed" };
+
+        let (operation, environment, database_name, detail, actor) = conn
+            .query_row(
+                "SELECT operation, environment, database_name, detail, created_by FROM requests WHERE id = ?1",
+                rusqlite::params![request_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
+            )
+            .unwrap_or_default();
+
+        let audit_id = uuid::Uuid::new_v4().to_string();
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.execute(
+            "UPDATE agent_executions SET status = ?1, finished_at = ?2, error_message = ?3 WHERE id = ?4",
+            rusqlite::params![new_status, now, error_msg, id],
         )
-        .map_err(|_| (StatusCode::NOT_FOUND, "execution not found".into()))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    if exec_status != "claimed" {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("execution status is {exec_status}"),
-        ));
-    }
-
-    if user.user != agent_id {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "only the claiming agent can submit this result".into(),
-        ));
-    }
-
-    let new_status = if success { "completed" } else { "failed" };
-    conn.execute(
-        "UPDATE agent_executions SET status = ?1, finished_at = ?2, error_message = ?3 WHERE id = ?4",
-        rusqlite::params![new_status, now, error_msg, id],
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let req_status = if success { "executed" } else { "failed" };
-    conn.execute(
-        "UPDATE requests SET status = ?1, updated_at = ?2, resolved_at = ?2 WHERE id = ?3",
-        rusqlite::params![req_status, now, request_id],
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // Write audit log
-    let audit_id = uuid::Uuid::new_v4().to_string();
-    let (operation, environment, database_name, detail, actor) = conn
-        .query_row(
-            "SELECT operation, environment, database_name, detail, created_by FROM requests WHERE id = ?1",
-            rusqlite::params![request_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
+        tx.execute(
+            "UPDATE requests SET status = ?1, updated_at = ?2, resolved_at = ?2 WHERE id = ?3",
+            rusqlite::params![req_status, now, request_id],
         )
-        .unwrap_or_default();
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    conn.execute(
-        "INSERT INTO audit_log (id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11)",
-        rusqlite::params![audit_id, request_id, id, actor, operation, environment, database_name, detail, req_status, error_msg, now],
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.execute(
+            "INSERT INTO audit_log (id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11)",
+            rusqlite::params![audit_id, request_id, id, actor, operation, environment, database_name, detail, req_status, error_msg, now],
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Drop the SQLite lock before touching the channel
-    drop(conn);
+        (request_id, req_status.to_string())
+    };
 
     // Relay result to waiting CLI
     let payload = json!({
@@ -968,7 +940,8 @@ async fn list_workflows(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -1002,7 +975,8 @@ async fn get_workflow(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let row = conn
@@ -1035,6 +1009,7 @@ async fn create_workflow(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
     require_admin_role(&user)?;
 
     let database = body["database"].as_str()
@@ -1073,6 +1048,7 @@ async fn update_workflow(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
     require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
@@ -1106,6 +1082,7 @@ async fn delete_workflow(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
     require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
@@ -1128,7 +1105,8 @@ async fn list_execution_policies(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -1161,7 +1139,8 @@ async fn get_execution_policy_handler(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let row = conn
@@ -1193,6 +1172,7 @@ async fn create_execution_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
     require_admin_role(&user)?;
 
     let database = body["database"].as_str()
@@ -1230,6 +1210,7 @@ async fn update_execution_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
     require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
@@ -1266,6 +1247,7 @@ async fn delete_execution_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
     require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
@@ -1288,7 +1270,8 @@ async fn list_result_policies(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -1323,7 +1306,8 @@ async fn get_result_policy_handler(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let row = conn
@@ -1357,6 +1341,7 @@ async fn create_result_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
     require_admin_role(&user)?;
 
     let database = body["database"].as_str()
@@ -1396,6 +1381,7 @@ async fn update_result_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
     require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
@@ -1432,6 +1418,7 @@ async fn delete_result_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
     require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
@@ -1454,7 +1441,8 @@ async fn list_notification_policies(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -1486,7 +1474,8 @@ async fn get_notification_policy(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let _user = auth::authenticate(&headers, &state).await?;
+    let user = auth::authenticate(&headers, &state).await?;
+    require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
     let row = conn
@@ -1517,6 +1506,7 @@ async fn create_notification_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
     require_admin_role(&user)?;
 
     let database = body["database"].as_str()
@@ -1553,6 +1543,7 @@ async fn update_notification_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
     require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;
@@ -1577,6 +1568,7 @@ async fn delete_notification_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    auth::require_human(&user)?;
     require_admin_role(&user)?;
 
     let conn = state.sqlite.lock().await;

@@ -2,6 +2,10 @@ use std::sync::Arc;
 
 use crate::Error;
 
+/// Default limits for query results to prevent OOM.
+pub const DEFAULT_MAX_RESULT_ROWS: usize = 10_000;
+pub const DEFAULT_MAX_RESULT_BYTES: usize = 50 * 1024 * 1024; // 50 MB
+
 /// Abstraction over database backends. Implementations handle connection pooling,
 /// query execution, and migration bookkeeping for a specific database engine.
 #[async_trait::async_trait]
@@ -53,12 +57,19 @@ pub struct PostgresDriver {
 #[async_trait::async_trait]
 impl DatabaseDriver for PostgresDriver {
     async fn query(&self, sql: &str) -> Result<Vec<serde_json::Value>, Error> {
-        
-        let rows: Vec<sqlx::postgres::PgRow> = sqlx::query(sql)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| Error::Database(e.to_string()))?;
-        Ok(rows.iter().map(pg_row_to_json).collect())
+        use futures::TryStreamExt;
+        let mut stream = sqlx::query(sql).fetch(&self.pool);
+        let mut rows = Vec::new();
+        let mut total_bytes: usize = 0;
+        while let Some(row) = stream.try_next().await.map_err(|e| Error::Database(e.to_string()))? {
+            let json = pg_row_to_json(&row);
+            total_bytes += serde_json::to_string(&json).unwrap_or_default().len();
+            rows.push(json);
+            if rows.len() >= DEFAULT_MAX_RESULT_ROWS || total_bytes >= DEFAULT_MAX_RESULT_BYTES {
+                break;
+            }
+        }
+        Ok(rows)
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
@@ -142,12 +153,19 @@ pub struct MysqlDriver {
 #[async_trait::async_trait]
 impl DatabaseDriver for MysqlDriver {
     async fn query(&self, sql: &str) -> Result<Vec<serde_json::Value>, Error> {
-        
-        let rows: Vec<sqlx::mysql::MySqlRow> = sqlx::query(sql)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| Error::Database(e.to_string()))?;
-        Ok(rows.iter().map(mysql_row_to_json).collect())
+        use futures::TryStreamExt;
+        let mut stream = sqlx::query(sql).fetch(&self.pool);
+        let mut rows = Vec::new();
+        let mut total_bytes: usize = 0;
+        while let Some(row) = stream.try_next().await.map_err(|e| Error::Database(e.to_string()))? {
+            let json = mysql_row_to_json(&row);
+            total_bytes += serde_json::to_string(&json).unwrap_or_default().len();
+            rows.push(json);
+            if rows.len() >= DEFAULT_MAX_RESULT_ROWS || total_bytes >= DEFAULT_MAX_RESULT_BYTES {
+                break;
+            }
+        }
+        Ok(rows)
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {

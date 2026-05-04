@@ -71,4 +71,5 @@ pub struct AuthUser {
     pub token_id: String,
     pub user: String,
     pub role: Role,
+    pub subject_type: String,
 }
