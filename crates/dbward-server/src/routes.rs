@@ -18,7 +18,7 @@ fn insert_policy_audit(
     op_type: &str,
     policy_type: &str,
     id: &str,
-) -> Result<(), (StatusCode, String)> {
+) -> Result<(), crate::api_error::ApiError> {
     let (db, env) = id.split_once(':').unwrap_or((id, ""));
     let audit_id = uuid::Uuid::new_v4().to_string();
     let detail_json = serde_json::json!({"type": policy_type, "id": id}).to_string();
@@ -27,7 +27,7 @@ fn insert_policy_audit(
         "INSERT INTO audit_log (id, request_id, actor_id, operation, environment, database_name, detail, status, created_at) VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, 'policy_change', ?7)",
         rusqlite::params![audit_id, user, op_type, env, db, detail_json, now],
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     Ok(())
 }
 
@@ -160,7 +160,7 @@ async fn list_requests(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::ListRequests, Resource::Global).await?;
     let (limit, offset) = parse_pagination(&params);
@@ -204,7 +204,7 @@ async fn list_requests(
     );
     let mut stmt = conn
         .prepare(&query_sql)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let candidates: Vec<serde_json::Value> = stmt
         .query_map(rusqlite::params_from_iter(&bind_values), |row| {
@@ -223,9 +223,9 @@ async fn list_requests(
                 "reason": row.get::<_, Option<String>>(11)?,
             }))
         })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let mut filtered = Vec::new();
     for row in candidates {
@@ -255,13 +255,13 @@ fn list_requests_pending_for_me(
     user: &crate::state::AuthUser,
     limit: i64,
     offset: i64,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
     // Fetch all pending requests with workflow snapshots
     let mut stmt = conn
         .prepare(
             "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at, workflow_snapshot_json, reason FROM requests WHERE status = 'pending' ORDER BY created_at DESC",
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let candidates: Vec<(serde_json::Value, String, Option<String>)> = stmt
         .query_map([], |row| {
@@ -287,7 +287,7 @@ fn list_requests_pending_for_me(
                 ws,
             ))
         })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -295,10 +295,10 @@ fn list_requests_pending_for_me(
     let all_approvals: HashMap<String, Vec<(i64, String, String)>> = {
         let mut stmt = conn
             .prepare("SELECT request_id, step_index, actor_id, actor_role FROM approvals WHERE action = 'approve' AND request_id IN (SELECT id FROM requests WHERE status = 'pending')")
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         let rows = stmt
             .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)))
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
             .filter_map(|r| r.ok());
         let mut map: HashMap<String, Vec<(i64, String, String)>> = HashMap::new();
         for (req_id, step, actor, role) in rows {
@@ -358,16 +358,16 @@ fn list_requests_pending_for_me(
 fn get_approvals_for_request(
     conn: &rusqlite::Connection,
     request_id: &str,
-) -> Result<Vec<(i64, String, String)>, (StatusCode, String)> {
+) -> Result<Vec<(i64, String, String)>, crate::api_error::ApiError> {
     let mut stmt = conn
         .prepare("SELECT step_index, actor_id, actor_role FROM approvals WHERE request_id = ?1 AND action = 'approve'")
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     stmt.query_map(rusqlite::params![request_id], |row| {
         Ok((row.get(0)?, row.get(1)?, row.get(2)?))
     })
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
     .collect::<Result<Vec<_>, _>>()
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))
 }
 
 fn current_approval_resource(
@@ -375,7 +375,7 @@ fn current_approval_resource(
     request_id: &str,
     requester_id: String,
     workflow_snapshot_json: Option<&str>,
-) -> Result<(Resource, usize, Vec<String>, usize), (StatusCode, String)> {
+) -> Result<(Resource, usize, Vec<String>, usize), crate::api_error::ApiError> {
     let steps: Vec<crate::server_config::WorkflowStep> = workflow_snapshot_json
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
@@ -430,7 +430,7 @@ async fn create_request(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::CreateRequest, Resource::Global).await?;
 
@@ -445,9 +445,7 @@ async fn create_request(
         "migrate_status",
     ];
     if !VALID_OPERATIONS.contains(&operation) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            format!("unknown operation: {operation}"),
+        return Err(crate::api_error::ApiError::bad_request(format!("unknown operation: {operation}"),
         ));
     }
 
@@ -472,26 +470,20 @@ async fn create_request(
     .await?;
 
     if emergency && reason.is_none() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "reason is required for emergency requests".into(),
+        return Err(crate::api_error::ApiError::bad_request("reason is required for emergency requests",
         ));
     }
     // Readonly and approver-only roles cannot use break-glass
     if emergency
         && (user.effective_permission() == "readonly" || user.effective_permission() == "approver")
     {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "insufficient permissions for break-glass".into(),
+        return Err(crate::api_error::ApiError::forbidden("insufficient permissions for break-glass",
         ));
     }
 
     // Approver-only roles cannot create requests
     if user.effective_permission() == "approver" {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "approver-only roles cannot create requests".into(),
+        return Err(crate::api_error::ApiError::forbidden("approver-only roles cannot create requests",
         ));
     }
 
@@ -502,9 +494,7 @@ async fn create_request(
     );
 
     if !emergency && decision.require_reason && reason.as_ref().map_or(true, |r| r.is_empty()) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "reason is required by workflow policy".into(),
+        return Err(crate::api_error::ApiError::bad_request("reason is required by workflow policy",
         ));
     }
 
@@ -525,7 +515,7 @@ async fn create_request(
         "INSERT INTO requests (id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, emergency, reason, workflow_id, workflow_snapshot_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         rusqlite::params![id, user.user, operation, environment, database_name, detail, status, now, now, emergency, reason, decision.workflow_id, decision.workflow_snapshot_json],
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     if emergency {
         let token = state
@@ -600,7 +590,7 @@ async fn approve_request(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
     body_str: String,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
     let approver = auth::authenticate(&headers, &state).await?;
     authz::authorize(&approver, Action::ApproveRequest, Resource::Global).await?;
 
@@ -630,7 +620,7 @@ async fn approve_request_inner(
     id: &str,
     approver: &crate::state::AuthUser,
     body_val: &serde_json::Value,
-) -> Result<ApproveResult, (StatusCode, String)> {
+) -> Result<ApproveResult, crate::api_error::ApiError> {
     let mut conn = state.sqlite.lock().await;
 
     let (req_user, status, operation, environment, database_name, detail, workflow_snapshot_json): (String, String, String, String, String, String, Option<String>) = conn
@@ -639,10 +629,10 @@ async fn approve_request_inner(
             rusqlite::params![id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
         )
-        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+        .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
 
     if status != "pending" {
-        return Err((StatusCode::CONFLICT, format!("request is already {status}")));
+        return Err(crate::api_error::ApiError::conflict( format!("request is already {status}")));
     }
 
     // Parse workflow steps from snapshot
@@ -663,18 +653,18 @@ async fn approve_request_inner(
         let now = chrono::Utc::now().to_rfc3339();
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.execute(
             "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
             rusqlite::params![now, now, id],
-        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         let approval_id = uuid::Uuid::new_v4().to_string();
         tx.execute(
             "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, 'approve', ?3, 0, ?4, NULL, ?5)",
             rusqlite::params![approval_id, id, approver.user, approver.effective_permission(), now],
-        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         let token = state
             .token_signer
@@ -706,11 +696,11 @@ async fn approve_request_inner(
     let existing_approvals: Vec<(i64, String, String)> = {
         let mut stmt = conn.prepare(
             "SELECT step_index, actor_id, actor_role FROM approvals WHERE request_id = ?1 AND action = 'approve'"
-        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         stmt.query_map(rusqlite::params![id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
         .filter_map(|r| r.ok())
         .collect()
     };
@@ -729,7 +719,7 @@ async fn approve_request_inner(
         .unwrap_or(steps.len());
 
     if current_step >= steps.len() {
-        return Err((StatusCode::CONFLICT, "all steps already satisfied".into()));
+        return Err(crate::api_error::ApiError::conflict( "all steps already satisfied"));
     }
 
     let step = &steps[current_step];
@@ -754,15 +744,11 @@ async fn approve_request_inner(
         .map(String::from);
     let actor_role = if let Some(ref role) = as_role {
         if !approver.has_role(role) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                format!("you do not have role '{role}'"),
+            return Err(crate::api_error::ApiError::forbidden(format!("you do not have role '{role}'"),
             ));
         }
         if !step.approvers.iter().any(|g| g.role == *role) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                format!("role '{role}' is not an approver for current step"),
+            return Err(crate::api_error::ApiError::forbidden(format!("role '{role}' is not an approver for current step"),
             ));
         }
         role.clone()
@@ -794,9 +780,7 @@ async fn approve_request_inner(
             .iter()
             .any(|(si, aid, _)| *si == current_step as i64 && aid == &approver.user)
         {
-            return Err((
-                StatusCode::CONFLICT,
-                "you already approved this step".into(),
+            return Err(crate::api_error::ApiError::conflict("you already approved this step",
             ));
         }
     } else {
@@ -804,9 +788,7 @@ async fn approve_request_inner(
         if existing_approvals.iter().any(|(si, aid, role)| {
             *si == current_step as i64 && aid == &approver.user && role == &actor_role
         }) {
-            return Err((
-                StatusCode::CONFLICT,
-                "you already approved this step with this role".into(),
+            return Err(crate::api_error::ApiError::conflict("you already approved this step with this role",
             ));
         }
     }
@@ -815,11 +797,11 @@ async fn approve_request_inner(
     let approval_id = uuid::Uuid::new_v4().to_string();
     let tx = conn
         .transaction()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     tx.execute(
         "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, 'approve', ?3, ?4, ?5, NULL, ?6)",
         rusqlite::params![approval_id, id, approver.user, current_step as i64, actor_role, now],
-    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let mut updated_approvals = existing_approvals.clone();
     updated_approvals.push((
@@ -839,9 +821,9 @@ async fn approve_request_inner(
         tx.execute(
             "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
             rusqlite::params![now, now, id],
-        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         let token = state
             .token_signer
@@ -872,9 +854,9 @@ async fn approve_request_inner(
             "UPDATE requests SET updated_at = ?1 WHERE id = ?2",
             rusqlite::params![now, id],
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
 
@@ -961,7 +943,7 @@ async fn reject_request(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::RejectRequest, Resource::Global).await?;
 
@@ -974,10 +956,10 @@ async fn reject_request(
                 rusqlite::params![id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
-            .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+            .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
 
         if status != "pending" {
-            return Err((StatusCode::CONFLICT, format!("request is already {status}")));
+            return Err(crate::api_error::ApiError::conflict( format!("request is already {status}")));
         }
 
         let workflow_snapshot_json = conn
@@ -996,9 +978,7 @@ async fn reject_request(
         )?;
         if let Err(_) = authz::authorize_sync(&user, Action::RejectRequest, approval_resource) {
             let roles_str = step_roles.join(", ");
-            return Err((
-                StatusCode::FORBIDDEN,
-                format!(
+            return Err(crate::api_error::ApiError::forbidden(format!(
                     "you are not an approver for the current step (step {}/{}: {})",
                     step_idx + 1,
                     total_steps,
@@ -1010,21 +990,21 @@ async fn reject_request(
         let now = chrono::Utc::now().to_rfc3339();
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.execute(
             "UPDATE requests SET status = 'rejected', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
             rusqlite::params![now, now, id],
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         let approval_id = uuid::Uuid::new_v4().to_string();
         tx.execute(
             "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, 'reject', ?3, 0, ?4, NULL, ?5)",
             rusqlite::params![approval_id, id, user.user, user.effective_permission(), now],
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
         state.webhooks.dispatch_with_policy(
@@ -1058,7 +1038,7 @@ async fn get_request(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::GetRequest, Resource::Global).await?;
     let wait: u64 = params
@@ -1070,14 +1050,14 @@ async fn get_request(
     let build_response = |conn: &rusqlite::Connection,
                           id: &str,
                           state: &AppState|
-     -> Result<serde_json::Value, (StatusCode, String)> {
+     -> Result<serde_json::Value, crate::api_error::ApiError> {
         let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason): (String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, Option<String>) = conn
             .query_row(
                 "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason FROM requests WHERE id = ?1",
                 rusqlite::params![id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?)),
             )
-            .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+            .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
 
         let mut resp = json!({
             "id": id_val, "created_by": created_by, "operation": operation,
@@ -1092,7 +1072,7 @@ async fn get_request(
                     .token_signer
                     .issue(id, &operation, &environment, &database_name, &detail);
             resp["execution_token"] = serde_json::to_value(token)
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
         // Include approval_progress when workflow snapshot exists
@@ -1192,7 +1172,7 @@ async fn list_audit(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(
         &user,
@@ -1245,10 +1225,10 @@ async fn list_audit(
     let count_sql = format!("SELECT COUNT(*) FROM audit_log {where_sql}");
     let mut count_stmt = conn
         .prepare(&count_sql)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     let total: i64 = count_stmt
         .query_row(rusqlite::params_from_iter(&bind_values), |row| row.get(0))
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let query_sql = format!(
         "SELECT id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at FROM audit_log {where_sql} ORDER BY created_at DESC LIMIT ?{} OFFSET ?{}",
@@ -1257,7 +1237,7 @@ async fn list_audit(
     );
     let mut stmt = conn
         .prepare(&query_sql)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = bind_values
         .iter()
@@ -1285,9 +1265,9 @@ async fn list_audit(
                 "created_at": row.get::<_, String>(11)?,
             }))
         })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     Ok(Json(
         json!({"audit_log": rows, "total": total, "limit": limit, "offset": offset}),
@@ -1303,7 +1283,7 @@ async fn dispatch_request(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::DispatchRequest, Resource::Global).await?;
 
@@ -1322,7 +1302,7 @@ async fn dispatch_request(
             rusqlite::params![id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
-        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+        .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
 
     authz::authorize_sync(
         &user,
@@ -1344,7 +1324,7 @@ async fn dispatch_request(
             if let Ok(resolved_time) = chrono::DateTime::parse_from_rfc3339(resolved) {
                 let elapsed = chrono::Utc::now().signed_duration_since(resolved_time);
                 if elapsed.num_seconds() as u64 > window_secs {
-                    return Err((StatusCode::GONE, "execution window expired".into()));
+                    return Err(crate::api_error::ApiError::new(StatusCode::GONE, "execution window expired"));
                 }
             }
         }
@@ -1357,12 +1337,10 @@ async fn dispatch_request(
             )
             .unwrap_or(0);
         if status == "failed" && !retry {
-            return Err((StatusCode::CONFLICT, "retry on failure is disabled".into()));
+            return Err(crate::api_error::ApiError::conflict( "retry on failure is disabled"));
         }
         if exec_count >= max_exec {
-            return Err((
-                StatusCode::CONFLICT,
-                format!("max executions ({max_exec}) reached"),
+            return Err(crate::api_error::ApiError::conflict(format!("max executions ({max_exec}) reached"),
             ));
         }
     }
@@ -1372,13 +1350,10 @@ async fn dispatch_request(
     let rows = conn.execute(
         "UPDATE requests SET status = 'dispatched', updated_at = ?1 WHERE id = ?2 AND status IN ('approved', 'auto_approved', 'break_glass', 'executed', 'failed')",
         rusqlite::params![now, id],
-    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     if rows == 0 {
-        return Err((
-            StatusCode::CONFLICT,
-            "request cannot be dispatched (wrong status)".into(),
-        ));
+        return Err(crate::api_error::ApiError::conflict("request cannot be dispatched (wrong status)"));
     }
 
     drop(conn);
@@ -1398,7 +1373,7 @@ async fn stream_result(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::ReadResult, Resource::Global).await?;
 
@@ -1409,7 +1384,7 @@ async fn stream_result(
             rusqlite::params![id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
-        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?
+        .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?
     };
 
     let access_roles = {
@@ -1443,7 +1418,7 @@ async fn stream_result(
                 }
                 _ => format!("request status is {status}"),
             };
-            return Err((StatusCode::CONFLICT, msg));
+            return Err(crate::api_error::ApiError::conflict( msg));
         }
     };
 
@@ -1463,9 +1438,9 @@ async fn stream_result(
     })
     .await;
     if wait.is_err() {
-        return Err((
+        return Err(crate::api_error::ApiError::new(
             StatusCode::GATEWAY_TIMEOUT,
-            "timed out waiting for result".into(),
+            "timed out waiting for result",
         ));
     }
 
@@ -1474,7 +1449,7 @@ async fn stream_result(
 
     match result {
         Some(payload) => Ok(Json(payload)),
-        None => Err((StatusCode::INTERNAL_SERVER_ERROR, "result was empty".into())),
+        None => Err(crate::api_error::ApiError::internal( "result was empty")),
     }
 }
 
@@ -1487,7 +1462,7 @@ async fn agent_poll(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::AgentPoll, Resource::Global).await?;
 
@@ -1579,7 +1554,7 @@ async fn agent_poll(
 
     let mut stmt = conn
         .prepare(&query_sql)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map(rusqlite::params_from_iter(&bind_values), |row| {
@@ -1592,9 +1567,9 @@ async fn agent_poll(
                 "detail": row.get::<_, String>(5)?,
             }))
         })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     Ok(Json(json!({"jobs": rows})))
 }
@@ -1605,7 +1580,7 @@ async fn agent_claim(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(_body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::AgentClaim, Resource::Global).await?;
     let agent_id = user.user.clone();
@@ -1618,12 +1593,10 @@ async fn agent_claim(
             rusqlite::params![id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
-        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+        .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
 
     if status != "dispatched" {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("request status is {status}, cannot claim"),
+        return Err(crate::api_error::ApiError::conflict(format!("request status is {status}, cannot claim"),
         ));
     }
 
@@ -1653,9 +1626,7 @@ async fn agent_claim(
                 || !matches(&caps["environments"], &environment)
                 || !matches(&caps["operations"], &operation)
             {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    "agent lacks capability for this job".into(),
+                return Err(crate::api_error::ApiError::forbidden("agent lacks capability for this job",
                 ));
             }
         }
@@ -1669,25 +1640,25 @@ async fn agent_claim(
         .token_signer
         .issue(&id, &operation, &environment, &database, &detail);
     let token_json = serde_json::to_string(&token)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let tx = conn
         .transaction()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     tx.execute(
         "INSERT INTO agent_executions (id, request_id, agent_id, status, execution_token_json, lease_expires_at, started_at, created_at)
          VALUES (?1, ?2, ?3, 'claimed', ?4, ?5, ?6, ?6)",
         rusqlite::params![exec_id, id, agent_id, token_json, lease_expires, now],
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     tx.execute(
         "UPDATE requests SET status = 'running', updated_at = ?1 WHERE id = ?2",
         rusqlite::params![now, id],
     )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     tx.commit()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     Ok(Json(json!({
         "execution_id": exec_id,
@@ -1706,7 +1677,7 @@ async fn agent_result(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::AgentSubmitResult, Resource::Global).await?;
 
@@ -1727,9 +1698,7 @@ async fn agent_result(
             .map_err(|_| (StatusCode::NOT_FOUND, "execution not found".into()))?;
 
         if exec_status != "claimed" {
-            return Err((
-                StatusCode::CONFLICT,
-                format!("execution status is {exec_status}"),
+            return Err(crate::api_error::ApiError::conflict(format!("execution status is {exec_status}"),
             ));
         }
 
@@ -1755,26 +1724,26 @@ async fn agent_result(
         let audit_id = uuid::Uuid::new_v4().to_string();
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.execute(
             "UPDATE agent_executions SET status = ?1, finished_at = ?2, error_message = ?3 WHERE id = ?4",
             rusqlite::params![new_status, now, error_msg, id],
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         tx.execute(
             "UPDATE requests SET status = ?1, updated_at = ?2, resolved_at = ?2 WHERE id = ?3",
             rusqlite::params![req_status, now, request_id],
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         tx.execute(
             "INSERT INTO audit_log (id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11)",
             rusqlite::params![audit_id, request_id, id, actor, operation, environment, database_name, detail, req_status, error_msg, now],
         )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         (request_id, req_status.to_string())
     };
@@ -1807,14 +1776,14 @@ async fn agent_result(
 async fn list_workflows(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at FROM workflows ORDER BY database_name, environment")
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
@@ -1834,9 +1803,9 @@ async fn list_workflows(
                 "updated_at": row.get::<_, String>(8)?,
             }))
         })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     Ok(Json(json!({"workflows": rows})))
 }
@@ -1845,7 +1814,7 @@ async fn get_workflow(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
 
@@ -1879,7 +1848,7 @@ async fn create_workflow(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
 
@@ -1902,7 +1871,7 @@ async fn create_workflow(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.execute(
             "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
@@ -1918,7 +1887,7 @@ async fn create_workflow(
 
         insert_policy_audit(&tx, &user.user, "policy_create", "workflow", &id)?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
 
     Ok((
@@ -1932,7 +1901,7 @@ async fn update_workflow(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
 
@@ -1956,41 +1925,39 @@ async fn update_workflow(
         )
         .unwrap_or(0);
     if pending_count > 0 {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("{pending_count} pending request(s) reference this workflow"),
+        return Err(crate::api_error::ApiError::conflict(format!("{pending_count} pending request(s) reference this workflow"),
         ));
     }
 
     {
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         if let Some(steps) = body.get("steps") {
             tx.execute(
                 "UPDATE workflows SET steps_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![steps.to_string(), now, id],
             )
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
         if let Some(ops) = body.get("operations") {
             tx.execute(
                 "UPDATE workflows SET operations_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![ops.to_string(), now, id],
             )
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
         if let Some(v) = body.get("require_reason").and_then(|v| v.as_bool()) {
             tx.execute(
                 "UPDATE workflows SET require_reason = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v, now, id],
             )
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
         insert_policy_audit(&tx, &user.user, "policy_update", "workflow", &id)?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "updated": true})))
@@ -2000,7 +1967,7 @@ async fn delete_workflow(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
 
@@ -2015,27 +1982,25 @@ async fn delete_workflow(
         )
         .unwrap_or(0);
     if pending_count > 0 {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("{pending_count} pending request(s) reference this workflow"),
+        return Err(crate::api_error::ApiError::conflict(format!("{pending_count} pending request(s) reference this workflow"),
         ));
     }
 
     {
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         let changes = tx
             .execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id])
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         if changes == 0 {
-            return Err((StatusCode::NOT_FOUND, "workflow not found".into()));
+            return Err(crate::api_error::ApiError::not_found( "workflow not found"));
         }
 
         insert_policy_audit(&tx, &user.user, "policy_delete", "workflow", &id)?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "deleted": true})))
@@ -2048,14 +2013,14 @@ async fn delete_workflow(
 async fn list_execution_policies(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at FROM execution_policies ORDER BY database_name, environment")
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
@@ -2071,9 +2036,9 @@ async fn list_execution_policies(
                 "updated_at": row.get::<_, String>(8)?,
             }))
         })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     Ok(Json(json!({"execution_policies": rows})))
 }
@@ -2082,7 +2047,7 @@ async fn get_execution_policy_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
 
@@ -2114,7 +2079,7 @@ async fn create_execution_policy(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
 
@@ -2135,7 +2100,7 @@ async fn create_execution_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.execute(
             "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
@@ -2151,7 +2116,7 @@ async fn create_execution_policy(
 
         insert_policy_audit(&tx, &user.user, "policy_create", "execution_policy", &id)?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
 
     Ok((
@@ -2165,7 +2130,7 @@ async fn update_execution_policy(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
 
@@ -2182,29 +2147,29 @@ async fn update_execution_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         if let Some(v) = body.get("max_executions").and_then(|v| v.as_i64()) {
             tx.execute(
                 "UPDATE execution_policies SET max_executions = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v, now, id],
-            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
         if let Some(v) = body.get("execution_window_secs").and_then(|v| v.as_i64()) {
             tx.execute(
                 "UPDATE execution_policies SET execution_window_secs = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v, now, id],
-            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
         if let Some(v) = body.get("retry_on_failure").and_then(|v| v.as_bool()) {
             tx.execute(
                 "UPDATE execution_policies SET retry_on_failure = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v, now, id],
-            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
         insert_policy_audit(&tx, &user.user, "policy_update", "execution_policy", &id)?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "updated": true})))
@@ -2214,7 +2179,7 @@ async fn delete_execution_policy(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
 
@@ -2222,21 +2187,21 @@ async fn delete_execution_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         let changes = tx
             .execute(
                 "DELETE FROM execution_policies WHERE id = ?1",
                 rusqlite::params![id],
             )
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         if changes == 0 {
-            return Err((StatusCode::NOT_FOUND, "execution policy not found".into()));
+            return Err(crate::api_error::ApiError::not_found( "execution policy not found"));
         }
 
         insert_policy_audit(&tx, &user.user, "policy_delete", "execution_policy", &id)?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "deleted": true})))
@@ -2249,14 +2214,14 @@ async fn delete_execution_policy(
 async fn list_result_policies(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at FROM result_policies ORDER BY database_name, environment")
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
@@ -2276,9 +2241,9 @@ async fn list_result_policies(
                 "updated_at": row.get::<_, String>(8)?,
             }))
         })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     Ok(Json(json!({"result_policies": rows})))
 }
@@ -2287,7 +2252,7 @@ async fn get_result_policy_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
 
@@ -2321,7 +2286,7 @@ async fn create_result_policy(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
 
@@ -2344,7 +2309,7 @@ async fn create_result_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.execute(
             "INSERT INTO result_policies (id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
@@ -2360,7 +2325,7 @@ async fn create_result_policy(
 
         insert_policy_audit(&tx, &user.user, "policy_create", "result_policy", &id)?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
 
     Ok((
@@ -2374,7 +2339,7 @@ async fn update_result_policy(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
 
@@ -2391,29 +2356,29 @@ async fn update_result_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         if let Some(v) = body.get("delivery_mode").and_then(|v| v.as_str()) {
             tx.execute(
                 "UPDATE result_policies SET delivery_mode = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v, now, id],
-            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
         if let Some(v) = body.get("storage_config") {
             tx.execute(
                 "UPDATE result_policies SET storage_config_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v.to_string(), now, id],
-            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
         if let Some(v) = body.get("access") {
             tx.execute(
                 "UPDATE result_policies SET access_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v.to_string(), now, id],
-            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
         insert_policy_audit(&tx, &user.user, "policy_update", "result_policy", &id)?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "updated": true})))
@@ -2423,7 +2388,7 @@ async fn delete_result_policy(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
 
@@ -2431,21 +2396,21 @@ async fn delete_result_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         let changes = tx
             .execute(
                 "DELETE FROM result_policies WHERE id = ?1",
                 rusqlite::params![id],
             )
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         if changes == 0 {
-            return Err((StatusCode::NOT_FOUND, "result policy not found".into()));
+            return Err(crate::api_error::ApiError::not_found( "result policy not found"));
         }
 
         insert_policy_audit(&tx, &user.user, "policy_delete", "result_policy", &id)?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "deleted": true})))
@@ -2458,14 +2423,14 @@ async fn delete_result_policy(
 async fn list_notification_policies(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, webhooks_json, source, created_at, updated_at FROM notification_policies ORDER BY database_name, environment")
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
@@ -2481,9 +2446,9 @@ async fn list_notification_policies(
                 "updated_at": row.get::<_, String>(6)?,
             }))
         })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     Ok(Json(json!({"notification_policies": rows})))
 }
@@ -2492,7 +2457,7 @@ async fn get_notification_policy(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
 
@@ -2523,7 +2488,7 @@ async fn create_notification_policy(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
 
@@ -2543,7 +2508,7 @@ async fn create_notification_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.execute(
             "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, 'api', ?5, ?5)",
@@ -2559,7 +2524,7 @@ async fn create_notification_policy(
 
         insert_policy_audit(&tx, &user.user, "policy_create", "notification_policy", &id)?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
 
     Ok((
@@ -2573,7 +2538,7 @@ async fn update_notification_policy(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
 
@@ -2595,17 +2560,17 @@ async fn update_notification_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         if let Some(v) = body.get("webhooks") {
             tx.execute(
                 "UPDATE notification_policies SET webhooks_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v.to_string(), now, id],
-            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
         insert_policy_audit(&tx, &user.user, "policy_update", "notification_policy", &id)?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "updated": true})))
@@ -2615,7 +2580,7 @@ async fn delete_notification_policy(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
 
@@ -2623,24 +2588,22 @@ async fn delete_notification_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         let changes = tx
             .execute(
                 "DELETE FROM notification_policies WHERE id = ?1",
                 rusqlite::params![id],
             )
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         if changes == 0 {
-            return Err((
-                StatusCode::NOT_FOUND,
-                "notification policy not found".into(),
+            return Err(crate::api_error::ApiError::not_found("notification policy not found",
             ));
         }
 
         insert_policy_audit(&tx, &user.user, "policy_delete", "notification_policy", &id)?;
         tx.commit()
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "deleted": true})))
