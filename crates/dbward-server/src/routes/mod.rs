@@ -1,3 +1,5 @@
+mod agent;
+mod audit;
 mod policies;
 
 use axum::routing::get;
@@ -27,16 +29,16 @@ pub fn router(state: AppState) -> Router {
             axum::routing::post(dispatch_request),
         )
         .route("/api/requests/{id}/result/stream", get(stream_result))
-        .route("/api/agent/poll", axum::routing::post(agent_poll))
+        .route("/api/agent/poll", axum::routing::post(agent::agent_poll))
         .route(
             "/api/agent/jobs/{id}/claim",
-            axum::routing::post(agent_claim),
+            axum::routing::post(agent::agent_claim),
         )
         .route(
             "/api/agent/jobs/{id}/result",
-            axum::routing::post(agent_result),
+            axum::routing::post(agent::agent_result),
         )
-        .route("/api/audit", get(list_audit))
+        .route("/api/audit", get(audit::list_audit))
         .route("/api/public-key", get(get_public_key))
         .route(
             "/api/workflows",
