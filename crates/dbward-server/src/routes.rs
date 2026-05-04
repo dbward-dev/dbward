@@ -772,10 +772,46 @@ async fn reject_request(
         }
 
         if user.effective_permission() != "admin" && user.user != req_user {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "only admin or the requester can reject".into(),
-            ));
+            // Check if user has a role matching the current step's approver groups
+            let can_reject_as_approver = {
+                let steps: Vec<crate::server_config::WorkflowStep> = conn
+                    .query_row(
+                        "SELECT workflow_snapshot_json FROM requests WHERE id = ?1",
+                        rusqlite::params![id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .ok()
+                    .flatten()
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default();
+
+                if steps.is_empty() {
+                    false
+                } else {
+                    let existing_approvals: Vec<(i64, String, String)> = conn
+                        .prepare("SELECT step_index, actor_id, actor_role FROM approvals WHERE request_id = ?1 AND action = 'approve'")
+                        .and_then(|mut stmt| {
+                            stmt.query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                        })
+                        .unwrap_or_default();
+
+                    let current_step = steps.iter().enumerate()
+                        .find_map(|(i, step)| {
+                            if !is_step_satisfied(step, &existing_approvals, i as i64) { Some(i) } else { None }
+                        })
+                        .unwrap_or(steps.len());
+
+                    current_step < steps.len() && steps[current_step].approvers.iter().any(|g| user.has_role(&g.role))
+                }
+            };
+
+            if !can_reject_as_approver {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "only admin, the requester, or a current-step approver can reject".into(),
+                ));
+            }
         }
 
         let now = chrono::Utc::now().to_rfc3339();

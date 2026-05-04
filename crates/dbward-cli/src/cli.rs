@@ -429,7 +429,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 println!("No requests.");
             } else {
                 println!(
-                    "{:<10} {:<14} {:<10} {:<14} {:<10} {}",
+                    "{:<10} {:<14} {:<10} {:<14} {:<16} {}",
                     "ID", "STATUS", "USER", "ENV", "OP", "DETAIL"
                 );
                 for r in requests {
@@ -446,7 +446,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                         detail.to_string()
                     };
                     println!(
-                        "{:<10} {:<14} {:<10} {:<14} {:<10} {}",
+                        "{:<10} {:<14} {:<10} {:<14} {:<16} {}",
                         short_id, status, user, env, op, short_detail
                     );
                 }
