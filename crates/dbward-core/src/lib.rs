@@ -10,9 +10,8 @@ mod types;
 
 pub use audit::AuditLogger;
 pub use config::{
-    AgentConfig, AgentDatabaseConfig, AgentServerConfig, AgentCapabilities,
-    ClientConfig, ClientDatabaseConfig, ServerConfig, ClientOidcConfig,
-    ResolvedDatabaseConfig,
+    AgentCapabilities, AgentConfig, AgentDatabaseConfig, AgentServerConfig, ClientConfig,
+    ClientDatabaseConfig, ClientOidcConfig, ResolvedDatabaseConfig, ServerConfig,
 };
 pub use engine::Engine;
 pub use error::Error;

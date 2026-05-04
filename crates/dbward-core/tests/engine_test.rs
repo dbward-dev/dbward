@@ -3,10 +3,14 @@ use std::sync::Arc;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
-use dbward_core::{Engine, Environment};
 use dbward_core::driver;
+use dbward_core::{Engine, Environment};
 
-async fn setup() -> (testcontainers::ContainerAsync<Postgres>, Arc<dyn driver::DatabaseDriver>, String) {
+async fn setup() -> (
+    testcontainers::ContainerAsync<Postgres>,
+    Arc<dyn driver::DatabaseDriver>,
+    String,
+) {
     let container = Postgres::default().start().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
@@ -37,7 +41,9 @@ async fn execute_select() {
 async fn execute_dml() {
     let (_container, drv, db_name) = setup().await;
     // Create table via driver directly
-    drv.execute("CREATE TABLE test_dml (id SERIAL, val TEXT)").await.unwrap();
+    drv.execute("CREATE TABLE test_dml (id SERIAL, val TEXT)")
+        .await
+        .unwrap();
 
     let mut engine = Engine::from_driver(drv, &db_name, Environment::Development);
     let result = engine
@@ -83,7 +89,10 @@ async fn ddl_rejected() {
 #[ignore]
 async fn pg_type_mapping_timestamptz() {
     let (_container, drv, _) = setup().await;
-    let rows = drv.query("SELECT '2024-01-15 10:30:00+00'::timestamptz AS ts").await.unwrap();
+    let rows = drv
+        .query("SELECT '2024-01-15 10:30:00+00'::timestamptz AS ts")
+        .await
+        .unwrap();
     assert!(rows[0]["ts"].is_string());
     let ts = rows[0]["ts"].as_str().unwrap();
     assert!(ts.contains("2024-01-15"));
@@ -93,15 +102,24 @@ async fn pg_type_mapping_timestamptz() {
 #[ignore]
 async fn pg_type_mapping_uuid() {
     let (_container, drv, _) = setup().await;
-    let rows = drv.query("SELECT 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid AS id").await.unwrap();
-    assert_eq!(rows[0]["id"].as_str().unwrap(), "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
+    let rows = drv
+        .query("SELECT 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid AS id")
+        .await
+        .unwrap();
+    assert_eq!(
+        rows[0]["id"].as_str().unwrap(),
+        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+    );
 }
 
 #[tokio::test]
 #[ignore]
 async fn pg_type_mapping_jsonb() {
     let (_container, drv, _) = setup().await;
-    let rows = drv.query(r#"SELECT '{"key": "value"}'::jsonb AS data"#).await.unwrap();
+    let rows = drv
+        .query(r#"SELECT '{"key": "value"}'::jsonb AS data"#)
+        .await
+        .unwrap();
     assert_eq!(rows[0]["data"]["key"], "value");
 }
 

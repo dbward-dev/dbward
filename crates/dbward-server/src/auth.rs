@@ -149,14 +149,12 @@ async fn authenticate_api_token(
     );
 
     match result {
-        Ok((id, user, role_str, subject_type)) => {
-            Ok(AuthUser {
-                token_id: id,
-                user,
-                roles: vec![role_str],
-                subject_type,
-            })
-        }
+        Ok((id, user, role_str, subject_type)) => Ok(AuthUser {
+            token_id: id,
+            user,
+            roles: vec![role_str],
+            subject_type,
+        }),
         Err(_) => Err((StatusCode::UNAUTHORIZED, "invalid token".into())),
     }
 }
@@ -187,9 +185,7 @@ mod tests {
     #[tokio::test]
     async fn create_and_verify_token() {
         let state = test_state();
-        let (token_id, raw_token) = create_token(&state, "alice", "developer")
-            .await
-            .unwrap();
+        let (token_id, raw_token) = create_token(&state, "alice", "developer").await.unwrap();
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -230,9 +226,7 @@ mod tests {
     #[tokio::test]
     async fn wrong_token_rejected() {
         let state = test_state();
-        create_token(&state, "alice", "developer")
-            .await
-            .unwrap();
+        create_token(&state, "alice", "developer").await.unwrap();
 
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -246,9 +240,7 @@ mod tests {
     #[tokio::test]
     async fn prefix_collision_still_authenticates() {
         let state = test_state();
-        let (_, token_a) = create_token(&state, "alice", "developer")
-            .await
-            .unwrap();
+        let (_, token_a) = create_token(&state, "alice", "developer").await.unwrap();
 
         // Insert a second token with the same prefix but different hash
         let prefix_a = token_prefix(&token_a);

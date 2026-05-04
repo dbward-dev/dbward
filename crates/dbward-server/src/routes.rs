@@ -31,7 +31,10 @@ fn insert_policy_audit(
     Ok(())
 }
 
-fn compute_next_step(steps: &[serde_json::Value], current_step_index: usize) -> Option<serde_json::Value> {
+fn compute_next_step(
+    steps: &[serde_json::Value],
+    current_step_index: usize,
+) -> Option<serde_json::Value> {
     steps.get(current_step_index).map(|step| {
         json!({
             "index": current_step_index,
@@ -83,10 +86,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/audit", get(list_audit))
         .route("/api/public-key", get(get_public_key))
-        .route(
-            "/api/workflows",
-            get(list_workflows).post(create_workflow),
-        )
+        .route("/api/workflows", get(list_workflows).post(create_workflow))
         .route(
             "/api/workflows/{id}",
             get(get_workflow)
@@ -163,7 +163,10 @@ async fn list_requests(
     let status_filter = params.get("status").filter(|s| !s.is_empty());
     let database_filter = params.get("database").filter(|s| !s.is_empty());
     let environment_filter = params.get("environment").filter(|s| !s.is_empty());
-    let pending_for_me = params.get("pending_for_me").map(|v| v == "true").unwrap_or(false);
+    let pending_for_me = params
+        .get("pending_for_me")
+        .map(|v| v == "true")
+        .unwrap_or(false);
 
     let conn = state.sqlite.lock().await;
 
@@ -238,7 +241,9 @@ async fn list_requests(
     let end = (start + limit as usize).min(filtered.len());
     let page = filtered[start..end].to_vec();
 
-    Ok(Json(json!({"requests": page, "total": total, "limit": limit, "offset": offset})))
+    Ok(Json(
+        json!({"requests": page, "total": total, "limit": limit, "offset": offset}),
+    ))
 }
 
 fn list_requests_pending_for_me(
@@ -250,7 +255,7 @@ fn list_requests_pending_for_me(
     // Fetch all pending requests with workflow snapshots
     let mut stmt = conn
         .prepare(
-            "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at, workflow_snapshot_json FROM requests WHERE status = 'pending' ORDER BY created_at DESC",
+            "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at, workflow_snapshot_json, reason FROM requests WHERE status = 'pending' ORDER BY created_at DESC",
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -272,6 +277,7 @@ fn list_requests_pending_for_me(
                     "created_at": row.get::<_, String>(8)?,
                     "updated_at": row.get::<_, String>(9)?,
                     "resolved_at": row.get::<_, Option<String>>(10)?,
+                    "reason": row.get::<_, Option<String>>(12)?,
                 }),
                 created_by,
                 ws,
@@ -317,7 +323,9 @@ fn list_requests_pending_for_me(
     let end = (start + limit as usize).min(filtered.len());
     let page = filtered[start..end].to_vec();
 
-    Ok(Json(json!({"requests": page, "total": total, "limit": limit, "offset": offset})))
+    Ok(Json(
+        json!({"requests": page, "total": total, "limit": limit, "offset": offset}),
+    ))
 }
 
 fn get_approvals_for_request(
@@ -372,7 +380,12 @@ fn current_approval_resource(
 
     let allowed_roles: Vec<String> = steps
         .get(current_step)
-        .map(|step| step.approvers.iter().map(|group| group.role.clone()).collect())
+        .map(|step| {
+            step.approvers
+                .iter()
+                .map(|group| group.role.clone())
+                .collect()
+        })
         .unwrap_or_default();
 
     Ok((
@@ -399,10 +412,16 @@ async fn create_request(
         .ok_or((StatusCode::BAD_REQUEST, "operation required".into()))?;
 
     const VALID_OPERATIONS: &[&str] = &[
-        "execute_query", "migrate_up", "migrate_down", "migrate_status",
+        "execute_query",
+        "migrate_up",
+        "migrate_down",
+        "migrate_status",
     ];
     if !VALID_OPERATIONS.contains(&operation) {
-        return Err((StatusCode::BAD_REQUEST, format!("unknown operation: {operation}")));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("unknown operation: {operation}"),
+        ));
     }
 
     let environment = body["environment"]
@@ -432,7 +451,9 @@ async fn create_request(
         ));
     }
     // Readonly and approver-only roles cannot use break-glass
-    if emergency && (user.effective_permission() == "readonly" || user.effective_permission() == "approver") {
+    if emergency
+        && (user.effective_permission() == "readonly" || user.effective_permission() == "approver")
+    {
         return Err((
             StatusCode::FORBIDDEN,
             "insufficient permissions for break-glass".into(),
@@ -450,16 +471,32 @@ async fn create_request(
     // Workflow evaluation: check workflows table first, then fall back to static policy
     let conn = state.sqlite.lock().await;
     let workflow_eval = crate::db::evaluate_workflow(&conn, database_name, environment, operation);
-    let (policy_action, workflow_require_reason, workflow_id, workflow_snapshot_json) = match &workflow_eval {
-        Some((wf_id, steps, require_reason)) => {
-            let action = if steps.is_empty() { "auto_approve" } else { "require_approval" };
-            let snapshot = serde_json::to_string(steps).unwrap_or_else(|_| "[]".into());
-            (action.to_string(), *require_reason, Some(wf_id.clone()), Some(snapshot))
-        }
-        None => {
-            (state.policy.evaluate(environment, operation, user.effective_permission()).to_string(), false, None, None)
-        }
-    };
+    let (policy_action, workflow_require_reason, workflow_id, workflow_snapshot_json) =
+        match &workflow_eval {
+            Some((wf_id, steps, require_reason)) => {
+                let action = if steps.is_empty() {
+                    "auto_approve"
+                } else {
+                    "require_approval"
+                };
+                let snapshot = serde_json::to_string(steps).unwrap_or_else(|_| "[]".into());
+                (
+                    action.to_string(),
+                    *require_reason,
+                    Some(wf_id.clone()),
+                    Some(snapshot),
+                )
+            }
+            None => (
+                state
+                    .policy
+                    .evaluate(environment, operation, user.effective_permission())
+                    .to_string(),
+                false,
+                None,
+                None,
+            ),
+        };
 
     if !emergency && workflow_require_reason && reason.as_ref().map_or(true, |r| r.is_empty()) {
         return Err((
@@ -492,47 +529,54 @@ async fn create_request(
             .token_signer
             .issue(&id, operation, environment, database_name, detail);
         let notif_hooks = crate::db::get_notification_webhooks(&conn, database_name, environment);
-        state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
-            event: "break_glass".into(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            request_id: id.clone(),
-            status: "break_glass".into(),
-            requester: user.user.clone(),
-            actor: user.user.clone(),
-            actor_role: Some(user.effective_permission().into()),
-            operation: operation.into(),
-            environment: environment.into(),
-            detail: detail.into(),
-            database: database_name.into(),
-            reason: reason.clone(),
-            next_step: None,
-            cli_command: Some(format!("dbward resume {id}")),
-        });
+        state.webhooks.dispatch_with_policy(
+            notif_hooks,
+            crate::webhook::WebhookEvent {
+                event: "break_glass".into(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: id.clone(),
+                status: "break_glass".into(),
+                requester: user.user.clone(),
+                actor: user.user.clone(),
+                actor_role: Some(user.effective_permission().into()),
+                operation: operation.into(),
+                environment: environment.into(),
+                detail: detail.into(),
+                database: database_name.into(),
+                reason: reason.clone(),
+                next_step: None,
+                cli_command: Some(format!("dbward resume {id}")),
+            },
+        );
         Ok((
             StatusCode::CREATED,
             Json(json!({"id": id, "status": "break_glass", "execution_token": token})),
         ))
     } else if needs_approval {
-        let next_step = workflow_snapshot_json.as_deref()
+        let next_step = workflow_snapshot_json
+            .as_deref()
             .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(s).ok())
             .and_then(|steps| compute_next_step(&steps, 0));
         let notif_hooks = crate::db::get_notification_webhooks(&conn, database_name, environment);
-        state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
-            event: "request_created".into(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            request_id: id.clone(),
-            status: "pending".into(),
-            requester: user.user.clone(),
-            actor: user.user.clone(),
-            actor_role: Some(user.effective_permission().into()),
-            operation: operation.into(),
-            environment: environment.into(),
-            detail: detail.into(),
-            database: database_name.into(),
-            reason: None,
-            next_step,
-            cli_command: Some(format!("dbward approve {id}")),
-        });
+        state.webhooks.dispatch_with_policy(
+            notif_hooks,
+            crate::webhook::WebhookEvent {
+                event: "request_created".into(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: id.clone(),
+                status: "pending".into(),
+                requester: user.user.clone(),
+                actor: user.user.clone(),
+                actor_role: Some(user.effective_permission().into()),
+                operation: operation.into(),
+                environment: environment.into(),
+                detail: detail.into(),
+                database: database_name.into(),
+                reason: None,
+                next_step,
+                cli_command: Some(format!("dbward approve {id}")),
+            },
+        );
         Ok((
             StatusCode::CREATED,
             Json(json!({"id": id, "status": "pending"})),
@@ -563,7 +607,9 @@ async fn approve_request(
 
     // Post-transaction async work
     if let Some(event) = result.webhook_event {
-        state.webhooks.dispatch_with_policy(result.notif_hooks, event);
+        state
+            .webhooks
+            .dispatch_with_policy(result.notif_hooks, event);
     }
     state.request_notifier.notify(&id).await;
 
@@ -612,7 +658,9 @@ async fn approve_request_inner(
             },
         )?;
         let now = chrono::Utc::now().to_rfc3339();
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         tx.execute(
             "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
             rusqlite::params![now, now, id],
@@ -622,20 +670,30 @@ async fn approve_request_inner(
             "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, 'approve', ?3, 0, ?4, NULL, ?5)",
             rusqlite::params![approval_id, id, approver.user, approver.effective_permission(), now],
         ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        let token = state.token_signer.issue(id, &operation, &environment, &database_name, &detail);
+        let token = state
+            .token_signer
+            .issue(id, &operation, &environment, &database_name, &detail);
         let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
         return Ok(ApproveResult {
             response: json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
             notif_hooks,
             webhook_event: Some(crate::webhook::WebhookEvent {
-                event: "request_approved".into(), timestamp: chrono::Utc::now().to_rfc3339(),
-                request_id: id.into(), status: "approved".into(),
-                requester: req_user, actor: approver.user.clone(),
+                event: "request_approved".into(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: id.into(),
+                status: "approved".into(),
+                requester: req_user,
+                actor: approver.user.clone(),
                 actor_role: Some(approver.effective_permission().into()),
-                operation, environment, detail, database: database_name,
-                reason: None, next_step: None,
+                operation,
+                environment,
+                detail,
+                database: database_name,
+                reason: None,
+                next_step: None,
                 cli_command: Some(format!("dbward resume {}", id)),
             }),
         });
@@ -646,16 +704,26 @@ async fn approve_request_inner(
         let mut stmt = conn.prepare(
             "SELECT step_index, actor_id, actor_role FROM approvals WHERE request_id = ?1 AND action = 'approve'"
         ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        stmt.query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-            .filter_map(|r| r.ok())
-            .collect()
+        stmt.query_map(rusqlite::params![id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .filter_map(|r| r.ok())
+        .collect()
     };
 
     // Calculate current step index (first unsatisfied step)
-    let current_step = steps.iter().enumerate().find_map(|(i, step)| {
-        if !is_step_satisfied(step, &existing_approvals, i as i64) { Some(i) } else { None }
-    }).unwrap_or(steps.len());
+    let current_step = steps
+        .iter()
+        .enumerate()
+        .find_map(|(i, step)| {
+            if !is_step_satisfied(step, &existing_approvals, i as i64) {
+                Some(i)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(steps.len());
 
     if current_step >= steps.len() {
         return Err((StatusCode::CONFLICT, "all steps already satisfied".into()));
@@ -668,80 +736,131 @@ async fn approve_request_inner(
         Action::ApproveRequest,
         Resource::ApprovalStep {
             requester_id: req_user.clone(),
-            allowed_roles: step.approvers.iter().map(|group| group.role.clone()).collect(),
+            allowed_roles: step
+                .approvers
+                .iter()
+                .map(|group| group.role.clone())
+                .collect(),
         },
     )?;
 
     // Determine approver's role
-    let as_role = body_val.get("as_role").and_then(|v| v.as_str()).map(String::from);
+    let as_role = body_val
+        .get("as_role")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let actor_role = if let Some(ref role) = as_role {
         if !approver.has_role(role) {
-            return Err((StatusCode::FORBIDDEN, format!("you do not have role '{role}'")));
+            return Err((
+                StatusCode::FORBIDDEN,
+                format!("you do not have role '{role}'"),
+            ));
         }
         if !step.approvers.iter().any(|g| g.role == *role) {
-            return Err((StatusCode::FORBIDDEN, format!("role '{role}' is not an approver for current step")));
+            return Err((
+                StatusCode::FORBIDDEN,
+                format!("role '{role}' is not an approver for current step"),
+            ));
         }
         role.clone()
     } else {
         let found = step.approvers.iter().find_map(|g| {
-            if approver.has_role(&g.role) { Some(g.role.clone()) } else { None }
-        });
-        found.or_else(|| {
-            if approver.effective_permission() == "admin" {
-                step.approvers.first().map(|g| g.role.clone())
+            if approver.has_role(&g.role) {
+                Some(g.role.clone())
             } else {
                 None
             }
-        }).ok_or((StatusCode::FORBIDDEN, "you do not have a matching role for this step".into()))?
+        });
+        found
+            .or_else(|| {
+                if approver.effective_permission() == "admin" {
+                    step.approvers.first().map(|g| g.role.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or((
+                StatusCode::FORBIDDEN,
+                "you do not have a matching role for this step".into(),
+            ))?
     };
 
     if step.require_distinct_actors {
         // Distinct actors: same user cannot approve same step at all
-        if existing_approvals.iter().any(|(si, aid, _)| *si == current_step as i64 && aid == &approver.user) {
-            return Err((StatusCode::CONFLICT, "you already approved this step".into()));
+        if existing_approvals
+            .iter()
+            .any(|(si, aid, _)| *si == current_step as i64 && aid == &approver.user)
+        {
+            return Err((
+                StatusCode::CONFLICT,
+                "you already approved this step".into(),
+            ));
         }
     } else {
         // Non-distinct: same user cannot approve same step with the same role (prevent exact duplicates)
-        if existing_approvals.iter().any(|(si, aid, role)| *si == current_step as i64 && aid == &approver.user && role == &actor_role) {
-            return Err((StatusCode::CONFLICT, "you already approved this step with this role".into()));
+        if existing_approvals.iter().any(|(si, aid, role)| {
+            *si == current_step as i64 && aid == &approver.user && role == &actor_role
+        }) {
+            return Err((
+                StatusCode::CONFLICT,
+                "you already approved this step with this role".into(),
+            ));
         }
     }
 
     let now = chrono::Utc::now().to_rfc3339();
     let approval_id = uuid::Uuid::new_v4().to_string();
-    let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     tx.execute(
         "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, 'approve', ?3, ?4, ?5, NULL, ?6)",
         rusqlite::params![approval_id, id, approver.user, current_step as i64, actor_role, now],
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let mut updated_approvals = existing_approvals.clone();
-    updated_approvals.push((current_step as i64, approver.user.clone(), actor_role.clone()));
+    updated_approvals.push((
+        current_step as i64,
+        approver.user.clone(),
+        actor_role.clone(),
+    ));
 
     let step_now_satisfied = is_step_satisfied(step, &updated_approvals, current_step as i64);
-    let all_satisfied = step_now_satisfied && steps.iter().enumerate().all(|(i, s)| {
-        is_step_satisfied(s, &updated_approvals, i as i64)
-    });
+    let all_satisfied = step_now_satisfied
+        && steps
+            .iter()
+            .enumerate()
+            .all(|(i, s)| is_step_satisfied(s, &updated_approvals, i as i64));
 
     if all_satisfied {
         tx.execute(
             "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
             rusqlite::params![now, now, id],
         ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        let token = state.token_signer.issue(id, &operation, &environment, &database_name, &detail);
+        let token = state
+            .token_signer
+            .issue(id, &operation, &environment, &database_name, &detail);
         let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
         Ok(ApproveResult {
             response: json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
             notif_hooks,
             webhook_event: Some(crate::webhook::WebhookEvent {
-                event: "request_approved".into(), timestamp: chrono::Utc::now().to_rfc3339(),
-                request_id: id.into(), status: "approved".into(),
-                requester: req_user, actor: approver.user.clone(),
+                event: "request_approved".into(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: id.into(),
+                status: "approved".into(),
+                requester: req_user,
+                actor: approver.user.clone(),
                 actor_role: Some(actor_role.clone()),
-                operation, environment, detail, database: database_name,
-                reason: None, next_step: None,
+                operation,
+                environment,
+                detail,
+                database: database_name,
+                reason: None,
+                next_step: None,
                 cli_command: Some(format!("dbward resume {}", id)),
             }),
         })
@@ -749,14 +868,24 @@ async fn approve_request_inner(
         tx.execute(
             "UPDATE requests SET updated_at = ?1 WHERE id = ?2",
             rusqlite::params![now, id],
-        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
 
-        let new_current = steps.iter().enumerate().find_map(|(i, s)| {
-            if !is_step_satisfied(s, &updated_approvals, i as i64) { Some(i) } else { None }
-        }).unwrap_or(steps.len());
+        let new_current = steps
+            .iter()
+            .enumerate()
+            .find_map(|(i, s)| {
+                if !is_step_satisfied(s, &updated_approvals, i as i64) {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(steps.len());
 
         let webhook_event = if step_now_satisfied {
             let steps_json_val: Vec<serde_json::Value> = workflow_snapshot_json
@@ -765,13 +894,19 @@ async fn approve_request_inner(
                 .unwrap_or_default();
             let next_step = compute_next_step(&steps_json_val, new_current);
             Some(crate::webhook::WebhookEvent {
-                event: "step_approved".into(), timestamp: chrono::Utc::now().to_rfc3339(),
-                request_id: id.into(), status: "pending".into(),
-                requester: req_user, actor: approver.user.clone(),
+                event: "step_approved".into(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: id.into(),
+                status: "pending".into(),
+                requester: req_user,
+                actor: approver.user.clone(),
                 actor_role: Some(actor_role.clone()),
-                operation: operation.clone(), environment: environment.clone(),
-                detail: detail.clone(), database: database_name.clone(),
-                reason: None, next_step,
+                operation: operation.clone(),
+                environment: environment.clone(),
+                detail: detail.clone(),
+                database: database_name.clone(),
+                reason: None,
+                next_step,
                 cli_command: Some(format!("dbward approve {}", id)),
             })
         } else {
@@ -796,16 +931,25 @@ fn is_step_satisfied(
     approvals: &[(i64, String, String)],
     step_index: i64,
 ) -> bool {
-    let step_approvals: Vec<&(i64, String, String)> = approvals.iter()
+    let step_approvals: Vec<&(i64, String, String)> = approvals
+        .iter()
         .filter(|(si, _, _)| *si == step_index)
         .collect();
 
     match step.mode.as_str() {
         "any" => step.approvers.iter().any(|g| {
-            step_approvals.iter().filter(|(_, _, role)| role == &g.role).count() >= g.min as usize
+            step_approvals
+                .iter()
+                .filter(|(_, _, role)| role == &g.role)
+                .count()
+                >= g.min as usize
         }),
         _ => step.approvers.iter().all(|g| {
-            step_approvals.iter().filter(|(_, _, role)| role == &g.role).count() >= g.min as usize
+            step_approvals
+                .iter()
+                .filter(|(_, _, role)| role == &g.role)
+                .count()
+                >= g.min as usize
         }),
     }
 }
@@ -851,12 +995,19 @@ async fn reject_request(
             let roles_str = step_roles.join(", ");
             return Err((
                 StatusCode::FORBIDDEN,
-                format!("you are not an approver for the current step (step {}/{}: {})", step_idx + 1, total_steps, roles_str),
+                format!(
+                    "you are not an approver for the current step (step {}/{}: {})",
+                    step_idx + 1,
+                    total_steps,
+                    roles_str
+                ),
             ));
         }
 
         let now = chrono::Utc::now().to_rfc3339();
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         tx.execute(
             "UPDATE requests SET status = 'rejected', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
             rusqlite::params![now, now, id],
@@ -869,25 +1020,29 @@ async fn reject_request(
             rusqlite::params![approval_id, id, user.user, user.effective_permission(), now],
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
-        state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
-            event: "request_rejected".into(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            request_id: id.clone(),
-            status: "rejected".into(),
-            requester: req_user.clone(),
-            actor: user.user.clone(),
-            actor_role: Some(user.effective_permission().into()),
-            operation: "".into(),
-            environment: environment.clone().into(),
-            database: database_name.clone().into(),
-            detail: "".into(),
-            reason: None,
-            next_step: None,
-            cli_command: None,
-        });
+        state.webhooks.dispatch_with_policy(
+            notif_hooks,
+            crate::webhook::WebhookEvent {
+                event: "request_rejected".into(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: id.clone(),
+                status: "rejected".into(),
+                requester: req_user.clone(),
+                actor: user.user.clone(),
+                actor_role: Some(user.effective_permission().into()),
+                operation: "".into(),
+                environment: environment.clone().into(),
+                database: database_name.clone().into(),
+                detail: "".into(),
+                reason: None,
+                next_step: None,
+                cli_command: None,
+            },
+        );
     }
 
     state.request_notifier.notify(&id).await;
@@ -909,7 +1064,10 @@ async fn get_request(
         .unwrap_or(0)
         .min(60);
 
-    let build_response = |conn: &rusqlite::Connection, id: &str, state: &AppState| -> Result<serde_json::Value, (StatusCode, String)> {
+    let build_response = |conn: &rusqlite::Connection,
+                          id: &str,
+                          state: &AppState|
+     -> Result<serde_json::Value, (StatusCode, String)> {
         let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason): (String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, Option<String>) = conn
             .query_row(
                 "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason FROM requests WHERE id = ?1",
@@ -926,14 +1084,19 @@ async fn get_request(
         });
 
         if status == "approved" || status == "auto_approved" || status == "break_glass" {
-            let token = state.token_signer.issue(id, &operation, &environment, &database_name, &detail);
+            let token =
+                state
+                    .token_signer
+                    .issue(id, &operation, &environment, &database_name, &detail);
             resp["execution_token"] = serde_json::to_value(token)
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
 
         // Include approval_progress when workflow snapshot exists
         if let Some(ref snapshot) = workflow_snapshot_json {
-            if let Ok(steps) = serde_json::from_str::<Vec<crate::server_config::WorkflowStep>>(snapshot) {
+            if let Ok(steps) =
+                serde_json::from_str::<Vec<crate::server_config::WorkflowStep>>(snapshot)
+            {
                 if !steps.is_empty() {
                     let approvals: Vec<(i64, String, String, String)> = conn
                         .prepare("SELECT step_index, actor_id, actor_role, created_at FROM approvals WHERE request_id = ?1 AND action = 'approve'")
@@ -960,12 +1123,21 @@ async fn get_request(
                         })
                     }).collect();
 
-                    let current = steps.iter().enumerate().find_map(|(i, step)| {
-                        let simple: Vec<(i64, String, String)> = approvals.iter()
-                            .map(|(si, uid, role, _)| (*si, uid.clone(), role.clone()))
-                            .collect();
-                        if !is_step_satisfied(step, &simple, i as i64) { Some(i) } else { None }
-                    }).unwrap_or(steps.len());
+                    let current = steps
+                        .iter()
+                        .enumerate()
+                        .find_map(|(i, step)| {
+                            let simple: Vec<(i64, String, String)> = approvals
+                                .iter()
+                                .map(|(si, uid, role, _)| (*si, uid.clone(), role.clone()))
+                                .collect();
+                            if !is_step_satisfied(step, &simple, i as i64) {
+                                Some(i)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(steps.len());
 
                     resp["approval_progress"] = json!({
                         "current_step": current,
@@ -1090,7 +1262,8 @@ async fn list_audit(
         .collect();
     all_params.push(Box::new(limit));
     all_params.push(Box::new(offset));
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        all_params.iter().map(|p| p.as_ref()).collect();
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map(param_refs.as_slice(), |row| {
@@ -1113,7 +1286,9 @@ async fn list_audit(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(json!({"audit_log": rows, "total": total, "limit": limit, "offset": offset})))
+    Ok(Json(
+        json!({"audit_log": rows, "total": total, "limit": limit, "offset": offset}),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1159,7 +1334,8 @@ async fn dispatch_request(
 
     // For executed/failed: check re-execution policy before attempting atomic update
     if status == "executed" || status == "failed" {
-        let (max_exec, window_secs, retry) = crate::db::get_execution_policy(&conn, &database_name, &environment);
+        let (max_exec, window_secs, retry) =
+            crate::db::get_execution_policy(&conn, &database_name, &environment);
 
         if let Some(ref resolved) = resolved_at {
             if let Ok(resolved_time) = chrono::DateTime::parse_from_rfc3339(resolved) {
@@ -1181,7 +1357,10 @@ async fn dispatch_request(
             return Err((StatusCode::CONFLICT, "retry on failure is disabled".into()));
         }
         if exec_count >= max_exec {
-            return Err((StatusCode::CONFLICT, format!("max executions ({max_exec}) reached")));
+            return Err((
+                StatusCode::CONFLICT,
+                format!("max executions ({max_exec}) reached"),
+            ));
         }
     }
 
@@ -1193,7 +1372,10 @@ async fn dispatch_request(
     ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     if rows == 0 {
-        return Err((StatusCode::CONFLICT, "request cannot be dispatched (wrong status)".into()));
+        return Err((
+            StatusCode::CONFLICT,
+            "request cannot be dispatched (wrong status)".into(),
+        ));
     }
 
     drop(conn);
@@ -1339,13 +1521,20 @@ async fn agent_poll(
         "databases": databases,
         "environments": environments,
         "operations": operations,
-    })).unwrap_or_else(|_| "{}".into());
+    }))
+    .unwrap_or_else(|_| "{}".into());
     conn.execute(
         "INSERT INTO agents (id, token_id, capabilities_json, last_seen_at, created_at)
          VALUES (?1, ?2, ?3, ?4, ?4)
          ON CONFLICT(id) DO UPDATE SET capabilities_json = ?3, last_seen_at = ?4",
         rusqlite::params![user.user, user.token_id, caps_json, now],
-    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("agent registration failed: {e}")))?;
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("agent registration failed: {e}"),
+        )
+    })?;
 
     let mut stmt = conn
         .prepare(
@@ -1427,13 +1616,20 @@ async fn agent_claim(
     ) {
         if let Ok(caps) = serde_json::from_str::<serde_json::Value>(&caps_json) {
             let matches = |arr: &serde_json::Value, val: &str| -> bool {
-                arr.as_array().map_or(true, |a| a.is_empty() || a.iter().any(|v| v.as_str() == Some(val) || v.as_str() == Some("*")))
+                arr.as_array().map_or(true, |a| {
+                    a.is_empty()
+                        || a.iter()
+                            .any(|v| v.as_str() == Some(val) || v.as_str() == Some("*"))
+                })
             };
             if !matches(&caps["databases"], &database)
                 || !matches(&caps["environments"], &environment)
                 || !matches(&caps["operations"], &operation)
             {
-                return Err((StatusCode::FORBIDDEN, "agent lacks capability for this job".into()));
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    "agent lacks capability for this job".into(),
+                ));
             }
         }
     }
@@ -1448,7 +1644,9 @@ async fn agent_claim(
     let token_json = serde_json::to_string(&token)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     tx.execute(
         "INSERT INTO agent_executions (id, request_id, agent_id, status, execution_token_json, lease_expires_at, started_at, created_at)
          VALUES (?1, ?2, ?3, 'claimed', ?4, ?5, ?6, ?6)",
@@ -1461,7 +1659,8 @@ async fn agent_claim(
         rusqlite::params![now, id],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    tx.commit()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({
         "execution_id": exec_id,
@@ -1527,7 +1726,9 @@ async fn agent_result(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("request lookup failed: {e}")))?;
 
         let audit_id = uuid::Uuid::new_v4().to_string();
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         tx.execute(
             "UPDATE agent_executions SET status = ?1, finished_at = ?2, error_message = ?3 WHERE id = ?4",
             rusqlite::params![new_status, now, error_msg, id],
@@ -1545,7 +1746,8 @@ async fn agent_result(
             rusqlite::params![audit_id, request_id, id, actor, operation, environment, database_name, detail, req_status, error_msg, now],
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         (request_id, req_status.to_string())
     };
@@ -1589,8 +1791,10 @@ async fn list_workflows(
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
-            let ops: serde_json::Value = serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
-            let steps: serde_json::Value = serde_json::from_str(row.get::<_, String>(4)?.as_str()).unwrap_or_default();
+            let ops: serde_json::Value =
+                serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
+            let steps: serde_json::Value =
+                serde_json::from_str(row.get::<_, String>(4)?.as_str()).unwrap_or_default();
             Ok(json!({
                 "id": row.get::<_, String>(0)?,
                 "database": row.get::<_, String>(1)?,
@@ -1652,9 +1856,11 @@ async fn create_workflow(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
 
-    let database = body["database"].as_str()
+    let database = body["database"]
+        .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
-    let environment = body["environment"].as_str()
+    let environment = body["environment"]
+        .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
     let operations = body.get("operations").cloned().unwrap_or(json!([]));
     let steps = body.get("steps").cloned().unwrap_or(json!([]));
@@ -1667,7 +1873,9 @@ async fn create_workflow(
 
     let mut conn = state.sqlite.lock().await;
     {
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         tx.execute(
             "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
@@ -1682,10 +1890,14 @@ async fn create_workflow(
         })?;
 
         insert_policy_audit(&tx, &user.user, "policy_create", "workflow", &id)?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
-    Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({"id": id, "database": database, "environment": environment})),
+    ))
 }
 
 async fn update_workflow(
@@ -1701,21 +1913,32 @@ async fn update_workflow(
     let now = chrono::Utc::now().to_rfc3339();
 
     // Check exists
-    conn.query_row("SELECT id FROM workflows WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
-        .map_err(|_| (StatusCode::NOT_FOUND, "workflow not found".into()))?;
+    conn.query_row(
+        "SELECT id FROM workflows WHERE id = ?1",
+        rusqlite::params![id],
+        |_| Ok(()),
+    )
+    .map_err(|_| (StatusCode::NOT_FOUND, "workflow not found".into()))?;
 
     // Block changes if pending requests reference this workflow
-    let pending_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM requests WHERE workflow_id = ?1 AND status = 'pending'",
-        rusqlite::params![id],
-        |row| row.get(0),
-    ).unwrap_or(0);
+    let pending_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM requests WHERE workflow_id = ?1 AND status = 'pending'",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
     if pending_count > 0 {
-        return Err((StatusCode::CONFLICT, format!("{pending_count} pending request(s) reference this workflow")));
+        return Err((
+            StatusCode::CONFLICT,
+            format!("{pending_count} pending request(s) reference this workflow"),
+        ));
     }
 
     {
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if let Some(steps) = body.get("steps") {
             tx.execute(
                 "UPDATE workflows SET steps_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
@@ -1739,7 +1962,8 @@ async fn update_workflow(
         }
 
         insert_policy_audit(&tx, &user.user, "policy_update", "workflow", &id)?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "updated": true})))
@@ -1756,17 +1980,24 @@ async fn delete_workflow(
     let mut conn = state.sqlite.lock().await;
 
     // Block deletion if pending requests reference this workflow
-    let pending_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM requests WHERE workflow_id = ?1 AND status = 'pending'",
-        rusqlite::params![id],
-        |row| row.get(0),
-    ).unwrap_or(0);
+    let pending_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM requests WHERE workflow_id = ?1 AND status = 'pending'",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
     if pending_count > 0 {
-        return Err((StatusCode::CONFLICT, format!("{pending_count} pending request(s) reference this workflow")));
+        return Err((
+            StatusCode::CONFLICT,
+            format!("{pending_count} pending request(s) reference this workflow"),
+        ));
     }
 
     {
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         let changes = tx
             .execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id])
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1776,7 +2007,8 @@ async fn delete_workflow(
         }
 
         insert_policy_audit(&tx, &user.user, "policy_delete", "workflow", &id)?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "deleted": true})))
@@ -1859,9 +2091,11 @@ async fn create_execution_policy(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
 
-    let database = body["database"].as_str()
+    let database = body["database"]
+        .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
-    let environment = body["environment"].as_str()
+    let environment = body["environment"]
+        .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
     let max_executions = body["max_executions"].as_i64().unwrap_or(1);
     let execution_window_secs = body["execution_window_secs"].as_i64().unwrap_or(3600);
@@ -1872,7 +2106,9 @@ async fn create_execution_policy(
 
     let mut conn = state.sqlite.lock().await;
     {
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         tx.execute(
             "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
@@ -1887,10 +2123,14 @@ async fn create_execution_policy(
         })?;
 
         insert_policy_audit(&tx, &user.user, "policy_create", "execution_policy", &id)?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
-    Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({"id": id, "database": database, "environment": environment})),
+    ))
 }
 
 async fn update_execution_policy(
@@ -1905,11 +2145,17 @@ async fn update_execution_policy(
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
 
-    conn.query_row("SELECT id FROM execution_policies WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
-        .map_err(|_| (StatusCode::NOT_FOUND, "execution policy not found".into()))?;
+    conn.query_row(
+        "SELECT id FROM execution_policies WHERE id = ?1",
+        rusqlite::params![id],
+        |_| Ok(()),
+    )
+    .map_err(|_| (StatusCode::NOT_FOUND, "execution policy not found".into()))?;
 
     {
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if let Some(v) = body.get("max_executions").and_then(|v| v.as_i64()) {
             tx.execute(
                 "UPDATE execution_policies SET max_executions = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
@@ -1930,7 +2176,8 @@ async fn update_execution_policy(
         }
 
         insert_policy_audit(&tx, &user.user, "policy_update", "execution_policy", &id)?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "updated": true})))
@@ -1946,9 +2193,14 @@ async fn delete_execution_policy(
 
     let mut conn = state.sqlite.lock().await;
     {
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         let changes = tx
-            .execute("DELETE FROM execution_policies WHERE id = ?1", rusqlite::params![id])
+            .execute(
+                "DELETE FROM execution_policies WHERE id = ?1",
+                rusqlite::params![id],
+            )
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         if changes == 0 {
@@ -1956,7 +2208,8 @@ async fn delete_execution_policy(
         }
 
         insert_policy_audit(&tx, &user.user, "policy_delete", "execution_policy", &id)?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "deleted": true})))
@@ -1980,8 +2233,10 @@ async fn list_result_policies(
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
-            let storage: serde_json::Value = serde_json::from_str(row.get::<_, String>(4)?.as_str()).unwrap_or_default();
-            let access: serde_json::Value = serde_json::from_str(row.get::<_, String>(5)?.as_str()).unwrap_or_default();
+            let storage: serde_json::Value =
+                serde_json::from_str(row.get::<_, String>(4)?.as_str()).unwrap_or_default();
+            let access: serde_json::Value =
+                serde_json::from_str(row.get::<_, String>(5)?.as_str()).unwrap_or_default();
             Ok(json!({
                 "id": row.get::<_, String>(0)?,
                 "database": row.get::<_, String>(1)?,
@@ -2043,9 +2298,11 @@ async fn create_result_policy(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
 
-    let database = body["database"].as_str()
+    let database = body["database"]
+        .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
-    let environment = body["environment"].as_str()
+    let environment = body["environment"]
+        .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
     let delivery_mode = body["delivery_mode"].as_str().unwrap_or("stream");
     let storage_config = body.get("storage_config").cloned().unwrap_or(json!({}));
@@ -2058,7 +2315,9 @@ async fn create_result_policy(
 
     let mut conn = state.sqlite.lock().await;
     {
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         tx.execute(
             "INSERT INTO result_policies (id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
@@ -2073,10 +2332,14 @@ async fn create_result_policy(
         })?;
 
         insert_policy_audit(&tx, &user.user, "policy_create", "result_policy", &id)?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
-    Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({"id": id, "database": database, "environment": environment})),
+    ))
 }
 
 async fn update_result_policy(
@@ -2091,11 +2354,17 @@ async fn update_result_policy(
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
 
-    conn.query_row("SELECT id FROM result_policies WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
-        .map_err(|_| (StatusCode::NOT_FOUND, "result policy not found".into()))?;
+    conn.query_row(
+        "SELECT id FROM result_policies WHERE id = ?1",
+        rusqlite::params![id],
+        |_| Ok(()),
+    )
+    .map_err(|_| (StatusCode::NOT_FOUND, "result policy not found".into()))?;
 
     {
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if let Some(v) = body.get("delivery_mode").and_then(|v| v.as_str()) {
             tx.execute(
                 "UPDATE result_policies SET delivery_mode = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
@@ -2116,7 +2385,8 @@ async fn update_result_policy(
         }
 
         insert_policy_audit(&tx, &user.user, "policy_update", "result_policy", &id)?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "updated": true})))
@@ -2132,9 +2402,14 @@ async fn delete_result_policy(
 
     let mut conn = state.sqlite.lock().await;
     {
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         let changes = tx
-            .execute("DELETE FROM result_policies WHERE id = ?1", rusqlite::params![id])
+            .execute(
+                "DELETE FROM result_policies WHERE id = ?1",
+                rusqlite::params![id],
+            )
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         if changes == 0 {
@@ -2142,7 +2417,8 @@ async fn delete_result_policy(
         }
 
         insert_policy_audit(&tx, &user.user, "policy_delete", "result_policy", &id)?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "deleted": true})))
@@ -2166,7 +2442,8 @@ async fn list_notification_policies(
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
-            let webhooks: serde_json::Value = serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
+            let webhooks: serde_json::Value =
+                serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
             Ok(json!({
                 "id": row.get::<_, String>(0)?,
                 "database": row.get::<_, String>(1)?,
@@ -2223,9 +2500,11 @@ async fn create_notification_policy(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
 
-    let database = body["database"].as_str()
+    let database = body["database"]
+        .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
-    let environment = body["environment"].as_str()
+    let environment = body["environment"]
+        .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
     let webhooks = body.get("webhooks").cloned().unwrap_or(json!([]));
 
@@ -2235,7 +2514,9 @@ async fn create_notification_policy(
 
     let mut conn = state.sqlite.lock().await;
     {
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         tx.execute(
             "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, 'api', ?5, ?5)",
@@ -2250,10 +2531,14 @@ async fn create_notification_policy(
         })?;
 
         insert_policy_audit(&tx, &user.user, "policy_create", "notification_policy", &id)?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
-    Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({"id": id, "database": database, "environment": environment})),
+    ))
 }
 
 async fn update_notification_policy(
@@ -2268,11 +2553,22 @@ async fn update_notification_policy(
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
 
-    conn.query_row("SELECT id FROM notification_policies WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
-        .map_err(|_| (StatusCode::NOT_FOUND, "notification policy not found".into()))?;
+    conn.query_row(
+        "SELECT id FROM notification_policies WHERE id = ?1",
+        rusqlite::params![id],
+        |_| Ok(()),
+    )
+    .map_err(|_| {
+        (
+            StatusCode::NOT_FOUND,
+            "notification policy not found".into(),
+        )
+    })?;
 
     {
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if let Some(v) = body.get("webhooks") {
             tx.execute(
                 "UPDATE notification_policies SET webhooks_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
@@ -2281,7 +2577,8 @@ async fn update_notification_policy(
         }
 
         insert_policy_audit(&tx, &user.user, "policy_update", "notification_policy", &id)?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "updated": true})))
@@ -2297,17 +2594,26 @@ async fn delete_notification_policy(
 
     let mut conn = state.sqlite.lock().await;
     {
-        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         let changes = tx
-            .execute("DELETE FROM notification_policies WHERE id = ?1", rusqlite::params![id])
+            .execute(
+                "DELETE FROM notification_policies WHERE id = ?1",
+                rusqlite::params![id],
+            )
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         if changes == 0 {
-            return Err((StatusCode::NOT_FOUND, "notification policy not found".into()));
+            return Err((
+                StatusCode::NOT_FOUND,
+                "notification policy not found".into(),
+            ));
         }
 
         insert_policy_audit(&tx, &user.user, "policy_delete", "notification_policy", &id)?;
-        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
     Ok(Json(json!({"id": id, "deleted": true})))

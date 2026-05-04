@@ -43,7 +43,10 @@ mod tests {
             Operation::AuditSearch,
         ];
         for op in &ops {
-            assert!(check_permission("admin", op).is_ok(), "admin should be allowed {op}");
+            assert!(
+                check_permission("admin", op).is_ok(),
+                "admin should be allowed {op}"
+            );
         }
     }
 

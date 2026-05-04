@@ -34,9 +34,15 @@ pub struct ApproverGroup {
     pub min: u32,
 }
 
-fn default_step_mode() -> String { "all".into() }
-fn default_one() -> u32 { 1 }
-fn default_true() -> bool { true }
+fn default_step_mode() -> String {
+    "all".into()
+}
+fn default_one() -> u32 {
+    1
+}
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RetentionConfig {
@@ -46,8 +52,12 @@ pub struct RetentionConfig {
     pub audit_ttl_days: u32,
 }
 
-fn default_request_ttl() -> u32 { 90 }
-fn default_audit_ttl() -> u32 { 365 }
+fn default_request_ttl() -> u32 {
+    90
+}
+fn default_audit_ttl() -> u32 {
+    365
+}
 
 impl Default for RetentionConfig {
     fn default() -> Self {
@@ -102,8 +112,12 @@ pub struct ExecutionPolicyDef {
     pub retry_on_failure: bool,
 }
 
-fn default_max_executions() -> u32 { 1 }
-fn default_execution_window() -> u64 { 86400 }
+fn default_max_executions() -> u32 {
+    1
+}
+fn default_execution_window() -> u64 {
+    86400
+}
 
 /// Result policy definition from TOML config.
 #[derive(Debug, Clone, Deserialize)]
@@ -118,8 +132,12 @@ pub struct ResultPolicyDef {
     pub access: Vec<String>,
 }
 
-fn default_delivery_mode() -> String { "direct".into() }
-fn default_access() -> Vec<String> { vec!["requester".into(), "admin".into()] }
+fn default_delivery_mode() -> String {
+    "direct".into()
+}
+fn default_access() -> Vec<String> {
+    vec!["requester".into(), "admin".into()]
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuthConfig {

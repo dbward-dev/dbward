@@ -84,8 +84,8 @@ pub fn verify_token(
         &token.detail_hash,
         &token.expires_at,
     );
-    let sig_bytes =
-        hex::decode(&token.signature).map_err(|e| Error::Token(format!("invalid signature: {e}")))?;
+    let sig_bytes = hex::decode(&token.signature)
+        .map_err(|e| Error::Token(format!("invalid signature: {e}")))?;
     let signature = ed25519_dalek::Signature::from_bytes(
         &sig_bytes
             .try_into()
@@ -104,7 +104,8 @@ pub fn load_public_key(path: &std::path::Path) -> Result<VerifyingKey, Error> {
     let key_bytes: [u8; 32] = bytes
         .try_into()
         .map_err(|_| Error::Token("invalid public key file".into()))?;
-    VerifyingKey::from_bytes(&key_bytes).map_err(|e| Error::Token(format!("invalid public key: {e}")))
+    VerifyingKey::from_bytes(&key_bytes)
+        .map_err(|e| Error::Token(format!("invalid public key: {e}")))
 }
 
 #[cfg(test)]
@@ -113,7 +114,13 @@ mod tests {
     use chrono::Duration;
     use ed25519_dalek::{Signer, SigningKey};
 
-    fn make_token(signing_key: &SigningKey, op: &str, env: &str, detail: &str, expires_at: chrono::DateTime<Utc>) -> ExecutionToken {
+    fn make_token(
+        signing_key: &SigningKey,
+        op: &str,
+        env: &str,
+        detail: &str,
+        expires_at: chrono::DateTime<Utc>,
+    ) -> ExecutionToken {
         let detail_hash = hash_detail(detail);
         let expires_str = expires_at.to_rfc3339();
         let msg = token_message("req-1", op, env, "default", &detail_hash, &expires_str);
@@ -139,51 +146,99 @@ mod tests {
     #[test]
     fn valid_token_passes() {
         let (sk, vk) = keypair();
-        let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
+        let token = make_token(
+            &sk,
+            "execute",
+            "production",
+            "SELECT 1",
+            Utc::now() + Duration::hours(1),
+        );
         assert!(verify_token(&token, &vk, "execute", "production", "default", "SELECT 1").is_ok());
     }
 
     #[test]
     fn expired_token_rejected() {
         let (sk, vk) = keypair();
-        let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() - Duration::seconds(1));
-        let err = verify_token(&token, &vk, "execute", "production", "default", "SELECT 1").unwrap_err();
+        let token = make_token(
+            &sk,
+            "execute",
+            "production",
+            "SELECT 1",
+            Utc::now() - Duration::seconds(1),
+        );
+        let err =
+            verify_token(&token, &vk, "execute", "production", "default", "SELECT 1").unwrap_err();
         assert!(err.to_string().contains("expired"));
     }
 
     #[test]
     fn operation_mismatch_rejected() {
         let (sk, vk) = keypair();
-        let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
-        let err = verify_token(&token, &vk, "migrate", "production", "default", "SELECT 1").unwrap_err();
+        let token = make_token(
+            &sk,
+            "execute",
+            "production",
+            "SELECT 1",
+            Utc::now() + Duration::hours(1),
+        );
+        let err =
+            verify_token(&token, &vk, "migrate", "production", "default", "SELECT 1").unwrap_err();
         assert!(err.to_string().contains("operation mismatch"));
     }
 
     #[test]
     fn environment_mismatch_rejected() {
         let (sk, vk) = keypair();
-        let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
-        let err = verify_token(&token, &vk, "execute", "staging", "default", "SELECT 1").unwrap_err();
+        let token = make_token(
+            &sk,
+            "execute",
+            "production",
+            "SELECT 1",
+            Utc::now() + Duration::hours(1),
+        );
+        let err =
+            verify_token(&token, &vk, "execute", "staging", "default", "SELECT 1").unwrap_err();
         assert!(err.to_string().contains("environment mismatch"));
     }
 
     #[test]
     fn detail_mismatch_rejected() {
         let (sk, vk) = keypair();
-        let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
-        let err = verify_token(&token, &vk, "execute", "production", "default", "DROP TABLE users").unwrap_err();
+        let token = make_token(
+            &sk,
+            "execute",
+            "production",
+            "SELECT 1",
+            Utc::now() + Duration::hours(1),
+        );
+        let err = verify_token(
+            &token,
+            &vk,
+            "execute",
+            "production",
+            "default",
+            "DROP TABLE users",
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("detail_hash mismatch"));
     }
 
     #[test]
     fn tampered_signature_rejected() {
         let (sk, vk) = keypair();
-        let mut token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
+        let mut token = make_token(
+            &sk,
+            "execute",
+            "production",
+            "SELECT 1",
+            Utc::now() + Duration::hours(1),
+        );
         // Flip a byte in the signature
         let mut sig_bytes = hex::decode(&token.signature).unwrap();
         sig_bytes[0] ^= 0xff;
         token.signature = hex::encode(sig_bytes);
-        let err = verify_token(&token, &vk, "execute", "production", "default", "SELECT 1").unwrap_err();
+        let err =
+            verify_token(&token, &vk, "execute", "production", "default", "SELECT 1").unwrap_err();
         assert!(err.to_string().contains("invalid signature"));
     }
 
@@ -191,8 +246,22 @@ mod tests {
     fn wrong_key_rejected() {
         let (sk, _) = keypair();
         let (_, other_vk) = keypair();
-        let token = make_token(&sk, "execute", "production", "SELECT 1", Utc::now() + Duration::hours(1));
-        let err = verify_token(&token, &other_vk, "execute", "production", "default", "SELECT 1").unwrap_err();
+        let token = make_token(
+            &sk,
+            "execute",
+            "production",
+            "SELECT 1",
+            Utc::now() + Duration::hours(1),
+        );
+        let err = verify_token(
+            &token,
+            &other_vk,
+            "execute",
+            "production",
+            "default",
+            "SELECT 1",
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("invalid signature"));
     }
 

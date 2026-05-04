@@ -144,7 +144,11 @@ async fn send_with_retry(
 fn format_payload(hook: &WebhookConfig, event: &WebhookEvent) -> (String, String) {
     match hook.format.as_str() {
         "slack" => {
-            let emoji = if event.event == "break_glass" { "🚨" } else { "📋" };
+            let emoji = if event.event == "break_glass" {
+                "🚨"
+            } else {
+                "📋"
+            };
             let detail_short = if event.detail.len() > 100 {
                 format!("{}...", &event.detail[..100])
             } else {
@@ -157,7 +161,11 @@ fn format_payload(hook: &WebhookConfig, event: &WebhookEvent) -> (String, String
                 event.operation,
                 event.environment,
                 detail_short,
-                event.reason.as_ref().map(|r| format!("\nReason: {r}")).unwrap_or_default(),
+                event
+                    .reason
+                    .as_ref()
+                    .map(|r| format!("\nReason: {r}"))
+                    .unwrap_or_default(),
             );
             if let Some(ref ns) = event.next_step {
                 text.push_str(&format!("\nNext: {ns}"));
@@ -245,7 +253,10 @@ mod tests {
         let mut event = test_event("request_created");
         event.detail = "X".repeat(200);
         let (body, _) = format_payload(&hook, &event);
-        let text = serde_json::from_str::<serde_json::Value>(&body).unwrap()["text"].as_str().unwrap().to_string();
+        let text = serde_json::from_str::<serde_json::Value>(&body).unwrap()["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert!(text.contains("..."));
     }
 

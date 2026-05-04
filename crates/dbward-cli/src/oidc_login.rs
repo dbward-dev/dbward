@@ -48,7 +48,11 @@ fn dirs_next() -> PathBuf {
 }
 
 /// Authorization Code Flow + PKCE
-pub async fn login(issuer: &str, client_id: &str, discovery_url: Option<&str>) -> Result<(), String> {
+pub async fn login(
+    issuer: &str,
+    client_id: &str,
+    discovery_url: Option<&str>,
+) -> Result<(), String> {
     let discovery = discover_with_override(issuer, discovery_url).await?;
 
     // PKCE
@@ -95,7 +99,10 @@ pub async fn login(issuer: &str, client_id: &str, discovery_url: Option<&str>) -
         return Err(format!("token exchange failed: {text}"));
     }
 
-    let token_resp: TokenResponse = resp.json().await.map_err(|e| format!("invalid token response: {e}"))?;
+    let token_resp: TokenResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("invalid token response: {e}"))?;
 
     let expires_at = chrono::Utc::now()
         + chrono::Duration::seconds(token_resp.expires_in.unwrap_or(3600) as i64);
@@ -115,11 +122,17 @@ pub async fn login(issuer: &str, client_id: &str, discovery_url: Option<&str>) -
 }
 
 /// Device Authorization Grant
-pub async fn login_device(issuer: &str, client_id: &str, discovery_url: Option<&str>) -> Result<(), String> {
+pub async fn login_device(
+    issuer: &str,
+    client_id: &str,
+    discovery_url: Option<&str>,
+) -> Result<(), String> {
     let discovery = discover_with_override(issuer, discovery_url).await?;
-    let device_endpoint = discovery
-        .device_authorization_endpoint
-        .unwrap_or_else(|| discovery.authorization_endpoint.replace("/authorize", "/device/authorize"));
+    let device_endpoint = discovery.device_authorization_endpoint.unwrap_or_else(|| {
+        discovery
+            .authorization_endpoint
+            .replace("/authorize", "/device/authorize")
+    });
 
     let client = reqwest::Client::new();
     let resp: serde_json::Value = client
@@ -158,7 +171,10 @@ pub async fn login_device(issuer: &str, client_id: &str, discovery_url: Option<&
             .await
             .map_err(|e| format!("poll failed: {e}"))?;
 
-        let body: serde_json::Value = resp.json().await.map_err(|e| format!("invalid poll response: {e}"))?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("invalid poll response: {e}"))?;
 
         if let Some(error) = body["error"].as_str() {
             match error {
@@ -196,10 +212,9 @@ pub async fn logout() -> Result<(), String> {
         return Ok(());
     }
 
-    let creds: Credentials = serde_json::from_str(
-        &std::fs::read_to_string(&path).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| format!("invalid credentials: {e}"))?;
+    let creds: Credentials =
+        serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| e.to_string())?)
+            .map_err(|e| format!("invalid credentials: {e}"))?;
 
     // Try to revoke at IdP
     if let Some(ref refresh) = creds.refresh_token {
@@ -230,10 +245,9 @@ pub fn whoami() -> Result<(), String> {
         return Ok(());
     }
 
-    let creds: Credentials = serde_json::from_str(
-        &std::fs::read_to_string(&path).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| format!("invalid credentials: {e}"))?;
+    let creds: Credentials =
+        serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| e.to_string())?)
+            .map_err(|e| format!("invalid credentials: {e}"))?;
 
     // Decode JWT to show identity (without verification)
     if let Some(ref id_token) = creds.id_token {
@@ -261,10 +275,9 @@ pub async fn load_token(issuer: &str, client_id: &str) -> Result<String, String>
         return Err("not logged in. Run: dbward login".into());
     }
 
-    let mut creds: Credentials = serde_json::from_str(
-        &std::fs::read_to_string(&path).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| format!("invalid credentials: {e}"))?;
+    let mut creds: Credentials =
+        serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| e.to_string())?)
+            .map_err(|e| format!("invalid credentials: {e}"))?;
 
     // Check expiry
     let expires = chrono::DateTime::parse_from_rfc3339(&creds.expires_at)
@@ -293,7 +306,9 @@ pub async fn load_token(issuer: &str, client_id: &str) -> Result<String, String>
                     if resp.status().is_success() {
                         if let Ok(token_resp) = resp.json::<TokenResponse>().await {
                             let new_expires = chrono::Utc::now()
-                                + chrono::Duration::seconds(token_resp.expires_in.unwrap_or(3600) as i64);
+                                + chrono::Duration::seconds(
+                                    token_resp.expires_in.unwrap_or(3600) as i64
+                                );
                             creds.access_token = token_resp.access_token;
                             if let Some(rt) = token_resp.refresh_token {
                                 creds.refresh_token = Some(rt);
@@ -314,10 +329,16 @@ async fn discover(issuer: &str) -> Result<OidcDiscovery, String> {
     discover_with_override(issuer, None).await
 }
 
-async fn discover_with_override(issuer: &str, discovery_url: Option<&str>) -> Result<OidcDiscovery, String> {
+async fn discover_with_override(
+    issuer: &str,
+    discovery_url: Option<&str>,
+) -> Result<OidcDiscovery, String> {
     let url = match discovery_url {
         Some(u) => u.to_string(),
-        None => format!("{}/.well-known/openid-configuration", issuer.trim_end_matches('/')),
+        None => format!(
+            "{}/.well-known/openid-configuration",
+            issuer.trim_end_matches('/')
+        ),
     };
     reqwest::get(&url)
         .await
@@ -338,13 +359,24 @@ async fn wait_for_callback(port: u16, expected_state: &str) -> Result<String, St
         .map_err(|e| format!("accept failed: {e}"))?;
 
     let mut buf = vec![0u8; 4096];
-    stream.readable().await.map_err(|e| format!("read failed: {e}"))?;
-    let n = stream.try_read(&mut buf).map_err(|e| format!("read failed: {e}"))?;
+    stream
+        .readable()
+        .await
+        .map_err(|e| format!("read failed: {e}"))?;
+    let n = stream
+        .try_read(&mut buf)
+        .map_err(|e| format!("read failed: {e}"))?;
     let request = String::from_utf8_lossy(&buf[..n]);
 
     // Parse query params from GET /callback?code=xxx&state=yyy
     let path = request.lines().next().unwrap_or("");
-    let query = path.split('?').nth(1).unwrap_or("").split(' ').next().unwrap_or("");
+    let query = path
+        .split('?')
+        .nth(1)
+        .unwrap_or("")
+        .split(' ')
+        .next()
+        .unwrap_or("");
 
     let mut code = None;
     let mut state = None;
@@ -359,9 +391,18 @@ async fn wait_for_callback(port: u16, expected_state: &str) -> Result<String, St
 
     // Send response
     let html = "<html><body><h2>Login successful!</h2><p>You can close this tab.</p></body></html>";
-    let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}", html.len(), html);
-    stream.writable().await.map_err(|e| format!("write failed: {e}"))?;
-    stream.try_write(response.as_bytes()).map_err(|e| format!("write failed: {e}"))?;
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n{}",
+        html.len(),
+        html
+    );
+    stream
+        .writable()
+        .await
+        .map_err(|e| format!("write failed: {e}"))?;
+    stream
+        .try_write(response.as_bytes())
+        .map_err(|e| format!("write failed: {e}"))?;
 
     let code = code.ok_or("missing code in callback")?;
     let recv_state = state.ok_or("missing state in callback")?;

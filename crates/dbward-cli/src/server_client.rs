@@ -34,21 +34,38 @@ impl ServerClient {
     /// Parse HTTP response: check status first, then parse JSON.
     async fn parse_response(&self, resp: reqwest::Response, context: &str) -> Result<Value, Error> {
         let status = resp.status();
-        let text = resp.text().await.map_err(|e| Error::Server(format!("{context}: {e}")))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| Error::Server(format!("{context}: {e}")))?;
         if !status.is_success() {
-            return Err(ServerError { status: status.as_u16(), body: text }.into_core_error(context));
+            return Err(ServerError {
+                status: status.as_u16(),
+                body: text,
+            }
+            .into_core_error(context));
         }
-        serde_json::from_str(&text).map_err(|e| Error::Server(format!("{context}: invalid JSON: {e}")))
+        serde_json::from_str(&text)
+            .map_err(|e| Error::Server(format!("{context}: invalid JSON: {e}")))
     }
 
     /// Parse HTTP response, returning ServerError on failure for caller to handle.
     async fn parse_response_detailed(&self, resp: reqwest::Response) -> Result<Value, ServerError> {
         let status = resp.status();
-        let text = resp.text().await.map_err(|_| ServerError { status: 0, body: "failed to read response".into() })?;
+        let text = resp.text().await.map_err(|_| ServerError {
+            status: 0,
+            body: "failed to read response".into(),
+        })?;
         if !status.is_success() {
-            return Err(ServerError { status: status.as_u16(), body: text });
+            return Err(ServerError {
+                status: status.as_u16(),
+                body: text,
+            });
         }
-        serde_json::from_str(&text).map_err(|_| ServerError { status: status.as_u16(), body: text })
+        serde_json::from_str(&text).map_err(|_| ServerError {
+            status: status.as_u16(),
+            body: text,
+        })
     }
 
     /// Create a request and return (id, status, optional execution_token).
@@ -106,7 +123,11 @@ impl ServerClient {
     }
 
     /// List all requests.
-    pub async fn list_requests(&self, limit: Option<u32>, status: Option<&str>) -> Result<Value, Error> {
+    pub async fn list_requests(
+        &self,
+        limit: Option<u32>,
+        status: Option<&str>,
+    ) -> Result<Value, Error> {
         let mut url = format!("{}/api/requests", self.base_url);
         let mut query_parts: Vec<String> = Vec::new();
         if let Some(l) = limit {
@@ -179,7 +200,10 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| ServerError { status: 0, body: format!("dispatch failed: {e}") })?;
+            .map_err(|e| ServerError {
+                status: 0,
+                body: format!("dispatch failed: {e}"),
+            })?;
 
         self.parse_response_detailed(resp).await
     }
@@ -245,7 +269,10 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| ServerError { status: 0, body: format!("approve failed: {e}") })?;
+            .map_err(|e| ServerError {
+                status: 0,
+                body: format!("approve failed: {e}"),
+            })?;
 
         self.parse_response_detailed(resp).await
     }
@@ -261,7 +288,10 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| ServerError { status: 0, body: format!("reject failed: {e}") })?;
+            .map_err(|e| ServerError {
+                status: 0,
+                body: format!("reject failed: {e}"),
+            })?;
 
         self.parse_response_detailed(resp).await
     }

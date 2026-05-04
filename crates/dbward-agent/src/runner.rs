@@ -3,7 +3,6 @@ use std::time::Duration;
 use dbward_core::{AgentConfig, Engine, Error};
 use dbward_migrate::Migrator;
 
-
 use crate::server_client::AgentClient;
 
 /// Run the agent poll loop. Blocks until interrupted.
@@ -13,7 +12,10 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
 
     // Fetch server's public key for token verification
     let public_key = client.get_public_key().await?;
-    eprintln!("agent {} started, polling {}", config.agent_id, config.server.url);
+    eprintln!(
+        "agent {} started, polling {}",
+        config.agent_id, config.server.url
+    );
 
     loop {
         tokio::select! {
@@ -130,9 +132,7 @@ async fn execute_operation(
     match operation {
         "execute_query" => {
             let mut engine = Engine::new(resolved, env).await?;
-            let result = engine
-                .execute_query("agent", "developer", detail)
-                .await?;
+            let result = engine.execute_query("agent", "developer", detail).await?;
             if result.rows.is_empty() {
                 Ok(format!("Rows affected: {}", result.rows_affected))
             } else {

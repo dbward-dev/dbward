@@ -61,7 +61,11 @@ impl DatabaseDriver for PostgresDriver {
         let mut stream = sqlx::query(sql).fetch(&self.pool);
         let mut rows = Vec::new();
         let mut total_bytes: usize = 0;
-        while let Some(row) = stream.try_next().await.map_err(|e| Error::Database(e.to_string()))? {
+        while let Some(row) = stream
+            .try_next()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?
+        {
             let json = pg_row_to_json(&row);
             total_bytes += serde_json::to_string(&json).unwrap_or_default().len();
             rows.push(json);
@@ -73,35 +77,59 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
-        let mut tx = self.pool.begin().await.map_err(|e| Error::Database(e.to_string()))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
         let result = sqlx::query(sql)
             .execute(&mut *tx)
             .await
             .map_err(|e| Error::Database(e.to_string()))?;
-        tx.commit().await.map_err(|e| Error::Database(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
         Ok(result.rows_affected())
     }
 
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), Error> {
-        let mut tx = self.pool.begin().await.map_err(|e| Error::Database(e.to_string()))?;
-        sqlx::query(sql).execute(&mut *tx).await.map_err(|e| Error::Database(e.to_string()))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
+        sqlx::query(sql)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
         sqlx::query("INSERT INTO schema_migrations (version) VALUES ($1)")
             .bind(version)
             .execute(&mut *tx)
             .await
             .map_err(|e| Error::Database(e.to_string()))?;
-        tx.commit().await.map_err(|e| Error::Database(e.to_string()))
+        tx.commit()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))
     }
 
     async fn revert_migration(&self, down_sql: &str, version: &str) -> Result<(), Error> {
-        let mut tx = self.pool.begin().await.map_err(|e| Error::Database(e.to_string()))?;
-        sqlx::query(down_sql).execute(&mut *tx).await.map_err(|e| Error::Database(e.to_string()))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
+        sqlx::query(down_sql)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
         sqlx::query("DELETE FROM schema_migrations WHERE version = $1")
             .bind(version)
             .execute(&mut *tx)
             .await
             .map_err(|e| Error::Database(e.to_string()))?;
-        tx.commit().await.map_err(|e| Error::Database(e.to_string()))
+        tx.commit()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))
     }
 
     async fn ensure_migrations_table(&self) -> Result<(), Error> {
@@ -128,18 +156,40 @@ fn pg_row_to_json(row: &sqlx::postgres::PgRow) -> serde_json::Value {
     for col in row.columns() {
         let name = col.name();
         let val: serde_json::Value = match col.type_info().name() {
-            "BOOL" => row.try_get::<bool, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
-            "INT2" => row.try_get::<i16, _>(name).map(|v| v.into()).unwrap_or(serde_json::Value::Null),
-            "INT4" => row.try_get::<i32, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
-            "INT8" => row.try_get::<i64, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
-            "FLOAT4" => row.try_get::<f32, _>(name).map(|v| v.into()).unwrap_or(serde_json::Value::Null),
-            "FLOAT8" => row.try_get::<f64, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
-            "JSONB" | "JSON" => row.try_get::<String, _>(name)
+            "BOOL" => row
+                .try_get::<bool, _>(name)
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::Null),
+            "INT2" => row
+                .try_get::<i16, _>(name)
+                .map(|v| v.into())
+                .unwrap_or(serde_json::Value::Null),
+            "INT4" => row
+                .try_get::<i32, _>(name)
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::Null),
+            "INT8" => row
+                .try_get::<i64, _>(name)
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::Null),
+            "FLOAT4" => row
+                .try_get::<f32, _>(name)
+                .map(|v| v.into())
+                .unwrap_or(serde_json::Value::Null),
+            "FLOAT8" => row
+                .try_get::<f64, _>(name)
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::Null),
+            "JSONB" | "JSON" => row
+                .try_get::<String, _>(name)
                 .ok()
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or(serde_json::Value::Null),
             // TIMESTAMPTZ, TIMESTAMP, DATE, UUID, NUMERIC → string via fallback
-            _ => row.try_get::<String, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
+            _ => row
+                .try_get::<String, _>(name)
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::Null),
         };
         map.insert(name.to_string(), val);
     }
@@ -159,7 +209,11 @@ impl DatabaseDriver for MysqlDriver {
         let mut stream = sqlx::query(sql).fetch(&self.pool);
         let mut rows = Vec::new();
         let mut total_bytes: usize = 0;
-        while let Some(row) = stream.try_next().await.map_err(|e| Error::Database(e.to_string()))? {
+        while let Some(row) = stream
+            .try_next()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?
+        {
             let json = mysql_row_to_json(&row);
             total_bytes += serde_json::to_string(&json).unwrap_or_default().len();
             rows.push(json);
@@ -171,42 +225,68 @@ impl DatabaseDriver for MysqlDriver {
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
-        let mut tx = self.pool.begin().await.map_err(|e| Error::Database(e.to_string()))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
         let result = sqlx::query(sql)
             .execute(&mut *tx)
             .await
             .map_err(|e| Error::Database(e.to_string()))?;
-        tx.commit().await.map_err(|e| Error::Database(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
         Ok(result.rows_affected())
     }
 
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), Error> {
-        let mut tx = self.pool.begin().await.map_err(|e| Error::Database(e.to_string()))?;
-        sqlx::query(sql).execute(&mut *tx).await.map_err(|e| Error::Database(e.to_string()))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
+        sqlx::query(sql)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
         sqlx::query("INSERT INTO schema_migrations (version) VALUES (?)")
             .bind(version)
             .execute(&mut *tx)
             .await
             .map_err(|e| Error::Database(e.to_string()))?;
-        tx.commit().await.map_err(|e| Error::Database(e.to_string()))
+        tx.commit()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))
     }
 
     async fn revert_migration(&self, down_sql: &str, version: &str) -> Result<(), Error> {
-        let mut tx = self.pool.begin().await.map_err(|e| Error::Database(e.to_string()))?;
-        sqlx::query(down_sql).execute(&mut *tx).await.map_err(|e| Error::Database(e.to_string()))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
+        sqlx::query(down_sql)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| Error::Database(e.to_string()))?;
         sqlx::query("DELETE FROM schema_migrations WHERE version = ?")
             .bind(version)
             .execute(&mut *tx)
             .await
             .map_err(|e| Error::Database(e.to_string()))?;
-        tx.commit().await.map_err(|e| Error::Database(e.to_string()))
+        tx.commit()
+            .await
+            .map_err(|e| Error::Database(e.to_string()))
     }
 
     async fn ensure_migrations_table(&self) -> Result<(), Error> {
-        sqlx::query("CREATE TABLE IF NOT EXISTS schema_migrations (version VARCHAR(255) PRIMARY KEY)")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| Error::Database(e.to_string()))?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (version VARCHAR(255) PRIMARY KEY)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Database(e.to_string()))?;
         Ok(())
     }
 
@@ -226,18 +306,40 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
     for col in row.columns() {
         let name = col.name();
         let val: serde_json::Value = match col.type_info().name() {
-            "BOOLEAN" | "TINYINT(1)" => row.try_get::<bool, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
-            "SMALLINT" | "TINYINT" => row.try_get::<i16, _>(name).map(|v| v.into()).unwrap_or(serde_json::Value::Null),
-            "INT" | "MEDIUMINT" => row.try_get::<i32, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
-            "BIGINT" => row.try_get::<i64, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
-            "FLOAT" => row.try_get::<f32, _>(name).map(|v| v.into()).unwrap_or(serde_json::Value::Null),
-            "DOUBLE" => row.try_get::<f64, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
-            "JSON" => row.try_get::<String, _>(name)
+            "BOOLEAN" | "TINYINT(1)" => row
+                .try_get::<bool, _>(name)
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::Null),
+            "SMALLINT" | "TINYINT" => row
+                .try_get::<i16, _>(name)
+                .map(|v| v.into())
+                .unwrap_or(serde_json::Value::Null),
+            "INT" | "MEDIUMINT" => row
+                .try_get::<i32, _>(name)
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::Null),
+            "BIGINT" => row
+                .try_get::<i64, _>(name)
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::Null),
+            "FLOAT" => row
+                .try_get::<f32, _>(name)
+                .map(|v| v.into())
+                .unwrap_or(serde_json::Value::Null),
+            "DOUBLE" => row
+                .try_get::<f64, _>(name)
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::Null),
+            "JSON" => row
+                .try_get::<String, _>(name)
                 .ok()
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or(serde_json::Value::Null),
             // TIMESTAMP, DATETIME, DATE, DECIMAL → string via fallback
-            _ => row.try_get::<String, _>(name).map(Into::into).unwrap_or(serde_json::Value::Null),
+            _ => row
+                .try_get::<String, _>(name)
+                .map(Into::into)
+                .unwrap_or(serde_json::Value::Null),
         };
         map.insert(name.to_string(), val);
     }

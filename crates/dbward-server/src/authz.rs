@@ -161,10 +161,8 @@ pub fn authorize_sync(
     resource: Resource,
 ) -> std::result::Result<(), (StatusCode, String)> {
     let principal = Principal::from(principal);
-    let principal_json =
-        serde_json::to_string(&principal).map_err(internal_error)?;
-    let resource_json =
-        serde_json::to_string(&resource).map_err(internal_error)?;
+    let principal_json = serde_json::to_string(&principal).map_err(internal_error)?;
+    let resource_json = serde_json::to_string(&resource).map_err(internal_error)?;
     let allowed = ENFORCER
         .get()
         .expect("casbin enforcer must be initialized before sync authorization")
@@ -255,21 +253,15 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
         ("RejectRequest", Resource::Global) => true,
         ("DispatchRequest", Resource::Global) => true,
         ("ReadResult", Resource::Global) => true,
-        (
-            "ListRequests",
-            Resource::Request {
-                requester_id, ..
-            },
-        ) => is_admin(principal) || principal.user == *requester_id,
+        ("ListRequests", Resource::Request { requester_id, .. }) => {
+            is_admin(principal) || principal.user == *requester_id
+        }
         ("CreateRequest", Resource::Global) | ("CreateRequest", Resource::Request { .. }) => {
             role_allows(&principal.permission, "developer")
         }
-        (
-            "GetRequest",
-            Resource::Request {
-                requester_id, ..
-            },
-        ) => is_admin(principal) || principal.user == *requester_id,
+        ("GetRequest", Resource::Request { requester_id, .. }) => {
+            is_admin(principal) || principal.user == *requester_id
+        }
         (
             "ApproveRequest",
             Resource::ApprovalStep {
@@ -301,12 +293,9 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
                     .iter()
                     .any(|role| principal.roles.iter().any(|own| own == role))
         }
-        (
-            "DispatchRequest",
-            Resource::Request {
-                requester_id, ..
-            },
-        ) => is_admin(principal) || principal.user == *requester_id,
+        ("DispatchRequest", Resource::Request { requester_id, .. }) => {
+            is_admin(principal) || principal.user == *requester_id
+        }
         (
             "ReadResult",
             Resource::Result {
@@ -410,9 +399,11 @@ mod tests {
             environment: "staging".into(),
         };
 
-        assert!(authorize(&principal, Action::CreateRequest, resource)
-            .await
-            .is_ok());
+        assert!(
+            authorize(&principal, Action::CreateRequest, resource)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -459,9 +450,11 @@ mod tests {
             allowed_roles: vec!["ops".into()],
         };
 
-        assert!(authorize(&principal, Action::RejectRequest, resource)
-            .await
-            .is_ok());
+        assert!(
+            authorize(&principal, Action::RejectRequest, resource)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -490,9 +483,11 @@ mod tests {
             requested_user: Some("bob".into()),
         };
 
-        assert!(authorize(&principal, Action::ListAudit, allowed)
-            .await
-            .is_ok());
+        assert!(
+            authorize(&principal, Action::ListAudit, allowed)
+                .await
+                .is_ok()
+        );
         assert_eq!(
             authorize(&principal, Action::ListAudit, denied)
                 .await

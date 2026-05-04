@@ -111,9 +111,7 @@ async fn production_requires_approval() {
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
-    let (_, bob_token) = auth::create_token(&state, "bob", "admin")
-        .await
-        .unwrap();
+    let (_, bob_token) = auth::create_token(&state, "bob", "admin").await.unwrap();
     let app = routes::router(state);
 
     // Alice creates a production request
@@ -164,9 +162,7 @@ async fn production_requires_approval() {
 #[tokio::test]
 async fn self_approve_rejected() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", "admin")
-        .await
-        .unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "admin").await.unwrap();
     let app = routes::router(state);
 
     let resp = app
@@ -306,7 +302,9 @@ async fn complete_flow_via_agent() {
             Request::post(&format!("/api/agent/jobs/{exec_id}/result"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
-                .body(Body::from(json!({"success": true, "result": []}).to_string()))
+                .body(Body::from(
+                    json!({"success": true, "result": []}).to_string(),
+                ))
                 .unwrap(),
         )
         .await
@@ -914,7 +912,9 @@ async fn only_claiming_agent_can_submit_result() {
             Request::post(&format!("/api/agent/jobs/{exec_id}/result"))
                 .header("authorization", auth_header(&agent2_token))
                 .header("content-type", "application/json")
-                .body(Body::from(json!({"success": true, "result": []}).to_string()))
+                .body(Body::from(
+                    json!({"success": true, "result": []}).to_string(),
+                ))
                 .unwrap(),
         )
         .await
@@ -995,7 +995,9 @@ async fn failed_request_still_respects_max_executions() {
             Request::post(&format!("/api/agent/jobs/{exec_id}/result"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
-                .body(Body::from(json!({"success": false, "error": "boom"}).to_string()))
+                .body(Body::from(
+                    json!({"success": false, "error": "boom"}).to_string(),
+                ))
                 .unwrap(),
         )
         .await
@@ -1022,8 +1024,12 @@ async fn failed_request_still_respects_max_executions() {
 #[tokio::test]
 async fn agent_token_cannot_approve() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
-    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
+        .await
+        .unwrap();
 
     let app = routes::router(state);
 
@@ -1041,15 +1047,19 @@ async fn agent_token_cannot_approve() {
     let id = body["id"].as_str().unwrap();
 
     // Agent tries to approve -> 403
-    let resp = app.clone().oneshot(
-        Request::builder()
-            .method("POST")
-            .uri(&format!("/api/requests/{id}/approve"))
-            .header("authorization", auth_header(&agent_token))
-            .header("content-type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!("/api/requests/{id}/approve"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -1061,103 +1071,134 @@ async fn user_token_cannot_poll_agent() {
     let app = routes::router(state);
 
     // Human admin tries agent poll -> 403
-    let resp = app.oneshot(
-        Request::builder()
-            .method("POST")
-            .uri("/api/agent/poll")
-            .header("authorization", auth_header(&admin_token))
-            .header("content-type", "application/json")
-            .body(Body::from(r#"{"databases":[],"environments":[]}"#))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/agent/poll")
+                .header("authorization", auth_header(&admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"databases":[],"environments":[]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
 async fn readonly_cannot_read_audit() {
     let state = test_state();
-    let (_, ro_token) = auth::create_token(&state, "viewer", "readonly").await.unwrap();
+    let (_, ro_token) = auth::create_token(&state, "viewer", "readonly")
+        .await
+        .unwrap();
 
     let app = routes::router(state);
 
-    let resp = app.clone().oneshot(
-        Request::builder()
-            .method("GET")
-            .uri("/api/audit")
-            .header("authorization", auth_header(&ro_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/audit")
+                .header("authorization", auth_header(&ro_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
-    let resp = app.oneshot(
-        Request::builder()
-            .method("GET")
-            .uri("/api/workflows")
-            .header("authorization", auth_header(&ro_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/workflows")
+                .header("authorization", auth_header(&ro_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
 async fn developer_can_read_own_audit() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
 
     let app = routes::router(state);
 
     // Developer can access audit (gets own logs)
-    let resp = app.clone().oneshot(
-        Request::builder()
-            .method("GET")
-            .uri("/api/audit")
-            .header("authorization", auth_header(&dev_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/audit")
+                .header("authorization", auth_header(&dev_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Developer cannot filter by another user
-    let resp = app.clone().oneshot(
-        Request::builder()
-            .method("GET")
-            .uri("/api/audit?user=admin1")
-            .header("authorization", auth_header(&dev_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/audit?user=admin1")
+                .header("authorization", auth_header(&dev_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // Developer can filter by own user explicitly
-    let resp = app.clone().oneshot(
-        Request::builder()
-            .method("GET")
-            .uri("/api/audit?user=dev1")
-            .header("authorization", auth_header(&dev_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/audit?user=dev1")
+                .header("authorization", auth_header(&dev_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Admin can filter by any user
-    let resp = app.oneshot(
-        Request::builder()
-            .method("GET")
-            .uri("/api/audit?user=dev1")
-            .header("authorization", auth_header(&admin_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/audit?user=dev1")
+                .header("authorization", auth_header(&admin_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]
 async fn requester_can_reject_own_request() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
 
     let app = routes::router(state);
 
@@ -1174,14 +1215,52 @@ async fn requester_can_reject_own_request() {
     let id = body["id"].as_str().unwrap();
 
     // Alice rejects her own request -> success
-    let resp = app.oneshot(
-        Request::builder()
-            .method("POST")
-            .uri(&format!("/api/requests/{id}/reject"))
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!("/api/requests/{id}/reject"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn current_step_approver_can_reject_request() {
+    let state = test_state_multistep();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead")
+        .await
+        .unwrap();
+
+    let app = routes::router(state);
+
+    let resp = app.clone().oneshot(
+        Request::post("/api/requests")
             .header("authorization", auth_header(&alice_token))
-            .body(Body::empty())
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"operation": "execute_query", "environment": "production", "detail": "DELETE FROM old"}).to_string()))
             .unwrap(),
     ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp).await;
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/reject"))
+                .header("authorization", auth_header(&lead_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
@@ -1192,24 +1271,33 @@ async fn complete_endpoint_removed() {
 
     let app = routes::router(state);
 
-    let resp = app.oneshot(
-        Request::builder()
-            .method("POST")
-            .uri("/api/requests/fake-id/complete")
-            .header("authorization", auth_header(&token))
-            .header("content-type", "application/json")
-            .body(Body::from(r#"{"success":true}"#))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/requests/fake-id/complete")
+                .header("authorization", auth_header(&token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"success":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     // Should be 404 (route doesn't exist) or 405 (method not allowed)
-    assert!(resp.status() == StatusCode::NOT_FOUND || resp.status() == StatusCode::METHOD_NOT_ALLOWED);
+    assert!(
+        resp.status() == StatusCode::NOT_FOUND || resp.status() == StatusCode::METHOD_NOT_ALLOWED
+    );
 }
 
 #[tokio::test]
 async fn dispatch_requires_owner_or_admin() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
-    let (_, bob_token) = auth::create_token(&state, "bob", "developer").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, bob_token) = auth::create_token(&state, "bob", "developer")
+        .await
+        .unwrap();
     let (_, admin_token) = auth::create_token(&state, "admin", "admin").await.unwrap();
 
     let app = routes::router(state);
@@ -1228,33 +1316,45 @@ async fn dispatch_requires_owner_or_admin() {
     let id = body["id"].as_str().unwrap();
 
     // Bob (non-admin, non-owner) tries to dispatch -> 403
-    let resp = app.clone().oneshot(
-        Request::builder()
-            .method("POST")
-            .uri(&format!("/api/requests/{id}/dispatch"))
-            .header("authorization", auth_header(&bob_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!("/api/requests/{id}/dispatch"))
+                .header("authorization", auth_header(&bob_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // Admin can dispatch
-    let resp = app.clone().oneshot(
-        Request::builder()
-            .method("POST")
-            .uri(&format!("/api/requests/{id}/dispatch"))
-            .header("authorization", auth_header(&admin_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!("/api/requests/{id}/dispatch"))
+                .header("authorization", auth_header(&admin_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]
 async fn agent_capability_mismatch_blocks_claim() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
-    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
+        .await
+        .unwrap();
 
     let app = routes::router(state);
 
@@ -1272,38 +1372,52 @@ async fn agent_capability_mismatch_blocks_claim() {
     let id = body["id"].as_str().unwrap();
 
     // Dispatch
-    let resp = app.clone().oneshot(
-        Request::builder()
-            .method("POST")
-            .uri(&format!("/api/requests/{id}/dispatch"))
-            .header("authorization", auth_header(&alice_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!("/api/requests/{id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Agent polls with limited capabilities (only "other-db")
-    let resp = app.clone().oneshot(
-        Request::builder()
-            .method("POST")
-            .uri("/api/agent/poll")
-            .header("authorization", auth_header(&agent_token))
-            .header("content-type", "application/json")
-            .body(Body::from(r#"{"databases":["other-db"],"environments":["development"]}"#))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/agent/poll")
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"databases":["other-db"],"environments":["development"]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Agent tries to claim job for "mydb" -> 403
-    let resp = app.clone().oneshot(
-        Request::builder()
-            .method("POST")
-            .uri(&format!("/api/agent/jobs/{id}/claim"))
-            .header("authorization", auth_header(&agent_token))
-            .header("content-type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(&format!("/api/agent/jobs/{id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -1319,7 +1433,9 @@ async fn require_reason_blocks_request_without_reason() {
             [],
         ).unwrap();
     }
-    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
 
     // Request without reason -> 400
     let app = routes::router(state.clone());
@@ -1348,10 +1464,77 @@ async fn require_reason_blocks_request_without_reason() {
                     json!({"operation": "execute_query", "environment": "development", "database": "app", "detail": "SELECT 1", "reason": "debugging issue #42"}).to_string(),
                 ))
                 .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn get_request_and_pending_for_me_include_reason() {
+    let state = test_state_multistep();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead")
+        .await
+        .unwrap();
+
+    let app = routes::router(state.clone());
+
+    let reason = "urgent production investigation";
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "production",
+                        "detail": "SELECT 1",
+                        "reason": reason,
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp).await;
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(&format!("/api/requests/{request_id}"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["reason"], reason);
+
+    let resp = app
+        .oneshot(
+            Request::get("/api/requests?pending_for_me=true")
+                .header("authorization", auth_header(&lead_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let requests = body["requests"].as_array().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["id"], request_id);
+    assert_eq!(requests[0]["reason"], reason);
 }
 
 // ---------------------------------------------------------------------------
@@ -1378,13 +1561,19 @@ fn test_state_multistep() -> AppState {
                 dbward_server::server_config::WorkflowStep {
                     step_type: "approval".into(),
                     mode: "all".into(),
-                    approvers: vec![dbward_server::server_config::ApproverGroup { role: "team-lead".into(), min: 1 }],
+                    approvers: vec![dbward_server::server_config::ApproverGroup {
+                        role: "team-lead".into(),
+                        min: 1,
+                    }],
                     require_distinct_actors: true,
                 },
                 dbward_server::server_config::WorkflowStep {
                     step_type: "approval".into(),
                     mode: "all".into(),
-                    approvers: vec![dbward_server::server_config::ApproverGroup { role: "dba".into(), min: 1 }],
+                    approvers: vec![dbward_server::server_config::ApproverGroup {
+                        role: "dba".into(),
+                        min: 1,
+                    }],
                     require_distinct_actors: true,
                 },
             ],
@@ -1395,17 +1584,21 @@ fn test_state_multistep() -> AppState {
             database: "*".into(),
             environment: "staging".into(),
             operations: vec![],
-            steps: vec![
-                dbward_server::server_config::WorkflowStep {
-                    step_type: "approval".into(),
-                    mode: "any".into(),
-                    approvers: vec![
-                        dbward_server::server_config::ApproverGroup { role: "team-lead".into(), min: 1 },
-                        dbward_server::server_config::ApproverGroup { role: "dba".into(), min: 1 },
-                    ],
-                    require_distinct_actors: true,
-                },
-            ],
+            steps: vec![dbward_server::server_config::WorkflowStep {
+                step_type: "approval".into(),
+                mode: "any".into(),
+                approvers: vec![
+                    dbward_server::server_config::ApproverGroup {
+                        role: "team-lead".into(),
+                        min: 1,
+                    },
+                    dbward_server::server_config::ApproverGroup {
+                        role: "dba".into(),
+                        min: 1,
+                    },
+                ],
+                require_distinct_actors: true,
+            }],
             require_reason: false,
         },
     ];
@@ -1426,8 +1619,12 @@ fn test_state_multistep() -> AppState {
 #[tokio::test]
 async fn multi_step_approval_team_lead_then_dba() {
     let state = test_state_multistep();
-    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
-    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead")
+        .await
+        .unwrap();
     let (_, dba_token) = auth::create_token(&state, "dba1", "dba").await.unwrap();
 
     let app = routes::router(state.clone());
@@ -1446,23 +1643,31 @@ async fn multi_step_approval_team_lead_then_dba() {
     let request_id = body["id"].as_str().unwrap().to_string();
 
     // DBA tries to approve step 0 (needs team-lead) → 403
-    let resp = app.clone().oneshot(
-        Request::post(&format!("/api/requests/{request_id}/approve"))
-            .header("authorization", auth_header(&dba_token))
-            .header("content-type", "application/json")
-            .body(Body::from(json!({}).to_string()))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&dba_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 403);
 
     // Team-lead approves step 0 → still pending (step 1 remains)
-    let resp = app.clone().oneshot(
-        Request::post(&format!("/api/requests/{request_id}/approve"))
-            .header("authorization", auth_header(&lead_token))
-            .header("content-type", "application/json")
-            .body(Body::from(json!({}).to_string()))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&lead_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
     assert_eq!(body["status"], "pending");
@@ -1470,13 +1675,17 @@ async fn multi_step_approval_team_lead_then_dba() {
     assert_eq!(body["total_steps"], 2);
 
     // DBA approves step 1 → approved with token
-    let resp = app.clone().oneshot(
-        Request::post(&format!("/api/requests/{request_id}/approve"))
-            .header("authorization", auth_header(&dba_token))
-            .header("content-type", "application/json")
-            .body(Body::from(json!({}).to_string()))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&dba_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
     assert_eq!(body["status"], "approved");
@@ -1486,7 +1695,9 @@ async fn multi_step_approval_team_lead_then_dba() {
 #[tokio::test]
 async fn mode_any_either_role_can_approve() {
     let state = test_state_multistep();
-    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
     let (_, dba_token) = auth::create_token(&state, "dba1", "dba").await.unwrap();
 
     let app = routes::router(state.clone());
@@ -1505,13 +1716,17 @@ async fn mode_any_either_role_can_approve() {
     let request_id = body["id"].as_str().unwrap().to_string();
 
     // DBA approves (mode=any, so dba alone is enough) → approved
-    let resp = app.clone().oneshot(
-        Request::post(&format!("/api/requests/{request_id}/approve"))
-            .header("authorization", auth_header(&dba_token))
-            .header("content-type", "application/json")
-            .body(Body::from(json!({}).to_string()))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&dba_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
     assert_eq!(body["status"], "approved");
@@ -1521,8 +1736,12 @@ async fn mode_any_either_role_can_approve() {
 #[tokio::test]
 async fn same_user_cannot_approve_twice_in_same_step() {
     let state = test_state_multistep();
-    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
-    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead")
+        .await
+        .unwrap();
 
     let app = routes::router(state.clone());
 
@@ -1537,31 +1756,43 @@ async fn same_user_cannot_approve_twice_in_same_step() {
     let request_id = body["id"].as_str().unwrap().to_string();
 
     // Lead approves step 0
-    let resp = app.clone().oneshot(
-        Request::post(&format!("/api/requests/{request_id}/approve"))
-            .header("authorization", auth_header(&lead_token))
-            .header("content-type", "application/json")
-            .body(Body::from(json!({}).to_string()))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&lead_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
 
     // Lead tries to approve again (now step 1, but lead doesn't have dba role) → 403
-    let resp = app.clone().oneshot(
-        Request::post(&format!("/api/requests/{request_id}/approve"))
-            .header("authorization", auth_header(&lead_token))
-            .header("content-type", "application/json")
-            .body(Body::from(json!({}).to_string()))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&lead_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 403);
 }
 
 #[tokio::test]
 async fn wrong_role_cannot_approve_current_step() {
     let state = test_state_multistep();
-    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
 
     let app = routes::router(state.clone());
 
@@ -1576,21 +1807,29 @@ async fn wrong_role_cannot_approve_current_step() {
     let request_id = body["id"].as_str().unwrap().to_string();
 
     // Developer (not team-lead or dba) tries to approve → 403
-    let resp = app.clone().oneshot(
-        Request::post(&format!("/api/requests/{request_id}/approve"))
-            .header("authorization", auth_header(&dev_token))
-            .header("content-type", "application/json")
-            .body(Body::from(json!({}).to_string()))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&dev_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 403);
 }
 
 #[tokio::test]
 async fn get_request_includes_approval_progress() {
     let state = test_state_multistep();
-    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
-    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead")
+        .await
+        .unwrap();
 
     let app = routes::router(state.clone());
 
@@ -1605,12 +1844,16 @@ async fn get_request_includes_approval_progress() {
     let request_id = body["id"].as_str().unwrap().to_string();
 
     // Check progress before any approvals
-    let resp = app.clone().oneshot(
-        Request::get(&format!("/api/requests/{request_id}"))
-            .header("authorization", auth_header(&alice_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(&format!("/api/requests/{request_id}"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let body = body_json(resp).await;
     let progress = &body["approval_progress"];
     assert_eq!(progress["current_step"], 0);
@@ -1619,21 +1862,28 @@ async fn get_request_includes_approval_progress() {
     assert_eq!(progress["steps"][1]["satisfied"], false);
 
     // Lead approves step 0
-    app.clone().oneshot(
-        Request::post(&format!("/api/requests/{request_id}/approve"))
-            .header("authorization", auth_header(&lead_token))
-            .header("content-type", "application/json")
-            .body(Body::from(json!({}).to_string()))
-            .unwrap(),
-    ).await.unwrap();
+    app.clone()
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&lead_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
     // Check progress after step 0 approved
-    let resp = app.clone().oneshot(
-        Request::get(&format!("/api/requests/{request_id}"))
-            .header("authorization", auth_header(&alice_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(&format!("/api/requests/{request_id}"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let body = body_json(resp).await;
     let progress = &body["approval_progress"];
     assert_eq!(progress["current_step"], 1);

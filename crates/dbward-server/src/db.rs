@@ -170,9 +170,15 @@ fn recover_in_flight_requests(conn: &Connection) -> Result<(), rusqlite::Error> 
 }
 
 /// Purge old completed requests and audit logs based on TTL.
-pub fn purge_old_records(conn: &Connection, request_ttl_days: u32, audit_ttl_days: u32) -> Result<(usize, usize), rusqlite::Error> {
-    let req_cutoff = (chrono::Utc::now() - chrono::Duration::days(request_ttl_days as i64)).to_rfc3339();
-    let audit_cutoff = (chrono::Utc::now() - chrono::Duration::days(audit_ttl_days as i64)).to_rfc3339();
+pub fn purge_old_records(
+    conn: &Connection,
+    request_ttl_days: u32,
+    audit_ttl_days: u32,
+) -> Result<(usize, usize), rusqlite::Error> {
+    let req_cutoff =
+        (chrono::Utc::now() - chrono::Duration::days(request_ttl_days as i64)).to_rfc3339();
+    let audit_cutoff =
+        (chrono::Utc::now() - chrono::Duration::days(audit_ttl_days as i64)).to_rfc3339();
 
     // Delete child rows first to satisfy FK constraints
     conn.execute(
@@ -226,7 +232,11 @@ pub fn sync_workflows(
         let mut sorted_ops = w.operations.clone();
         sorted_ops.sort();
         let ops_json = serde_json::to_string(&sorted_ops).unwrap_or_else(|_| "[]".into());
-        let ops_tag = if sorted_ops.is_empty() { "*".to_string() } else { sorted_ops.join(",") };
+        let ops_tag = if sorted_ops.is_empty() {
+            "*".to_string()
+        } else {
+            sorted_ops.join(",")
+        };
         let id = format!("{}:{}:{}", w.database, w.environment, ops_tag);
         let steps_json = serde_json::to_string(&w.steps).unwrap_or_else(|_| "[]".into());
         conn.execute(
@@ -269,11 +279,13 @@ pub fn evaluate_workflow(
 
         // Priority: exact operations match first, then catch-all (empty operations)
         let mut exact_match: Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> = None;
-        let mut catchall_match: Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> = None;
+        let mut catchall_match: Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> =
+            None;
 
         for (id, operations_json, steps_json, require_reason) in &rows {
             let operations: Vec<String> = serde_json::from_str(operations_json).unwrap_or_default();
-            let steps: Vec<crate::server_config::WorkflowStep> = serde_json::from_str(steps_json).unwrap_or_default();
+            let steps: Vec<crate::server_config::WorkflowStep> =
+                serde_json::from_str(steps_json).unwrap_or_default();
             if operations.is_empty() {
                 if catchall_match.is_none() {
                     catchall_match = Some((id.clone(), steps, *require_reason));
@@ -321,7 +333,9 @@ pub fn sync_result_policies(
     let now = chrono::Utc::now().to_rfc3339();
     for p in policies {
         let id = format!("{}:{}", p.database, p.environment);
-        let config_json = p.storage_config.as_ref()
+        let config_json = p
+            .storage_config
+            .as_ref()
             .map(|v| v.to_string())
             .unwrap_or_else(|| "{}".into());
         let access_json = serde_json::to_string(&p.access).unwrap_or_else(|_| "[]".into());
@@ -338,7 +352,11 @@ pub fn sync_result_policies(
 }
 
 /// Lookup execution policy for a request. Returns (max_executions, window_secs, retry_on_failure).
-pub fn get_execution_policy(conn: &Connection, database: &str, environment: &str) -> (u32, u64, bool) {
+pub fn get_execution_policy(
+    conn: &Connection,
+    database: &str,
+    environment: &str,
+) -> (u32, u64, bool) {
     let query = |db: &str, env: &str| -> Option<(u32, u64, bool)> {
         conn.query_row(
             "SELECT max_executions, execution_window_secs, retry_on_failure FROM execution_policies WHERE database_name = ?1 AND environment = ?2",
@@ -354,7 +372,11 @@ pub fn get_execution_policy(conn: &Connection, database: &str, environment: &str
 }
 
 /// Lookup result policy for a request. Returns (delivery_mode, access_roles).
-pub fn get_result_policy(conn: &Connection, database: &str, environment: &str) -> (String, Vec<String>) {
+pub fn get_result_policy(
+    conn: &Connection,
+    database: &str,
+    environment: &str,
+) -> (String, Vec<String>) {
     let query = |db: &str, env: &str| -> Option<(String, String)> {
         conn.query_row(
             "SELECT delivery_mode, access_json FROM result_policies WHERE database_name = ?1 AND environment = ?2",
@@ -393,7 +415,11 @@ pub fn sync_notification_policies(
 }
 
 /// Lookup notification webhooks for a database×environment.
-pub fn get_notification_webhooks(conn: &Connection, database: &str, environment: &str) -> Vec<crate::webhook::WebhookConfig> {
+pub fn get_notification_webhooks(
+    conn: &Connection,
+    database: &str,
+    environment: &str,
+) -> Vec<crate::webhook::WebhookConfig> {
     let query = |db: &str, env: &str| -> Option<String> {
         conn.query_row(
             "SELECT webhooks_json FROM notification_policies WHERE database_name = ?1 AND environment = ?2",
@@ -515,7 +541,8 @@ mod tests {
             "INSERT INTO approvals (id, request_id, action, actor_id, created_at)
              VALUES ('apr-1', 'old-1', 'approve', 'bob', ?1)",
             rusqlite::params![old],
-        ).unwrap();
+        )
+        .unwrap();
 
         // Recent executed request (should NOT be purged)
         conn.execute(
@@ -550,13 +577,19 @@ mod tests {
         assert_eq!(audit_del, 1); // aud-1 purged
 
         // Verify remaining
-        let req_count: i64 = conn.query_row("SELECT COUNT(*) FROM requests", [], |r| r.get(0)).unwrap();
+        let req_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM requests", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(req_count, 2); // new-1 + old-2
 
-        let apr_count: i64 = conn.query_row("SELECT COUNT(*) FROM approvals", [], |r| r.get(0)).unwrap();
+        let apr_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM approvals", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(apr_count, 0); // orphaned approval cleaned up
 
-        let aud_count: i64 = conn.query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0)).unwrap();
+        let aud_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(aud_count, 1); // aud-2 remains
     }
 }

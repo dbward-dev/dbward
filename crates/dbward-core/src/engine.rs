@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::config::ResolvedDatabaseConfig;
 use crate::driver::DatabaseDriver;
 use crate::query::{QueryResult, QueryType, classify_query};
-use crate::{AuditEntry, AuditLogger, Error, Environment, Operation, check_permission};
+use crate::{AuditEntry, AuditLogger, Environment, Error, Operation, check_permission};
 
 pub struct Engine {
     driver: Arc<dyn DatabaseDriver>,
@@ -13,7 +13,10 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub async fn new(resolved: &ResolvedDatabaseConfig, environment: Environment) -> Result<Self, Error> {
+    pub async fn new(
+        resolved: &ResolvedDatabaseConfig,
+        environment: Environment,
+    ) -> Result<Self, Error> {
         let driver = crate::driver::connect(&resolved.url).await?;
         Ok(Self {
             driver,
@@ -23,7 +26,11 @@ impl Engine {
         })
     }
 
-    pub fn from_driver(driver: Arc<dyn DatabaseDriver>, database_name: &str, environment: Environment) -> Self {
+    pub fn from_driver(
+        driver: Arc<dyn DatabaseDriver>,
+        database_name: &str,
+        environment: Environment,
+    ) -> Self {
         Self {
             driver,
             database_name: database_name.to_string(),

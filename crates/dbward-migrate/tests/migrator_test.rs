@@ -7,11 +7,13 @@ use dbward_core::driver;
 use dbward_migrate::Migrator;
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/migrations")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/migrations")
 }
 
-async fn setup() -> (testcontainers::ContainerAsync<Postgres>, std::sync::Arc<dyn driver::DatabaseDriver>) {
+async fn setup() -> (
+    testcontainers::ContainerAsync<Postgres>,
+    std::sync::Arc<dyn driver::DatabaseDriver>,
+) {
     let container = Postgres::default().start().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
@@ -38,7 +40,10 @@ async fn migrate_up_and_status() {
     assert!(status[1].applied);
 
     // Verify table exists via driver
-    let rows = drv.query("SELECT COUNT(*)::int AS cnt FROM users").await.unwrap();
+    let rows = drv
+        .query("SELECT COUNT(*)::int AS cnt FROM users")
+        .await
+        .unwrap();
     assert_eq!(rows[0]["cnt"], 0);
 }
 

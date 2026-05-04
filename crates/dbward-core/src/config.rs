@@ -46,7 +46,9 @@ impl ClientConfig {
                 return Ok(sel.to_string());
             }
             if !self.databases.contains_key(sel) {
-                return Err(Error::Config(format!("database '{sel}' not found in config")));
+                return Err(Error::Config(format!(
+                    "database '{sel}' not found in config"
+                )));
             }
         }
         if let Some(ref def) = self.default_database {
@@ -166,79 +168,109 @@ mod tests {
 
     #[test]
     fn client_config_resolve_single_db() {
-        let config: ClientConfig = toml::from_str(r#"
+        let config: ClientConfig = toml::from_str(
+            r#"
             [server]
             url = "http://localhost:3000"
             [databases.app]
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert_eq!(config.resolve_database_name(None).unwrap(), "app");
     }
 
     #[test]
     fn client_config_resolve_by_name() {
-        let config: ClientConfig = toml::from_str(r#"
+        let config: ClientConfig = toml::from_str(
+            r#"
             [server]
             url = "http://localhost:3000"
             [databases.primary]
             [databases.analytics]
-        "#).unwrap();
-        assert_eq!(config.resolve_database_name(Some("analytics")).unwrap(), "analytics");
+        "#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.resolve_database_name(Some("analytics")).unwrap(),
+            "analytics"
+        );
     }
 
     #[test]
     fn client_config_resolve_default() {
-        let config: ClientConfig = toml::from_str(r#"
+        let config: ClientConfig = toml::from_str(
+            r#"
             default_database = "primary"
             [server]
             url = "http://localhost:3000"
             [databases.primary]
             [databases.analytics]
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert_eq!(config.resolve_database_name(None).unwrap(), "primary");
     }
 
     #[test]
     fn client_config_multiple_without_default_errors() {
-        let config: ClientConfig = toml::from_str(r#"
+        let config: ClientConfig = toml::from_str(
+            r#"
             [server]
             url = "http://localhost:3000"
             [databases.a]
             [databases.b]
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert!(config.resolve_database_name(None).is_err());
     }
 
     #[test]
     fn client_config_empty_databases_returns_default() {
-        let config: ClientConfig = toml::from_str(r#"
+        let config: ClientConfig = toml::from_str(
+            r#"
             [server]
             url = "http://localhost:3000"
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert_eq!(config.resolve_database_name(None).unwrap(), "default");
     }
 
     #[test]
     fn client_config_migrations_dir() {
-        let config: ClientConfig = toml::from_str(r#"
+        let config: ClientConfig = toml::from_str(
+            r#"
             [server]
             url = "http://localhost:3000"
             [databases.app]
             migrations_dir = "custom/migrations"
-        "#).unwrap();
-        assert_eq!(config.migrations_dir_for("app"), PathBuf::from("custom/migrations"));
-        assert_eq!(config.migrations_dir_for("other"), PathBuf::from("db/migrations/other"));
+        "#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.migrations_dir_for("app"),
+            PathBuf::from("custom/migrations")
+        );
+        assert_eq!(
+            config.migrations_dir_for("other"),
+            PathBuf::from("db/migrations/other")
+        );
     }
 
     #[test]
     fn agent_config_parse() {
-        let config: AgentConfig = toml::from_str(r#"
+        let config: AgentConfig = toml::from_str(
+            r#"
             agent_id = "agent-1"
             [server]
             url = "http://localhost:3000"
             agent_token = "agt_secret"
             [databases.app]
             url = "postgres://localhost/app"
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert_eq!(config.agent_id, "agent-1");
         let r = config.resolve_database("app").unwrap();
         assert_eq!(r.url, "postgres://localhost/app");
@@ -246,14 +278,17 @@ mod tests {
 
     #[test]
     fn agent_config_resolve_unknown_errors() {
-        let config: AgentConfig = toml::from_str(r#"
+        let config: AgentConfig = toml::from_str(
+            r#"
             agent_id = "agent-1"
             [server]
             url = "http://localhost:3000"
             agent_token = "agt_secret"
             [databases.app]
             url = "postgres://localhost/app"
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
         assert!(config.resolve_database("unknown").is_err());
     }
 }

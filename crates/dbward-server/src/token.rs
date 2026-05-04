@@ -31,7 +31,9 @@ impl TokenSigner {
                 use std::io::Write;
                 use std::os::unix::fs::OpenOptionsExt;
                 std::fs::OpenOptions::new()
-                    .write(true).create(true).truncate(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
                     .mode(0o600)
                     .open(&key_path)
                     .map_err(|e| e.to_string())?

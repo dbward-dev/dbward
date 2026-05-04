@@ -9,6 +9,8 @@ use crate::mcp;
 use crate::oidc_login;
 use crate::server_client;
 
+const LIST_DETAIL_WIDTH: usize = 30;
+
 #[derive(Parser)]
 #[command(name = "dbward", about = "DB operations workflow + approval engine")]
 pub struct Cli {
@@ -130,9 +132,7 @@ enum Command {
         no_save: bool,
     },
     /// Show a previously saved result from local storage
-    Result {
-        id: String,
-    },
+    Result { id: String },
 }
 
 #[derive(Subcommand)]
@@ -196,6 +196,18 @@ fn parse_role(s: &str) -> Result<String, String> {
     } else {
         Ok(s.to_string())
     }
+}
+
+fn truncate_table_cell(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_string();
+    }
+    if max_chars <= 3 {
+        return ".".repeat(max_chars);
+    }
+    let prefix: String = value.chars().take(max_chars - 3).collect();
+    format!("{prefix}...")
 }
 
 // ---------------------------------------------------------------------------
@@ -380,7 +392,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
                 Err(e) => {
                     if e.status == 404 {
-                        return Err(dbward_core::Error::Server(format!("Request {id} not found")));
+                        return Err(dbward_core::Error::Server(format!(
+                            "Request {id} not found"
+                        )));
                     }
                     if e.status == 409 && e.body.to_lowercase().contains("already approved") {
                         return Err(dbward_core::Error::Server(format!(
@@ -400,7 +414,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
                 Err(e) => {
                     if e.status == 404 {
-                        return Err(dbward_core::Error::Server(format!("Request {id} not found")));
+                        return Err(dbward_core::Error::Server(format!(
+                            "Request {id} not found"
+                        )));
                     }
                     if e.status == 403 {
                         return Err(dbward_core::Error::Server(e.body));
@@ -410,7 +426,11 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             }
             Ok(())
         }
-        Command::List { ref limit, ref status, pending_for_me } => {
+        Command::List {
+            ref limit,
+            ref status,
+            pending_for_me,
+        } => {
             let body = if pending_for_me {
                 sc.list_pending_for_me(*limit).await?
             } else {
@@ -429,7 +449,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 println!("No requests.");
             } else {
                 // Collect rows first to calculate column widths
-                let mut rows: Vec<(String, String, String, String, String, String, String)> = Vec::new();
+                let mut rows: Vec<(String, String, String, String, String, String, String)> =
+                    Vec::new();
                 for r in requests {
                     let id = r["id"].as_str().unwrap_or("?");
                     let short_id = id[..id.len().min(8)].to_string();
@@ -438,11 +459,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     let env = r["environment"].as_str().unwrap_or("?").to_string();
                     let op = r["operation"].as_str().unwrap_or("?").to_string();
                     let detail = r["detail"].as_str().unwrap_or("");
-                    let short_detail = if detail.len() > 40 {
-                        format!("{}...", &detail[..37])
-                    } else {
-                        detail.to_string()
-                    };
+                    let short_detail = truncate_table_cell(detail, LIST_DETAIL_WIDTH);
                     let reason = r["reason"].as_str().unwrap_or("").to_string();
                     rows.push((short_id, status, user, env, op, short_detail, reason));
                 }
@@ -459,35 +476,79 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
 
                 if has_reason {
                     println!(
-                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<30} {}",
-                        "ID", "STATUS", "USER", "ENV", "OP", "DETAIL", "REASON",
-                        w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4,
+                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<detail_width$} {}",
+                        "ID",
+                        "STATUS",
+                        "USER",
+                        "ENV",
+                        "OP",
+                        "DETAIL",
+                        "REASON",
+                        w0 = w.0,
+                        w1 = w.1,
+                        w2 = w.2,
+                        w3 = w.3,
+                        w4 = w.4,
+                        detail_width = LIST_DETAIL_WIDTH,
                     );
                     for r in &rows {
                         println!(
-                            "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<30} {}",
-                            r.0, r.1, r.2, r.3, r.4, r.5, r.6,
-                            w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4,
+                            "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<detail_width$} {}",
+                            r.0,
+                            r.1,
+                            r.2,
+                            r.3,
+                            r.4,
+                            r.5,
+                            r.6,
+                            w0 = w.0,
+                            w1 = w.1,
+                            w2 = w.2,
+                            w3 = w.3,
+                            w4 = w.4,
+                            detail_width = LIST_DETAIL_WIDTH,
                         );
                     }
                 } else {
                     println!(
                         "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{}",
-                        "ID", "STATUS", "USER", "ENV", "OP", "DETAIL",
-                        w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4,
+                        "ID",
+                        "STATUS",
+                        "USER",
+                        "ENV",
+                        "OP",
+                        "DETAIL",
+                        w0 = w.0,
+                        w1 = w.1,
+                        w2 = w.2,
+                        w3 = w.3,
+                        w4 = w.4,
                     );
                     for r in &rows {
                         println!(
                             "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{}",
-                            r.0, r.1, r.2, r.3, r.4, r.5,
-                            w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4,
+                            r.0,
+                            r.1,
+                            r.2,
+                            r.3,
+                            r.4,
+                            r.5,
+                            w0 = w.0,
+                            w1 = w.1,
+                            w2 = w.2,
+                            w3 = w.3,
+                            w4 = w.4,
                         );
                     }
                 }
             }
             Ok(())
         }
-        Command::Resume { ref id, ref output, no_save } => {
+        Command::Resume {
+            ref id,
+            ref output,
+            no_save,
+        } => {
             let resp = sc.dispatch_and_wait(id).await?;
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -507,8 +568,20 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             Ok(())
         }
         Command::Mcp => mcp::run_stdio(config, cli.database.as_deref(), sc).await,
-        Command::Audit { ref limit, ref user, ref operation, ref status } => {
-            let body = sc.list_audit(*limit, user.as_deref(), operation.as_deref(), status.as_deref()).await?;
+        Command::Audit {
+            ref limit,
+            ref user,
+            ref operation,
+            ref status,
+        } => {
+            let body = sc
+                .list_audit(
+                    *limit,
+                    user.as_deref(),
+                    operation.as_deref(),
+                    status.as_deref(),
+                )
+                .await?;
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&body)?);
                 return Ok(());
@@ -642,8 +715,12 @@ fn load_result(request_id: &str) -> Result<serde_json::Value, dbward_core::Error
         .join(".dbward")
         .join("results")
         .join(format!("{request_id}.json"));
-    let content = std::fs::read_to_string(&path)
-        .map_err(|_| dbward_core::Error::Server(format!("No saved result for {request_id}. Path: {}", path.display())))?;
+    let content = std::fs::read_to_string(&path).map_err(|_| {
+        dbward_core::Error::Server(format!(
+            "No saved result for {request_id}. Path: {}",
+            path.display()
+        ))
+    })?;
     serde_json::from_str(&content)
         .map_err(|e| dbward_core::Error::Server(format!("Failed to parse saved result: {e}")))
 }
@@ -709,7 +786,12 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
             dbward_server::start(addr, state).await
         }
         ServerAction::Token { action } => match action {
-            TokenAction::Create { user, role, agent, data } => {
+            TokenAction::Create {
+                user,
+                role,
+                agent,
+                data,
+            } => {
                 let conn = rusqlite::Connection::open(data)
                     .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
                 dbward_server::db::init(&conn)
@@ -733,9 +815,10 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
                 };
                 let subject_type = if *agent { "agent" } else { "user" };
-                let (token_id, raw_token) = dbward_server::auth::create_token_with_type(&state, user, role, subject_type)
-                    .await
-                    .map_err(dbward_core::Error::Server)?;
+                let (token_id, raw_token) =
+                    dbward_server::auth::create_token_with_type(&state, user, role, subject_type)
+                        .await
+                        .map_err(dbward_core::Error::Server)?;
                 let type_label = if *agent { "agent" } else { "user" };
                 println!("Token created:");
                 println!("  ID:    {token_id}");
@@ -825,21 +908,18 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
     };
 
     // Create tokens
-    let (_, admin_token) = dbward_server::auth::create_token_with_type(
-        &state, "admin", "admin", "user",
-    )
-    .await
-    .map_err(dbward_core::Error::Server)?;
-    let (_, dev_token) = dbward_server::auth::create_token_with_type(
-        &state, "developer", "developer", "user",
-    )
-    .await
-    .map_err(dbward_core::Error::Server)?;
-    let (_, agent_token) = dbward_server::auth::create_token_with_type(
-        &state, "agent", "admin", "agent",
-    )
-    .await
-    .map_err(dbward_core::Error::Server)?;
+    let (_, admin_token) =
+        dbward_server::auth::create_token_with_type(&state, "admin", "admin", "user")
+            .await
+            .map_err(dbward_core::Error::Server)?;
+    let (_, dev_token) =
+        dbward_server::auth::create_token_with_type(&state, "developer", "developer", "user")
+            .await
+            .map_err(dbward_core::Error::Server)?;
+    let (_, agent_token) =
+        dbward_server::auth::create_token_with_type(&state, "agent", "admin", "agent")
+            .await
+            .map_err(dbward_core::Error::Server)?;
 
     let addr: std::net::SocketAddr = format!("127.0.0.1:{port}")
         .parse()
@@ -974,5 +1054,21 @@ mod tests {
     #[test]
     fn parse_role_invalid() {
         assert!(parse_role("").is_err());
+    }
+
+    #[test]
+    fn truncate_table_cell_preserves_short_values() {
+        assert_eq!(
+            truncate_table_cell("SELECT 1", LIST_DETAIL_WIDTH),
+            "SELECT 1"
+        );
+    }
+
+    #[test]
+    fn truncate_table_cell_caps_long_values() {
+        let value = "1234567890123456789012345678901234567890";
+        let truncated = truncate_table_cell(value, LIST_DETAIL_WIDTH);
+        assert_eq!(truncated.chars().count(), LIST_DETAIL_WIDTH);
+        assert!(truncated.ends_with("..."));
     }
 }

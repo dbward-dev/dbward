@@ -191,7 +191,8 @@ mod tests {
 
     #[test]
     fn detects_writable_cte_insert() {
-        let sql = "WITH ins AS (INSERT INTO archive SELECT * FROM users RETURNING *) SELECT * FROM ins";
+        let sql =
+            "WITH ins AS (INSERT INTO archive SELECT * FROM users RETURNING *) SELECT * FROM ins";
         assert!(matches!(classify_query(sql), Ok(QueryType::Insert)));
     }
 

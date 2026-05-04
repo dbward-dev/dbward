@@ -24,7 +24,10 @@ pub struct Migrator {
 }
 
 impl Migrator {
-    pub fn new(driver: Arc<dyn DatabaseDriver>, migrations_dir: impl Into<std::path::PathBuf>) -> Self {
+    pub fn new(
+        driver: Arc<dyn DatabaseDriver>,
+        migrations_dir: impl Into<std::path::PathBuf>,
+    ) -> Self {
         Self {
             driver,
             migrations_dir: migrations_dir.into(),
@@ -78,10 +81,7 @@ impl Migrator {
         Ok(result)
     }
 
-    pub async fn down(
-        &self,
-        count: Option<usize>,
-    ) -> Result<MigrationResult, dbward_core::Error> {
+    pub async fn down(&self, count: Option<usize>) -> Result<MigrationResult, dbward_core::Error> {
         self.driver.ensure_migrations_table().await?;
         let applied = self.driver.applied_versions().await?;
         let migrations = parse_migrations_dir(&self.migrations_dir)?;
@@ -102,10 +102,7 @@ impl Migrator {
 
         for migration in to_rollback {
             let down_sql = migration.down_sql.as_deref().ok_or_else(|| {
-                dbward_core::Error::Config(format!(
-                    "no down migration for {}",
-                    migration.version
-                ))
+                dbward_core::Error::Config(format!("no down migration for {}", migration.version))
             })?;
 
             self.driver
@@ -126,7 +123,9 @@ impl Migrator {
     /// Create a Migrator for local-only operations (create migration files).
     /// No DB driver needed.
     pub fn new_local(migrations_dir: impl Into<std::path::PathBuf>) -> LocalMigrator {
-        LocalMigrator { migrations_dir: migrations_dir.into() }
+        LocalMigrator {
+            migrations_dir: migrations_dir.into(),
+        }
     }
 }
 
