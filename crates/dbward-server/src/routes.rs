@@ -9,15 +9,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::auth;
+use crate::authz::{self, Action, Resource};
 use crate::state::AppState;
-
-fn require_admin_role(user: &crate::state::AuthUser) -> Result<(), (StatusCode, String)> {
-    if user.effective_permission() == "admin" {
-        Ok(())
-    } else {
-        Err((StatusCode::FORBIDDEN, "admin only".into()))
-    }
-}
 
 fn insert_policy_audit(
     conn: &rusqlite::Connection,
@@ -38,16 +31,6 @@ fn insert_policy_audit(
     Ok(())
 }
 
-fn can_access_result(
-    user: &crate::state::AuthUser,
-    requester: &str,
-    access_roles: &[String],
-) -> bool {
-    access_roles.iter().any(|role| {
-        (role == "requester" && user.user == requester) || role == user.effective_permission()
-    })
-}
-
 fn compute_next_step(steps: &[serde_json::Value], current_step_index: usize) -> Option<serde_json::Value> {
     steps.get(current_step_index).map(|step| {
         json!({
@@ -55,6 +38,20 @@ fn compute_next_step(steps: &[serde_json::Value], current_step_index: usize) -> 
             "approvers": step["approvers"]
         })
     })
+}
+
+fn request_resource(
+    requester_id: String,
+    status: String,
+    database: String,
+    environment: String,
+) -> Resource {
+    Resource::Request {
+        requester_id,
+        status,
+        database,
+        environment,
+    }
 }
 
 pub fn router(state: AppState) -> Router {
@@ -161,6 +158,7 @@ async fn list_requests(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    authz::authorize(&user, Action::ListRequests, Resource::Global).await?;
     let (limit, offset) = parse_pagination(&params);
     let status_filter = params.get("status").filter(|s| !s.is_empty());
     let database_filter = params.get("database").filter(|s| !s.is_empty());
@@ -173,14 +171,8 @@ async fn list_requests(
         return list_requests_pending_for_me(&conn, &user, limit, offset);
     }
 
-    let is_admin = user.effective_permission() == "admin";
     let mut where_clauses: Vec<String> = Vec::new();
     let mut bind_values: Vec<String> = Vec::new();
-
-    if !is_admin {
-        bind_values.push(user.user.clone());
-        where_clauses.push(format!("created_by = ?{}", bind_values.len()));
-    }
     if let Some(s) = status_filter {
         bind_values.push(s.clone());
         where_clauses.push(format!("status = ?{}", bind_values.len()));
@@ -200,33 +192,15 @@ async fn list_requests(
         format!("WHERE {}", where_clauses.join(" AND "))
     };
 
-    let count_sql = format!("SELECT COUNT(*) FROM requests {where_sql}");
-    let mut count_stmt = conn
-        .prepare(&count_sql)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let total: i64 = count_stmt
-        .query_row(rusqlite::params_from_iter(&bind_values), |row| row.get(0))
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
     let query_sql = format!(
-        "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at FROM requests {where_sql} ORDER BY created_at DESC LIMIT ?{} OFFSET ?{}",
-        bind_values.len() + 1,
-        bind_values.len() + 2,
+        "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at FROM requests {where_sql} ORDER BY created_at DESC",
     );
     let mut stmt = conn
         .prepare(&query_sql)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = bind_values
-        .iter()
-        .map(|v| Box::new(v.clone()) as Box<dyn rusqlite::types::ToSql>)
-        .collect();
-    all_params.push(Box::new(limit));
-    all_params.push(Box::new(offset));
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
-
-    let rows: Vec<serde_json::Value> = stmt
-        .query_map(param_refs.as_slice(), |row| {
+    let candidates: Vec<serde_json::Value> = stmt
+        .query_map(rusqlite::params_from_iter(&bind_values), |row| {
             Ok(json!({
                 "id": row.get::<_, String>(0)?,
                 "created_by": row.get::<_, String>(1)?,
@@ -245,7 +219,25 @@ async fn list_requests(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(json!({"requests": rows, "total": total, "limit": limit, "offset": offset})))
+    let mut filtered = Vec::new();
+    for row in candidates {
+        let resource = request_resource(
+            row["created_by"].as_str().unwrap_or("").to_string(),
+            row["status"].as_str().unwrap_or("").to_string(),
+            row["database_name"].as_str().unwrap_or("").to_string(),
+            row["environment"].as_str().unwrap_or("").to_string(),
+        );
+        if authz::authorize_sync(&user, Action::ListRequests, resource).is_ok() {
+            filtered.push(row);
+        }
+    }
+
+    let total = filtered.len() as i64;
+    let start = (offset as usize).min(filtered.len());
+    let end = (start + limit as usize).min(filtered.len());
+    let page = filtered[start..end].to_vec();
+
+    Ok(Json(json!({"requests": page, "total": total, "limit": limit, "offset": offset})))
 }
 
 fn list_requests_pending_for_me(
@@ -290,33 +282,30 @@ fn list_requests_pending_for_me(
 
     let mut filtered: Vec<serde_json::Value> = Vec::new();
     for (row, created_by, ws_json) in &candidates {
-        // Can't self-approve
-        if *created_by == user.user {
-            continue;
-        }
-        let steps: Vec<crate::server_config::WorkflowStep> = ws_json
-            .as_deref()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or_default();
-        if steps.is_empty() {
-            // Legacy: admin-only
-            if user.effective_permission() == "admin" {
-                filtered.push(row.clone());
-            }
-            continue;
-        }
         let req_id = row["id"].as_str().unwrap_or("");
         let approvals = get_approvals_for_request(conn, req_id)?;
-        let current_step = steps.iter().enumerate().find_map(|(i, step)| {
-            if !is_step_satisfied(step, &approvals, i as i64) { Some(i) } else { None }
-        });
-        if let Some(idx) = current_step {
-            let step = &steps[idx];
-            let user_can_approve = step.approvers.iter().any(|g| user.has_role(&g.role))
-                || user.effective_permission() == "admin";
-            // Exclude if user already approved this step
-            let already_approved = approvals.iter().any(|(si, aid, _)| *si == idx as i64 && aid == &user.user);
-            if user_can_approve && !already_approved {
+        let approval_resource =
+            current_approval_resource(conn, req_id, created_by.clone(), ws_json.as_deref())?;
+        if authz::authorize_sync(user, Action::ApproveRequest, approval_resource).is_ok() {
+            let steps: Vec<crate::server_config::WorkflowStep> = ws_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_default();
+            let current_step = steps.iter().enumerate().find_map(|(i, step)| {
+                if !is_step_satisfied(step, &approvals, i as i64) {
+                    Some(i)
+                } else {
+                    None
+                }
+            });
+            if let Some(idx) = current_step {
+                let already_approved = approvals
+                    .iter()
+                    .any(|(si, aid, _)| *si == idx as i64 && aid == &user.user);
+                if !already_approved {
+                    filtered.push(row.clone());
+                }
+            } else if steps.is_empty() {
                 filtered.push(row.clone());
             }
         }
@@ -345,13 +334,54 @@ fn get_approvals_for_request(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
+fn current_approval_resource(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    requester_id: String,
+    workflow_snapshot_json: Option<&str>,
+) -> Result<Resource, (StatusCode, String)> {
+    let steps: Vec<crate::server_config::WorkflowStep> = workflow_snapshot_json
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+
+    if steps.is_empty() {
+        return Ok(Resource::ApprovalStep {
+            requester_id,
+            allowed_roles: Vec::new(),
+        });
+    }
+
+    let approvals = get_approvals_for_request(conn, request_id)?;
+    let current_step = steps
+        .iter()
+        .enumerate()
+        .find_map(|(i, step)| {
+            if !is_step_satisfied(step, &approvals, i as i64) {
+                Some(i)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(steps.len());
+
+    let allowed_roles = steps
+        .get(current_step)
+        .map(|step| step.approvers.iter().map(|group| group.role.clone()).collect())
+        .unwrap_or_default();
+
+    Ok(Resource::ApprovalStep {
+        requester_id,
+        allowed_roles,
+    })
+}
+
 async fn create_request(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
+    authz::authorize(&user, Action::CreateRequest, Resource::Global).await?;
 
     let operation = body["operation"]
         .as_str()
@@ -371,6 +401,18 @@ async fn create_request(
     let database_name = body["database"].as_str().unwrap_or("default");
     let emergency = body["emergency"].as_bool().unwrap_or(false);
     let reason = body["reason"].as_str().map(|s| s.to_string());
+
+    authz::authorize(
+        &user,
+        Action::CreateRequest,
+        request_resource(
+            user.user.clone(),
+            "new".into(),
+            database_name.into(),
+            environment.into(),
+        ),
+    )
+    .await?;
 
     if emergency && reason.is_none() {
         return Err((
@@ -502,7 +544,7 @@ async fn approve_request(
     body_str: String,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let approver = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&approver)?;
+    authz::authorize(&approver, Action::ApproveRequest, Resource::Global).await?;
 
     let body_val: serde_json::Value = serde_json::from_str(&body_str).unwrap_or(json!({}));
 
@@ -543,10 +585,6 @@ async fn approve_request_inner(
         return Err((StatusCode::CONFLICT, format!("request is already {status}")));
     }
 
-    if req_user == approver.user {
-        return Err((StatusCode::FORBIDDEN, "requester cannot approve their own request".into()));
-    }
-
     // Parse workflow steps from snapshot
     let steps: Vec<crate::server_config::WorkflowStep> = workflow_snapshot_json
         .as_deref()
@@ -554,10 +592,14 @@ async fn approve_request_inner(
         .unwrap_or_default();
 
     if steps.is_empty() {
-        // Legacy: admin-only single approval (no workflow snapshot)
-        if approver.effective_permission() != "admin" {
-            return Err((StatusCode::FORBIDDEN, "admin only".into()));
-        }
+        authz::authorize_sync(
+            approver,
+            Action::ApproveRequest,
+            Resource::ApprovalStep {
+                requester_id: req_user.clone(),
+                allowed_roles: Vec::new(),
+            },
+        )?;
         let now = chrono::Utc::now().to_rfc3339();
         let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         tx.execute(
@@ -609,6 +651,15 @@ async fn approve_request_inner(
     }
 
     let step = &steps[current_step];
+
+    authz::authorize_sync(
+        approver,
+        Action::ApproveRequest,
+        Resource::ApprovalStep {
+            requester_id: req_user.clone(),
+            allowed_roles: step.approvers.iter().map(|group| group.role.clone()).collect(),
+        },
+    )?;
 
     // Determine approver's role
     let as_role = body_val.get("as_role").and_then(|v| v.as_str()).map(String::from);
@@ -754,7 +805,7 @@ async fn reject_request(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
+    authz::authorize(&user, Action::RejectRequest, Resource::Global).await?;
 
     {
         let mut conn = state.sqlite.lock().await;
@@ -771,48 +822,21 @@ async fn reject_request(
             return Err((StatusCode::CONFLICT, format!("request is already {status}")));
         }
 
-        if user.effective_permission() != "admin" && user.user != req_user {
-            // Check if user has a role matching the current step's approver groups
-            let can_reject_as_approver = {
-                let steps: Vec<crate::server_config::WorkflowStep> = conn
-                    .query_row(
-                        "SELECT workflow_snapshot_json FROM requests WHERE id = ?1",
-                        rusqlite::params![id],
-                        |row| row.get::<_, Option<String>>(0),
-                    )
-                    .ok()
-                    .flatten()
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default();
-
-                if steps.is_empty() {
-                    false
-                } else {
-                    let existing_approvals: Vec<(i64, String, String)> = conn
-                        .prepare("SELECT step_index, actor_id, actor_role FROM approvals WHERE request_id = ?1 AND action = 'approve'")
-                        .and_then(|mut stmt| {
-                            stmt.query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-                                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                        })
-                        .unwrap_or_default();
-
-                    let current_step = steps.iter().enumerate()
-                        .find_map(|(i, step)| {
-                            if !is_step_satisfied(step, &existing_approvals, i as i64) { Some(i) } else { None }
-                        })
-                        .unwrap_or(steps.len());
-
-                    current_step < steps.len() && steps[current_step].approvers.iter().any(|g| user.has_role(&g.role))
-                }
-            };
-
-            if !can_reject_as_approver {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    "only admin, the requester, or a current-step approver can reject".into(),
-                ));
-            }
-        }
+        let workflow_snapshot_json = conn
+            .query_row(
+                "SELECT workflow_snapshot_json FROM requests WHERE id = ?1",
+                rusqlite::params![id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .flatten();
+        let approval_resource = current_approval_resource(
+            &conn,
+            &id,
+            req_user.clone(),
+            workflow_snapshot_json.as_deref(),
+        )?;
+        authz::authorize_sync(&user, Action::RejectRequest, approval_resource)?;
 
         let now = chrono::Utc::now().to_rfc3339();
         let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -861,6 +885,7 @@ async fn get_request(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    authz::authorize(&user, Action::GetRequest, Resource::Global).await?;
     let wait: u64 = params
         .get("wait")
         .and_then(|v| v.parse().ok())
@@ -940,10 +965,16 @@ async fn get_request(
     let (resp, status) = {
         let conn = state.sqlite.lock().await;
         let resp = build_response(&conn, &id, &state)?;
-        let created_by = resp["created_by"].as_str().unwrap_or("");
-        if user.effective_permission() != "admin" && user.user != created_by {
-            return Err((StatusCode::FORBIDDEN, "request access denied".into()));
-        }
+        authz::authorize_sync(
+            &user,
+            Action::GetRequest,
+            request_resource(
+                resp["created_by"].as_str().unwrap_or("").to_string(),
+                resp["status"].as_str().unwrap_or("").to_string(),
+                resp["database_name"].as_str().unwrap_or("").to_string(),
+                resp["environment"].as_str().unwrap_or("").to_string(),
+            ),
+        )?;
         let status = resp["status"].as_str().unwrap_or("").to_string();
         (resp, status)
     };
@@ -970,21 +1001,14 @@ async fn list_audit(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-
-    // Readonly: 403. Developer: own logs only. Admin: all.
-    match user.effective_permission() {
-        "readonly" => {
-            return Err((StatusCode::FORBIDDEN, "admin or developer only".into()));
-        }
-        "admin" => {}
-        _ => {
-            if let Some(u) = params.get("user").filter(|s| !s.is_empty()) {
-                if u != &user.user {
-                    return Err((StatusCode::FORBIDDEN, "developers can only view their own audit logs".into()));
-                }
-            }
-        }
-    }
+    authz::authorize(
+        &user,
+        Action::ListAudit,
+        Resource::AuditQuery {
+            requested_user: params.get("user").filter(|s| !s.is_empty()).cloned(),
+        },
+    )
+    .await?;
 
     let (limit, offset) = parse_pagination(&params);
     // Developer: force filter to own user
@@ -1085,7 +1109,7 @@ async fn dispatch_request(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
+    authz::authorize(&user, Action::DispatchRequest, Resource::Global).await?;
 
     let conn = state.sqlite.lock().await;
 
@@ -1104,12 +1128,16 @@ async fn dispatch_request(
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
-    if user.user != requester && user.effective_permission() != "admin" {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "only the requester can dispatch this request".into(),
-        ));
-    }
+    authz::authorize_sync(
+        &user,
+        Action::DispatchRequest,
+        request_resource(
+            requester.clone(),
+            status.clone(),
+            database_name.clone(),
+            environment.clone(),
+        ),
+    )?;
 
     // For executed/failed: check re-execution policy before attempting atomic update
     if status == "executed" || status == "failed" {
@@ -1169,7 +1197,7 @@ async fn stream_result(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
+    authz::authorize(&user, Action::ReadResult, Resource::Global).await?;
 
     let (requester, database_name, environment, status): (String, String, String, String) = {
         let conn = state.sqlite.lock().await;
@@ -1187,9 +1215,15 @@ async fn stream_result(
         access_roles
     };
 
-    if !can_access_result(&user, &requester, &access_roles) {
-        return Err((StatusCode::FORBIDDEN, "result access denied".into()));
-    }
+    authz::authorize(
+        &user,
+        Action::ReadResult,
+        Resource::Result {
+            requester_id: requester.clone(),
+            access_roles,
+        },
+    )
+    .await?;
 
     let slot = match state.result_channels.get(&id).await {
         Some(slot) => slot,
@@ -1252,8 +1286,7 @@ async fn agent_poll(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_agent(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::AgentPoll, Resource::Global).await?;
 
     let databases: Vec<String> = body["databases"]
         .as_array()
@@ -1340,8 +1373,7 @@ async fn agent_claim(
     Json(_body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_agent(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::AgentClaim, Resource::Global).await?;
     let agent_id = user.user.clone();
 
     let mut conn = state.sqlite.lock().await;
@@ -1360,6 +1392,14 @@ async fn agent_claim(
             format!("request status is {status}, cannot claim"),
         ));
     }
+
+    authz::authorize_sync(
+        &user,
+        Action::AgentClaim,
+        Resource::AgentExecution {
+            agent_id: agent_id.clone(),
+        },
+    )?;
 
     // Verify agent has capability for this job
     if let Ok(caps_json) = conn.query_row(
@@ -1424,8 +1464,7 @@ async fn agent_result(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_agent(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::AgentSubmitResult, Resource::Global).await?;
 
     let success = body["success"].as_bool().unwrap_or(false);
     let result = body["result"].clone();
@@ -1450,12 +1489,13 @@ async fn agent_result(
             ));
         }
 
-        if user.user != agent_id {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "only the claiming agent can submit this result".into(),
-            ));
-        }
+        authz::authorize_sync(
+            &user,
+            Action::AgentSubmitResult,
+            Resource::AgentExecution {
+                agent_id: agent_id.clone(),
+            },
+        )?;
 
         let new_status = if success { "completed" } else { "failed" };
         let req_status = if success { "executed" } else { "failed" };
@@ -1522,7 +1562,7 @@ async fn list_workflows(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -1558,7 +1598,7 @@ async fn get_workflow(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
 
     let conn = state.sqlite.lock().await;
     let row = conn
@@ -1592,8 +1632,7 @@ async fn create_workflow(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
 
     let database = body["database"].as_str()
         .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
@@ -1638,8 +1677,7 @@ async fn update_workflow(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
 
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
@@ -1695,8 +1733,7 @@ async fn delete_workflow(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
 
     let mut conn = state.sqlite.lock().await;
 
@@ -1736,7 +1773,7 @@ async fn list_execution_policies(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -1770,7 +1807,7 @@ async fn get_execution_policy_handler(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
 
     let conn = state.sqlite.lock().await;
     let row = conn
@@ -1802,8 +1839,7 @@ async fn create_execution_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
 
     let database = body["database"].as_str()
         .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
@@ -1846,8 +1882,7 @@ async fn update_execution_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
 
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
@@ -1889,8 +1924,7 @@ async fn delete_execution_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
 
     let mut conn = state.sqlite.lock().await;
     {
@@ -1919,7 +1953,7 @@ async fn list_result_policies(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -1955,7 +1989,7 @@ async fn get_result_policy_handler(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
 
     let conn = state.sqlite.lock().await;
     let row = conn
@@ -1989,8 +2023,7 @@ async fn create_result_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
 
     let database = body["database"].as_str()
         .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
@@ -2035,8 +2068,7 @@ async fn update_result_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
 
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
@@ -2078,8 +2110,7 @@ async fn delete_result_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
 
     let mut conn = state.sqlite.lock().await;
     {
@@ -2108,7 +2139,7 @@ async fn list_notification_policies(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -2141,7 +2172,7 @@ async fn get_notification_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
 
     let conn = state.sqlite.lock().await;
     let row = conn
@@ -2172,8 +2203,7 @@ async fn create_notification_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
 
     let database = body["database"].as_str()
         .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
@@ -2215,8 +2245,7 @@ async fn update_notification_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
 
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
@@ -2246,8 +2275,7 @@ async fn delete_notification_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    auth::require_human(&user)?;
-    require_admin_role(&user)?;
+    authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
 
     let mut conn = state.sqlite.lock().await;
     {

@@ -28,6 +28,7 @@ hmac = "0.12"
 toml.workspace = true
 jsonwebtoken = "9"
 base64 = "0.22"
+casbin = { version = "2.20", default-features = false, features = ["runtime-tokio"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
