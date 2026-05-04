@@ -105,6 +105,42 @@ services:
     profiles:
       - dev
 
+  carol:
+    build: *dbward-build
+    entrypoint: ["/bin/sh", "/scripts/dev-entrypoint.sh", "carol"]
+    command: ["list"]
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./:/workspace
+      - dev-tokens:/tokens:ro
+      - ./dev/dbward-cli.toml:/config/dbward-cli.toml:ro
+      - ./dev/dev-entrypoint.sh:/scripts/dev-entrypoint.sh:ro
+    depends_on:
+      dev-init:
+        condition: service_completed_successfully
+    profiles:
+      - dev
+
+  dave:
+    build: *dbward-build
+    entrypoint: ["/bin/sh", "/scripts/dev-entrypoint.sh", "dave"]
+    command: ["list"]
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./:/workspace
+      - dev-tokens:/tokens:ro
+      - ./dev/dbward-cli.toml:/config/dbward-cli.toml:ro
+      - ./dev/dev-entrypoint.sh:/scripts/dev-entrypoint.sh:ro
+    depends_on:
+      dev-init:
+        condition: service_completed_successfully
+    profiles:
+      - dev
+
 volumes:
   pgdata:
   server-data:

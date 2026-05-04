@@ -8,7 +8,7 @@ use dbward::cli::{self, Cli};
 async fn main() {
     let cli = Cli::parse();
     if let Err(e) = cli::run(cli).await {
-        eprintln!("error: {e}");
+        eprintln!("{e}");
         process::exit(1);
     }
 }

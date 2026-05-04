@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use dbward_core::{AgentConfig, Engine, Error};
 use dbward_migrate::Migrator;
-use tracing::{error, info};
+
 
 use crate::server_client::AgentClient;
 
@@ -13,19 +13,19 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
 
     // Fetch server's public key for token verification
     let public_key = client.get_public_key().await?;
-    info!(agent_id = %config.agent_id, "agent started, polling {}", config.server.url);
+    eprintln!("agent {} started, polling {}", config.agent_id, config.server.url);
 
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
-                info!("shutting down");
+                eprintln!("agent shutting down");
                 return Ok(());
             }
             _ = poll_once(&config, &client, &public_key) => {}
         }
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
-                info!("shutting down");
+                eprintln!("agent shutting down");
                 return Ok(());
             }
             _ = tokio::time::sleep(poll_interval) => {}
@@ -48,7 +48,7 @@ async fn poll_once(
     {
         Ok(j) => j,
         Err(e) => {
-            error!("poll failed: {e}");
+            eprintln!("poll failed: {e}");
             return;
         }
     };
@@ -60,7 +60,7 @@ async fn poll_once(
         };
 
         if let Err(e) = execute_job(config, client, public_key, &request_id, &job).await {
-            error!(request_id = %request_id, "job failed: {e}");
+            eprintln!("job {request_id} failed: {e}");
         }
     }
 }
@@ -82,7 +82,7 @@ async fn execute_job(
     let database = claim["database"].as_str().unwrap_or("");
     let detail = claim["detail"].as_str().unwrap_or("");
 
-    info!(request_id, operation, database, "claimed job");
+    eprintln!("claimed job {request_id} ({operation} on {database})");
 
     // Verify token
     let token: dbward_core::token::ExecutionToken =
@@ -108,13 +108,13 @@ async fn execute_job(
         }
         Err(e) => {
             let msg = e.to_string();
-            error!(request_id, "execution failed: {msg}");
+            eprintln!("job {request_id} execution failed: {msg}");
             client.send_result(exec_id, false, None, Some(&msg)).await?;
             return Ok(());
         }
     };
 
-    info!(request_id, "execution completed");
+    eprintln!("job {request_id} execution completed");
     client
         .send_result(exec_id, success, result_value, None)
         .await?;

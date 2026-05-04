@@ -18,6 +18,16 @@ impl ServerClient {
         }
     }
 
+    /// Parse HTTP response: check status first, then parse JSON.
+    async fn parse_response(&self, resp: reqwest::Response, context: &str) -> Result<Value, Error> {
+        let status = resp.status();
+        let text = resp.text().await.map_err(|e| Error::Server(format!("{context}: {e}")))?;
+        if !status.is_success() {
+            return Err(Error::Server(format!("{context} ({status}): {text}")));
+        }
+        serde_json::from_str(&text).map_err(|e| Error::Server(format!("{context}: invalid JSON: {e}")))
+    }
+
     /// Create a request and return (id, status, optional execution_token).
     pub async fn create_request(
         &self,
@@ -93,9 +103,7 @@ impl ServerClient {
             .await
             .map_err(|e| Error::Server(format!("list requests failed: {e}")))?;
 
-        resp.json()
-            .await
-            .map_err(|e| Error::Server(format!("invalid response: {e}")))
+        self.parse_response(resp, "list requests").await
     }
 
     /// Get a single request by ID, optionally long-polling for status change.
@@ -117,19 +125,7 @@ impl ServerClient {
             .await
             .map_err(|e| Error::Server(format!("get request failed: {e}")))?;
 
-        let status_code = resp.status();
-        let body: Value = resp
-            .json()
-            .await
-            .map_err(|e| Error::Server(format!("invalid response: {e}")))?;
-
-        if !status_code.is_success() {
-            return Err(Error::Server(format!(
-                "get request failed ({}): {}",
-                status_code, body
-            )));
-        }
-        Ok(body)
+        self.parse_response(resp, "get request").await
     }
 
     /// Dispatch a request for execution (on-demand).
@@ -145,19 +141,7 @@ impl ServerClient {
             .await
             .map_err(|e| Error::Server(format!("dispatch failed: {e}")))?;
 
-        let status_code = resp.status();
-        let body: Value = resp
-            .json()
-            .await
-            .map_err(|e| Error::Server(format!("dispatch parse failed: {e}")))?;
-
-        if !status_code.is_success() {
-            return Err(Error::Server(format!(
-                "dispatch failed ({}): {}",
-                status_code, body
-            )));
-        }
-        Ok(body)
+        self.parse_response(resp, "dispatch").await
     }
 
     /// Wait for execution result via long poll.
@@ -173,19 +157,7 @@ impl ServerClient {
             .await
             .map_err(|e| Error::Server(format!("stream result failed: {e}")))?;
 
-        let status_code = resp.status();
-        let body: Value = resp
-            .json()
-            .await
-            .map_err(|e| Error::Server(format!("stream result parse failed: {e}")))?;
-
-        if !status_code.is_success() {
-            return Err(Error::Server(format!(
-                "stream result failed ({}): {}",
-                status_code, body
-            )));
-        }
-        Ok(body)
+        self.parse_response(resp, "stream result").await
     }
 
     /// Dispatch and wait for result in one flow.
@@ -293,18 +265,6 @@ impl ServerClient {
             .await
             .map_err(|e| Error::Server(format!("list audit failed: {e}")))?;
 
-        let status_code = resp.status();
-        let body: Value = resp
-            .json()
-            .await
-            .map_err(|e| Error::Server(format!("invalid response: {e}")))?;
-
-        if !status_code.is_success() {
-            return Err(Error::Server(format!(
-                "list audit failed ({}): {}",
-                status_code, body
-            )));
-        }
-        Ok(body)
+        self.parse_response(resp, "list audit").await
     }
 }

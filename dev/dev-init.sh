@@ -5,8 +5,9 @@ create_token() {
     user="$1"
     role="$2"
     path="$3"
+    extra="${4:-}"
 
-    output="$(dbward server token create --user "$user" --role "$role" --data /data/dbward.db)"
+    output="$(dbward server token create --user "$user" --role "$role" $extra --data /data/dbward.db)"
     token="$(printf '%s\n' "$output" | awk -F': ' '/^  Token: /{print $2}')"
 
     if [ -z "$token" ]; then
@@ -24,5 +25,7 @@ mkdir -p /tokens
 echo "[dev-init] creating API tokens"
 create_token "alice" "developer" "/tokens/alice.token"
 create_token "bob" "admin" "/tokens/bob.token"
-create_token "agent" "admin" "/tokens/agent.token"
+create_token "carol" "team-lead" "/tokens/carol.token"
+create_token "dave" "dba" "/tokens/dave.token"
+create_token "agent" "admin" "/tokens/agent.token" "--agent"
 echo "[dev-init] done"

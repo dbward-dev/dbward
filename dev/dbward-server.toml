@@ -18,16 +18,31 @@ value = "dbward-developers"
 role = "developer"
 
 # Workflow definitions (synced to SQLite on startup)
+
+# Development: auto-approve everything
 [[workflows]]
 database = "*"
 environment = "development"
 steps = []
 
+# Staging: team-lead OR dba (either one)
 [[workflows]]
 database = "*"
 environment = "staging"
-steps = []
 
+[[workflows.steps]]
+type = "approval"
+mode = "any"
+
+[[workflows.steps.approvers]]
+role = "team-lead"
+min = 1
+
+[[workflows.steps.approvers]]
+role = "dba"
+min = 1
+
+# Production: team-lead first, then dba (sequential)
 [[workflows]]
 database = "*"
 environment = "production"
@@ -36,5 +51,12 @@ environment = "production"
 type = "approval"
 
 [[workflows.steps.approvers]]
-role = "admin"
+role = "team-lead"
+min = 1
+
+[[workflows.steps]]
+type = "approval"
+
+[[workflows.steps.approvers]]
+role = "dba"
 min = 1
