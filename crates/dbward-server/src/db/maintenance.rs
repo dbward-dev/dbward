@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 
 /// Reset dispatched/running requests back to approved on server restart.
-pub fn recover_in_flight_requests(conn: &Connection) -> Result<(), rusqlite::Error> {
+pub(super) fn recover_in_flight_requests(conn: &Connection) -> Result<(), rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute_batch("BEGIN")?;
     conn.execute(

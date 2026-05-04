@@ -1,4 +1,4 @@
-pub mod maintenance;
+pub(crate) mod maintenance;
 pub mod policy_repo;
 
 use rusqlite::Connection;
