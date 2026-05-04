@@ -32,24 +32,37 @@ pub struct NewRequest<'a> {
 
 // --- ID resolution ---
 
-/// Resolve a full or prefix request ID to the full UUID.
-/// If the input looks like a full UUID (contains '-' and len >= 36), use exact match.
-/// Otherwise, use prefix match (LIKE 'prefix%'). Returns error if 0 or 2+ matches.
-pub fn resolve_request_id(conn: &Connection, input: &str) -> Result<String, rusqlite::Error> {
+/// Resolve a request ID: accepts exactly 8-char short ID or full UUID (36 chars).
+/// Short ID uses prefix match. Returns error if 0 or 2+ matches.
+pub fn resolve_request_id(conn: &Connection, input: &str) -> Result<String, ResolveError> {
+    // Full UUID
     if input.len() >= 36 && input.contains('-') {
         return Ok(input.to_string());
     }
+    // Short ID: exactly 8 hex chars
+    if input.len() != 8 || !input.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ResolveError::InvalidFormat);
+    }
     let mut stmt = conn.prepare(
         "SELECT id FROM requests WHERE id LIKE ?1 || '%' LIMIT 2",
-    )?;
+    ).map_err(|e| ResolveError::Db(e.to_string()))?;
     let ids: Vec<String> = stmt
-        .query_map(rusqlite::params![input], |row| row.get(0))?
-        .collect::<Result<Vec<_>, _>>()?;
+        .query_map(rusqlite::params![input], |row| row.get(0))
+        .map_err(|e| ResolveError::Db(e.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| ResolveError::Db(e.to_string()))?;
     match ids.len() {
-        0 => Err(rusqlite::Error::QueryReturnedNoRows),
+        0 => Err(ResolveError::NotFound),
         1 => Ok(ids.into_iter().next().unwrap()),
-        _ => Err(rusqlite::Error::QueryReturnedNoRows), // ambiguous
+        _ => Err(ResolveError::Ambiguous(ids)),
     }
+}
+
+pub enum ResolveError {
+    NotFound,
+    Ambiguous(Vec<String>),
+    InvalidFormat,
+    Db(String),
 }
 
 // --- Reads ---

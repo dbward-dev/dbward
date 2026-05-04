@@ -11,10 +11,19 @@ use crate::auth;
 use crate::authz::{self, Action, Resource};
 use crate::state::AppState;
 
-/// Resolve a short or full request ID, returning 404 if not found or ambiguous.
+/// Resolve a short or full request ID, returning appropriate error.
 fn resolve_id(conn: &rusqlite::Connection, input: &str) -> Result<String, crate::api_error::ApiError> {
-    crate::db::request_repo::resolve_request_id(conn, input)
-        .map_err(|_| crate::api_error::ApiError::not_found(format!("request {input} not found")))
+    use crate::db::request_repo::ResolveError;
+    crate::db::request_repo::resolve_request_id(conn, input).map_err(|e| match e {
+        ResolveError::NotFound => crate::api_error::ApiError::not_found(format!("request {input} not found")),
+        ResolveError::Ambiguous(ids) => crate::api_error::ApiError::conflict(format!(
+            "ambiguous short ID '{input}', candidates: {}", ids.join(", ")
+        )),
+        ResolveError::InvalidFormat => crate::api_error::ApiError::bad_request(
+            "provide an 8-character short ID or full UUID",
+        ),
+        ResolveError::Db(msg) => crate::api_error::ApiError::internal(msg),
+    })
 }
 
 pub(crate) fn request_resource(
