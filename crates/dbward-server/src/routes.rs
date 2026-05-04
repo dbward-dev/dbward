@@ -228,8 +228,8 @@ async fn list_requests(
             }))
         })
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({"requests": rows, "total": total, "limit": limit, "offset": offset})))
 }
@@ -245,6 +245,14 @@ async fn create_request(
     let operation = body["operation"]
         .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "operation required".into()))?;
+
+    const VALID_OPERATIONS: &[&str] = &[
+        "execute_query", "migrate_up", "migrate_down", "migrate_status",
+    ];
+    if !VALID_OPERATIONS.contains(&operation) {
+        return Err((StatusCode::BAD_REQUEST, format!("unknown operation: {operation}")));
+    }
+
     let environment = body["environment"]
         .as_str()
         .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
@@ -360,50 +368,52 @@ async fn approve_request(
     auth::require_human(&approver)?;
     require_admin_role(&approver)?;
 
-    let mut conn = state.sqlite.lock().await;
+    let (req_user, operation, environment, database_name, detail, token, notif_hooks) = {
+        let mut conn = state.sqlite.lock().await;
 
-    // Fetch request
-    let (req_user, status, operation, environment, database_name, detail): (String, String, String, String, String, String) = conn
-        .query_row(
-            "SELECT created_by, status, operation, environment, database_name, detail FROM requests WHERE id = ?1",
-            rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+        let (req_user, status, operation, environment, database_name, detail): (String, String, String, String, String, String) = conn
+            .query_row(
+                "SELECT created_by, status, operation, environment, database_name, detail FROM requests WHERE id = ?1",
+                rusqlite::params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            )
+            .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+
+        if status != "pending" {
+            return Err((StatusCode::CONFLICT, format!("request is already {status}")));
+        }
+
+        if req_user == approver.user {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "requester cannot approve their own request".into(),
+            ));
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.execute(
+            "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
+            rusqlite::params![now, now, id],
         )
-        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    if status != "pending" {
-        return Err((StatusCode::CONFLICT, format!("request is already {status}")));
-    }
+        let approval_id = uuid::Uuid::new_v4().to_string();
+        tx.execute(
+            "INSERT INTO approvals (id, request_id, action, actor_id, comment, created_at) VALUES (?1, ?2, 'approve', ?3, NULL, ?4)",
+            rusqlite::params![approval_id, id, approver.user, now],
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // Requester ≠ approver
-    if req_user == approver.user {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "requester cannot approve their own request".into(),
-        ));
-    }
+        let token = state
+            .token_signer
+            .issue(&id, &operation, &environment, &database_name, &detail);
 
-    let now = chrono::Utc::now().to_rfc3339();
-    let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    tx.execute(
-        "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
-        rusqlite::params![now, now, id],
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
+        (req_user, operation, environment, database_name, detail, token, notif_hooks)
+    };
 
-    let approval_id = uuid::Uuid::new_v4().to_string();
-    tx.execute(
-        "INSERT INTO approvals (id, request_id, action, actor_id, comment, created_at) VALUES (?1, ?2, 'approve', ?3, NULL, ?4)",
-        rusqlite::params![approval_id, id, approver.user, now],
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let token = state
-        .token_signer
-        .issue(&id, &operation, &environment, &database_name, &detail);
-
-    let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
     state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
         event: "request_approved".into(),
         request_id: id.clone(),
@@ -415,6 +425,8 @@ async fn approve_request(
         approved_by: Some(approver.user.clone()),
         reason: None,
     });
+
+    state.request_notifier.notify(&id).await;
 
     Ok(Json(
         json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
@@ -429,56 +441,59 @@ async fn reject_request(
     let user = auth::authenticate(&headers, &state).await?;
     auth::require_human(&user)?;
 
-    let mut conn = state.sqlite.lock().await;
+    {
+        let mut conn = state.sqlite.lock().await;
 
-    let (req_user, status, database_name, environment): (String, String, String, String) = conn
-        .query_row(
-            "SELECT created_by, status, database_name, environment FROM requests WHERE id = ?1",
-            rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        let (req_user, status, database_name, environment): (String, String, String, String) = conn
+            .query_row(
+                "SELECT created_by, status, database_name, environment FROM requests WHERE id = ?1",
+                rusqlite::params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+
+        if status != "pending" {
+            return Err((StatusCode::CONFLICT, format!("request is already {status}")));
+        }
+
+        if user.role != dbward_core::Role::Admin && user.user != req_user {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "only admin or the requester can reject".into(),
+            ));
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.execute(
+            "UPDATE requests SET status = 'rejected', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
+            rusqlite::params![now, now, id],
         )
-        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    if status != "pending" {
-        return Err((StatusCode::CONFLICT, format!("request is already {status}")));
+        let approval_id = uuid::Uuid::new_v4().to_string();
+        tx.execute(
+            "INSERT INTO approvals (id, request_id, action, actor_id, comment, created_at) VALUES (?1, ?2, 'reject', ?3, NULL, ?4)",
+            rusqlite::params![approval_id, id, user.user, now],
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
+        state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
+            event: "request_rejected".into(),
+            request_id: id.clone(),
+            user: user.user.clone(),
+            operation: "".into(),
+            environment: environment.clone().into(),
+            database: database_name.clone().into(),
+            detail: "".into(),
+            approved_by: None,
+            reason: None,
+        });
     }
 
-    // Only admin or the requester can reject
-    if user.role != dbward_core::Role::Admin && user.user != req_user {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "only admin or the requester can reject".into(),
-        ));
-    }
-
-    let now = chrono::Utc::now().to_rfc3339();
-    let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    tx.execute(
-        "UPDATE requests SET status = 'rejected', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
-        rusqlite::params![now, now, id],
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let approval_id = uuid::Uuid::new_v4().to_string();
-    tx.execute(
-        "INSERT INTO approvals (id, request_id, action, actor_id, comment, created_at) VALUES (?1, ?2, 'reject', ?3, NULL, ?4)",
-        rusqlite::params![approval_id, id, user.user, now],
-    )
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
-    state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
-        event: "request_rejected".into(),
-        request_id: id.clone(),
-        user: user.user.clone(),
-        operation: "".into(),
-        environment: environment.clone().into(),
-        database: database_name.clone().into(),
-        detail: "".into(),
-        approved_by: None,
-        reason: None,
-    });
+    state.request_notifier.notify(&id).await;
 
     Ok(Json(json!({"id": id, "status": "rejected"})))
 }
@@ -487,37 +502,62 @@ async fn get_request(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    let wait: u64 = params
+        .get("wait")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+        .min(60);
 
-    let conn = state.sqlite.lock().await;
+    let build_response = |conn: &rusqlite::Connection, id: &str, state: &AppState| -> Result<serde_json::Value, (StatusCode, String)> {
+        let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at): (String, String, String, String, String, String, String, String, String, Option<String>) = conn
+            .query_row(
+                "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at FROM requests WHERE id = ?1",
+                rusqlite::params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
+            )
+            .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
-    let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at): (String, String, String, String, String, String, String, String, String, Option<String>) = conn
-        .query_row(
-            "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at FROM requests WHERE id = ?1",
-            rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
-        )
-        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+        let mut resp = json!({
+            "id": id_val, "created_by": created_by, "operation": operation,
+            "environment": environment, "database_name": database_name, "detail": detail, "status": status,
+            "created_at": created_at, "updated_at": updated_at, "resolved_at": resolved_at,
+        });
 
-    if user.role != dbward_core::Role::Admin && user.user != created_by {
-        return Err((StatusCode::FORBIDDEN, "request access denied".into()));
-    }
+        if status == "approved" || status == "auto_approved" || status == "break_glass" {
+            let token = state.token_signer.issue(id, &operation, &environment, &database_name, &detail);
+            resp["execution_token"] = serde_json::to_value(token)
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
 
-    let mut resp = json!({
-        "id": id_val, "created_by": created_by, "operation": operation,
-        "environment": environment, "database_name": database_name, "detail": detail, "status": status,
-        "created_at": created_at, "updated_at": updated_at, "resolved_at": resolved_at,
-    });
+        Ok(resp)
+    };
 
-    // Only issue token for approved/auto_approved (not executed/failed/rejected)
-    if status == "approved" || status == "auto_approved" || status == "break_glass" {
-        let token =
-            state
-                .token_signer
-                .issue(&id, &operation, &environment, &database_name, &detail);
-        resp["execution_token"] = serde_json::to_value(token)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // First read
+    let (resp, status) = {
+        let conn = state.sqlite.lock().await;
+        let resp = build_response(&conn, &id, &state)?;
+        let created_by = resp["created_by"].as_str().unwrap_or("");
+        if user.role != dbward_core::Role::Admin && user.user != created_by {
+            return Err((StatusCode::FORBIDDEN, "request access denied".into()));
+        }
+        let status = resp["status"].as_str().unwrap_or("").to_string();
+        (resp, status)
+    };
+
+    // Long-poll: wait for status change on non-terminal states
+    if wait > 0 && ["pending", "approved", "dispatched", "running"].contains(&status.as_str()) {
+        let notify = state.request_notifier.subscribe(&id).await;
+        tokio::select! {
+            _ = notify.notified() => {},
+            _ = tokio::time::sleep(std::time::Duration::from_secs(wait)) => {},
+        }
+        // Re-read after notification
+        let conn = state.sqlite.lock().await;
+        let resp = build_response(&conn, &id, &state)?;
+        return Ok(Json(resp));
     }
 
     Ok(Json(resp))
@@ -627,8 +667,8 @@ async fn list_audit(
             }))
         })
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({"audit_log": rows, "total": total, "limit": limit, "offset": offset})))
 }
@@ -853,7 +893,7 @@ async fn agent_poll(
          VALUES (?1, ?2, ?3, ?4, ?4)
          ON CONFLICT(id) DO UPDATE SET capabilities_json = ?3, last_seen_at = ?4",
         rusqlite::params![user.user, user.token_id, caps_json, now],
-    ).ok();
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("agent registration failed: {e}")))?;
 
     let mut stmt = conn
         .prepare(
@@ -877,7 +917,9 @@ async fn agent_poll(
             }))
         })
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .filter_map(|r| r.ok())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .into_iter()
         .filter(|r| {
             let db = r["database_name"].as_str().unwrap_or("");
             let env = r["environment"].as_str().unwrap_or("");
@@ -1023,7 +1065,7 @@ async fn agent_result(
                 rusqlite::params![request_id],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?)),
             )
-            .unwrap_or_default();
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("request lookup failed: {e}")))?;
 
         let audit_id = uuid::Uuid::new_v4().to_string();
         let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1063,6 +1105,8 @@ async fn agent_result(
         slot.notify.notify_waiters();
     }
 
+    state.request_notifier.notify(&request_id).await;
+
     Ok(Json(
         json!({"status": req_status, "request_id": request_id}),
     ))
@@ -1101,8 +1145,8 @@ async fn list_workflows(
             }))
         })
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({"workflows": rows})))
 }
@@ -1292,8 +1336,8 @@ async fn list_execution_policies(
             }))
         })
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({"execution_policies": rows})))
 }
@@ -1477,8 +1521,8 @@ async fn list_result_policies(
             }))
         })
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({"result_policies": rows})))
 }
@@ -1663,8 +1707,8 @@ async fn list_notification_policies(
             }))
         })
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({"notification_policies": rows})))
 }

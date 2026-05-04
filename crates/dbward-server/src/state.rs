@@ -56,6 +56,38 @@ impl ResultChannels {
     }
 }
 
+/// Notifies long-polling GET /api/requests/{id}?wait= when status changes.
+pub struct RequestNotifier {
+    notifiers: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
+}
+
+impl RequestNotifier {
+    pub fn new() -> Self {
+        Self {
+            notifiers: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub async fn subscribe(&self, request_id: &str) -> Arc<tokio::sync::Notify> {
+        self.notifiers
+            .lock()
+            .await
+            .entry(request_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Notify::new()))
+            .clone()
+    }
+
+    pub async fn notify(&self, request_id: &str) {
+        if let Some(n) = self.notifiers.lock().await.get(request_id) {
+            n.notify_waiters();
+        }
+    }
+
+    pub async fn remove(&self, request_id: &str) {
+        self.notifiers.lock().await.remove(request_id);
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub sqlite: Arc<Mutex<Connection>>,
@@ -66,6 +98,7 @@ pub struct AppState {
     pub policy: Arc<PolicyConfig>,
     pub result_channels: Arc<ResultChannels>,
     pub retention: RetentionConfig,
+    pub request_notifier: Arc<RequestNotifier>,
 }
 
 #[derive(Debug, Clone)]

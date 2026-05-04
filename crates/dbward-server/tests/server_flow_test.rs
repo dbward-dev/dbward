@@ -53,6 +53,7 @@ fn test_state() -> AppState {
         policy: Arc::new(Default::default()),
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
+        request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
     }
 }
 
@@ -735,6 +736,7 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         policy: Arc::new(Default::default()),
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
+        request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
     };
     let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
         .await
@@ -1027,7 +1029,7 @@ async fn agent_token_cannot_approve() {
             .uri("/api/requests")
             .header("authorization", auth_header(&alice_token))
             .header("content-type", "application/json")
-            .body(Body::from(r#"{"operation":"execute","environment":"production","database":"default","detail":"SELECT 1"}"#))
+            .body(Body::from(r#"{"operation":"execute_query","environment":"production","database":"default","detail":"SELECT 1"}"#))
             .unwrap(),
     ).await.unwrap();
     let body = body_json(resp).await;
@@ -1159,7 +1161,7 @@ async fn requester_can_reject_own_request() {
             .uri("/api/requests")
             .header("authorization", auth_header(&alice_token))
             .header("content-type", "application/json")
-            .body(Body::from(r#"{"operation":"execute","environment":"production","database":"default","detail":"SELECT 1"}"#))
+            .body(Body::from(r#"{"operation":"execute_query","environment":"production","database":"default","detail":"SELECT 1"}"#))
             .unwrap(),
     ).await.unwrap();
     let body = body_json(resp).await;
@@ -1213,7 +1215,7 @@ async fn dispatch_requires_owner_or_admin() {
             .uri("/api/requests")
             .header("authorization", auth_header(&alice_token))
             .header("content-type", "application/json")
-            .body(Body::from(r#"{"operation":"execute","environment":"development","database":"default","detail":"SELECT 1"}"#))
+            .body(Body::from(r#"{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT 1"}"#))
             .unwrap(),
     ).await.unwrap();
     let body = body_json(resp).await;
@@ -1257,7 +1259,7 @@ async fn agent_capability_mismatch_blocks_claim() {
             .uri("/api/requests")
             .header("authorization", auth_header(&alice_token))
             .header("content-type", "application/json")
-            .body(Body::from(r#"{"operation":"execute","environment":"development","database":"mydb","detail":"SELECT 1"}"#))
+            .body(Body::from(r#"{"operation":"execute_query","environment":"development","database":"mydb","detail":"SELECT 1"}"#))
             .unwrap(),
     ).await.unwrap();
     let body = body_json(resp).await;

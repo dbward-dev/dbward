@@ -8,7 +8,7 @@ mod state;
 pub mod token;
 pub mod webhook;
 
-pub use state::{AppState, ResultChannels};
+pub use state::{AppState, RequestNotifier, ResultChannels};
 
 use std::net::SocketAddr;
 

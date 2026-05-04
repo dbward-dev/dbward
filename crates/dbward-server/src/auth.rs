@@ -193,6 +193,7 @@ mod tests {
             policy: Arc::new(Default::default()),
             result_channels: Arc::new(crate::state::ResultChannels::new()),
             retention: Default::default(),
+            request_notifier: Arc::new(crate::state::RequestNotifier::new()),
         }
     }
 

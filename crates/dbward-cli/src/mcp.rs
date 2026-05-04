@@ -144,7 +144,8 @@ async fn handle_tools_call(
         }
         "dbward_check_request" => {
             let req_id = args["request_id"].as_str().unwrap_or("");
-            check_request(client, req_id).await
+            let timeout = args["timeout"].as_u64().unwrap_or(30);
+            check_request(client, req_id, timeout).await
         }
         "dbward_get_result" => {
             let req_id = args["request_id"].as_str().unwrap_or("");
@@ -220,12 +221,13 @@ fn format_result(resp: &Value) -> Result<String, String> {
 async fn check_request(
     client: &crate::server_client::ServerClient,
     request_id: &str,
+    timeout: u64,
 ) -> Result<String, String> {
     if request_id.is_empty() {
         return Err("request_id is required".to_string());
     }
     let resp = client
-        .get_request(request_id)
+        .get_request_with_wait(request_id, timeout)
         .await
         .map_err(|e| e.to_string())?;
     let status = resp["status"].as_str().unwrap_or("unknown");
@@ -337,11 +339,12 @@ fn tools_definitions() -> Value {
         },
         {
             "name": "dbward_check_request",
-            "description": "Check the status of a request",
+            "description": "Check request status. Waits up to timeout seconds for status change.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "request_id": {"type": "string", "description": "Request ID to check"}
+                    "request_id": {"type": "string", "description": "Request ID to check"},
+                    "timeout": {"type": "integer", "description": "Seconds to wait for status change (default 30, max 60)", "default": 30}
                 },
                 "required": ["request_id"]
             }

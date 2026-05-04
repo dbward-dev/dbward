@@ -98,11 +98,20 @@ impl ServerClient {
             .map_err(|e| Error::Server(format!("invalid response: {e}")))
     }
 
-    /// Get a single request by ID.
+    /// Get a single request by ID, optionally long-polling for status change.
     pub async fn get_request(&self, request_id: &str) -> Result<Value, Error> {
+        self.get_request_with_wait(request_id, 0).await
+    }
+
+    /// Get a single request by ID with long-poll wait (seconds).
+    pub async fn get_request_with_wait(&self, request_id: &str, wait: u64) -> Result<Value, Error> {
+        let mut url = format!("{}/api/requests/{}", self.base_url, request_id);
+        if wait > 0 {
+            url = format!("{url}?wait={wait}");
+        }
         let resp = self
             .client
-            .get(format!("{}/api/requests/{}", self.base_url, request_id))
+            .get(&url)
             .bearer_auth(&self.api_token)
             .send()
             .await
