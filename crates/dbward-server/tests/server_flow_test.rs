@@ -45,7 +45,7 @@ fn test_state() -> AppState {
             require_reason: false,
         },
     ];
-    db::sync_workflows(&conn, &workflows).unwrap();
+    db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
@@ -1840,7 +1840,7 @@ fn test_state_multistep() -> AppState {
             require_reason: false,
         },
     ];
-    db::sync_workflows(&conn, &workflows).unwrap();
+    db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),

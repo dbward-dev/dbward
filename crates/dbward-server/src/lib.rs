@@ -22,7 +22,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
         loop {
             interval.tick().await;
             let conn = sqlite.lock().await;
-            if let Ok(n) = db::reclaim_expired_leases(&conn) {
+            if let Ok(n) = db::maintenance::reclaim_expired_leases(&conn) {
                 if n > 0 {
                     eprintln!("reclaimed {n} expired lease(s)");
                 }
@@ -39,7 +39,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
             interval.tick().await;
             let conn = sqlite2.lock().await;
             if let Ok((r, a)) =
-                db::purge_old_records(&conn, retention.request_ttl_days, retention.audit_ttl_days)
+                db::maintenance::purge_old_records(&conn, retention.request_ttl_days, retention.audit_ttl_days)
             {
                 if r > 0 || a > 0 {
                     eprintln!("purged {r} old request(s), {a} old audit log(s)");

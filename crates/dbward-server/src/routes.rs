@@ -505,7 +505,7 @@ async fn create_request(
 
     // Unified policy evaluation: workflows first, static policy fallback
     let conn = state.sqlite.lock().await;
-    let decision = crate::db::evaluate_approval_policy(
+    let decision = crate::db::policy_repo::evaluate_approval_policy(
         &conn,
         &state.policy,
         database_name,
@@ -543,7 +543,7 @@ async fn create_request(
         let token = state
             .token_signer
             .issue(&id, operation, environment, database_name, detail);
-        let notif_hooks = crate::db::get_notification_webhooks(&conn, database_name, environment);
+        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
         state.webhooks.dispatch_with_policy(
             notif_hooks,
             crate::webhook::WebhookEvent {
@@ -573,7 +573,7 @@ async fn create_request(
             .as_deref()
             .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(s).ok())
             .and_then(|steps| compute_next_step(&steps, 0));
-        let notif_hooks = crate::db::get_notification_webhooks(&conn, database_name, environment);
+        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
         state.webhooks.dispatch_with_policy(
             notif_hooks,
             crate::webhook::WebhookEvent {
@@ -694,7 +694,7 @@ async fn approve_request_inner(
         let token = state
             .token_signer
             .issue(id, &operation, &environment, &database_name, &detail);
-        let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
+        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
         return Ok(ApproveResult {
             response: json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
             notif_hooks,
@@ -859,7 +859,7 @@ async fn approve_request_inner(
         let token = state
             .token_signer
             .issue(id, &operation, &environment, &database_name, &detail);
-        let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
+        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
         Ok(ApproveResult {
             response: json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
             notif_hooks,
@@ -889,7 +889,7 @@ async fn approve_request_inner(
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
-        let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
+        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
 
         let new_current = steps
             .iter()
@@ -1038,7 +1038,7 @@ async fn reject_request(
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
-        let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
+        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
         state.webhooks.dispatch_with_policy(
             notif_hooks,
             crate::webhook::WebhookEvent {
@@ -1350,7 +1350,7 @@ async fn dispatch_request(
     // For executed/failed: check re-execution policy before attempting atomic update
     if status == "executed" || status == "failed" {
         let (max_exec, window_secs, retry) =
-            crate::db::get_execution_policy(&conn, &database_name, &environment);
+            crate::db::policy_repo::get_execution_policy(&conn, &database_name, &environment);
 
         if let Some(ref resolved) = resolved_at {
             if let Ok(resolved_time) = chrono::DateTime::parse_from_rfc3339(resolved) {
@@ -1429,7 +1429,7 @@ async fn stream_result(
 
     let access_roles = {
         let conn = state.sqlite.lock().await;
-        let (_, access_roles) = crate::db::get_result_policy(&conn, &database_name, &environment);
+        let (_, access_roles) = crate::db::policy_repo::get_result_policy(&conn, &database_name, &environment);
         access_roles
     };
 

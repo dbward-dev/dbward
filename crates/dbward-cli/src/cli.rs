@@ -745,13 +745,13 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
             dbward_server::db::init(&conn)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
-            dbward_server::db::sync_workflows(&conn, &server_cfg.workflows)
+            dbward_server::db::policy_repo::sync_workflows(&conn, &server_cfg.workflows)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
-            dbward_server::db::sync_execution_policies(&conn, &server_cfg.execution_policies)
+            dbward_server::db::policy_repo::sync_execution_policies(&conn, &server_cfg.execution_policies)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
-            dbward_server::db::sync_result_policies(&conn, &server_cfg.result_policies)
+            dbward_server::db::policy_repo::sync_result_policies(&conn, &server_cfg.result_policies)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
-            dbward_server::db::sync_notification_policies(&conn, &server_cfg.notification_policies)
+            dbward_server::db::policy_repo::sync_notification_policies(&conn, &server_cfg.notification_policies)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
             let data_path = std::path::Path::new(data)
                 .parent()
@@ -889,7 +889,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         steps: vec![],
         require_reason: false,
     }];
-    dbward_server::db::sync_workflows(&conn, &workflows)
+    dbward_server::db::policy_repo::sync_workflows(&conn, &workflows)
         .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
 
     let token_signer = dbward_server::token::TokenSigner::load_or_generate(&dev_dir)
