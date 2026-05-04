@@ -331,6 +331,44 @@ pub fn evaluate_workflow(
     None
 }
 
+/// Unified approval policy decision.
+pub struct ApprovalDecision {
+    pub needs_approval: bool,
+    pub workflow_id: Option<String>,
+    pub workflow_snapshot_json: Option<String>,
+    pub require_reason: bool,
+}
+
+/// Single entry point for approval policy evaluation.
+/// Checks workflows table first, falls back to static PolicyConfig.
+pub fn evaluate_approval_policy(
+    conn: &Connection,
+    policy: &crate::policy::PolicyConfig,
+    database: &str,
+    environment: &str,
+    operation: &str,
+    role: &str,
+) -> ApprovalDecision {
+    if let Some((wf_id, steps, require_reason)) = evaluate_workflow(conn, database, environment, operation) {
+        let needs_approval = !steps.is_empty();
+        let snapshot = serde_json::to_string(&steps).unwrap_or_else(|_| "[]".into());
+        ApprovalDecision {
+            needs_approval,
+            workflow_id: Some(wf_id),
+            workflow_snapshot_json: Some(snapshot),
+            require_reason,
+        }
+    } else {
+        let action = policy.evaluate(environment, operation, role);
+        ApprovalDecision {
+            needs_approval: action == "require_approval",
+            workflow_id: None,
+            workflow_snapshot_json: None,
+            require_reason: false,
+        }
+    }
+}
+
 /// Sync execution policies from TOML config into SQLite.
 pub fn sync_execution_policies(
     conn: &Connection,

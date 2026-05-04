@@ -495,44 +495,20 @@ async fn create_request(
         ));
     }
 
-    // Workflow evaluation: check workflows table first, then fall back to static policy
+    // Unified policy evaluation: workflows first, static policy fallback
     let conn = state.sqlite.lock().await;
-    let workflow_eval = crate::db::evaluate_workflow(&conn, database_name, environment, operation);
-    let (policy_action, workflow_require_reason, workflow_id, workflow_snapshot_json) =
-        match &workflow_eval {
-            Some((wf_id, steps, require_reason)) => {
-                let action = if steps.is_empty() {
-                    "auto_approve"
-                } else {
-                    "require_approval"
-                };
-                let snapshot = serde_json::to_string(steps).unwrap_or_else(|_| "[]".into());
-                (
-                    action.to_string(),
-                    *require_reason,
-                    Some(wf_id.clone()),
-                    Some(snapshot),
-                )
-            }
-            None => (
-                state
-                    .policy
-                    .evaluate(environment, operation, user.effective_permission())
-                    .to_string(),
-                false,
-                None,
-                None,
-            ),
-        };
+    let decision = crate::db::evaluate_approval_policy(
+        &conn, &state.policy, database_name, environment, operation, user.effective_permission(),
+    );
 
-    if !emergency && workflow_require_reason && reason.as_ref().map_or(true, |r| r.is_empty()) {
+    if !emergency && decision.require_reason && reason.as_ref().map_or(true, |r| r.is_empty()) {
         return Err((
             StatusCode::BAD_REQUEST,
             "reason is required by workflow policy".into(),
         ));
     }
 
-    let needs_approval = !emergency && policy_action == "require_approval";
+    let needs_approval = !emergency && decision.needs_approval;
 
     let status = if emergency {
         "break_glass"
@@ -547,7 +523,7 @@ async fn create_request(
 
     conn.execute(
         "INSERT INTO requests (id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, emergency, reason, workflow_id, workflow_snapshot_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        rusqlite::params![id, user.user, operation, environment, database_name, detail, status, now, now, emergency, reason, workflow_id, workflow_snapshot_json],
+        rusqlite::params![id, user.user, operation, environment, database_name, detail, status, now, now, emergency, reason, decision.workflow_id, decision.workflow_snapshot_json],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -580,7 +556,7 @@ async fn create_request(
             Json(json!({"id": id, "status": "break_glass", "execution_token": token})),
         ))
     } else if needs_approval {
-        let next_step = workflow_snapshot_json
+        let next_step = decision.workflow_snapshot_json
             .as_deref()
             .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(s).ok())
             .and_then(|steps| compute_next_step(&steps, 0));
