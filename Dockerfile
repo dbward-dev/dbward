@@ -29,13 +29,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 COPY . .
 
-# Remove cargo fingerprints so incremental build detects source changes
-RUN --mount=type=cache,target=/app/target \
-    rm -rf /app/target/release/.fingerprint/dbward-*
-
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    cargo build --release --package dbward --bin dbward \
+    rm -rf /app/target/release/.fingerprint/dbward-* \
+ && cargo build --release --package dbward --bin dbward \
  && install -Dm755 target/release/dbward /out/dbward
 
 FROM debian:bookworm-slim AS runtime
