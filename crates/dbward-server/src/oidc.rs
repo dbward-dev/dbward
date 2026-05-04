@@ -74,21 +74,33 @@ impl OidcVerifier {
         let kid = header.kid.as_deref().unwrap_or("");
 
         let key = self.get_decoding_key(kid).await?;
+        let jwk = self.get_jwk(kid).await?;
 
-        let mut validation = Validation::new(Algorithm::RS256);
+        // Determine algorithm from JWK's alg field, falling back to header's alg
+        let alg = jwk.alg.as_deref()
+            .and_then(|a| match a {
+                "RS256" => Some(Algorithm::RS256),
+                "RS384" => Some(Algorithm::RS384),
+                "RS512" => Some(Algorithm::RS512),
+                "ES256" => Some(Algorithm::ES256),
+                "ES384" => Some(Algorithm::ES384),
+                _ => None,
+            })
+            .unwrap_or_else(|| match jwk.kty.as_str() {
+                "RSA" => Algorithm::RS256,
+                "EC" => match jwk.crv.as_deref() {
+                    Some("P-384") => Algorithm::ES384,
+                    _ => Algorithm::ES256,
+                },
+                _ => Algorithm::RS256,
+            });
+
+        let mut validation = Validation::new(alg);
         validation.set_audience(&[&self.config.client_id]);
         validation.set_issuer(&[&self.config.issuer]);
         validation.leeway = 30;
 
-        // Also try ES256
         let claims = decode::<Claims>(token, &key, &validation)
-            .or_else(|_| {
-                let mut v = Validation::new(Algorithm::ES256);
-                v.set_audience(&[&self.config.client_id]);
-                v.set_issuer(&[&self.config.issuer]);
-                v.leeway = 30;
-                decode::<Claims>(token, &key, &v)
-            })
             .map_err(|e| format!("JWT verification failed: {e}"))?
             .claims;
 
@@ -143,13 +155,18 @@ impl OidcVerifier {
     }
 
     async fn get_decoding_key(&self, kid: &str) -> Result<DecodingKey, String> {
+        let jwk = self.get_jwk(kid).await?;
+        jwk_to_decoding_key(&jwk)
+    }
+
+    async fn get_jwk(&self, kid: &str) -> Result<Jwk, String> {
         // Check cache
         {
             let cache = self.jwks.read().await;
             if let Some(ref cached) = *cache {
                 if cached.fetched_at.elapsed() < Duration::from_secs(3600) {
                     if let Some(key) = find_key(&cached.keys, kid) {
-                        return jwk_to_decoding_key(&key);
+                        return Ok(key);
                     }
                 }
             }
@@ -160,8 +177,7 @@ impl OidcVerifier {
 
         let cache = self.jwks.read().await;
         let cached = cache.as_ref().ok_or("JWKS not available")?;
-        let key = find_key(&cached.keys, kid).ok_or(format!("kid '{kid}' not found in JWKS"))?;
-        jwk_to_decoding_key(&key)
+        find_key(&cached.keys, kid).ok_or(format!("kid '{kid}' not found in JWKS"))
     }
 
     async fn refresh_jwks(&self) -> Result<(), String> {
@@ -219,7 +235,8 @@ impl OidcVerifier {
 
 fn find_key(keys: &[Jwk], kid: &str) -> Option<Jwk> {
     if kid.is_empty() {
-        return keys.first().cloned();
+        // Only use first key if JWKS has exactly one key (single-key set)
+        return if keys.len() == 1 { keys.first().cloned() } else { None };
     }
     keys.iter().find(|k| k.kid.as_deref() == Some(kid)).cloned()
 }
