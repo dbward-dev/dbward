@@ -138,7 +138,7 @@ async fn production_requires_approval() {
     let resp = app
         .clone()
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/approve"))
+            Request::post(format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&bob_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -189,7 +189,7 @@ async fn self_approve_rejected() {
     // Alice tries to approve her own request
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/approve"))
+            Request::post(format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&alice_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -230,7 +230,7 @@ async fn non_admin_cannot_approve_requests() {
 
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/approve"))
+            Request::post(format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&bob_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -274,7 +274,7 @@ async fn complete_flow_via_agent() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+            Request::post(format!("/api/requests/{request_id}/dispatch"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -287,7 +287,7 @@ async fn complete_flow_via_agent() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/agent/jobs/{request_id}/claim"))
+            Request::post(format!("/api/agent/jobs/{request_id}/claim"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -303,7 +303,7 @@ async fn complete_flow_via_agent() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/agent/jobs/{exec_id}/result"))
+            Request::post(format!("/api/agent/jobs/{exec_id}/result"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from(
@@ -319,7 +319,7 @@ async fn complete_flow_via_agent() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::get(&format!("/api/requests/{request_id}"))
+            Request::get(format!("/api/requests/{request_id}"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -363,7 +363,7 @@ async fn non_admin_cannot_read_other_users_request() {
 
     let resp = app
         .oneshot(
-            Request::get(&format!("/api/requests/{request_id}"))
+            Request::get(format!("/api/requests/{request_id}"))
                 .header("authorization", auth_header(&bob_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -438,7 +438,7 @@ async fn agent_full_flow() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+            Request::post(format!("/api/requests/{request_id}/dispatch"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -470,7 +470,7 @@ async fn agent_full_flow() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/agent/jobs/{request_id}/claim"))
+            Request::post(format!("/api/agent/jobs/{request_id}/claim"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({"agent_id": "agent-1"}).to_string()))
@@ -489,7 +489,7 @@ async fn agent_full_flow() {
     let stream_handle = tokio::spawn(async move {
         let app = routes::router(state2);
         app.oneshot(
-            Request::get(&format!("/api/requests/{request_id2}/result/stream"))
+            Request::get(format!("/api/requests/{request_id2}/result/stream"))
                 .header("authorization", auth_header(&alice_token2))
                 .body(Body::empty())
                 .unwrap(),
@@ -504,7 +504,7 @@ async fn agent_full_flow() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/agent/jobs/{exec_id}/result"))
+            Request::post(format!("/api/agent/jobs/{exec_id}/result"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from(
@@ -527,7 +527,7 @@ async fn agent_full_flow() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::get(&format!("/api/requests/{request_id}"))
+            Request::get(format!("/api/requests/{request_id}"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -567,7 +567,7 @@ async fn stream_result_after_agent_posts_still_succeeds() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+            Request::post(format!("/api/requests/{request_id}/dispatch"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -579,7 +579,7 @@ async fn stream_result_after_agent_posts_still_succeeds() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/agent/jobs/{request_id}/claim"))
+            Request::post(format!("/api/agent/jobs/{request_id}/claim"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({"agent_id": "agent-1"}).to_string()))
@@ -594,7 +594,7 @@ async fn stream_result_after_agent_posts_still_succeeds() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/agent/jobs/{exec_id}/result"))
+            Request::post(format!("/api/agent/jobs/{exec_id}/result"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from(
@@ -609,7 +609,7 @@ async fn stream_result_after_agent_posts_still_succeeds() {
     let app = routes::router(state);
     let resp = app
         .oneshot(
-            Request::get(&format!("/api/requests/{request_id}/result/stream"))
+            Request::get(format!("/api/requests/{request_id}/result/stream"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -674,7 +674,7 @@ async fn agent_poll_empty_capability_arrays_do_not_break_query() {
     let resp = app
         .clone()
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+            Request::post(format!("/api/requests/{request_id}/dispatch"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -730,7 +730,7 @@ async fn agent_poll_wildcard_capability_arrays_match_all_values() {
     let resp = app
         .clone()
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+            Request::post(format!("/api/requests/{request_id}/dispatch"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -788,7 +788,7 @@ async fn agent_cannot_claim_pending() {
     let app = routes::router(state);
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/agent/jobs/{request_id}/claim"))
+            Request::post(format!("/api/agent/jobs/{request_id}/claim"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({"agent_id": "agent-1"}).to_string()))
@@ -946,7 +946,7 @@ async fn result_stream_honors_result_policy_access() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+            Request::post(format!("/api/requests/{request_id}/dispatch"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -958,7 +958,7 @@ async fn result_stream_honors_result_policy_access() {
     let app = routes::router(state);
     let resp = app
         .oneshot(
-            Request::get(&format!("/api/requests/{request_id}/result/stream"))
+            Request::get(format!("/api/requests/{request_id}/result/stream"))
                 .header("authorization", auth_header(&bob_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -999,7 +999,7 @@ async fn only_claiming_agent_can_submit_result() {
 
     let app = routes::router(state.clone());
     app.oneshot(
-        Request::post(&format!("/api/requests/{request_id}/dispatch"))
+        Request::post(format!("/api/requests/{request_id}/dispatch"))
             .header("authorization", auth_header(&alice_token))
             .body(Body::empty())
             .unwrap(),
@@ -1010,7 +1010,7 @@ async fn only_claiming_agent_can_submit_result() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/agent/jobs/{request_id}/claim"))
+            Request::post(format!("/api/agent/jobs/{request_id}/claim"))
                 .header("authorization", auth_header(&agent1_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({"agent_id": "spoofed"}).to_string()))
@@ -1025,7 +1025,7 @@ async fn only_claiming_agent_can_submit_result() {
     let app = routes::router(state);
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/agent/jobs/{exec_id}/result"))
+            Request::post(format!("/api/agent/jobs/{exec_id}/result"))
                 .header("authorization", auth_header(&agent2_token))
                 .header("content-type", "application/json")
                 .body(Body::from(
@@ -1083,7 +1083,7 @@ async fn failed_request_still_respects_max_executions() {
 
     let app = routes::router(state.clone());
     app.oneshot(
-        Request::post(&format!("/api/requests/{request_id}/dispatch"))
+        Request::post(format!("/api/requests/{request_id}/dispatch"))
             .header("authorization", auth_header(&alice_token))
             .body(Body::empty())
             .unwrap(),
@@ -1094,7 +1094,7 @@ async fn failed_request_still_respects_max_executions() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/agent/jobs/{request_id}/claim"))
+            Request::post(format!("/api/agent/jobs/{request_id}/claim"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -1108,7 +1108,7 @@ async fn failed_request_still_respects_max_executions() {
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/agent/jobs/{exec_id}/result"))
+            Request::post(format!("/api/agent/jobs/{exec_id}/result"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from(
@@ -1123,7 +1123,7 @@ async fn failed_request_still_respects_max_executions() {
     let app = routes::router(state);
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+            Request::post(format!("/api/requests/{request_id}/dispatch"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -1168,7 +1168,7 @@ async fn agent_token_cannot_approve() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/requests/{id}/approve"))
+                .uri(format!("/api/requests/{id}/approve"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from("{}"))
@@ -1335,7 +1335,7 @@ async fn requester_can_reject_own_request() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/requests/{id}/reject"))
+                .uri(format!("/api/requests/{id}/reject"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -1370,7 +1370,7 @@ async fn current_step_approver_can_reject_request() {
 
     let resp = app
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/reject"))
+            Request::post(format!("/api/requests/{request_id}/reject"))
                 .header("authorization", auth_header(&lead_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -1437,7 +1437,7 @@ async fn dispatch_requires_owner_or_admin() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/requests/{id}/dispatch"))
+                .uri(format!("/api/requests/{id}/dispatch"))
                 .header("authorization", auth_header(&bob_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -1452,7 +1452,7 @@ async fn dispatch_requires_owner_or_admin() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/requests/{id}/dispatch"))
+                .uri(format!("/api/requests/{id}/dispatch"))
                 .header("authorization", auth_header(&admin_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -1493,7 +1493,7 @@ async fn agent_capability_mismatch_blocks_claim() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/requests/{id}/dispatch"))
+                .uri(format!("/api/requests/{id}/dispatch"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -1526,7 +1526,7 @@ async fn agent_capability_mismatch_blocks_claim() {
         .oneshot(
             Request::builder()
                 .method("POST")
-                .uri(&format!("/api/agent/jobs/{id}/claim"))
+                .uri(format!("/api/agent/jobs/{id}/claim"))
                 .header("authorization", auth_header(&agent_token))
                 .header("content-type", "application/json")
                 .body(Body::from("{}"))
@@ -1625,7 +1625,7 @@ async fn get_request_and_pending_for_me_include_reason() {
     let resp = app
         .clone()
         .oneshot(
-            Request::get(&format!("/api/requests/{request_id}"))
+            Request::get(format!("/api/requests/{request_id}"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -1706,7 +1706,7 @@ async fn list_requests_shows_only_approvable_pending_requests_without_snapshot_l
 
     app.clone()
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/approve"))
+            Request::post(format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&lead_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -1980,7 +1980,7 @@ async fn multi_step_approval_team_lead_then_dba() {
     let resp = app
         .clone()
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/approve"))
+            Request::post(format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&dba_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -1994,7 +1994,7 @@ async fn multi_step_approval_team_lead_then_dba() {
     let resp = app
         .clone()
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/approve"))
+            Request::post(format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&lead_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -2014,7 +2014,7 @@ async fn multi_step_approval_team_lead_then_dba() {
     let resp = app
         .clone()
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/approve"))
+            Request::post(format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&dba_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -2059,7 +2059,7 @@ async fn mode_any_either_role_can_approve() {
     let resp = app
         .clone()
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/approve"))
+            Request::post(format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&dba_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -2103,7 +2103,7 @@ async fn same_user_cannot_approve_twice_in_same_step() {
     let resp = app
         .clone()
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/approve"))
+            Request::post(format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&lead_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -2117,7 +2117,7 @@ async fn same_user_cannot_approve_twice_in_same_step() {
     let resp = app
         .clone()
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/approve"))
+            Request::post(format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&lead_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -2154,7 +2154,7 @@ async fn wrong_role_cannot_approve_current_step() {
     let resp = app
         .clone()
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/approve"))
+            Request::post(format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&dev_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -2191,7 +2191,7 @@ async fn get_request_includes_approval_progress() {
     let resp = app
         .clone()
         .oneshot(
-            Request::get(&format!("/api/requests/{request_id}"))
+            Request::get(format!("/api/requests/{request_id}"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),
@@ -2208,7 +2208,7 @@ async fn get_request_includes_approval_progress() {
     // Lead approves step 0
     app.clone()
         .oneshot(
-            Request::post(&format!("/api/requests/{request_id}/approve"))
+            Request::post(format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&lead_token))
                 .header("content-type", "application/json")
                 .body(Body::from(json!({}).to_string()))
@@ -2221,7 +2221,7 @@ async fn get_request_includes_approval_progress() {
     let resp = app
         .clone()
         .oneshot(
-            Request::get(&format!("/api/requests/{request_id}"))
+            Request::get(format!("/api/requests/{request_id}"))
                 .header("authorization", auth_header(&alice_token))
                 .body(Body::empty())
                 .unwrap(),

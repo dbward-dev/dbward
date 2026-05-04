@@ -157,10 +157,10 @@ pub(crate) async fn agent_claim(
     )?;
 
     // Verify agent has capability for this job
-    if let Some(caps_json) = crate::db::agent_repo::get_agent_capabilities(&conn, &agent_id) {
-        if let Ok(caps) = serde_json::from_str::<serde_json::Value>(&caps_json) {
+    if let Some(caps_json) = crate::db::agent_repo::get_agent_capabilities(&conn, &agent_id)
+        && let Ok(caps) = serde_json::from_str::<serde_json::Value>(&caps_json) {
             let matches = |arr: &serde_json::Value, val: &str| -> bool {
-                arr.as_array().map_or(true, |a| {
+                arr.as_array().is_none_or(|a| {
                     a.is_empty()
                         || a.iter()
                             .any(|v| v.as_str() == Some(val) || v.as_str() == Some("*"))
@@ -175,7 +175,6 @@ pub(crate) async fn agent_claim(
                 ));
             }
         }
-    }
 
     let token = state
         .token_signer

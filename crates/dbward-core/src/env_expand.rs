@@ -28,8 +28,8 @@ fn walk(value: &mut toml::Value, path: &str) -> Result<(), Error> {
                 walk(val, &format!("{path}[{i}]"))?;
             }
         }
-        toml::Value::String(s) => {
-            if s.contains("${") {
+        toml::Value::String(s)
+            if s.contains("${") => {
                 let mut err: Option<Error> = None;
                 let expanded = ENV_RE.replace_all(s, |caps: &regex::Captures| {
                     if err.is_some() {
@@ -38,14 +38,13 @@ fn walk(value: &mut toml::Value, path: &str) -> Result<(), Error> {
                     let var = &caps[1];
                     let default = caps.get(2).map(|m| m.as_str());
 
-                    if let Some(d) = default {
-                        if d.contains("${") {
+                    if let Some(d) = default
+                        && d.contains("${") {
                             err = Some(Error::Config(format!(
                                 "{path}: nested ${{}} expansion is not supported"
                             )));
                             return String::new();
                         }
-                    }
 
                     match std::env::var(var) {
                         Ok(v) => v,
@@ -73,7 +72,6 @@ fn walk(value: &mut toml::Value, path: &str) -> Result<(), Error> {
 
                 *s = expanded.into_owned();
             }
-        }
         _ => {}
     }
     Ok(())

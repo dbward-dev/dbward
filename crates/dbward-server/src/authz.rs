@@ -206,9 +206,7 @@ fn authz_match(
     policy_obj: Dynamic,
 ) -> Dynamic {
     let allowed = parse_dynamic::<Principal>(&sub)
-        .zip(parse_dynamic::<Resource>(&obj))
-        .and_then(|(principal, resource)| {
-            Some((
+        .zip(parse_dynamic::<Resource>(&obj)).map(|(principal, resource)| (
                 principal,
                 resource,
                 act.to_string(),
@@ -216,7 +214,6 @@ fn authz_match(
                 policy_perm.to_string(),
                 policy_obj.to_string(),
             ))
-        })
         .map(
             |(principal, resource, act, policy_sub_type, policy_perm, policy_obj)| {
                 principal.subject_type == policy_sub_type

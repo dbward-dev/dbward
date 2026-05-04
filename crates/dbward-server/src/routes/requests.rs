@@ -470,7 +470,7 @@ pub(crate) async fn create_request(
         user.effective_permission(),
     );
 
-    if !emergency && decision.require_reason && reason.as_ref().map_or(true, |r| r.is_empty()) {
+    if !emergency && decision.require_reason && reason.as_ref().is_none_or(|r| r.is_empty()) {
         return Err(crate::api_error::ApiError::bad_request(
             "reason is required by workflow policy",
         )
@@ -648,7 +648,7 @@ pub(crate) async fn reject_request(
             req_user.clone(),
             workflow_snapshot_json.as_deref(),
         )?;
-        if let Err(_) = authz::authorize_sync(&user, Action::RejectRequest, approval_resource) {
+        if authz::authorize_sync(&user, Action::RejectRequest, approval_resource).is_err() {
             let roles_str = step_roles.join(", ");
             return Err(crate::api_error::ApiError::forbidden(format!(
                 "you are not an approver for the current step (step {}/{}: {})",
@@ -691,8 +691,8 @@ pub(crate) async fn reject_request(
                 actor: user.user.clone(),
                 actor_role: Some(user.effective_permission().into()),
                 operation: "".into(),
-                environment: environment.clone().into(),
-                database: database_name.clone().into(),
+                environment: environment.clone(),
+                database: database_name.clone(),
                 detail: "".into(),
                 reason: None,
                 next_step: None,
@@ -753,11 +753,10 @@ pub(crate) async fn get_request(
         }
 
         // Include approval_progress when workflow snapshot exists
-        if let Some(ref snapshot) = workflow_snapshot_json {
-            if let Ok(steps) =
+        if let Some(ref snapshot) = workflow_snapshot_json
+            && let Ok(steps) =
                 serde_json::from_str::<Vec<crate::server_config::WorkflowStep>>(snapshot)
-            {
-                if !steps.is_empty() {
+                && !steps.is_empty() {
                     let approvals: Vec<(i64, String, String, String)> = conn
                         .prepare("SELECT step_index, actor_id, actor_role, created_at FROM approvals WHERE request_id = ?1 AND action = 'approve'")
                         .and_then(|mut stmt| {
@@ -807,8 +806,6 @@ pub(crate) async fn get_request(
                         "steps": step_views,
                     });
                 }
-            }
-        }
 
         Ok(resp)
     };
@@ -893,8 +890,8 @@ pub(crate) async fn dispatch_request(
         let (max_exec, window_secs, retry) =
             crate::db::policy_repo::get_execution_policy(&conn, &database_name, &environment);
 
-        if let Some(ref resolved) = resolved_at {
-            if let Ok(resolved_time) = chrono::DateTime::parse_from_rfc3339(resolved) {
+        if let Some(ref resolved) = resolved_at
+            && let Ok(resolved_time) = chrono::DateTime::parse_from_rfc3339(resolved) {
                 let elapsed = chrono::Utc::now().signed_duration_since(resolved_time);
                 if elapsed.num_seconds() as u64 > window_secs {
                     return Err(crate::api_error::ApiError::new(
@@ -904,7 +901,6 @@ pub(crate) async fn dispatch_request(
                     .with_code("execution_window_expired"));
                 }
             }
-        }
 
         let exec_count = crate::db::request_repo::count_executions(&conn, &id);
         if status == "failed" && !retry {

@@ -219,8 +219,8 @@ pub async fn logout() -> Result<(), String> {
     // Try to revoke at IdP
     if let Some(ref refresh) = creds.refresh_token {
         let discovery = discover(&creds.issuer).await.ok();
-        if let Some(disc) = discovery {
-            if let Some(ref revoke_url) = disc.revocation_endpoint {
+        if let Some(disc) = discovery
+            && let Some(ref revoke_url) = disc.revocation_endpoint {
                 let _ = reqwest::Client::new()
                     .post(revoke_url)
                     .form(&[
@@ -230,7 +230,6 @@ pub async fn logout() -> Result<(), String> {
                     .send()
                     .await;
             }
-        }
     }
 
     std::fs::remove_file(&path).map_err(|e| e.to_string())?;
@@ -250,18 +249,16 @@ pub fn whoami() -> Result<(), String> {
             .map_err(|e| format!("invalid credentials: {e}"))?;
 
     // Decode JWT to show identity (without verification)
-    if let Some(ref id_token) = creds.id_token {
-        if let Some(payload) = id_token.split('.').nth(1) {
+    if let Some(ref id_token) = creds.id_token
+        && let Some(payload) = id_token.split('.').nth(1) {
             use base64::Engine;
-            if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload) {
-                if let Ok(claims) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            if let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload)
+                && let Ok(claims) = serde_json::from_slice::<serde_json::Value>(&bytes) {
                     let email = claims["email"].as_str().unwrap_or("unknown");
                     let sub = claims["sub"].as_str().unwrap_or("unknown");
                     println!("Identity: {email} ({sub})");
                 }
-            }
         }
-    }
 
     println!("Issuer: {}", creds.issuer);
     println!("Expires: {}", creds.expires_at);
@@ -290,10 +287,10 @@ pub async fn load_token(issuer: &str, client_id: &str) -> Result<String, String>
 
     // Try refresh if near expiry (best-effort, don't fail if refresh fails)
     let refresh_threshold = chrono::Utc::now() + chrono::Duration::minutes(5);
-    if expires < refresh_threshold {
-        if let Some(ref refresh_token) = creds.refresh_token {
-            if let Ok(discovery) = discover(issuer).await {
-                if let Ok(resp) = reqwest::Client::new()
+    if expires < refresh_threshold
+        && let Some(ref refresh_token) = creds.refresh_token
+            && let Ok(discovery) = discover(issuer).await
+                && let Ok(resp) = reqwest::Client::new()
                     .post(&discovery.token_endpoint)
                     .form(&[
                         ("grant_type", "refresh_token"),
@@ -302,9 +299,8 @@ pub async fn load_token(issuer: &str, client_id: &str) -> Result<String, String>
                     ])
                     .send()
                     .await
-                {
-                    if resp.status().is_success() {
-                        if let Ok(token_resp) = resp.json::<TokenResponse>().await {
+                    && resp.status().is_success()
+                        && let Ok(token_resp) = resp.json::<TokenResponse>().await {
                             let new_expires = chrono::Utc::now()
                                 + chrono::Duration::seconds(
                                     token_resp.expires_in.unwrap_or(3600) as i64
@@ -316,11 +312,6 @@ pub async fn load_token(issuer: &str, client_id: &str) -> Result<String, String>
                             creds.expires_at = new_expires.to_rfc3339();
                             let _ = save_credentials(&creds);
                         }
-                    }
-                }
-            }
-        }
-    }
 
     Ok(creds.access_token)
 }

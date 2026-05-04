@@ -279,7 +279,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         Command::Agent {
             config: agent_config_path,
         } => {
-            let content = std::fs::read_to_string(&agent_config_path).map_err(|e| {
+            let content = std::fs::read_to_string(agent_config_path).map_err(|e| {
                 dbward_core::Error::Config(format!("{}: {e}", agent_config_path.display()))
             })?;
             let agent_config: dbward_core::AgentConfig = {
@@ -521,7 +521,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
 
                 if has_reason {
                     println!(
-                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<detail_width$} {}",
+                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<detail_width$} REASON",
                         "ID",
                         "STATUS",
                         "TIME",
@@ -529,7 +529,6 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                         "ENV",
                         "OP",
                         "DETAIL",
-                        "REASON",
                         w0 = w.0,
                         w1 = w.1,
                         w2 = w.2,
@@ -560,14 +559,13 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     }
                 } else {
                     println!(
-                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{}",
+                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}DETAIL",
                         "ID",
                         "STATUS",
                         "TIME",
                         "USER",
                         "ENV",
                         "OP",
-                        "DETAIL",
                         w0 = w.0,
                         w1 = w.1,
                         w2 = w.2,
@@ -645,8 +643,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 println!("No audit log entries.");
             } else {
                 println!(
-                    "{:<10} {:<22} {:<10} {:<14} {:<10} {:<10} {:<12} {}",
-                    "ID", "TIMESTAMP", "USER", "OPERATION", "ENV", "DATABASE", "STATUS", "DETAIL"
+                    "{:<10} {:<22} {:<10} {:<14} {:<10} {:<10} {:<12} DETAIL",
+                    "ID", "TIMESTAMP", "USER", "OPERATION", "ENV", "DATABASE", "STATUS"
                 );
                 for e in entries {
                     let id = e["id"].as_str().unwrap_or("?");

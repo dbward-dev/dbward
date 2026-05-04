@@ -22,6 +22,12 @@ pub struct ResultChannels {
     pub slots: Mutex<HashMap<String, Arc<ResultSlot>>>,
 }
 
+impl Default for ResultChannels {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResultChannels {
     const SLOT_TTL: Duration = Duration::from_secs(600);
 
@@ -57,6 +63,12 @@ impl ResultChannels {
 /// Notifies long-polling GET /api/requests/{id}?wait= when status changes.
 pub struct RequestNotifier {
     notifiers: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
+}
+
+impl Default for RequestNotifier {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RequestNotifier {
