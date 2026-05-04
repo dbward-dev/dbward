@@ -288,8 +288,8 @@ fn list_requests_pending_for_me(
             ))
         })
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     // Batch-load all approvals for pending requests (eliminates N+1)
     let all_approvals: HashMap<String, Vec<(i64, String, String)>> = {
@@ -297,9 +297,17 @@ fn list_requests_pending_for_me(
             .prepare("SELECT request_id, step_index, actor_id, actor_role FROM approvals WHERE action = 'approve' AND request_id IN (SELECT id FROM requests WHERE status = 'pending')")
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         let rows = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)))
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
-            .filter_map(|r| r.ok());
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         let mut map: HashMap<String, Vec<(i64, String, String)>> = HashMap::new();
         for (req_id, step, actor, role) in rows {
             map.entry(req_id).or_default().push((step, actor, role));
@@ -318,7 +326,11 @@ fn list_requests_pending_for_me(
             .unwrap_or_default();
 
         let current_step_idx = steps.iter().enumerate().find_map(|(i, step)| {
-            if !is_step_satisfied(step, &approvals, i as i64) { Some(i) } else { None }
+            if !is_step_satisfied(step, &approvals, i as i64) {
+                Some(i)
+            } else {
+                None
+            }
         });
 
         let allowed_roles: Vec<String> = current_step_idx
@@ -445,8 +457,9 @@ async fn create_request(
         "migrate_status",
     ];
     if !VALID_OPERATIONS.contains(&operation) {
-        return Err(crate::api_error::ApiError::bad_request(format!("unknown operation: {operation}"),
-        ));
+        return Err(crate::api_error::ApiError::bad_request(format!(
+            "unknown operation: {operation}"
+        )));
     }
 
     let environment = body["environment"]
@@ -470,31 +483,40 @@ async fn create_request(
     .await?;
 
     if emergency && reason.is_none() {
-        return Err(crate::api_error::ApiError::bad_request("reason is required for emergency requests",
+        return Err(crate::api_error::ApiError::bad_request(
+            "reason is required for emergency requests",
         ));
     }
     // Readonly and approver-only roles cannot use break-glass
     if emergency
         && (user.effective_permission() == "readonly" || user.effective_permission() == "approver")
     {
-        return Err(crate::api_error::ApiError::forbidden("insufficient permissions for break-glass",
+        return Err(crate::api_error::ApiError::forbidden(
+            "insufficient permissions for break-glass",
         ));
     }
 
     // Approver-only roles cannot create requests
     if user.effective_permission() == "approver" {
-        return Err(crate::api_error::ApiError::forbidden("approver-only roles cannot create requests",
+        return Err(crate::api_error::ApiError::forbidden(
+            "approver-only roles cannot create requests",
         ));
     }
 
     // Unified policy evaluation: workflows first, static policy fallback
     let conn = state.sqlite.lock().await;
     let decision = crate::db::evaluate_approval_policy(
-        &conn, &state.policy, database_name, environment, operation, user.effective_permission(),
+        &conn,
+        &state.policy,
+        database_name,
+        environment,
+        operation,
+        user.effective_permission(),
     );
 
     if !emergency && decision.require_reason && reason.as_ref().map_or(true, |r| r.is_empty()) {
-        return Err(crate::api_error::ApiError::bad_request("reason is required by workflow policy",
+        return Err(crate::api_error::ApiError::bad_request(
+            "reason is required by workflow policy",
         ));
     }
 
@@ -546,7 +568,8 @@ async fn create_request(
             Json(json!({"id": id, "status": "break_glass", "execution_token": token})),
         ))
     } else if needs_approval {
-        let next_step = decision.workflow_snapshot_json
+        let next_step = decision
+            .workflow_snapshot_json
             .as_deref()
             .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(s).ok())
             .and_then(|steps| compute_next_step(&steps, 0));
@@ -632,7 +655,9 @@ async fn approve_request_inner(
         .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
 
     if status != "pending" {
-        return Err(crate::api_error::ApiError::conflict( format!("request is already {status}")));
+        return Err(crate::api_error::ApiError::conflict(format!(
+            "request is already {status}"
+        )));
     }
 
     // Parse workflow steps from snapshot
@@ -719,7 +744,9 @@ async fn approve_request_inner(
         .unwrap_or(steps.len());
 
     if current_step >= steps.len() {
-        return Err(crate::api_error::ApiError::conflict( "all steps already satisfied"));
+        return Err(crate::api_error::ApiError::conflict(
+            "all steps already satisfied",
+        ));
     }
 
     let step = &steps[current_step];
@@ -744,12 +771,14 @@ async fn approve_request_inner(
         .map(String::from);
     let actor_role = if let Some(ref role) = as_role {
         if !approver.has_role(role) {
-            return Err(crate::api_error::ApiError::forbidden(format!("you do not have role '{role}'"),
-            ));
+            return Err(crate::api_error::ApiError::forbidden(format!(
+                "you do not have role '{role}'"
+            )));
         }
         if !step.approvers.iter().any(|g| g.role == *role) {
-            return Err(crate::api_error::ApiError::forbidden(format!("role '{role}' is not an approver for current step"),
-            ));
+            return Err(crate::api_error::ApiError::forbidden(format!(
+                "role '{role}' is not an approver for current step"
+            )));
         }
         role.clone()
     } else {
@@ -780,7 +809,8 @@ async fn approve_request_inner(
             .iter()
             .any(|(si, aid, _)| *si == current_step as i64 && aid == &approver.user)
         {
-            return Err(crate::api_error::ApiError::conflict("you already approved this step",
+            return Err(crate::api_error::ApiError::conflict(
+                "you already approved this step",
             ));
         }
     } else {
@@ -788,7 +818,8 @@ async fn approve_request_inner(
         if existing_approvals.iter().any(|(si, aid, role)| {
             *si == current_step as i64 && aid == &approver.user && role == &actor_role
         }) {
-            return Err(crate::api_error::ApiError::conflict("you already approved this step with this role",
+            return Err(crate::api_error::ApiError::conflict(
+                "you already approved this step with this role",
             ));
         }
     }
@@ -959,7 +990,9 @@ async fn reject_request(
             .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
 
         if status != "pending" {
-            return Err(crate::api_error::ApiError::conflict( format!("request is already {status}")));
+            return Err(crate::api_error::ApiError::conflict(format!(
+                "request is already {status}"
+            )));
         }
 
         let workflow_snapshot_json = conn
@@ -979,12 +1012,11 @@ async fn reject_request(
         if let Err(_) = authz::authorize_sync(&user, Action::RejectRequest, approval_resource) {
             let roles_str = step_roles.join(", ");
             return Err(crate::api_error::ApiError::forbidden(format!(
-                    "you are not an approver for the current step (step {}/{}: {})",
-                    step_idx + 1,
-                    total_steps,
-                    roles_str
-                ),
-            ));
+                "you are not an approver for the current step (step {}/{}: {})",
+                step_idx + 1,
+                total_steps,
+                roles_str
+            )));
         }
 
         let now = chrono::Utc::now().to_rfc3339();
@@ -1324,7 +1356,10 @@ async fn dispatch_request(
             if let Ok(resolved_time) = chrono::DateTime::parse_from_rfc3339(resolved) {
                 let elapsed = chrono::Utc::now().signed_duration_since(resolved_time);
                 if elapsed.num_seconds() as u64 > window_secs {
-                    return Err(crate::api_error::ApiError::new(StatusCode::GONE, "execution window expired"));
+                    return Err(crate::api_error::ApiError::new(
+                        StatusCode::GONE,
+                        "execution window expired",
+                    ));
                 }
             }
         }
@@ -1337,11 +1372,14 @@ async fn dispatch_request(
             )
             .unwrap_or(0);
         if status == "failed" && !retry {
-            return Err(crate::api_error::ApiError::conflict( "retry on failure is disabled"));
+            return Err(crate::api_error::ApiError::conflict(
+                "retry on failure is disabled",
+            ));
         }
         if exec_count >= max_exec {
-            return Err(crate::api_error::ApiError::conflict(format!("max executions ({max_exec}) reached"),
-            ));
+            return Err(crate::api_error::ApiError::conflict(format!(
+                "max executions ({max_exec}) reached"
+            )));
         }
     }
 
@@ -1353,7 +1391,9 @@ async fn dispatch_request(
     ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     if rows == 0 {
-        return Err(crate::api_error::ApiError::conflict("request cannot be dispatched (wrong status)"));
+        return Err(crate::api_error::ApiError::conflict(
+            "request cannot be dispatched (wrong status)",
+        ));
     }
 
     drop(conn);
@@ -1418,7 +1458,7 @@ async fn stream_result(
                 }
                 _ => format!("request status is {status}"),
             };
-            return Err(crate::api_error::ApiError::conflict( msg));
+            return Err(crate::api_error::ApiError::conflict(msg));
         }
     };
 
@@ -1449,7 +1489,7 @@ async fn stream_result(
 
     match result {
         Some(payload) => Ok(Json(payload)),
-        None => Err(crate::api_error::ApiError::internal( "result was empty")),
+        None => Err(crate::api_error::ApiError::internal("result was empty")),
     }
 }
 
@@ -1596,8 +1636,9 @@ async fn agent_claim(
         .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
 
     if status != "dispatched" {
-        return Err(crate::api_error::ApiError::conflict(format!("request status is {status}, cannot claim"),
-        ));
+        return Err(crate::api_error::ApiError::conflict(format!(
+            "request status is {status}, cannot claim"
+        )));
     }
 
     authz::authorize_sync(
@@ -1626,7 +1667,8 @@ async fn agent_claim(
                 || !matches(&caps["environments"], &environment)
                 || !matches(&caps["operations"], &operation)
             {
-                return Err(crate::api_error::ApiError::forbidden("agent lacks capability for this job",
+                return Err(crate::api_error::ApiError::forbidden(
+                    "agent lacks capability for this job",
                 ));
             }
         }
@@ -1698,8 +1740,9 @@ async fn agent_result(
             .map_err(|_| (StatusCode::NOT_FOUND, "execution not found".into()))?;
 
         if exec_status != "claimed" {
-            return Err(crate::api_error::ApiError::conflict(format!("execution status is {exec_status}"),
-            ));
+            return Err(crate::api_error::ApiError::conflict(format!(
+                "execution status is {exec_status}"
+            )));
         }
 
         authz::authorize_sync(
@@ -1925,8 +1968,9 @@ async fn update_workflow(
         )
         .unwrap_or(0);
     if pending_count > 0 {
-        return Err(crate::api_error::ApiError::conflict(format!("{pending_count} pending request(s) reference this workflow"),
-        ));
+        return Err(crate::api_error::ApiError::conflict(format!(
+            "{pending_count} pending request(s) reference this workflow"
+        )));
     }
 
     {
@@ -1982,8 +2026,9 @@ async fn delete_workflow(
         )
         .unwrap_or(0);
     if pending_count > 0 {
-        return Err(crate::api_error::ApiError::conflict(format!("{pending_count} pending request(s) reference this workflow"),
-        ));
+        return Err(crate::api_error::ApiError::conflict(format!(
+            "{pending_count} pending request(s) reference this workflow"
+        )));
     }
 
     {
@@ -1995,7 +2040,7 @@ async fn delete_workflow(
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         if changes == 0 {
-            return Err(crate::api_error::ApiError::not_found( "workflow not found"));
+            return Err(crate::api_error::ApiError::not_found("workflow not found"));
         }
 
         insert_policy_audit(&tx, &user.user, "policy_delete", "workflow", &id)?;
@@ -2196,7 +2241,9 @@ async fn delete_execution_policy(
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         if changes == 0 {
-            return Err(crate::api_error::ApiError::not_found( "execution policy not found"));
+            return Err(crate::api_error::ApiError::not_found(
+                "execution policy not found",
+            ));
         }
 
         insert_policy_audit(&tx, &user.user, "policy_delete", "execution_policy", &id)?;
@@ -2405,7 +2452,9 @@ async fn delete_result_policy(
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         if changes == 0 {
-            return Err(crate::api_error::ApiError::not_found( "result policy not found"));
+            return Err(crate::api_error::ApiError::not_found(
+                "result policy not found",
+            ));
         }
 
         insert_policy_audit(&tx, &user.user, "policy_delete", "result_policy", &id)?;
@@ -2597,7 +2646,8 @@ async fn delete_notification_policy(
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         if changes == 0 {
-            return Err(crate::api_error::ApiError::not_found("notification policy not found",
+            return Err(crate::api_error::ApiError::not_found(
+                "notification policy not found",
             ));
         }
 

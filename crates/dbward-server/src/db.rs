@@ -349,7 +349,9 @@ pub fn evaluate_approval_policy(
     operation: &str,
     role: &str,
 ) -> ApprovalDecision {
-    if let Some((wf_id, steps, require_reason)) = evaluate_workflow(conn, database, environment, operation) {
+    if let Some((wf_id, steps, require_reason)) =
+        evaluate_workflow(conn, database, environment, operation)
+    {
         let needs_approval = !steps.is_empty();
         let snapshot = serde_json::to_string(&steps).unwrap_or_else(|_| "[]".into());
         ApprovalDecision {
@@ -703,5 +705,50 @@ mod tests {
 
         assert_eq!(api_count, 1);
         assert_eq!(stale_toml_count, 0);
+    }
+
+    #[test]
+    fn evaluate_workflow_prefers_more_specific_scope_before_wildcards() {
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
+             VALUES ('app:production:*', 'app', 'production', '[]', '[]', 0, 'api', 't1', 't1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
+             VALUES ('*:production:execute_query', '*', 'production', '[\"execute_query\"]', '[{\"type\":\"approval\",\"mode\":\"all\",\"approvers\":[{\"role\":\"admin\",\"min\":1}],\"require_distinct_actors\":true}]', 0, 'api', 't1', 't1')",
+            [],
+        )
+        .unwrap();
+
+        let (workflow_id, steps, require_reason) =
+            evaluate_workflow(&conn, "app", "production", "execute_query").unwrap();
+        assert_eq!(workflow_id, "app:production:*");
+        assert!(steps.is_empty());
+        assert!(!require_reason);
+    }
+
+    #[test]
+    fn evaluate_approval_policy_falls_back_to_static_policy_without_workflow() {
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn).unwrap();
+
+        let decision = evaluate_approval_policy(
+            &conn,
+            &crate::policy::PolicyConfig::default(),
+            "app",
+            "production",
+            "execute_query",
+            "developer",
+        );
+
+        assert!(decision.needs_approval);
+        assert!(decision.workflow_id.is_none());
+        assert!(decision.workflow_snapshot_json.is_none());
+        assert!(!decision.require_reason);
     }
 }

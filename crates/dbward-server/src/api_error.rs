@@ -5,9 +5,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 pub struct ApiError {
     pub error: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
     #[serde(skip)]
     pub status: StatusCode,
@@ -56,12 +54,8 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let body = serde_json::json!({
-            "error": self.error,
-            "code": self.code,
-            "hint": self.hint,
-        });
-        (self.status, axum::Json(body)).into_response()
+        let status = self.status;
+        (status, axum::Json(self)).into_response()
     }
 }
 

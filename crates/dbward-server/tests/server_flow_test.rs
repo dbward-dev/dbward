@@ -1649,6 +1649,132 @@ async fn get_request_and_pending_for_me_include_reason() {
     assert_eq!(requests[0]["reason"], reason);
 }
 
+#[tokio::test]
+async fn pending_for_me_returns_internal_error_when_approval_rows_are_malformed() {
+    let state = test_state_multistep();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead")
+        .await
+        .unwrap();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "production",
+                        "detail": "SELECT 1",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let request_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    {
+        let conn = state.sqlite.lock().await;
+        conn.execute(
+            "INSERT INTO approvals (id, request_id, action, actor_id, comment, step_index, actor_role, created_at)
+             VALUES (?1, ?2, 'approve', 'broken', NULL, ?3, 'team-lead', ?4)",
+            rusqlite::params![
+                "bad-approval",
+                request_id,
+                "not-an-integer",
+                "2026-05-04T00:00:00Z"
+            ],
+        )
+        .unwrap();
+    }
+
+    let resp = app
+        .oneshot(
+            Request::get("/api/requests?pending_for_me=true")
+                .header("authorization", auth_header(&lead_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = body_json(resp).await;
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("Invalid column type")
+    );
+    assert!(body["code"].is_null());
+    assert!(body["hint"].is_null());
+}
+
+#[tokio::test]
+async fn authz_errors_use_structured_json_shape() {
+    let state = test_state();
+    let (_, user_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let app = routes::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::post("/api/agent/poll")
+                .header("authorization", auth_header(&user_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body,
+        json!({
+            "error": "agent poll is not allowed",
+            "code": null,
+            "hint": null,
+        })
+    );
+}
+
+#[tokio::test]
+async fn auth_errors_use_structured_json_shape() {
+    let app = routes::router(test_state());
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "staging", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body,
+        json!({
+            "error": "missing Authorization header",
+            "code": null,
+            "hint": null,
+        })
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2: Multi-step workflow approval tests
 // ---------------------------------------------------------------------------
