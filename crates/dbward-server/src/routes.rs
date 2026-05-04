@@ -193,7 +193,7 @@ async fn list_requests(
     };
 
     let query_sql = format!(
-        "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at FROM requests {where_sql} ORDER BY created_at DESC",
+        "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at, reason FROM requests {where_sql} ORDER BY created_at DESC",
     );
     let mut stmt = conn
         .prepare(&query_sql)
@@ -213,6 +213,7 @@ async fn list_requests(
                 "created_at": row.get::<_, String>(8)?,
                 "updated_at": row.get::<_, String>(9)?,
                 "resolved_at": row.get::<_, Option<String>>(10)?,
+                "reason": row.get::<_, Option<String>>(11)?,
             }))
         })
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
@@ -909,11 +910,11 @@ async fn get_request(
         .min(60);
 
     let build_response = |conn: &rusqlite::Connection, id: &str, state: &AppState| -> Result<serde_json::Value, (StatusCode, String)> {
-        let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json): (String, String, String, String, String, String, String, String, String, Option<String>, Option<String>) = conn
+        let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason): (String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, Option<String>) = conn
             .query_row(
-                "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json FROM requests WHERE id = ?1",
+                "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason FROM requests WHERE id = ?1",
                 rusqlite::params![id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?)),
             )
             .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
@@ -921,6 +922,7 @@ async fn get_request(
             "id": id_val, "created_by": created_by, "operation": operation,
             "environment": environment, "database_name": database_name, "detail": detail, "status": status,
             "created_at": created_at, "updated_at": updated_at, "resolved_at": resolved_at,
+            "reason": reason,
         });
 
         if status == "approved" || status == "auto_approved" || status == "break_glass" {

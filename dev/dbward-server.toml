@@ -46,6 +46,7 @@ min = 1
 [[workflows]]
 database = "*"
 environment = "production"
+require_reason = true
 
 [[workflows.steps]]
 type = "approval"
