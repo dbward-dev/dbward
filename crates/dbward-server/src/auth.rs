@@ -1,6 +1,5 @@
 use axum::http::{HeaderMap, StatusCode};
 use chrono::Utc;
-use rusqlite::params;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -43,9 +42,8 @@ pub async fn create_token_with_type(
     let prefix = token_prefix(&raw_token);
 
     let conn = state.sqlite.lock().await;
-    conn.execute(
-        "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, role, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![token_id, subject_type, user, hash, prefix, role, "active", Utc::now().to_rfc3339()],
+    crate::db::token_repo::insert_token(
+        &conn, &token_id, subject_type, user, &hash, &prefix, role, &Utc::now().to_rfc3339(),
     )
     .map_err(|e| e.to_string())?;
 
@@ -55,14 +53,9 @@ pub async fn create_token_with_type(
 /// Revoke a token by ID.
 pub async fn revoke_token(state: &AppState, token_id: &str) -> Result<(), String> {
     let conn = state.sqlite.lock().await;
-    let updated = conn
-        .execute(
-            "UPDATE tokens SET status = 'revoked', revoked_at = ?1 WHERE id = ?2",
-            params![Utc::now().to_rfc3339(), token_id],
-        )
+    let found = crate::db::token_repo::revoke_token(&conn, token_id, &Utc::now().to_rfc3339())
         .map_err(|e| e.to_string())?;
-
-    if updated == 0 {
+    if !found {
         return Err("token not found".to_string());
     }
     Ok(())
@@ -128,19 +121,14 @@ async fn authenticate_api_token(
 
     let conn = state.sqlite.lock().await;
 
-    let result: Result<(String, String, String, String), _> = conn.query_row(
-        "SELECT id, subject_id, role, subject_type FROM tokens WHERE token_prefix = ?1 AND token_hash = ?2 AND status = 'active'",
-        params![prefix, hash],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-    );
-
-    match result {
-        Ok((id, user, role_str, subject_type)) => Ok(AuthUser {
-            token_id: id,
-            user,
-            roles: vec![role_str],
-            subject_type,
+    match crate::db::token_repo::lookup_active_token(&conn, &prefix, &hash) {
+        Ok(Some(row)) => Ok(AuthUser {
+            token_id: row.id,
+            user: row.subject_id,
+            roles: vec![row.role],
+            subject_type: row.subject_type,
         }),
+        Ok(None) => Err((StatusCode::UNAUTHORIZED, "invalid token".into())),
         Err(_) => Err((StatusCode::UNAUTHORIZED, "invalid token".into())),
     }
 }

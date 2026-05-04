@@ -3,6 +3,7 @@ pub mod agent_repo;
 pub mod audit_repo;
 pub mod policy_repo;
 pub mod request_repo;
+pub mod token_repo;
 
 use rusqlite::Connection;
 
