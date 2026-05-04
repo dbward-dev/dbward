@@ -11,6 +11,12 @@ use crate::auth;
 use crate::authz::{self, Action, Resource};
 use crate::state::AppState;
 
+/// Resolve a short or full request ID, returning 404 if not found or ambiguous.
+fn resolve_id(conn: &rusqlite::Connection, input: &str) -> Result<String, crate::api_error::ApiError> {
+    crate::db::request_repo::resolve_request_id(conn, input)
+        .map_err(|_| crate::api_error::ApiError::not_found(format!("request {input} not found")))
+}
+
 pub(crate) fn request_resource(
     requester_id: String,
     status: String,
@@ -523,6 +529,7 @@ pub(crate) async fn approve_request(
 ) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
     let approver = auth::authenticate(&headers, &state).await?;
     authz::authorize(&approver, Action::ApproveRequest, Resource::Global).await?;
+    let id = { let conn = state.sqlite.lock().await; resolve_id(&conn, &id)? };
 
     let body_val: serde_json::Value = serde_json::from_str(&body_str).unwrap_or(json!({}));
 
@@ -556,6 +563,7 @@ pub(crate) async fn reject_request(
 
     {
         let mut conn = state.sqlite.lock().await;
+        let id = resolve_id(&conn, &id)?;
 
         let ctx = crate::db::request_repo::get_request_context(&conn, &id)
             .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
@@ -642,6 +650,7 @@ pub(crate) async fn get_request(
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::GetRequest, Resource::Global).await?;
+    let id = { let conn = state.sqlite.lock().await; resolve_id(&conn, &id)? };
     let wait: u64 = params
         .get("wait")
         .and_then(|v| v.parse().ok())
@@ -780,6 +789,7 @@ pub(crate) async fn dispatch_request(
     authz::authorize(&user, Action::DispatchRequest, Resource::Global).await?;
 
     let conn = state.sqlite.lock().await;
+    let id = resolve_id(&conn, &id)?;
 
     // Check ownership
     let (requester, status, database_name, environment, resolved_at): (
@@ -872,6 +882,7 @@ pub(crate) async fn stream_result(
 
     let (requester, database_name, environment, status): (String, String, String, String) = {
         let conn = state.sqlite.lock().await;
+        let id = resolve_id(&conn, &id)?;
         conn.query_row(
             "SELECT created_by, database_name, environment, status FROM requests WHERE id = ?1",
             rusqlite::params![id],

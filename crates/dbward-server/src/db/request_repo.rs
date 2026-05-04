@@ -30,6 +30,28 @@ pub struct NewRequest<'a> {
     pub workflow_snapshot_json: Option<&'a str>,
 }
 
+// --- ID resolution ---
+
+/// Resolve a full or prefix request ID to the full UUID.
+/// If the input looks like a full UUID (contains '-' and len >= 36), use exact match.
+/// Otherwise, use prefix match (LIKE 'prefix%'). Returns error if 0 or 2+ matches.
+pub fn resolve_request_id(conn: &Connection, input: &str) -> Result<String, rusqlite::Error> {
+    if input.len() >= 36 && input.contains('-') {
+        return Ok(input.to_string());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT id FROM requests WHERE id LIKE ?1 || '%' LIMIT 2",
+    )?;
+    let ids: Vec<String> = stmt
+        .query_map(rusqlite::params![input], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    match ids.len() {
+        0 => Err(rusqlite::Error::QueryReturnedNoRows),
+        1 => Ok(ids.into_iter().next().unwrap()),
+        _ => Err(rusqlite::Error::QueryReturnedNoRows), // ambiguous
+    }
+}
+
 // --- Reads ---
 
 /// Load request context for approve/reject/dispatch/claim.
