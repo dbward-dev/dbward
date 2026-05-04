@@ -12,7 +12,7 @@ use crate::auth;
 use crate::authz::{self, Action, Resource};
 use crate::state::AppState;
 
-fn compute_next_step(
+pub(crate) fn compute_next_step(
     steps: &[serde_json::Value],
     current_step_index: usize,
 ) -> Option<serde_json::Value> {
@@ -24,7 +24,7 @@ fn compute_next_step(
     })
 }
 
-fn request_resource(
+pub(crate) fn request_resource(
     requester_id: String,
     status: String,
     database: String,
@@ -38,84 +38,16 @@ fn request_resource(
     }
 }
 
-fn should_filter_capability(values: &[String]) -> bool {
+pub(crate) fn should_filter_capability(values: &[String]) -> bool {
     !values.is_empty() && !values.iter().any(|v| v == "*")
 }
 
-pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/health", get(health))
-        .route("/api/requests", get(list_requests).post(create_request))
-        .route("/api/requests/{id}", get(get_request))
-        .route(
-            "/api/requests/{id}/approve",
-            axum::routing::post(approve_request),
-        )
-        .route(
-            "/api/requests/{id}/reject",
-            axum::routing::post(reject_request),
-        )
-        .route(
-            "/api/requests/{id}/dispatch",
-            axum::routing::post(dispatch_request),
-        )
-        .route("/api/requests/{id}/result/stream", get(stream_result))
-        .route("/api/agent/poll", axum::routing::post(agent_poll))
-        .route(
-            "/api/agent/jobs/{id}/claim",
-            axum::routing::post(agent_claim),
-        )
-        .route(
-            "/api/agent/jobs/{id}/result",
-            axum::routing::post(agent_result),
-        )
-        .route("/api/audit", get(list_audit))
-        .route("/api/public-key", get(get_public_key))
-        .route("/api/workflows", get(list_workflows).post(create_workflow))
-        .route(
-            "/api/workflows/{id}",
-            get(get_workflow)
-                .put(update_workflow)
-                .delete(delete_workflow),
-        )
-        .route(
-            "/api/execution-policies",
-            get(list_execution_policies).post(create_execution_policy),
-        )
-        .route(
-            "/api/execution-policies/{id}",
-            get(get_execution_policy_handler)
-                .put(update_execution_policy)
-                .delete(delete_execution_policy),
-        )
-        .route(
-            "/api/result-policies",
-            get(list_result_policies).post(create_result_policy),
-        )
-        .route(
-            "/api/result-policies/{id}",
-            get(get_result_policy_handler)
-                .put(update_result_policy)
-                .delete(delete_result_policy),
-        )
-        .route(
-            "/api/notification-policies",
-            get(list_notification_policies).post(create_notification_policy),
-        )
-        .route(
-            "/api/notification-policies/{id}",
-            get(get_notification_policy)
-                .put(update_notification_policy)
-                .delete(delete_notification_policy),
-        )
-        .with_state(state)
-}
 
-async fn health() -> impl IntoResponse {
+pub(crate) async fn health() -> impl IntoResponse {
     Json(json!({"status": "ok"}))
 }
 
-async fn get_public_key(State(state): State<AppState>) -> impl IntoResponse {
+pub(crate) async fn get_public_key(State(state): State<AppState>) -> impl IntoResponse {
     let bytes = state.token_signer.verifying_key().to_bytes();
     (
         [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
@@ -123,7 +55,7 @@ async fn get_public_key(State(state): State<AppState>) -> impl IntoResponse {
     )
 }
 
-fn parse_pagination(params: &HashMap<String, String>) -> (i64, i64) {
+pub(crate) fn parse_pagination(params: &HashMap<String, String>) -> (i64, i64) {
     let limit = params
         .get("limit")
         .and_then(|v| v.parse::<i64>().ok())
@@ -137,7 +69,7 @@ fn parse_pagination(params: &HashMap<String, String>) -> (i64, i64) {
     (limit, offset)
 }
 
-async fn list_requests(
+pub(crate) async fn list_requests(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
@@ -231,7 +163,7 @@ async fn list_requests(
     ))
 }
 
-fn list_requests_pending_for_me(
+pub(crate) fn list_requests_pending_for_me(
     conn: &rusqlite::Connection,
     user: &crate::state::AuthUser,
     limit: i64,
@@ -348,7 +280,7 @@ fn list_requests_pending_for_me(
     ))
 }
 
-fn get_approvals_for_request(
+pub(crate) fn get_approvals_for_request(
     conn: &rusqlite::Connection,
     request_id: &str,
 ) -> Result<Vec<(i64, String, String)>, crate::api_error::ApiError> {
@@ -356,7 +288,7 @@ fn get_approvals_for_request(
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))
 }
 
-fn current_approval_resource(
+pub(crate) fn current_approval_resource(
     conn: &rusqlite::Connection,
     request_id: &str,
     requester_id: String,
@@ -412,7 +344,7 @@ fn current_approval_resource(
     ))
 }
 
-async fn create_request(
+pub(crate) async fn create_request(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
@@ -584,7 +516,7 @@ async fn create_request(
     }
 }
 
-async fn approve_request(
+pub(crate) async fn approve_request(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -608,13 +540,13 @@ async fn approve_request(
     Ok(Json(result.response))
 }
 
-struct ApproveResult {
+pub(crate) struct ApproveResult {
     response: serde_json::Value,
     notif_hooks: Vec<crate::webhook::WebhookConfig>,
     webhook_event: Option<crate::webhook::WebhookEvent>,
 }
 
-async fn approve_request_inner(
+pub(crate) async fn approve_request_inner(
     state: &AppState,
     id: &str,
     approver: &crate::state::AuthUser,
@@ -918,7 +850,7 @@ async fn approve_request_inner(
     }
 }
 
-fn is_step_satisfied(
+pub(crate) fn is_step_satisfied(
     step: &crate::server_config::WorkflowStep,
     approvals: &[(i64, String, String)],
     step_index: i64,
@@ -946,7 +878,7 @@ fn is_step_satisfied(
     }
 }
 
-async fn reject_request(
+pub(crate) async fn reject_request(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -1033,7 +965,7 @@ async fn reject_request(
     Ok(Json(json!({"id": id, "status": "rejected"})))
 }
 
-async fn get_request(
+pub(crate) async fn get_request(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -1168,7 +1100,7 @@ async fn get_request(
     Ok(Json(resp))
 }
 
-async fn list_audit(
+pub(crate) async fn list_audit(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
@@ -1279,7 +1211,7 @@ async fn list_audit(
 // ---------------------------------------------------------------------------
 
 /// Client dispatches a request for execution. Creates a result channel.
-async fn dispatch_request(
+pub(crate) async fn dispatch_request(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -1364,7 +1296,7 @@ async fn dispatch_request(
 }
 
 /// Client waits for execution result (long poll).
-async fn stream_result(
+pub(crate) async fn stream_result(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -1453,7 +1385,7 @@ async fn stream_result(
 // ---------------------------------------------------------------------------
 
 /// Agent polls for dispatchable jobs (approved / auto_approved / break_glass).
-async fn agent_poll(
+pub(crate) async fn agent_poll(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
@@ -1559,7 +1491,7 @@ async fn agent_poll(
 }
 
 /// Agent claims a job for execution.
-async fn agent_claim(
+pub(crate) async fn agent_claim(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -1637,7 +1569,7 @@ async fn agent_claim(
 }
 
 /// Agent sends execution result. Server relays to waiting CLI via channel.
-async fn agent_result(
+pub(crate) async fn agent_result(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -1702,863 +1634,4 @@ async fn agent_result(
     Ok(Json(
         json!({"status": req_status, "request_id": request_id}),
     ))
-}
-
-// ---------------------------------------------------------------------------
-// Workflow CRUD (admin only)
-// ---------------------------------------------------------------------------
-
-async fn list_workflows(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
-
-    let conn = state.sqlite.lock().await;
-    let mut stmt = conn
-        .prepare("SELECT id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at FROM workflows ORDER BY database_name, environment")
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-    let rows: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
-            let ops: serde_json::Value =
-                serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
-            let steps: serde_json::Value =
-                serde_json::from_str(row.get::<_, String>(4)?.as_str()).unwrap_or_default();
-            Ok(json!({
-                "id": row.get::<_, String>(0)?,
-                "database": row.get::<_, String>(1)?,
-                "environment": row.get::<_, String>(2)?,
-                "operations": ops,
-                "steps": steps,
-                "require_reason": row.get::<_, bool>(5)?,
-                "source": row.get::<_, String>(6)?,
-                "created_at": row.get::<_, String>(7)?,
-                "updated_at": row.get::<_, String>(8)?,
-            }))
-        })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-    Ok(Json(json!({"workflows": rows})))
-}
-
-async fn get_workflow(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
-
-    let conn = state.sqlite.lock().await;
-    let row = conn
-        .query_row(
-            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at FROM workflows WHERE id = ?1",
-            rusqlite::params![id],
-            |row| {
-                let ops: serde_json::Value = serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
-                let steps: serde_json::Value = serde_json::from_str(row.get::<_, String>(4)?.as_str()).unwrap_or_default();
-                Ok(json!({
-                    "id": row.get::<_, String>(0)?,
-                    "database": row.get::<_, String>(1)?,
-                    "environment": row.get::<_, String>(2)?,
-                    "operations": ops,
-                    "steps": steps,
-                    "require_reason": row.get::<_, bool>(5)?,
-                    "source": row.get::<_, String>(6)?,
-                    "created_at": row.get::<_, String>(7)?,
-                    "updated_at": row.get::<_, String>(8)?,
-                }))
-            },
-        )
-        .map_err(|_| (StatusCode::NOT_FOUND, "workflow not found".into()))?;
-
-    Ok(Json(row))
-}
-
-async fn create_workflow(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
-
-    let database = body["database"]
-        .as_str()
-        .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
-    let environment = body["environment"]
-        .as_str()
-        .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
-    let operations = body.get("operations").cloned().unwrap_or(json!([]));
-    let steps = body.get("steps").cloned().unwrap_or(json!([]));
-    let require_reason = body["require_reason"].as_bool().unwrap_or(false);
-
-    let id = format!("{database}:{environment}");
-    let ops_json = operations.to_string();
-    let steps_json = steps.to_string();
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let mut conn = state.sqlite.lock().await;
-    {
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
-            rusqlite::params![id, database, environment, ops_json, steps_json, require_reason, now],
-        )
-        .map_err(|e| {
-            if e.to_string().contains("UNIQUE") {
-                (StatusCode::CONFLICT, format!("workflow for {database}:{environment} already exists"))
-            } else {
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-            }
-        })?;
-
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "workflow", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    }
-
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({"id": id, "database": database, "environment": environment})),
-    ))
-}
-
-async fn update_workflow(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
-
-    let mut conn = state.sqlite.lock().await;
-    let now = chrono::Utc::now().to_rfc3339();
-
-    // Check exists
-    conn.query_row(
-        "SELECT id FROM workflows WHERE id = ?1",
-        rusqlite::params![id],
-        |_| Ok(()),
-    )
-    .map_err(|_| (StatusCode::NOT_FOUND, "workflow not found".into()))?;
-
-    // Block changes if pending requests reference this workflow
-    let pending_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM requests WHERE workflow_id = ?1 AND status = 'pending'",
-            rusqlite::params![id],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-    if pending_count > 0 {
-        return Err(crate::api_error::ApiError::conflict(format!(
-            "{pending_count} pending request(s) reference this workflow"
-        )));
-    }
-
-    {
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        if let Some(steps) = body.get("steps") {
-            tx.execute(
-                "UPDATE workflows SET steps_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![steps.to_string(), now, id],
-            )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        }
-        if let Some(ops) = body.get("operations") {
-            tx.execute(
-                "UPDATE workflows SET operations_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![ops.to_string(), now, id],
-            )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        }
-        if let Some(v) = body.get("require_reason").and_then(|v| v.as_bool()) {
-            tx.execute(
-                "UPDATE workflows SET require_reason = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![v, now, id],
-            )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        }
-
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "workflow", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    }
-
-    Ok(Json(json!({"id": id, "updated": true})))
-}
-
-async fn delete_workflow(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
-
-    let mut conn = state.sqlite.lock().await;
-
-    // Block deletion if pending requests reference this workflow
-    let pending_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM requests WHERE workflow_id = ?1 AND status = 'pending'",
-            rusqlite::params![id],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-    if pending_count > 0 {
-        return Err(crate::api_error::ApiError::conflict(format!(
-            "{pending_count} pending request(s) reference this workflow"
-        )));
-    }
-
-    {
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        let changes = tx
-            .execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id])
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-        if changes == 0 {
-            return Err(crate::api_error::ApiError::not_found("workflow not found"));
-        }
-
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "workflow", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    }
-
-    Ok(Json(json!({"id": id, "deleted": true})))
-}
-
-// ---------------------------------------------------------------------------
-// Execution Policy CRUD (admin only for mutations)
-// ---------------------------------------------------------------------------
-
-async fn list_execution_policies(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
-
-    let conn = state.sqlite.lock().await;
-    let mut stmt = conn
-        .prepare("SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at FROM execution_policies ORDER BY database_name, environment")
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-    let rows: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
-            Ok(json!({
-                "id": row.get::<_, String>(0)?,
-                "database": row.get::<_, String>(1)?,
-                "environment": row.get::<_, String>(2)?,
-                "max_executions": row.get::<_, i64>(3)?,
-                "execution_window_secs": row.get::<_, i64>(4)?,
-                "retry_on_failure": row.get::<_, bool>(5)?,
-                "source": row.get::<_, String>(6)?,
-                "created_at": row.get::<_, String>(7)?,
-                "updated_at": row.get::<_, String>(8)?,
-            }))
-        })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-    Ok(Json(json!({"execution_policies": rows})))
-}
-
-async fn get_execution_policy_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
-
-    let conn = state.sqlite.lock().await;
-    let row = conn
-        .query_row(
-            "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at FROM execution_policies WHERE id = ?1",
-            rusqlite::params![id],
-            |row| {
-                Ok(json!({
-                    "id": row.get::<_, String>(0)?,
-                    "database": row.get::<_, String>(1)?,
-                    "environment": row.get::<_, String>(2)?,
-                    "max_executions": row.get::<_, i64>(3)?,
-                    "execution_window_secs": row.get::<_, i64>(4)?,
-                    "retry_on_failure": row.get::<_, bool>(5)?,
-                    "source": row.get::<_, String>(6)?,
-                    "created_at": row.get::<_, String>(7)?,
-                    "updated_at": row.get::<_, String>(8)?,
-                }))
-            },
-        )
-        .map_err(|_| (StatusCode::NOT_FOUND, "execution policy not found".into()))?;
-
-    Ok(Json(row))
-}
-
-async fn create_execution_policy(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
-
-    let database = body["database"]
-        .as_str()
-        .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
-    let environment = body["environment"]
-        .as_str()
-        .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
-    let max_executions = body["max_executions"].as_i64().unwrap_or(1);
-    let execution_window_secs = body["execution_window_secs"].as_i64().unwrap_or(3600);
-    let retry_on_failure = body["retry_on_failure"].as_bool().unwrap_or(false);
-
-    let id = format!("{database}:{environment}");
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let mut conn = state.sqlite.lock().await;
-    {
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.execute(
-            "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
-            rusqlite::params![id, database, environment, max_executions, execution_window_secs, retry_on_failure, now],
-        )
-        .map_err(|e| {
-            if e.to_string().contains("UNIQUE") {
-                (StatusCode::CONFLICT, format!("execution policy for {database}:{environment} already exists"))
-            } else {
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-            }
-        })?;
-
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "execution_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    }
-
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({"id": id, "database": database, "environment": environment})),
-    ))
-}
-
-async fn update_execution_policy(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
-
-    let mut conn = state.sqlite.lock().await;
-    let now = chrono::Utc::now().to_rfc3339();
-
-    conn.query_row(
-        "SELECT id FROM execution_policies WHERE id = ?1",
-        rusqlite::params![id],
-        |_| Ok(()),
-    )
-    .map_err(|_| (StatusCode::NOT_FOUND, "execution policy not found".into()))?;
-
-    {
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        if let Some(v) = body.get("max_executions").and_then(|v| v.as_i64()) {
-            tx.execute(
-                "UPDATE execution_policies SET max_executions = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![v, now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        }
-        if let Some(v) = body.get("execution_window_secs").and_then(|v| v.as_i64()) {
-            tx.execute(
-                "UPDATE execution_policies SET execution_window_secs = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![v, now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        }
-        if let Some(v) = body.get("retry_on_failure").and_then(|v| v.as_bool()) {
-            tx.execute(
-                "UPDATE execution_policies SET retry_on_failure = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![v, now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        }
-
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "execution_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    }
-
-    Ok(Json(json!({"id": id, "updated": true})))
-}
-
-async fn delete_execution_policy(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
-
-    let mut conn = state.sqlite.lock().await;
-    {
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        let changes = tx
-            .execute(
-                "DELETE FROM execution_policies WHERE id = ?1",
-                rusqlite::params![id],
-            )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-        if changes == 0 {
-            return Err(crate::api_error::ApiError::not_found(
-                "execution policy not found",
-            ));
-        }
-
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "execution_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    }
-
-    Ok(Json(json!({"id": id, "deleted": true})))
-}
-
-// ---------------------------------------------------------------------------
-// Result Policy CRUD (admin only for mutations)
-// ---------------------------------------------------------------------------
-
-async fn list_result_policies(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
-
-    let conn = state.sqlite.lock().await;
-    let mut stmt = conn
-        .prepare("SELECT id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at FROM result_policies ORDER BY database_name, environment")
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-    let rows: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
-            let storage: serde_json::Value =
-                serde_json::from_str(row.get::<_, String>(4)?.as_str()).unwrap_or_default();
-            let access: serde_json::Value =
-                serde_json::from_str(row.get::<_, String>(5)?.as_str()).unwrap_or_default();
-            Ok(json!({
-                "id": row.get::<_, String>(0)?,
-                "database": row.get::<_, String>(1)?,
-                "environment": row.get::<_, String>(2)?,
-                "delivery_mode": row.get::<_, String>(3)?,
-                "storage_config": storage,
-                "access": access,
-                "source": row.get::<_, String>(6)?,
-                "created_at": row.get::<_, String>(7)?,
-                "updated_at": row.get::<_, String>(8)?,
-            }))
-        })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-    Ok(Json(json!({"result_policies": rows})))
-}
-
-async fn get_result_policy_handler(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
-
-    let conn = state.sqlite.lock().await;
-    let row = conn
-        .query_row(
-            "SELECT id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at FROM result_policies WHERE id = ?1",
-            rusqlite::params![id],
-            |row| {
-                let storage: serde_json::Value = serde_json::from_str(row.get::<_, String>(4)?.as_str()).unwrap_or_default();
-                let access: serde_json::Value = serde_json::from_str(row.get::<_, String>(5)?.as_str()).unwrap_or_default();
-                Ok(json!({
-                    "id": row.get::<_, String>(0)?,
-                    "database": row.get::<_, String>(1)?,
-                    "environment": row.get::<_, String>(2)?,
-                    "delivery_mode": row.get::<_, String>(3)?,
-                    "storage_config": storage,
-                    "access": access,
-                    "source": row.get::<_, String>(6)?,
-                    "created_at": row.get::<_, String>(7)?,
-                    "updated_at": row.get::<_, String>(8)?,
-                }))
-            },
-        )
-        .map_err(|_| (StatusCode::NOT_FOUND, "result policy not found".into()))?;
-
-    Ok(Json(row))
-}
-
-async fn create_result_policy(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
-
-    let database = body["database"]
-        .as_str()
-        .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
-    let environment = body["environment"]
-        .as_str()
-        .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
-    let delivery_mode = body["delivery_mode"].as_str().unwrap_or("stream");
-    let storage_config = body.get("storage_config").cloned().unwrap_or(json!({}));
-    let access = body.get("access").cloned().unwrap_or(json!({}));
-
-    let id = format!("{database}:{environment}");
-    let storage_json = storage_config.to_string();
-    let access_json = access.to_string();
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let mut conn = state.sqlite.lock().await;
-    {
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.execute(
-            "INSERT INTO result_policies (id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
-            rusqlite::params![id, database, environment, delivery_mode, storage_json, access_json, now],
-        )
-        .map_err(|e| {
-            if e.to_string().contains("UNIQUE") {
-                (StatusCode::CONFLICT, format!("result policy for {database}:{environment} already exists"))
-            } else {
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-            }
-        })?;
-
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "result_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    }
-
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({"id": id, "database": database, "environment": environment})),
-    ))
-}
-
-async fn update_result_policy(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
-
-    let mut conn = state.sqlite.lock().await;
-    let now = chrono::Utc::now().to_rfc3339();
-
-    conn.query_row(
-        "SELECT id FROM result_policies WHERE id = ?1",
-        rusqlite::params![id],
-        |_| Ok(()),
-    )
-    .map_err(|_| (StatusCode::NOT_FOUND, "result policy not found".into()))?;
-
-    {
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        if let Some(v) = body.get("delivery_mode").and_then(|v| v.as_str()) {
-            tx.execute(
-                "UPDATE result_policies SET delivery_mode = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![v, now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        }
-        if let Some(v) = body.get("storage_config") {
-            tx.execute(
-                "UPDATE result_policies SET storage_config_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![v.to_string(), now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        }
-        if let Some(v) = body.get("access") {
-            tx.execute(
-                "UPDATE result_policies SET access_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![v.to_string(), now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        }
-
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "result_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    }
-
-    Ok(Json(json!({"id": id, "updated": true})))
-}
-
-async fn delete_result_policy(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
-
-    let mut conn = state.sqlite.lock().await;
-    {
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        let changes = tx
-            .execute(
-                "DELETE FROM result_policies WHERE id = ?1",
-                rusqlite::params![id],
-            )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-        if changes == 0 {
-            return Err(crate::api_error::ApiError::not_found(
-                "result policy not found",
-            ));
-        }
-
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "result_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    }
-
-    Ok(Json(json!({"id": id, "deleted": true})))
-}
-
-// ---------------------------------------------------------------------------
-// Notification Policy CRUD (admin only for mutations)
-// ---------------------------------------------------------------------------
-
-async fn list_notification_policies(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
-
-    let conn = state.sqlite.lock().await;
-    let mut stmt = conn
-        .prepare("SELECT id, database_name, environment, webhooks_json, source, created_at, updated_at FROM notification_policies ORDER BY database_name, environment")
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-    let rows: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
-            let webhooks: serde_json::Value =
-                serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
-            Ok(json!({
-                "id": row.get::<_, String>(0)?,
-                "database": row.get::<_, String>(1)?,
-                "environment": row.get::<_, String>(2)?,
-                "webhooks": webhooks,
-                "source": row.get::<_, String>(4)?,
-                "created_at": row.get::<_, String>(5)?,
-                "updated_at": row.get::<_, String>(6)?,
-            }))
-        })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-    Ok(Json(json!({"notification_policies": rows})))
-}
-
-async fn get_notification_policy(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
-
-    let conn = state.sqlite.lock().await;
-    let row = conn
-        .query_row(
-            "SELECT id, database_name, environment, webhooks_json, source, created_at, updated_at FROM notification_policies WHERE id = ?1",
-            rusqlite::params![id],
-            |row| {
-                let webhooks: serde_json::Value = serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
-                Ok(json!({
-                    "id": row.get::<_, String>(0)?,
-                    "database": row.get::<_, String>(1)?,
-                    "environment": row.get::<_, String>(2)?,
-                    "webhooks": webhooks,
-                    "source": row.get::<_, String>(4)?,
-                    "created_at": row.get::<_, String>(5)?,
-                    "updated_at": row.get::<_, String>(6)?,
-                }))
-            },
-        )
-        .map_err(|_| (StatusCode::NOT_FOUND, "notification policy not found".into()))?;
-
-    Ok(Json(row))
-}
-
-async fn create_notification_policy(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
-
-    let database = body["database"]
-        .as_str()
-        .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
-    let environment = body["environment"]
-        .as_str()
-        .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
-    let webhooks = body.get("webhooks").cloned().unwrap_or(json!([]));
-
-    let id = format!("{database}:{environment}");
-    let webhooks_json = webhooks.to_string();
-    let now = chrono::Utc::now().to_rfc3339();
-
-    let mut conn = state.sqlite.lock().await;
-    {
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.execute(
-            "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, source, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, 'api', ?5, ?5)",
-            rusqlite::params![id, database, environment, webhooks_json, now],
-        )
-        .map_err(|e| {
-            if e.to_string().contains("UNIQUE") {
-                (StatusCode::CONFLICT, format!("notification policy for {database}:{environment} already exists"))
-            } else {
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-            }
-        })?;
-
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "notification_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    }
-
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({"id": id, "database": database, "environment": environment})),
-    ))
-}
-
-async fn update_notification_policy(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
-
-    let mut conn = state.sqlite.lock().await;
-    let now = chrono::Utc::now().to_rfc3339();
-
-    conn.query_row(
-        "SELECT id FROM notification_policies WHERE id = ?1",
-        rusqlite::params![id],
-        |_| Ok(()),
-    )
-    .map_err(|_| {
-        (
-            StatusCode::NOT_FOUND,
-            "notification policy not found".into(),
-        )
-    })?;
-
-    {
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        if let Some(v) = body.get("webhooks") {
-            tx.execute(
-                "UPDATE notification_policies SET webhooks_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![v.to_string(), now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        }
-
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "notification_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    }
-
-    Ok(Json(json!({"id": id, "updated": true})))
-}
-
-async fn delete_notification_policy(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
-
-    let mut conn = state.sqlite.lock().await;
-    {
-        let tx = conn
-            .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        let changes = tx
-            .execute(
-                "DELETE FROM notification_policies WHERE id = ?1",
-                rusqlite::params![id],
-            )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-
-        if changes == 0 {
-            return Err(crate::api_error::ApiError::not_found(
-                "notification policy not found",
-            ));
-        }
-
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "notification_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    }
-
-    Ok(Json(json!({"id": id, "deleted": true})))
 }

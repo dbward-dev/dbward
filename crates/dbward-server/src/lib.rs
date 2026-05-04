@@ -5,6 +5,7 @@ pub mod db;
 pub mod oidc;
 pub mod policy;
 pub mod routes;
+mod routes_legacy;
 pub mod server_config;
 mod state;
 pub mod token;
