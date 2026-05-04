@@ -223,13 +223,23 @@ pub fn reclaim_expired_leases(conn: &Connection) -> Result<usize, rusqlite::Erro
 }
 
 /// Sync workflows from TOML config into SQLite. Only touches source='toml' rows.
-fn delete_stale_toml_records(conn: &Connection, table: &str, keep_ids: &[String]) -> Result<(), rusqlite::Error> {
+fn delete_stale_toml_records(
+    conn: &Connection,
+    table: &str,
+    keep_ids: &[String],
+) -> Result<(), rusqlite::Error> {
     if keep_ids.is_empty() {
         conn.execute(&format!("DELETE FROM {table} WHERE source = 'toml'"), [])?;
     } else {
         let placeholders: Vec<String> = (1..=keep_ids.len()).map(|i| format!("?{i}")).collect();
-        let sql = format!("DELETE FROM {table} WHERE source = 'toml' AND id NOT IN ({})", placeholders.join(","));
-        let params: Vec<&dyn rusqlite::types::ToSql> = keep_ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
+        let sql = format!(
+            "DELETE FROM {table} WHERE source = 'toml' AND id NOT IN ({})",
+            placeholders.join(",")
+        );
+        let params: Vec<&dyn rusqlite::types::ToSql> = keep_ids
+            .iter()
+            .map(|id| id as &dyn rusqlite::types::ToSql)
+            .collect();
         conn.execute(&sql, params.as_slice())?;
     }
     Ok(())
@@ -616,5 +626,44 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0))
             .unwrap();
         assert_eq!(aud_count, 1); // aud-2 remains
+    }
+
+    #[test]
+    fn sync_workflows_only_deletes_toml_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
+             VALUES ('api-row', 'app', 'development', '[\"execute_query\"]', '[]', 0, 'api', 't1', 't1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
+             VALUES ('stale-toml', 'legacy', 'development', '[\"execute_query\"]', '[]', 0, 'toml', 't1', 't1')",
+            [],
+        )
+        .unwrap();
+
+        sync_workflows(&conn, &[]).unwrap();
+
+        let api_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM workflows WHERE id = 'api-row' AND source = 'api'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let stale_toml_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM workflows WHERE id = 'stale-toml'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(api_count, 1);
+        assert_eq!(stale_toml_count, 0);
     }
 }

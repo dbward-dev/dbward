@@ -57,6 +57,10 @@ fn request_resource(
     }
 }
 
+fn should_filter_capability(values: &[String]) -> bool {
+    !values.is_empty() && !values.iter().any(|v| v == "*")
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -1540,22 +1544,28 @@ async fn agent_poll(
     let mut where_clauses = vec!["status = 'dispatched'".to_string()];
     let mut bind_values: Vec<String> = Vec::new();
 
-    if !databases.is_empty() {
-        let placeholders: Vec<String> = databases.iter().enumerate()
+    if should_filter_capability(&databases) {
+        let placeholders: Vec<String> = databases
+            .iter()
+            .enumerate()
             .map(|(i, _)| format!("?{}", bind_values.len() + i + 1))
             .collect();
         where_clauses.push(format!("database_name IN ({})", placeholders.join(",")));
         bind_values.extend(databases.clone());
     }
-    if !environments.is_empty() {
-        let placeholders: Vec<String> = environments.iter().enumerate()
+    if should_filter_capability(&environments) {
+        let placeholders: Vec<String> = environments
+            .iter()
+            .enumerate()
             .map(|(i, _)| format!("?{}", bind_values.len() + i + 1))
             .collect();
         where_clauses.push(format!("environment IN ({})", placeholders.join(",")));
         bind_values.extend(environments.clone());
     }
-    if !operations.is_empty() {
-        let placeholders: Vec<String> = operations.iter().enumerate()
+    if should_filter_capability(&operations) {
+        let placeholders: Vec<String> = operations
+            .iter()
+            .enumerate()
             .map(|(i, _)| format!("?{}", bind_values.len() + i + 1))
             .collect();
         where_clauses.push(format!("operation IN ({})", placeholders.join(",")));

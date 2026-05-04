@@ -642,6 +642,118 @@ async fn agent_poll_empty_when_no_approved() {
 }
 
 #[tokio::test]
+async fn agent_poll_empty_capability_arrays_do_not_break_query() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
+        .await
+        .unwrap();
+
+    let app = routes::router(state);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "development", "database": "app", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let request_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app
+        .oneshot(
+            Request::post("/api/agent/poll")
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"databases": [], "environments": [], "operations": []}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["jobs"].as_array().unwrap().len(), 1);
+    assert_eq!(body["jobs"][0]["id"], request_id);
+}
+
+#[tokio::test]
+async fn agent_poll_wildcard_capability_arrays_match_all_values() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
+        .await
+        .unwrap();
+
+    let app = routes::router(state);
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "development", "database": "mydb", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let request_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app
+        .oneshot(
+            Request::post("/api/agent/poll")
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"databases": ["*"], "environments": ["development"], "operations": ["*"]}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["jobs"].as_array().unwrap().len(), 1);
+    assert_eq!(body["jobs"][0]["id"], request_id);
+}
+
+#[tokio::test]
 async fn agent_cannot_claim_pending() {
     let state = test_state();
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")

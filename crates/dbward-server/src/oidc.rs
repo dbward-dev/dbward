@@ -75,25 +75,7 @@ impl OidcVerifier {
 
         let key = self.get_decoding_key(kid).await?;
         let jwk = self.get_jwk(kid).await?;
-
-        // Determine algorithm from JWK's alg field, falling back to header's alg
-        let alg = jwk.alg.as_deref()
-            .and_then(|a| match a {
-                "RS256" => Some(Algorithm::RS256),
-                "RS384" => Some(Algorithm::RS384),
-                "RS512" => Some(Algorithm::RS512),
-                "ES256" => Some(Algorithm::ES256),
-                "ES384" => Some(Algorithm::ES384),
-                _ => None,
-            })
-            .unwrap_or_else(|| match jwk.kty.as_str() {
-                "RSA" => Algorithm::RS256,
-                "EC" => match jwk.crv.as_deref() {
-                    Some("P-384") => Algorithm::ES384,
-                    _ => Algorithm::ES256,
-                },
-                _ => Algorithm::RS256,
-            });
+        let alg = select_algorithm(header.alg, &jwk)?;
 
         let mut validation = Validation::new(alg);
         validation.set_audience(&[&self.config.client_id]);
@@ -236,9 +218,65 @@ impl OidcVerifier {
 fn find_key(keys: &[Jwk], kid: &str) -> Option<Jwk> {
     if kid.is_empty() {
         // Only use first key if JWKS has exactly one key (single-key set)
-        return if keys.len() == 1 { keys.first().cloned() } else { None };
+        return if keys.len() == 1 {
+            keys.first().cloned()
+        } else {
+            None
+        };
     }
     keys.iter().find(|k| k.kid.as_deref() == Some(kid)).cloned()
+}
+
+fn parse_algorithm(alg: &str) -> Option<Algorithm> {
+    match alg {
+        "RS256" => Some(Algorithm::RS256),
+        "RS384" => Some(Algorithm::RS384),
+        "RS512" => Some(Algorithm::RS512),
+        "ES256" => Some(Algorithm::ES256),
+        "ES384" => Some(Algorithm::ES384),
+        _ => None,
+    }
+}
+
+fn algorithm_matches_jwk(alg: Algorithm, jwk: &Jwk) -> bool {
+    match jwk.kty.as_str() {
+        "RSA" => matches!(alg, Algorithm::RS256 | Algorithm::RS384 | Algorithm::RS512),
+        "EC" => match jwk.crv.as_deref() {
+            Some("P-256") => alg == Algorithm::ES256,
+            Some("P-384") => alg == Algorithm::ES384,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn select_algorithm(header_alg: Algorithm, jwk: &Jwk) -> Result<Algorithm, String> {
+    if let Some(jwk_alg) = jwk.alg.as_deref() {
+        let alg =
+            parse_algorithm(jwk_alg).ok_or_else(|| format!("unsupported JWK alg: {jwk_alg}"))?;
+        if alg != header_alg {
+            return Err(format!(
+                "JWT header alg {:?} does not match JWK alg {:?}",
+                header_alg, alg
+            ));
+        }
+        if !algorithm_matches_jwk(alg, jwk) {
+            return Err(format!(
+                "JWK alg {:?} is incompatible with key type {} / curve {:?}",
+                alg, jwk.kty, jwk.crv
+            ));
+        }
+        return Ok(alg);
+    }
+
+    if algorithm_matches_jwk(header_alg, jwk) {
+        return Ok(header_alg);
+    }
+
+    Err(format!(
+        "JWT header alg {:?} is incompatible with key type {} / curve {:?}",
+        header_alg, jwk.kty, jwk.crv
+    ))
 }
 
 fn jwk_to_decoding_key(jwk: &Jwk) -> Result<DecodingKey, String> {
@@ -303,6 +341,81 @@ mod tests {
             y: None,
         }];
         assert!(find_key(&keys, "").is_some());
+    }
+
+    #[test]
+    fn find_key_empty_kid_rejects_ambiguous_jwks() {
+        let keys = vec![
+            Jwk {
+                kid: Some("k1".into()),
+                kty: "RSA".into(),
+                alg: None,
+                n: None,
+                e: None,
+                crv: None,
+                x: None,
+                y: None,
+            },
+            Jwk {
+                kid: Some("k2".into()),
+                kty: "RSA".into(),
+                alg: None,
+                n: None,
+                e: None,
+                crv: None,
+                x: None,
+                y: None,
+            },
+        ];
+        assert!(find_key(&keys, "").is_none());
+    }
+
+    #[test]
+    fn select_algorithm_uses_header_alg_for_rsa_when_jwk_alg_missing() {
+        let jwk = Jwk {
+            kid: Some("k1".into()),
+            kty: "RSA".into(),
+            alg: None,
+            n: None,
+            e: None,
+            crv: None,
+            x: None,
+            y: None,
+        };
+        assert_eq!(
+            select_algorithm(Algorithm::RS512, &jwk).unwrap(),
+            Algorithm::RS512
+        );
+    }
+
+    #[test]
+    fn select_algorithm_rejects_header_alg_when_curve_mismatches() {
+        let jwk = Jwk {
+            kid: Some("k1".into()),
+            kty: "EC".into(),
+            alg: None,
+            n: None,
+            e: None,
+            crv: Some("P-256".into()),
+            x: None,
+            y: None,
+        };
+        assert!(select_algorithm(Algorithm::ES384, &jwk).is_err());
+    }
+
+    #[test]
+    fn select_algorithm_rejects_header_alg_mismatch_with_jwk_alg() {
+        let jwk = Jwk {
+            kid: Some("k1".into()),
+            kty: "RSA".into(),
+            alg: Some("RS256".into()),
+            n: None,
+            e: None,
+            crv: None,
+            x: None,
+            y: None,
+        };
+        assert!(select_algorithm(Algorithm::RS512, &jwk).is_err());
     }
 
     fn test_verifier(mappings: Vec<RoleMapping>, default_role: &str) -> OidcVerifier {
