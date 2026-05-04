@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WebhookConfig {
@@ -29,16 +29,23 @@ fn default_format() -> String {
 #[derive(Debug, Clone, Serialize)]
 pub struct WebhookEvent {
     pub event: String,
+    pub timestamp: String,
     pub request_id: String,
-    pub user: String,
+    pub status: String,
+    pub requester: String,
+    pub actor: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actor_role: Option<String>,
     pub operation: String,
     pub environment: String,
     pub database: String,
     pub detail: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub approved_by: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_step: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cli_command: Option<String>,
 }
 
 #[derive(Clone)]
@@ -143,15 +150,21 @@ fn format_payload(hook: &WebhookConfig, event: &WebhookEvent) -> (String, String
             } else {
                 event.detail.clone()
             };
-            let text = format!(
+            let mut text = format!(
                 "{emoji} *[dbward]* `{}` by *{}*\n`{}` on `{}`\n```{}```{}",
                 event.event,
-                event.user,
+                event.actor,
                 event.operation,
                 event.environment,
                 detail_short,
                 event.reason.as_ref().map(|r| format!("\nReason: {r}")).unwrap_or_default(),
             );
+            if let Some(ref ns) = event.next_step {
+                text.push_str(&format!("\nNext: {ns}"));
+            }
+            if let Some(ref cmd) = event.cli_command {
+                text.push_str(&format!("\n`{cmd}`"));
+            }
             let payload = json!({"text": &text});
             (payload.to_string(), "application/json".into())
         }
@@ -169,14 +182,19 @@ mod tests {
     fn test_event(event_name: &str) -> WebhookEvent {
         WebhookEvent {
             event: event_name.into(),
+            timestamp: "2026-01-01T00:00:00Z".into(),
             request_id: "req-1".into(),
-            user: "alice".into(),
+            status: "pending".into(),
+            requester: "alice".into(),
+            actor: "alice".into(),
+            actor_role: None,
             operation: "execute".into(),
             environment: "production".into(),
             database: "app".into(),
             detail: "SELECT 1".into(),
-            approved_by: None,
             reason: None,
+            next_step: None,
+            cli_command: None,
         }
     }
 
@@ -197,7 +215,7 @@ mod tests {
         assert_eq!(ct, "application/json");
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(parsed["event"], "request_created");
-        assert_eq!(parsed["user"], "alice");
+        assert_eq!(parsed["requester"], "alice");
     }
 
     #[test]

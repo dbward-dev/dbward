@@ -424,14 +424,19 @@ async fn create_request(
         let notif_hooks = crate::db::get_notification_webhooks(&conn, database_name, environment);
         state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
             event: "break_glass".into(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
             request_id: id.clone(),
-            user: user.user.clone(),
+            status: "break_glass".into(),
+            requester: user.user.clone(),
+            actor: user.user.clone(),
+            actor_role: Some(user.effective_permission().into()),
             operation: operation.into(),
             environment: environment.into(),
             detail: detail.into(),
             database: database_name.into(),
-            approved_by: None,
             reason: reason.clone(),
+            next_step: None,
+            cli_command: Some(format!("dbward resume {id}")),
         });
         Ok((
             StatusCode::CREATED,
@@ -441,14 +446,19 @@ async fn create_request(
         let notif_hooks = crate::db::get_notification_webhooks(&conn, database_name, environment);
         state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
             event: "request_created".into(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
             request_id: id.clone(),
-            user: user.user.clone(),
+            status: "pending".into(),
+            requester: user.user.clone(),
+            actor: user.user.clone(),
+            actor_role: Some(user.effective_permission().into()),
             operation: operation.into(),
             environment: environment.into(),
             detail: detail.into(),
             database: database_name.into(),
-            approved_by: None,
             reason: None,
+            next_step: None,
+            cli_command: Some(format!("dbward approve {id}")),
         });
         Ok((
             StatusCode::CREATED,
@@ -547,9 +557,13 @@ async fn approve_request_inner(
             response: json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
             notif_hooks,
             webhook_event: Some(crate::webhook::WebhookEvent {
-                event: "request_approved".into(), request_id: id.into(), user: req_user,
+                event: "request_approved".into(), timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: id.into(), status: "approved".into(),
+                requester: req_user, actor: approver.user.clone(),
+                actor_role: Some(approver.effective_permission().into()),
                 operation, environment, detail, database: database_name,
-                approved_by: Some(approver.user.clone()), reason: None,
+                reason: None, next_step: None,
+                cli_command: Some(format!("dbward resume {}", id)),
             }),
         });
     }
@@ -638,9 +652,13 @@ async fn approve_request_inner(
             response: json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
             notif_hooks,
             webhook_event: Some(crate::webhook::WebhookEvent {
-                event: "request_approved".into(), request_id: id.into(), user: req_user,
+                event: "request_approved".into(), timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: id.into(), status: "approved".into(),
+                requester: req_user, actor: approver.user.clone(),
+                actor_role: Some(actor_role.clone()),
                 operation, environment, detail, database: database_name,
-                approved_by: Some(approver.user.clone()), reason: None,
+                reason: None, next_step: None,
+                cli_command: Some(format!("dbward resume {}", id)),
             }),
         })
     } else {
@@ -652,10 +670,14 @@ async fn approve_request_inner(
 
         let webhook_event = if step_now_satisfied {
             Some(crate::webhook::WebhookEvent {
-                event: "step_approved".into(), request_id: id.into(), user: req_user,
+                event: "step_approved".into(), timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: id.into(), status: "pending".into(),
+                requester: req_user, actor: approver.user.clone(),
+                actor_role: Some(actor_role.clone()),
                 operation: operation.clone(), environment: environment.clone(),
                 detail: detail.clone(), database: database_name.clone(),
-                approved_by: Some(approver.user.clone()), reason: None,
+                reason: None, next_step: None,
+                cli_command: Some(format!("dbward approve {}", id)),
             })
         } else {
             None
@@ -747,14 +769,19 @@ async fn reject_request(
         let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
         state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
             event: "request_rejected".into(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
             request_id: id.clone(),
-            user: user.user.clone(),
+            status: "rejected".into(),
+            requester: req_user.clone(),
+            actor: user.user.clone(),
+            actor_role: Some(user.effective_permission().into()),
             operation: "".into(),
             environment: environment.clone().into(),
             database: database_name.clone().into(),
             detail: "".into(),
-            approved_by: None,
             reason: None,
+            next_step: None,
+            cli_command: None,
         });
     }
 
