@@ -1,8 +1,7 @@
-use axum::http::StatusCode;
 use serde_json::json;
 
 use crate::authz::{self, Action, Resource};
-use crate::state::AppState;
+use crate::token::TokenSigner;
 
 pub(crate) fn compute_next_step(
     steps: &[serde_json::Value],
@@ -23,17 +22,25 @@ pub(crate) struct ApproveResult {
 }
 
 pub(crate) async fn approve_request_inner(
-    state: &AppState,
+    sqlite: &tokio::sync::Mutex<rusqlite::Connection>,
+    token_signer: &TokenSigner,
     id: &str,
     approver: &crate::state::AuthUser,
     body_val: &serde_json::Value,
 ) -> Result<ApproveResult, crate::api_error::ApiError> {
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = sqlite.lock().await;
 
     let ctx = crate::db::request_repo::get_request_context(&conn, id)
         .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
-    let (req_user, status, operation, environment, database_name, detail, workflow_snapshot_json) =
-        (ctx.created_by, ctx.status, ctx.operation, ctx.environment, ctx.database_name, ctx.detail, ctx.workflow_snapshot_json);
+    let (req_user, status, operation, environment, database_name, detail, workflow_snapshot_json) = (
+        ctx.created_by,
+        ctx.status,
+        ctx.operation,
+        ctx.environment,
+        ctx.database_name,
+        ctx.detail,
+        ctx.workflow_snapshot_json,
+    );
 
     if status != "pending" {
         return Err(crate::api_error::ApiError::conflict(format!(
@@ -75,10 +82,9 @@ pub(crate) async fn approve_request_inner(
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
-        let token = state
-            .token_signer
-            .issue(id, &operation, &environment, &database_name, &detail);
-        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
+        let token = token_signer.issue(id, &operation, &environment, &database_name, &detail);
+        let notif_hooks =
+            crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
         return Ok(ApproveResult {
             response: json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
             notif_hooks,
@@ -181,10 +187,11 @@ pub(crate) async fn approve_request_inner(
                     None
                 }
             })
-            .ok_or((
-                StatusCode::FORBIDDEN,
-                "you do not have a matching role for this step".into(),
-            ))?
+            .ok_or_else(|| {
+                crate::api_error::ApiError::forbidden(
+                    "you do not have a matching role for this step",
+                )
+            })?
     };
 
     if step.require_distinct_actors {
@@ -243,10 +250,9 @@ pub(crate) async fn approve_request_inner(
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
-        let token = state
-            .token_signer
-            .issue(id, &operation, &environment, &database_name, &detail);
-        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
+        let token = token_signer.issue(id, &operation, &environment, &database_name, &detail);
+        let notif_hooks =
+            crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
         Ok(ApproveResult {
             response: json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
             notif_hooks,
@@ -273,7 +279,8 @@ pub(crate) async fn approve_request_inner(
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
-        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
+        let notif_hooks =
+            crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
 
         let new_current = steps
             .iter()
@@ -326,7 +333,6 @@ pub(crate) async fn approve_request_inner(
     }
 }
 
-
 pub(crate) fn is_step_satisfied(
     step: &crate::server_config::WorkflowStep,
     approvals: &[(i64, String, String)],
@@ -354,4 +360,3 @@ pub(crate) fn is_step_satisfied(
         }),
     }
 }
-

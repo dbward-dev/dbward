@@ -11,7 +11,6 @@ use crate::auth;
 use crate::authz::{self, Action, Resource};
 use crate::state::AppState;
 
-
 pub(crate) fn request_resource(
     requester_id: String,
     status: String,
@@ -29,7 +28,6 @@ pub(crate) fn request_resource(
 pub(crate) fn should_filter_capability(values: &[String]) -> bool {
     !values.is_empty() && !values.iter().any(|v| v == "*")
 }
-
 
 pub(crate) async fn health() -> impl IntoResponse {
     Json(json!({"status": "ok"}))
@@ -427,19 +425,31 @@ pub(crate) async fn create_request(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    crate::db::request_repo::insert_request(&conn, &crate::db::request_repo::NewRequest {
-        id: &id, created_by: &user.user, operation, environment, database_name,
-        detail, status, emergency, reason: reason.as_deref(),
-        workflow_id: decision.workflow_id.as_deref(),
-        workflow_snapshot_json: decision.workflow_snapshot_json.as_deref(),
-    }, &now)
+    crate::db::request_repo::insert_request(
+        &conn,
+        &crate::db::request_repo::NewRequest {
+            id: &id,
+            created_by: &user.user,
+            operation,
+            environment,
+            database_name,
+            detail,
+            status,
+            emergency,
+            reason: reason.as_deref(),
+            workflow_id: decision.workflow_id.as_deref(),
+            workflow_snapshot_json: decision.workflow_snapshot_json.as_deref(),
+        },
+        &now,
+    )
     .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     if emergency {
         let token = state
             .token_signer
             .issue(&id, operation, environment, database_name, detail);
-        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
+        let notif_hooks =
+            crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
         state.webhooks.dispatch_with_policy(
             notif_hooks,
             crate::webhook::WebhookEvent {
@@ -469,7 +479,8 @@ pub(crate) async fn create_request(
             .as_deref()
             .and_then(|s| serde_json::from_str::<Vec<serde_json::Value>>(s).ok())
             .and_then(|steps| crate::services::request_lifecycle::compute_next_step(&steps, 0));
-        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
+        let notif_hooks =
+            crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
         state.webhooks.dispatch_with_policy(
             notif_hooks,
             crate::webhook::WebhookEvent {
@@ -515,7 +526,14 @@ pub(crate) async fn approve_request(
 
     let body_val: serde_json::Value = serde_json::from_str(&body_str).unwrap_or(json!({}));
 
-    let result = crate::services::request_lifecycle::approve_request_inner(&state, &id, &approver, &body_val).await?;
+    let result = crate::services::request_lifecycle::approve_request_inner(
+        &state.sqlite,
+        state.token_signer.as_ref(),
+        &id,
+        &approver,
+        &body_val,
+    )
+    .await?;
 
     // Post-transaction async work
     if let Some(event) = result.webhook_event {
@@ -588,7 +606,8 @@ pub(crate) async fn reject_request(
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
-        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
+        let notif_hooks =
+            crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
         state.webhooks.dispatch_with_policy(
             notif_hooks,
             crate::webhook::WebhookEvent {
@@ -696,7 +715,9 @@ pub(crate) async fn get_request(
                                 .iter()
                                 .map(|(si, uid, role, _)| (*si, uid.clone(), role.clone()))
                                 .collect();
-                            if !crate::services::request_lifecycle::is_step_satisfied(step, &simple, i as i64) {
+                            if !crate::services::request_lifecycle::is_step_satisfied(
+                                step, &simple, i as i64,
+                            ) {
                                 Some(i)
                             } else {
                                 None
@@ -770,7 +791,13 @@ pub(crate) async fn dispatch_request(
     ) = {
         let ctx = crate::db::request_repo::get_request_context(&conn, &id)
             .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
-        (ctx.created_by, ctx.status, ctx.database_name, ctx.environment, ctx.resolved_at)
+        (
+            ctx.created_by,
+            ctx.status,
+            ctx.database_name,
+            ctx.environment,
+            ctx.resolved_at,
+        )
     };
 
     authz::authorize_sync(
@@ -855,7 +882,8 @@ pub(crate) async fn stream_result(
 
     let access_roles = {
         let conn = state.sqlite.lock().await;
-        let (_, access_roles) = crate::db::policy_repo::get_result_policy(&conn, &database_name, &environment);
+        let (_, access_roles) =
+            crate::db::policy_repo::get_result_policy(&conn, &database_name, &environment);
         access_roles
     };
 
