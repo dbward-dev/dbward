@@ -43,7 +43,14 @@ pub async fn create_token_with_type(
 
     let conn = state.sqlite.lock().await;
     crate::db::token_repo::insert_token(
-        &conn, &token_id, subject_type, user, &hash, &prefix, role, &Utc::now().to_rfc3339(),
+        &conn,
+        &token_id,
+        subject_type,
+        user,
+        &hash,
+        &prefix,
+        role,
+        &Utc::now().to_rfc3339(),
     )
     .map_err(|e| e.to_string())?;
 

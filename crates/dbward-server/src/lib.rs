@@ -39,9 +39,11 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
         loop {
             interval.tick().await;
             let conn = sqlite2.lock().await;
-            if let Ok((r, a)) =
-                db::maintenance::purge_old_records(&conn, retention.request_ttl_days, retention.audit_ttl_days)
-            {
+            if let Ok((r, a)) = db::maintenance::purge_old_records(
+                &conn,
+                retention.request_ttl_days,
+                retention.audit_ttl_days,
+            ) {
                 if r > 0 || a > 0 {
                     eprintln!("purged {r} old request(s), {a} old audit log(s)");
                 }

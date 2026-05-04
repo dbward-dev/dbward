@@ -35,19 +35,18 @@ pub struct NewRequest<'a> {
 /// Resolve a request ID: accepts exactly 8-char short ID or full UUID (36 chars).
 /// Short ID uses prefix match. Returns error if 0 or 2+ matches.
 pub fn resolve_request_id(conn: &Connection, input: &str) -> Result<String, ResolveError> {
-    // Full UUID
-    if input.len() >= 36 && input.contains('-') {
-        return Ok(input.to_string());
+    if let Ok(uuid) = uuid::Uuid::parse_str(input) {
+        return Ok(uuid.hyphenated().to_string());
     }
-    // Short ID: exactly 8 hex chars
     if input.len() != 8 || !input.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(ResolveError::InvalidFormat);
     }
-    let mut stmt = conn.prepare(
-        "SELECT id FROM requests WHERE id LIKE ?1 || '%' LIMIT 2",
-    ).map_err(|e| ResolveError::Db(e.to_string()))?;
+    let prefix = input.to_ascii_lowercase();
+    let mut stmt = conn
+        .prepare("SELECT id FROM requests WHERE substr(id, 1, 8) = ?1 LIMIT 2")
+        .map_err(|e| ResolveError::Db(e.to_string()))?;
     let ids: Vec<String> = stmt
-        .query_map(rusqlite::params![input], |row| row.get(0))
+        .query_map(rusqlite::params![prefix], |row| row.get(0))
         .map_err(|e| ResolveError::Db(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| ResolveError::Db(e.to_string()))?;
@@ -58,6 +57,7 @@ pub fn resolve_request_id(conn: &Connection, input: &str) -> Result<String, Reso
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveError {
     NotFound,
     Ambiguous(Vec<String>),
@@ -114,7 +114,11 @@ pub fn count_executions(conn: &Connection, request_id: &str) -> u32 {
 // --- Writes ---
 
 /// Insert a new request.
-pub fn insert_request(conn: &Connection, req: &NewRequest, now: &str) -> Result<(), rusqlite::Error> {
+pub fn insert_request(
+    conn: &Connection,
+    req: &NewRequest,
+    now: &str,
+) -> Result<(), rusqlite::Error> {
     conn.execute(
         "INSERT INTO requests (id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, emergency, reason, workflow_id, workflow_snapshot_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         rusqlite::params![req.id, req.created_by, req.operation, req.environment, req.database_name, req.detail, req.status, now, now, req.emergency, req.reason, req.workflow_id, req.workflow_snapshot_json],
@@ -187,4 +191,80 @@ pub fn mark_dispatched(conn: &Connection, id: &str) -> Result<bool, rusqlite::Er
         rusqlite::params![now, id],
     )?;
     Ok(rows > 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::init(&conn).unwrap();
+        conn
+    }
+
+    fn insert_request(conn: &Connection, id: &str) {
+        conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at)
+             VALUES (?1, 'alice', 'execute_query', 'development', 'app', 'pending', 'SELECT 1', 't1', 't1')",
+            rusqlite::params![id],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn resolves_full_uuid_and_normalizes_case() {
+        let conn = test_conn();
+        let id = "550e8400-e29b-41d4-a716-446655440000";
+        insert_request(&conn, id);
+
+        let resolved = resolve_request_id(&conn, "550E8400-E29B-41D4-A716-446655440000").unwrap();
+
+        assert_eq!(resolved, id);
+    }
+
+    #[test]
+    fn resolves_short_id_case_insensitively() {
+        let conn = test_conn();
+        let id = "deadbeef-e29b-41d4-a716-446655440000";
+        insert_request(&conn, id);
+
+        let resolved = resolve_request_id(&conn, "DEADBEEF").unwrap();
+
+        assert_eq!(resolved, id);
+    }
+
+    #[test]
+    fn rejects_invalid_formats_before_querying() {
+        let conn = test_conn();
+
+        assert_eq!(
+            resolve_request_id(&conn, "deadbeez").unwrap_err(),
+            ResolveError::InvalidFormat
+        );
+        assert_eq!(
+            resolve_request_id(&conn, "deadbee%").unwrap_err(),
+            ResolveError::InvalidFormat
+        );
+        assert_eq!(
+            resolve_request_id(&conn, "550e8400-e29b-41d4-a716-44665544000z").unwrap_err(),
+            ResolveError::InvalidFormat
+        );
+    }
+
+    #[test]
+    fn reports_ambiguous_short_ids() {
+        let conn = test_conn();
+        let first = "cafebabe-e29b-41d4-a716-446655440000";
+        let second = "cafebabe-e29b-41d4-a716-446655440001";
+        insert_request(&conn, first);
+        insert_request(&conn, second);
+
+        let err = resolve_request_id(&conn, "cafebabe").unwrap_err();
+
+        assert_eq!(
+            err,
+            ResolveError::Ambiguous(vec![first.to_string(), second.to_string()])
+        );
+    }
 }

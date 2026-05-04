@@ -3,8 +3,8 @@ mod audit;
 mod policies;
 mod requests;
 
-use axum::routing::get;
 use axum::Router;
+use axum::routing::get;
 
 use crate::state::AppState;
 use requests::{

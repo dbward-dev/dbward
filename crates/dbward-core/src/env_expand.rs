@@ -3,9 +3,8 @@ use std::sync::LazyLock;
 
 use crate::Error;
 
-static ENV_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}").unwrap()
-});
+static ENV_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}").unwrap());
 
 /// Expand `${VAR}` and `${VAR:-default}` in all string values of a TOML tree.
 pub fn expand_env_vars(value: &mut toml::Value) -> Result<(), Error> {
@@ -69,9 +68,7 @@ fn walk(value: &mut toml::Value, path: &str) -> Result<(), Error> {
 
                 // Check for leftover unexpanded ${
                 if expanded.contains("${") {
-                    return Err(Error::Config(format!(
-                        "{path}: malformed ${{}} expression"
-                    )));
+                    return Err(Error::Config(format!("{path}: malformed ${{}} expression")));
                 }
 
                 *s = expanded.into_owned();
@@ -89,14 +86,17 @@ mod tests {
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    fn with_env<F: FnOnce()>(vars: &[(&str, &str)], f: F) {
+    fn with_env<F: FnOnce()>(vars: &[(&str, Option<&str>)], f: F) {
         let _guard = ENV_LOCK.lock().unwrap();
         let originals: Vec<_> = vars
             .iter()
             .map(|(k, _)| (*k, std::env::var(k).ok()))
             .collect();
         for (k, v) in vars {
-            unsafe { std::env::set_var(k, v) };
+            match v {
+                Some(v) => unsafe { std::env::set_var(k, v) },
+                None => unsafe { std::env::remove_var(k) },
+            }
         }
         f();
         for (k, original) in &originals {
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn simple_expansion() {
-        with_env(&[("TEST_HOST", "localhost")], || {
+        with_env(&[("TEST_HOST", Some("localhost"))], || {
             let val = expand(r#"host = "${TEST_HOST}""#).unwrap();
             assert_eq!(val["host"].as_str().unwrap(), "localhost");
         });
@@ -123,39 +123,43 @@ mod tests {
 
     #[test]
     fn embedded_in_url() {
-        with_env(&[("DB_USER", "admin"), ("DB_PASS", "s3cret")], || {
-            let val = expand(r#"url = "postgres://${DB_USER}:${DB_PASS}@host/db""#).unwrap();
-            assert_eq!(
-                val["url"].as_str().unwrap(),
-                "postgres://admin:s3cret@host/db"
-            );
-        });
+        with_env(
+            &[("DB_USER", Some("admin")), ("DB_PASS", Some("s3cret"))],
+            || {
+                let val = expand(r#"url = "postgres://${DB_USER}:${DB_PASS}@host/db""#).unwrap();
+                assert_eq!(
+                    val["url"].as_str().unwrap(),
+                    "postgres://admin:s3cret@host/db"
+                );
+            },
+        );
     }
 
     #[test]
     fn default_value() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        unsafe { std::env::remove_var("UNSET_VAR_TEST") };
-        let mut val: toml::Value = toml::from_str(r#"v = "${UNSET_VAR_TEST:-fallback}""#).unwrap();
-        expand_env_vars(&mut val).unwrap();
-        assert_eq!(val["v"].as_str().unwrap(), "fallback");
+        with_env(&[("UNSET_VAR_TEST", None)], || {
+            let mut val: toml::Value =
+                toml::from_str(r#"v = "${UNSET_VAR_TEST:-fallback}""#).unwrap();
+            expand_env_vars(&mut val).unwrap();
+            assert_eq!(val["v"].as_str().unwrap(), "fallback");
+        });
     }
 
     #[test]
     fn missing_var_error() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        unsafe { std::env::remove_var("MISSING_VAR_XYZ") };
-        let mut val: toml::Value = toml::from_str(r#"token = "${MISSING_VAR_XYZ}""#).unwrap();
-        let err = expand_env_vars(&mut val).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("MISSING_VAR_XYZ"), "got: {msg}");
-        assert!(msg.contains("not set"), "got: {msg}");
-        assert!(msg.contains("token"), "got: {msg}");
+        with_env(&[("MISSING_VAR_XYZ", None)], || {
+            let mut val: toml::Value = toml::from_str(r#"token = "${MISSING_VAR_XYZ}""#).unwrap();
+            let err = expand_env_vars(&mut val).unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("MISSING_VAR_XYZ"), "got: {msg}");
+            assert!(msg.contains("not set"), "got: {msg}");
+            assert!(msg.contains("token"), "got: {msg}");
+        });
     }
 
     #[test]
     fn nested_table() {
-        with_env(&[("SRV_TOKEN", "dbw_abc")], || {
+        with_env(&[("SRV_TOKEN", Some("dbw_abc"))], || {
             let val = expand(
                 r#"
                 [server]
@@ -169,7 +173,7 @@ mod tests {
 
     #[test]
     fn array_expansion() {
-        with_env(&[("HOOK_URL", "https://hooks.example.com")], || {
+        with_env(&[("HOOK_URL", Some("https://hooks.example.com"))], || {
             let val = expand(
                 r#"
                 [[webhooks]]
@@ -186,10 +190,30 @@ mod tests {
 
     #[test]
     fn empty_env_value() {
-        with_env(&[("EMPTY_VAR", "")], || {
+        with_env(&[("EMPTY_VAR", Some(""))], || {
             let val = expand(r#"v = "${EMPTY_VAR}""#).unwrap();
             assert_eq!(val["v"].as_str().unwrap(), "");
         });
+    }
+
+    #[test]
+    fn empty_default_value() {
+        with_env(&[("EMPTY_DEFAULT_TEST", None)], || {
+            let val = expand(r#"v = "${EMPTY_DEFAULT_TEST:-}""#).unwrap();
+            assert_eq!(val["v"].as_str().unwrap(), "");
+        });
+    }
+
+    #[test]
+    fn malformed_empty_var_name_errors() {
+        let err = expand(r#"v = "${}""#).unwrap_err();
+        assert!(err.to_string().contains("malformed"), "got: {err}");
+    }
+
+    #[test]
+    fn malformed_special_char_var_name_errors() {
+        let err = expand(r#"v = "${DB-PASS}""#).unwrap_err();
+        assert!(err.to_string().contains("malformed"), "got: {err}");
     }
 
     #[test]

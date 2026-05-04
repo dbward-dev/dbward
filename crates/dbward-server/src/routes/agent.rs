@@ -1,13 +1,12 @@
+use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
-use axum::Json;
 use serde_json::json;
 
 use crate::auth;
 use crate::authz::{self, Action, Resource};
 use crate::state::AppState;
-
 
 // ---------------------------------------------------------------------------
 // Agent endpoints
@@ -56,8 +55,9 @@ pub(crate) async fn agent_poll(
         "operations": operations,
     }))
     .unwrap_or_else(|_| "{}".into());
-    crate::db::agent_repo::upsert_agent(&conn, &user.user, &user.token_id, &caps_json)
-        .map_err(|e| crate::api_error::ApiError::internal(format!("agent registration failed: {e}")))?;
+    crate::db::agent_repo::upsert_agent(&conn, &user.user, &user.token_id, &caps_json).map_err(
+        |e| crate::api_error::ApiError::internal(format!("agent registration failed: {e}")),
+    )?;
 
     // Build dynamic WHERE clause for capability filtering
     let mut where_clauses = vec!["status = 'dispatched'".to_string()];
@@ -134,8 +134,13 @@ pub(crate) async fn agent_claim(
 
     let ctx = crate::db::request_repo::get_request_context(&conn, &id)
         .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
-    let (operation, environment, database, detail, status) =
-        (ctx.operation, ctx.environment, ctx.database_name, ctx.detail, ctx.status);
+    let (operation, environment, database, detail, status) = (
+        ctx.operation,
+        ctx.environment,
+        ctx.database_name,
+        ctx.detail,
+        ctx.status,
+    );
 
     if status != "dispatched" {
         return Err(crate::api_error::ApiError::conflict(format!(
@@ -219,7 +224,8 @@ pub(crate) async fn agent_result(
 
         if exec_ctx.status != "claimed" {
             return Err(crate::api_error::ApiError::conflict(format!(
-                "execution status is {}", exec_ctx.status
+                "execution status is {}",
+                exec_ctx.status
             )));
         }
 
@@ -235,9 +241,16 @@ pub(crate) async fn agent_result(
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         let req_status = crate::db::agent_repo::finish_execution(
-            &mut conn, &id, &exec_ctx.request_id, success, error_msg.as_deref(),
-            &req_ctx.operation, &req_ctx.environment, &req_ctx.database_name,
-            &req_ctx.detail, &req_ctx.created_by,
+            &mut conn,
+            &id,
+            &exec_ctx.request_id,
+            success,
+            error_msg.as_deref(),
+            &req_ctx.operation,
+            &req_ctx.environment,
+            &req_ctx.database_name,
+            &req_ctx.detail,
+            &req_ctx.created_by,
         )
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 

@@ -22,10 +22,7 @@ where
 }
 
 /// Get agent capabilities JSON.
-pub fn get_agent_capabilities(
-    conn: &Connection,
-    agent_id: &str,
-) -> Option<String> {
+pub fn get_agent_capabilities(conn: &Connection, agent_id: &str) -> Option<String> {
     conn.query_row(
         "SELECT capabilities_json FROM agents WHERE id = ?1",
         rusqlite::params![agent_id],
@@ -75,11 +72,13 @@ pub fn get_execution_context(
     conn.query_row(
         "SELECT request_id, status, agent_id FROM agent_executions WHERE id = ?1",
         rusqlite::params![execution_id],
-        |row| Ok(ExecutionContext {
-            request_id: row.get(0)?,
-            status: row.get(1)?,
-            agent_id: row.get(2)?,
-        }),
+        |row| {
+            Ok(ExecutionContext {
+                request_id: row.get(0)?,
+                status: row.get(1)?,
+                agent_id: row.get(2)?,
+            })
+        },
     )
 }
 

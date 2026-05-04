@@ -1,7 +1,7 @@
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::Json;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,16 +12,22 @@ use crate::authz::{self, Action, Resource};
 use crate::state::AppState;
 
 /// Resolve a short or full request ID, returning appropriate error.
-fn resolve_id(conn: &rusqlite::Connection, input: &str) -> Result<String, crate::api_error::ApiError> {
+fn resolve_id(
+    conn: &rusqlite::Connection,
+    input: &str,
+) -> Result<String, crate::api_error::ApiError> {
     use crate::db::request_repo::ResolveError;
     crate::db::request_repo::resolve_request_id(conn, input).map_err(|e| match e {
-        ResolveError::NotFound => crate::api_error::ApiError::not_found(format!("request {input} not found")),
+        ResolveError::NotFound => {
+            crate::api_error::ApiError::not_found(format!("request {input} not found"))
+        }
         ResolveError::Ambiguous(ids) => crate::api_error::ApiError::conflict(format!(
-            "ambiguous short ID '{input}', candidates: {}", ids.join(", ")
+            "ambiguous short ID '{input}', candidates: {}",
+            ids.join(", ")
         )),
-        ResolveError::InvalidFormat => crate::api_error::ApiError::bad_request(
-            "provide an 8-character short ID or full UUID",
-        ),
+        ResolveError::InvalidFormat => {
+            crate::api_error::ApiError::bad_request("provide an 8-character short ID or full UUID")
+        }
         ResolveError::Db(msg) => crate::api_error::ApiError::internal(msg),
     })
 }
@@ -538,7 +544,10 @@ pub(crate) async fn approve_request(
 ) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
     let approver = auth::authenticate(&headers, &state).await?;
     authz::authorize(&approver, Action::ApproveRequest, Resource::Global).await?;
-    let id = { let conn = state.sqlite.lock().await; resolve_id(&conn, &id)? };
+    let id = {
+        let conn = state.sqlite.lock().await;
+        resolve_id(&conn, &id)?
+    };
 
     let body_val: serde_json::Value = serde_json::from_str(&body_str).unwrap_or(json!({}));
 
@@ -659,7 +668,10 @@ pub(crate) async fn get_request(
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::GetRequest, Resource::Global).await?;
-    let id = { let conn = state.sqlite.lock().await; resolve_id(&conn, &id)? };
+    let id = {
+        let conn = state.sqlite.lock().await;
+        resolve_id(&conn, &id)?
+    };
     let wait: u64 = params
         .get("wait")
         .and_then(|v| v.parse().ok())

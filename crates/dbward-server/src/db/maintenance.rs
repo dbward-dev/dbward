@@ -94,7 +94,8 @@ mod tests {
             "INSERT INTO approvals (id, request_id, action, actor_id, created_at)
              VALUES ('apr-1', 'old-1', 'approve', 'bob', ?1)",
             rusqlite::params![old],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at)
              VALUES ('new-1', 'alice', 'execute_query', 'dev', 'app', 'executed', 'SELECT 1', ?1, ?1)",

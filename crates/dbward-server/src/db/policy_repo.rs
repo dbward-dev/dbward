@@ -311,10 +311,18 @@ mod tests {
         sync_workflows(&conn, &[]).unwrap();
 
         let api_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM workflows WHERE id = 'api-row' AND source = 'api'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM workflows WHERE id = 'api-row' AND source = 'api'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         let stale_toml_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM workflows WHERE id = 'stale-toml'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM workflows WHERE id = 'stale-toml'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
 
         assert_eq!(api_count, 1);

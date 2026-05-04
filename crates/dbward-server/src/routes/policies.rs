@@ -1,7 +1,7 @@
+use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::Json;
 use serde_json::json;
 
 use crate::auth;
@@ -120,8 +120,14 @@ pub(crate) async fn create_workflow(
             }
         })?;
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "workflow", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::audit_repo::insert_policy_change(
+            &tx,
+            &user.user,
+            "policy_create",
+            "workflow",
+            &id,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -192,8 +198,14 @@ pub(crate) async fn update_workflow(
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "workflow", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::audit_repo::insert_policy_change(
+            &tx,
+            &user.user,
+            "policy_update",
+            "workflow",
+            &id,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -237,8 +249,14 @@ pub(crate) async fn delete_workflow(
             return Err(crate::api_error::ApiError::not_found("workflow not found"));
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "workflow", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::audit_repo::insert_policy_change(
+            &tx,
+            &user.user,
+            "policy_delete",
+            "workflow",
+            &id,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -354,8 +372,14 @@ pub(crate) async fn create_execution_policy(
             }
         })?;
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "execution_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::audit_repo::insert_policy_change(
+            &tx,
+            &user.user,
+            "policy_create",
+            "execution_policy",
+            &id,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -408,8 +432,14 @@ pub(crate) async fn update_execution_policy(
             ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "execution_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::audit_repo::insert_policy_change(
+            &tx,
+            &user.user,
+            "policy_update",
+            "execution_policy",
+            &id,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -443,8 +473,14 @@ pub(crate) async fn delete_execution_policy(
             ));
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "execution_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::audit_repo::insert_policy_change(
+            &tx,
+            &user.user,
+            "policy_delete",
+            "execution_policy",
+            &id,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -568,8 +604,14 @@ pub(crate) async fn create_result_policy(
             }
         })?;
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "result_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::audit_repo::insert_policy_change(
+            &tx,
+            &user.user,
+            "policy_create",
+            "result_policy",
+            &id,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -622,8 +664,14 @@ pub(crate) async fn update_result_policy(
             ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "result_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::audit_repo::insert_policy_change(
+            &tx,
+            &user.user,
+            "policy_update",
+            "result_policy",
+            &id,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -657,8 +705,14 @@ pub(crate) async fn delete_result_policy(
             ));
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "result_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::audit_repo::insert_policy_change(
+            &tx,
+            &user.user,
+            "policy_delete",
+            "result_policy",
+            &id,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -772,8 +826,14 @@ pub(crate) async fn create_notification_policy(
             }
         })?;
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "notification_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::audit_repo::insert_policy_change(
+            &tx,
+            &user.user,
+            "policy_create",
+            "notification_policy",
+            &id,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -819,8 +879,14 @@ pub(crate) async fn update_notification_policy(
             ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "notification_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::audit_repo::insert_policy_change(
+            &tx,
+            &user.user,
+            "policy_update",
+            "notification_policy",
+            &id,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -854,8 +920,14 @@ pub(crate) async fn delete_notification_policy(
             ));
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "notification_policy", &id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::audit_repo::insert_policy_change(
+            &tx,
+            &user.user,
+            "policy_delete",
+            "notification_policy",
+            &id,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
