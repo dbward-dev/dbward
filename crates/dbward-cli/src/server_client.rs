@@ -27,7 +27,11 @@ impl ServerClient {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             api_token: api_token.to_string(),
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("failed to build HTTP client"),
         }
     }
 

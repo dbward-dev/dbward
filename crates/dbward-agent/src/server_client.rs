@@ -13,7 +13,11 @@ impl AgentClient {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             agent_token: agent_token.to_string(),
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .expect("failed to build HTTP client"),
         }
     }
 
@@ -35,6 +39,12 @@ impl AgentClient {
             .send()
             .await
             .map_err(|e| Error::Server(format!("poll failed: {e}")))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::Server(format!("poll failed ({status}): {body}")));
+        }
 
         let body: Value = resp
             .json()
