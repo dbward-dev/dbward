@@ -428,27 +428,61 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             if requests.is_empty() {
                 println!("No requests.");
             } else {
-                println!(
-                    "{:<10} {:<14} {:<10} {:<14} {:<16} {}",
-                    "ID", "STATUS", "USER", "ENV", "OP", "DETAIL"
-                );
+                // Collect rows first to calculate column widths
+                let mut rows: Vec<(String, String, String, String, String, String, String)> = Vec::new();
                 for r in requests {
                     let id = r["id"].as_str().unwrap_or("?");
-                    let short_id = &id[..id.len().min(8)];
-                    let status = r["status"].as_str().unwrap_or("?");
-                    let user = r["created_by"].as_str().unwrap_or("?");
-                    let op = r["operation"].as_str().unwrap_or("?");
-                    let env = r["environment"].as_str().unwrap_or("?");
+                    let short_id = id[..id.len().min(8)].to_string();
+                    let status = r["status"].as_str().unwrap_or("?").to_string();
+                    let user = r["created_by"].as_str().unwrap_or("?").to_string();
+                    let env = r["environment"].as_str().unwrap_or("?").to_string();
+                    let op = r["operation"].as_str().unwrap_or("?").to_string();
                     let detail = r["detail"].as_str().unwrap_or("");
                     let short_detail = if detail.len() > 40 {
                         format!("{}...", &detail[..37])
                     } else {
                         detail.to_string()
                     };
+                    let reason = r["reason"].as_str().unwrap_or("").to_string();
+                    rows.push((short_id, status, user, env, op, short_detail, reason));
+                }
+
+                let has_reason = rows.iter().any(|r| !r.6.is_empty());
+
+                let w = (
+                    rows.iter().map(|r| r.0.len()).max().unwrap_or(2).max(2) + 2,
+                    rows.iter().map(|r| r.1.len()).max().unwrap_or(6).max(6) + 2,
+                    rows.iter().map(|r| r.2.len()).max().unwrap_or(4).max(4) + 2,
+                    rows.iter().map(|r| r.3.len()).max().unwrap_or(3).max(3) + 2,
+                    rows.iter().map(|r| r.4.len()).max().unwrap_or(2).max(2) + 2,
+                );
+
+                if has_reason {
                     println!(
-                        "{:<10} {:<14} {:<10} {:<14} {:<16} {}",
-                        short_id, status, user, env, op, short_detail
+                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<30} {}",
+                        "ID", "STATUS", "USER", "ENV", "OP", "DETAIL", "REASON",
+                        w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4,
                     );
+                    for r in &rows {
+                        println!(
+                            "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<30} {}",
+                            r.0, r.1, r.2, r.3, r.4, r.5, r.6,
+                            w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4,
+                        );
+                    }
+                } else {
+                    println!(
+                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{}",
+                        "ID", "STATUS", "USER", "ENV", "OP", "DETAIL",
+                        w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4,
+                    );
+                    for r in &rows {
+                        println!(
+                            "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{}",
+                            r.0, r.1, r.2, r.3, r.4, r.5,
+                            w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4,
+                        );
+                    }
                 }
             }
             Ok(())
