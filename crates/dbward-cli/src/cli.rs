@@ -455,7 +455,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 println!("No requests.");
             } else {
                 // Collect rows first to calculate column widths
-                let mut rows: Vec<(String, String, String, String, String, String, String)> =
+                let mut rows: Vec<(String, String, String, String, String, String, String, String)> =
                     Vec::new();
                 for r in requests {
                     let id = r["id"].as_str().unwrap_or("?");
@@ -467,7 +467,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     let detail = r["detail"].as_str().unwrap_or("");
                     let short_detail = truncate_table_cell(detail, LIST_DETAIL_WIDTH);
                     let reason = r["reason"].as_str().unwrap_or("").to_string();
-                    rows.push((short_id, status, user, env, op, short_detail, reason));
+                    let created = r["created_at"].as_str().unwrap_or("");
+                    let short_time = if created.len() >= 16 { &created[11..16] } else { created }.to_string();
+                    rows.push((short_id, status, user, env, op, short_detail, reason, short_time));
                 }
 
                 let has_reason = rows.iter().any(|r| !r.6.is_empty());
@@ -475,6 +477,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 let w = (
                     rows.iter().map(|r| r.0.len()).max().unwrap_or(2).max(2) + 2,
                     rows.iter().map(|r| r.1.len()).max().unwrap_or(6).max(6) + 2,
+                    rows.iter().map(|r| r.7.len()).max().unwrap_or(5).max(5) + 2,
                     rows.iter().map(|r| r.2.len()).max().unwrap_or(4).max(4) + 2,
                     rows.iter().map(|r| r.3.len()).max().unwrap_or(3).max(3) + 2,
                     rows.iter().map(|r| r.4.len()).max().unwrap_or(2).max(2) + 2,
@@ -482,68 +485,30 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
 
                 if has_reason {
                     println!(
-                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<detail_width$} {}",
-                        "ID",
-                        "STATUS",
-                        "USER",
-                        "ENV",
-                        "OP",
-                        "DETAIL",
-                        "REASON",
-                        w0 = w.0,
-                        w1 = w.1,
-                        w2 = w.2,
-                        w3 = w.3,
-                        w4 = w.4,
+                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<detail_width$} {}",
+                        "ID", "STATUS", "TIME", "USER", "ENV", "OP", "DETAIL", "REASON",
+                        w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4, w5 = w.5,
                         detail_width = LIST_DETAIL_WIDTH,
                     );
                     for r in &rows {
                         println!(
-                            "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<detail_width$} {}",
-                            r.0,
-                            r.1,
-                            r.2,
-                            r.3,
-                            r.4,
-                            r.5,
-                            r.6,
-                            w0 = w.0,
-                            w1 = w.1,
-                            w2 = w.2,
-                            w3 = w.3,
-                            w4 = w.4,
+                            "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<detail_width$} {}",
+                            r.0, r.1, r.7, r.2, r.3, r.4, r.5, r.6,
+                            w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4, w5 = w.5,
                             detail_width = LIST_DETAIL_WIDTH,
                         );
                     }
                 } else {
                     println!(
-                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{}",
-                        "ID",
-                        "STATUS",
-                        "USER",
-                        "ENV",
-                        "OP",
-                        "DETAIL",
-                        w0 = w.0,
-                        w1 = w.1,
-                        w2 = w.2,
-                        w3 = w.3,
-                        w4 = w.4,
+                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{}",
+                        "ID", "STATUS", "TIME", "USER", "ENV", "OP", "DETAIL",
+                        w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4, w5 = w.5,
                     );
                     for r in &rows {
                         println!(
-                            "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{}",
-                            r.0,
-                            r.1,
-                            r.2,
-                            r.3,
-                            r.4,
-                            r.5,
-                            w0 = w.0,
-                            w1 = w.1,
-                            w2 = w.2,
-                            w3 = w.3,
-                            w4 = w.4,
+                            "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{}",
+                            r.0, r.1, r.7, r.2, r.3, r.4, r.5,
+                            w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4, w5 = w.5,
                         );
                     }
                 }
