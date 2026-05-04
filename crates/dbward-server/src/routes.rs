@@ -284,7 +284,7 @@ fn list_requests_pending_for_me(
     for (row, created_by, ws_json) in &candidates {
         let req_id = row["id"].as_str().unwrap_or("");
         let approvals = get_approvals_for_request(conn, req_id)?;
-        let approval_resource =
+        let (approval_resource, _, _, _) =
             current_approval_resource(conn, req_id, created_by.clone(), ws_json.as_deref())?;
         if authz::authorize_sync(user, Action::ApproveRequest, approval_resource).is_ok() {
             let steps: Vec<crate::server_config::WorkflowStep> = ws_json
@@ -339,16 +339,21 @@ fn current_approval_resource(
     request_id: &str,
     requester_id: String,
     workflow_snapshot_json: Option<&str>,
-) -> Result<Resource, (StatusCode, String)> {
+) -> Result<(Resource, usize, Vec<String>, usize), (StatusCode, String)> {
     let steps: Vec<crate::server_config::WorkflowStep> = workflow_snapshot_json
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
 
     if steps.is_empty() {
-        return Ok(Resource::ApprovalStep {
-            requester_id,
-            allowed_roles: Vec::new(),
-        });
+        return Ok((
+            Resource::ApprovalStep {
+                requester_id,
+                allowed_roles: Vec::new(),
+            },
+            0,
+            Vec::new(),
+            0,
+        ));
     }
 
     let approvals = get_approvals_for_request(conn, request_id)?;
@@ -364,15 +369,20 @@ fn current_approval_resource(
         })
         .unwrap_or(steps.len());
 
-    let allowed_roles = steps
+    let allowed_roles: Vec<String> = steps
         .get(current_step)
         .map(|step| step.approvers.iter().map(|group| group.role.clone()).collect())
         .unwrap_or_default();
 
-    Ok(Resource::ApprovalStep {
-        requester_id,
+    Ok((
+        Resource::ApprovalStep {
+            requester_id,
+            allowed_roles: allowed_roles.clone(),
+        },
+        current_step,
         allowed_roles,
-    })
+        steps.len(),
+    ))
 }
 
 async fn create_request(
@@ -830,13 +840,19 @@ async fn reject_request(
             )
             .ok()
             .flatten();
-        let approval_resource = current_approval_resource(
+        let (approval_resource, step_idx, step_roles, total_steps) = current_approval_resource(
             &conn,
             &id,
             req_user.clone(),
             workflow_snapshot_json.as_deref(),
         )?;
-        authz::authorize_sync(&user, Action::RejectRequest, approval_resource)?;
+        if let Err(_) = authz::authorize_sync(&user, Action::RejectRequest, approval_resource) {
+            let roles_str = step_roles.join(", ");
+            return Err((
+                StatusCode::FORBIDDEN,
+                format!("you are not an approver for the current step (step {}/{}: {})", step_idx + 1, total_steps, roles_str),
+            ));
+        }
 
         let now = chrono::Utc::now().to_rfc3339();
         let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
