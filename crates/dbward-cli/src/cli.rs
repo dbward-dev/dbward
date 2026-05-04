@@ -96,6 +96,13 @@ enum Command {
         #[arg(long, default_value = "dbward-agent.toml")]
         config: PathBuf,
     },
+    /// Start local dev server + agent
+    Dev {
+        #[arg(long)]
+        database_url: String,
+        #[arg(long, default_value = "3000")]
+        port: u16,
+    },
     /// Approve a pending request
     Approve { id: String },
     /// Reject a pending request
@@ -246,6 +253,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 dbward_core::Error::Config(format!("{}: {e}", agent_config_path.display()))
             })?;
             return dbward_agent::run(agent_config).await;
+        }
+        Command::Dev { database_url, port } => {
+            return run_dev(database_url, *port).await;
         }
         _ => {}
     }
@@ -477,7 +487,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         | Command::Logout
         | Command::Whoami
         | Command::Server { .. }
-        | Command::Agent { .. } => unreachable!(),
+        | Command::Agent { .. }
+        | Command::Dev { .. } => unreachable!(),
     }
 }
 
@@ -696,6 +707,137 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
             }
         },
     }
+}
+
+// ---------------------------------------------------------------------------
+// Dev (local server + agent)
+// ---------------------------------------------------------------------------
+
+async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error> {
+    let dev_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".dbward")
+        .join("dev");
+    std::fs::create_dir_all(&dev_dir).map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dev_dir, std::fs::Permissions::from_mode(0o700));
+    }
+
+    let db_path = dev_dir.join("dbward.db");
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+    dbward_server::db::init(&conn).map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+
+    // Auto-approve all environments
+    let workflows = vec![dbward_server::server_config::WorkflowDef {
+        database: "*".into(),
+        environment: "*".into(),
+        operations: vec![],
+        steps: vec![],
+        require_reason: false,
+    }];
+    dbward_server::db::sync_workflows(&conn, &workflows)
+        .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+
+    let token_signer = dbward_server::token::TokenSigner::load_or_generate(&dev_dir)
+        .map_err(dbward_core::Error::Server)?;
+
+    let state = dbward_server::AppState {
+        sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
+        token_signer: std::sync::Arc::new(token_signer),
+        webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        oidc: None,
+        auth_mode: "token".into(),
+        policy: std::sync::Arc::new(Default::default()),
+        result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
+        retention: Default::default(),
+    };
+
+    // Create tokens
+    let (_, admin_token) = dbward_server::auth::create_token_with_type(
+        &state, "admin", dbward_core::Role::Admin, "user",
+    )
+    .await
+    .map_err(dbward_core::Error::Server)?;
+    let (_, dev_token) = dbward_server::auth::create_token_with_type(
+        &state, "developer", dbward_core::Role::Developer, "user",
+    )
+    .await
+    .map_err(dbward_core::Error::Server)?;
+    let (_, agent_token) = dbward_server::auth::create_token_with_type(
+        &state, "agent", dbward_core::Role::Admin, "agent",
+    )
+    .await
+    .map_err(dbward_core::Error::Server)?;
+
+    let addr: std::net::SocketAddr = format!("127.0.0.1:{port}")
+        .parse()
+        .map_err(|e: std::net::AddrParseError| dbward_core::Error::Server(e.to_string()))?;
+    let server_url = format!("http://127.0.0.1:{port}");
+
+    // Write client config
+    let client_config = format!(
+        "[server]\nurl = \"{}\"\ntoken = \"{}\"\n",
+        server_url, dev_token
+    );
+    let config_path = dev_dir.join("client.toml");
+    let _ = std::fs::write(&config_path, &client_config);
+
+    eprintln!("dbward dev server starting...");
+    eprintln!("  Server:    {server_url}");
+    eprintln!("  Database:  {database_url}");
+    eprintln!();
+    eprintln!("  Admin token:     {admin_token}");
+    eprintln!("  Developer token: {dev_token}");
+    eprintln!();
+    eprintln!("  Config: {}", config_path.display());
+    eprintln!(
+        "  Try: dbward --config {} execute \"SELECT 1\"",
+        config_path.display()
+    );
+    eprintln!();
+
+    // Build agent config
+    let mut databases = std::collections::BTreeMap::new();
+    databases.insert(
+        "default".into(),
+        dbward_core::AgentDatabaseConfig {
+            url: database_url.to_string(),
+            migrations_dir: None,
+        },
+    );
+    let agent_config = dbward_core::AgentConfig {
+        agent_id: "dev-agent".into(),
+        poll_interval_ms: 500,
+        lease_duration_secs: 300,
+        max_concurrent_tasks: 2,
+        server: dbward_core::AgentServerConfig {
+            url: server_url,
+            agent_token: agent_token.clone(),
+        },
+        capabilities: dbward_core::AgentCapabilities {
+            databases: vec!["default".into()],
+            environments: vec!["*".into()],
+            operations: vec!["*".into()],
+        },
+        databases,
+    };
+
+    // Spawn server, then run agent on main task
+    let server_state = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = dbward_server::start(addr, server_state).await {
+            eprintln!("server error: {e}");
+        }
+    });
+
+    // Wait for server to be ready
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // Run agent (blocks until ctrl-c)
+    dbward_agent::run(agent_config).await
 }
 
 // ---------------------------------------------------------------------------
