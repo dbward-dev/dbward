@@ -1,15 +1,14 @@
 mod agent;
 mod audit;
 mod policies;
+mod requests;
 
 use axum::routing::get;
 use axum::Router;
 
 use crate::state::AppState;
 
-// Re-export all handler functions from the old routes.rs for now
-// These will be split into separate modules in subsequent steps
-pub use super::routes_legacy::*;
+pub use requests::*;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
