@@ -87,7 +87,7 @@ pub(crate) async fn approve_request_inner(
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
         return Ok(ApproveResult {
-            response: json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
+            response: json!({"id": id, "status": "approved", "approved_by": approver.user, "step_completed": 0, "current_step": 0, "total_steps": 0, "message": "Approved.", "execution_token": token}),
             notif_hooks,
             webhook_event: Some(crate::webhook::WebhookEvent {
                 event: "request_approved".into(),
@@ -261,7 +261,7 @@ pub(crate) async fn approve_request_inner(
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
         Ok(ApproveResult {
-            response: json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
+            response: json!({"id": id, "status": "approved", "approved_by": approver.user, "step_completed": current_step, "current_step": steps.len(), "total_steps": steps.len(), "message": format!("Step {}/{} approved. All steps complete.", current_step + 1, steps.len()), "execution_token": token}),
             notif_hooks,
             webhook_event: Some(crate::webhook::WebhookEvent {
                 event: "request_approved".into(),
@@ -330,9 +330,11 @@ pub(crate) async fn approve_request_inner(
         Ok(ApproveResult {
             response: json!({
                 "id": id, "status": "pending",
+                "approved_by": approver.user,
                 "step_completed": current_step, "current_step": new_current,
                 "total_steps": steps.len(),
                 "message": format!("Step {}/{} approved. Waiting for further approvals.", current_step + 1, steps.len()),
+                "execution_token": null,
             }),
             notif_hooks,
             webhook_event,
