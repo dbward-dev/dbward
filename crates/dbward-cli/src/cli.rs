@@ -210,6 +210,25 @@ fn truncate_table_cell(value: &str, max_chars: usize) -> String {
     format!("{prefix}...")
 }
 
+fn format_created_time(created_at: &str) -> String {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(created_at) {
+        return dt.format("%H:%M").to_string();
+    }
+
+    for format in [
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M",
+    ] {
+        if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(created_at, format) {
+            return dt.format("%H:%M").to_string();
+        }
+    }
+
+    "?".to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Auth helper
 // ---------------------------------------------------------------------------
@@ -455,8 +474,16 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 println!("No requests.");
             } else {
                 // Collect rows first to calculate column widths
-                let mut rows: Vec<(String, String, String, String, String, String, String, String)> =
-                    Vec::new();
+                let mut rows: Vec<(
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                )> = Vec::new();
                 for r in requests {
                     let id = r["id"].as_str().unwrap_or("?");
                     let short_id = id[..id.len().min(8)].to_string();
@@ -468,8 +495,17 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     let short_detail = truncate_table_cell(detail, LIST_DETAIL_WIDTH);
                     let reason = r["reason"].as_str().unwrap_or("").to_string();
                     let created = r["created_at"].as_str().unwrap_or("");
-                    let short_time = if created.len() >= 16 { &created[11..16] } else { created }.to_string();
-                    rows.push((short_id, status, user, env, op, short_detail, reason, short_time));
+                    let short_time = format_created_time(created);
+                    rows.push((
+                        short_id,
+                        status,
+                        user,
+                        env,
+                        op,
+                        short_detail,
+                        reason,
+                        short_time,
+                    ));
                 }
 
                 let has_reason = rows.iter().any(|r| !r.6.is_empty());
@@ -486,29 +522,75 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 if has_reason {
                     println!(
                         "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<detail_width$} {}",
-                        "ID", "STATUS", "TIME", "USER", "ENV", "OP", "DETAIL", "REASON",
-                        w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4, w5 = w.5,
+                        "ID",
+                        "STATUS",
+                        "TIME",
+                        "USER",
+                        "ENV",
+                        "OP",
+                        "DETAIL",
+                        "REASON",
+                        w0 = w.0,
+                        w1 = w.1,
+                        w2 = w.2,
+                        w3 = w.3,
+                        w4 = w.4,
+                        w5 = w.5,
                         detail_width = LIST_DETAIL_WIDTH,
                     );
                     for r in &rows {
                         println!(
                             "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<detail_width$} {}",
-                            r.0, r.1, r.7, r.2, r.3, r.4, r.5, r.6,
-                            w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4, w5 = w.5,
+                            r.0,
+                            r.1,
+                            r.7,
+                            r.2,
+                            r.3,
+                            r.4,
+                            r.5,
+                            r.6,
+                            w0 = w.0,
+                            w1 = w.1,
+                            w2 = w.2,
+                            w3 = w.3,
+                            w4 = w.4,
+                            w5 = w.5,
                             detail_width = LIST_DETAIL_WIDTH,
                         );
                     }
                 } else {
                     println!(
                         "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{}",
-                        "ID", "STATUS", "TIME", "USER", "ENV", "OP", "DETAIL",
-                        w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4, w5 = w.5,
+                        "ID",
+                        "STATUS",
+                        "TIME",
+                        "USER",
+                        "ENV",
+                        "OP",
+                        "DETAIL",
+                        w0 = w.0,
+                        w1 = w.1,
+                        w2 = w.2,
+                        w3 = w.3,
+                        w4 = w.4,
+                        w5 = w.5,
                     );
                     for r in &rows {
                         println!(
                             "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{}",
-                            r.0, r.1, r.7, r.2, r.3, r.4, r.5,
-                            w0 = w.0, w1 = w.1, w2 = w.2, w3 = w.3, w4 = w.4, w5 = w.5,
+                            r.0,
+                            r.1,
+                            r.7,
+                            r.2,
+                            r.3,
+                            r.4,
+                            r.5,
+                            w0 = w.0,
+                            w1 = w.1,
+                            w2 = w.2,
+                            w3 = w.3,
+                            w4 = w.4,
+                            w5 = w.5,
                         );
                     }
                 }
@@ -1050,5 +1132,21 @@ mod tests {
         let truncated = truncate_table_cell(value, LIST_DETAIL_WIDTH);
         assert_eq!(truncated.chars().count(), LIST_DETAIL_WIDTH);
         assert!(truncated.ends_with("..."));
+    }
+
+    #[test]
+    fn format_created_time_supports_rfc3339() {
+        assert_eq!(format_created_time("2026-05-05T01:13:27+09:00"), "01:13");
+    }
+
+    #[test]
+    fn format_created_time_supports_space_separated_timestamp() {
+        assert_eq!(format_created_time("2026-05-05 01:13:27.123"), "01:13");
+    }
+
+    #[test]
+    fn format_created_time_falls_back_for_invalid_input() {
+        assert_eq!(format_created_time("not-a-timestamp"), "?");
+        assert_eq!(format_created_time("2026-05-05T01:🦀:27+09:00"), "?");
     }
 }

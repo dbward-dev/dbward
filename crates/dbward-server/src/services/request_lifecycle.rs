@@ -43,9 +43,10 @@ pub(crate) async fn approve_request_inner(
     );
 
     if status != "pending" {
-        return Err(crate::api_error::ApiError::conflict(format!(
-            "request is already {status}"
-        )));
+        return Err(
+            crate::api_error::ApiError::conflict(format!("request is already {status}"))
+                .with_code("request_approve_wrong_status"),
+        );
     }
 
     // Parse workflow steps from snapshot
@@ -134,9 +135,10 @@ pub(crate) async fn approve_request_inner(
         .unwrap_or(steps.len());
 
     if current_step >= steps.len() {
-        return Err(crate::api_error::ApiError::conflict(
-            "all steps already satisfied",
-        ));
+        return Err(
+            crate::api_error::ApiError::conflict("all steps already satisfied")
+                .with_code("all_steps_already_satisfied"),
+        );
     }
 
     let step = &steps[current_step];
@@ -163,12 +165,14 @@ pub(crate) async fn approve_request_inner(
         if !approver.has_role(role) {
             return Err(crate::api_error::ApiError::forbidden(format!(
                 "you do not have role '{role}'"
-            )));
+            ))
+            .with_code("as_role_not_held"));
         }
         if !step.approvers.iter().any(|g| g.role == *role) {
             return Err(crate::api_error::ApiError::forbidden(format!(
                 "role '{role}' is not an approver for current step"
-            )));
+            ))
+            .with_code("as_role_not_allowed_for_step"));
         }
         role.clone()
     } else {
@@ -191,6 +195,7 @@ pub(crate) async fn approve_request_inner(
                 crate::api_error::ApiError::forbidden(
                     "you do not have a matching role for this step",
                 )
+                .with_code("no_matching_approver_role")
             })?
     };
 
@@ -200,9 +205,10 @@ pub(crate) async fn approve_request_inner(
             .iter()
             .any(|(si, aid, _)| *si == current_step as i64 && aid == &approver.user)
         {
-            return Err(crate::api_error::ApiError::conflict(
-                "you already approved this step",
-            ));
+            return Err(
+                crate::api_error::ApiError::conflict("you already approved this step")
+                    .with_code("already_approved_step"),
+            );
         }
     } else {
         // Non-distinct: same user cannot approve same step with the same role (prevent exact duplicates)
@@ -211,7 +217,8 @@ pub(crate) async fn approve_request_inner(
         }) {
             return Err(crate::api_error::ApiError::conflict(
                 "you already approved this step with this role",
-            ));
+            )
+            .with_code("already_approved_role"));
         }
     }
 

@@ -375,7 +375,8 @@ pub(crate) async fn create_request(
     if !VALID_OPERATIONS.contains(&operation) {
         return Err(crate::api_error::ApiError::bad_request(format!(
             "unknown operation: {operation}"
-        )));
+        ))
+        .with_code("unknown_operation"));
     }
 
     let environment = body["environment"]
@@ -401,7 +402,8 @@ pub(crate) async fn create_request(
     if emergency && reason.is_none() {
         return Err(crate::api_error::ApiError::bad_request(
             "reason is required for emergency requests",
-        ));
+        )
+        .with_code("emergency_reason_required"));
     }
     // Readonly and approver-only roles cannot use break-glass
     if emergency
@@ -409,14 +411,16 @@ pub(crate) async fn create_request(
     {
         return Err(crate::api_error::ApiError::forbidden(
             "insufficient permissions for break-glass",
-        ));
+        )
+        .with_code("break_glass_forbidden"));
     }
 
     // Approver-only roles cannot create requests
     if user.effective_permission() == "approver" {
         return Err(crate::api_error::ApiError::forbidden(
             "approver-only roles cannot create requests",
-        ));
+        )
+        .with_code("approver_cannot_create_request"));
     }
 
     // Unified policy evaluation: workflows first, static policy fallback
@@ -433,7 +437,8 @@ pub(crate) async fn create_request(
     if !emergency && decision.require_reason && reason.as_ref().map_or(true, |r| r.is_empty()) {
         return Err(crate::api_error::ApiError::bad_request(
             "reason is required by workflow policy",
-        ));
+        )
+        .with_code("workflow_reason_required"));
     }
 
     let needs_approval = !emergency && decision.needs_approval;
@@ -596,7 +601,8 @@ pub(crate) async fn reject_request(
         if status != "pending" {
             return Err(crate::api_error::ApiError::conflict(format!(
                 "request is already {status}"
-            )));
+            ))
+            .with_code("request_reject_wrong_status"));
         }
 
         let workflow_snapshot_json = ctx.workflow_snapshot_json.clone();
@@ -613,7 +619,8 @@ pub(crate) async fn reject_request(
                 step_idx + 1,
                 total_steps,
                 roles_str
-            )));
+            ))
+            .with_code("not_current_step_approver"));
         }
 
         let now = chrono::Utc::now().to_rfc3339();
@@ -857,21 +864,24 @@ pub(crate) async fn dispatch_request(
                     return Err(crate::api_error::ApiError::new(
                         StatusCode::GONE,
                         "execution window expired",
-                    ));
+                    )
+                    .with_code("execution_window_expired"));
                 }
             }
         }
 
         let exec_count = crate::db::request_repo::count_executions(&conn, &id);
         if status == "failed" && !retry {
-            return Err(crate::api_error::ApiError::conflict(
-                "retry on failure is disabled",
-            ));
+            return Err(
+                crate::api_error::ApiError::conflict("retry on failure is disabled")
+                    .with_code("retry_on_failure_disabled"),
+            );
         }
         if exec_count >= max_exec {
             return Err(crate::api_error::ApiError::conflict(format!(
                 "max executions ({max_exec}) reached"
-            )));
+            ))
+            .with_code("max_executions_reached"));
         }
     }
 
@@ -880,7 +890,8 @@ pub(crate) async fn dispatch_request(
     {
         return Err(crate::api_error::ApiError::conflict(
             "request cannot be dispatched (wrong status)",
-        ));
+        )
+        .with_code("request_dispatch_wrong_status"));
     }
 
     drop(conn);
@@ -947,7 +958,9 @@ pub(crate) async fn stream_result(
                 }
                 _ => format!("request status is {status}"),
             };
-            return Err(crate::api_error::ApiError::conflict(msg));
+            return Err(
+                crate::api_error::ApiError::conflict(msg).with_code("result_relay_unavailable")
+            );
         }
     };
 
@@ -970,7 +983,8 @@ pub(crate) async fn stream_result(
         return Err(crate::api_error::ApiError::new(
             StatusCode::GATEWAY_TIMEOUT,
             "timed out waiting for result",
-        ));
+        )
+        .with_code("result_wait_timeout"));
     }
 
     let result = slot.result.lock().await.clone();
@@ -978,6 +992,8 @@ pub(crate) async fn stream_result(
 
     match result {
         Some(payload) => Ok(Json(payload)),
-        None => Err(crate::api_error::ApiError::internal("result was empty")),
+        None => {
+            Err(crate::api_error::ApiError::internal("result was empty").with_code("result_empty"))
+        }
     }
 }

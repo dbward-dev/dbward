@@ -3,6 +3,8 @@ use dbward_core::token::ExecutionToken;
 use reqwest::Client;
 use serde_json::Value;
 
+const MAX_ERROR_BODY_PREVIEW: usize = 200;
+
 /// Structured HTTP error from the server.
 #[derive(Debug)]
 pub struct ServerError {
@@ -25,11 +27,38 @@ impl ServerError {
                 )
             })
             .unwrap_or((None, None, None));
-        Self { status, body, error_message, code, hint }
+        Self {
+            status,
+            body,
+            error_message,
+            code,
+            hint,
+        }
+    }
+
+    fn fallback_message(&self) -> String {
+        if self.status == 0 {
+            return "request failed before receiving a server response".to_string();
+        }
+
+        let compact = self.body.split_whitespace().collect::<Vec<_>>().join(" ");
+        if compact.is_empty() {
+            return format!("server returned HTTP {}", self.status);
+        }
+
+        let preview: String = compact.chars().take(MAX_ERROR_BODY_PREVIEW).collect();
+        if compact.chars().count() > MAX_ERROR_BODY_PREVIEW {
+            format!("{preview}...")
+        } else {
+            preview
+        }
     }
 
     pub fn into_core_error(self, context: &str) -> Error {
-        let msg = self.error_message.as_deref().unwrap_or(&self.body);
+        let msg = self
+            .error_message
+            .clone()
+            .unwrap_or_else(|| self.fallback_message());
         let mut out = format!("{context}: {msg}");
         if let Some(hint) = &self.hint {
             out.push_str(&format!("\n  Hint: {hint}"));
@@ -65,8 +94,7 @@ impl ServerClient {
             .await
             .map_err(|e| Error::Server(format!("{context}: {e}")))?;
         if !status.is_success() {
-            return Err(ServerError::from_response(status.as_u16(), text)
-            .into_core_error(context));
+            return Err(ServerError::from_response(status.as_u16(), text).into_core_error(context));
         }
         serde_json::from_str(&text)
             .map_err(|e| Error::Server(format!("{context}: invalid JSON: {e}")))
@@ -75,7 +103,10 @@ impl ServerClient {
     /// Parse HTTP response, returning ServerError on failure for caller to handle.
     async fn parse_response_detailed(&self, resp: reqwest::Response) -> Result<Value, ServerError> {
         let status = resp.status();
-        let text = resp.text().await.map_err(|_| ServerError::from_response(0, "failed to read response".into()))?;
+        let text = resp
+            .text()
+            .await
+            .map_err(|_| ServerError::from_response(0, "failed to read response".into()))?;
         if !status.is_success() {
             return Err(ServerError::from_response(status.as_u16(), text));
         }
@@ -111,23 +142,12 @@ impl ServerClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| Error::Server(format!("server request failed: {e}")))?;
+            .map_err(|_| {
+                ServerError::from_response(0, "create request failed".into())
+                    .into_core_error("create request")
+            })?;
 
-        let status_code = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| Error::Server(format!("server request failed: {e}")))?;
-
-        if !status_code.is_success() {
-            return Err(Error::Server(format!(
-                "server returned {}: {}",
-                status_code, text
-            )));
-        }
-
-        let body: Value = serde_json::from_str(&text)
-            .map_err(|e| Error::Server(format!("invalid server response: {e}")))?;
+        let body = self.parse_response(resp, "create request").await?;
 
         let id = body["id"].as_str().unwrap_or("").to_string();
         let status = body["status"].as_str().unwrap_or("").to_string();
@@ -335,5 +355,55 @@ impl ServerClient {
             .map_err(|e| Error::Server(format!("list audit failed: {e}")))?;
 
         self.parse_response(resp, "list audit").await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_structured_server_error_fields() {
+        let err = ServerError::from_response(
+            409,
+            r#"{"error":"request is already approved","code":"already_approved","hint":"Run dbward resume"}"#.into(),
+        );
+
+        assert_eq!(
+            err.error_message.as_deref(),
+            Some("request is already approved")
+        );
+        assert_eq!(err.code.as_deref(), Some("already_approved"));
+        assert_eq!(err.hint.as_deref(), Some("Run dbward resume"));
+    }
+
+    #[test]
+    fn falls_back_when_error_body_is_not_json() {
+        let err = ServerError::from_response(502, "<html>bad gateway</html>".into());
+
+        match err.into_core_error("dispatch") {
+            Error::Server(msg) => assert_eq!(msg, "dispatch: <html>bad gateway</html>"),
+            other => panic!("unexpected error variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hides_transport_error_details_in_core_error() {
+        let err = ServerError::from_response(
+            0,
+            "dispatch failed: error sending request for url (https://user:secret@example.com)"
+                .into(),
+        );
+
+        match err.into_core_error("dispatch") {
+            Error::Server(msg) => {
+                assert!(
+                    msg.contains("dispatch: request failed before receiving a server response")
+                );
+                assert!(!msg.contains("secret"));
+                assert!(!msg.contains("https://"));
+            }
+            other => panic!("unexpected error variant: {other:?}"),
+        }
     }
 }
