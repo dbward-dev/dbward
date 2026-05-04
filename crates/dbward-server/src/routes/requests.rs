@@ -123,7 +123,7 @@ pub(crate) async fn list_requests(
     };
 
     let query_sql = format!(
-        "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at, reason FROM requests {where_sql} ORDER BY created_at DESC",
+        "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at, reason, workflow_snapshot_json FROM requests {where_sql} ORDER BY created_at DESC",
     );
     let mut stmt = conn
         .prepare(&query_sql)
@@ -144,6 +144,7 @@ pub(crate) async fn list_requests(
                 "updated_at": row.get::<_, String>(9)?,
                 "resolved_at": row.get::<_, Option<String>>(10)?,
                 "reason": row.get::<_, Option<String>>(11)?,
+                "workflow_snapshot_json": row.get::<_, Option<String>>(12)?,
             }))
         })
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
@@ -160,6 +161,40 @@ pub(crate) async fn list_requests(
         );
         if authz::authorize_sync(&user, Action::ListRequests, resource).is_ok() {
             filtered.push(row);
+            continue;
+        }
+        // Approvers can also see pending requests they can approve
+        if row["status"].as_str() == Some("pending") {
+            let ws: Option<String> = row.get("workflow_snapshot_json")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let steps: Vec<crate::server_config::WorkflowStep> = ws
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_default();
+            let allowed_roles: Vec<String> = if steps.is_empty() {
+                Vec::new()
+            } else {
+                let approvals = crate::db::request_repo::get_approvals(&conn, row["id"].as_str().unwrap_or(""))
+                    .unwrap_or_default();
+                let current = steps.iter().enumerate().find_map(|(i, step)| {
+                    if !crate::services::request_lifecycle::is_step_satisfied(step, &approvals, i as i64) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                });
+                current.and_then(|i| steps.get(i))
+                    .map(|step| step.approvers.iter().map(|g| g.role.clone()).collect())
+                    .unwrap_or_default()
+            };
+            let approval_resource = Resource::ApprovalStep {
+                requester_id: row["created_by"].as_str().unwrap_or("").to_string(),
+                allowed_roles,
+            };
+            if authz::authorize_sync(&user, Action::ApproveRequest, approval_resource).is_ok() {
+                filtered.push(row);
+            }
         }
     }
 
