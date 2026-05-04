@@ -4,16 +4,18 @@ use crate::{Error, Operation};
 ///
 /// Matrix:
 ///   - "admin": all operations
+///   - "developer": all except audit_search
 ///   - "readonly": migrate_status, audit_search, execute_query (SELECT only — caller enforces query type)
-///   - anything else ("developer", "dba", "team-lead", …): all except audit_search
+///   - "approver" (custom roles): no operations (they exist only to approve requests)
 pub fn check_permission(role: &str, operation: &Operation) -> Result<(), Error> {
     let allowed = match role {
         "admin" => true,
+        "developer" => !matches!(operation, Operation::AuditSearch),
         "readonly" => matches!(
             operation,
             Operation::MigrateStatus | Operation::AuditSearch | Operation::ExecuteQuery
         ),
-        _ => !matches!(operation, Operation::AuditSearch),
+        _ => false,
     };
 
     if allowed {
@@ -71,9 +73,10 @@ mod tests {
     }
 
     #[test]
-    fn custom_role_treated_as_developer() {
-        assert!(check_permission("dba", &Operation::ExecuteQuery).is_ok());
-        assert!(check_permission("team-lead", &Operation::MigrateUp).is_ok());
+    fn custom_role_cannot_perform_operations() {
+        assert!(check_permission("dba", &Operation::ExecuteQuery).is_err());
+        assert!(check_permission("team-lead", &Operation::MigrateUp).is_err());
         assert!(check_permission("dba", &Operation::AuditSearch).is_err());
+        assert!(check_permission("approver", &Operation::ExecuteQuery).is_err());
     }
 }

@@ -88,7 +88,7 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
 
         CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_approvals_request ON approvals(request_id);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_unique_per_step ON approvals(request_id, step_index, actor_id);
+        CREATE INDEX IF NOT EXISTS idx_approvals_step ON approvals(request_id, step_index, actor_id);
         CREATE INDEX IF NOT EXISTS idx_agent_exec_request ON agent_executions(request_id);
         CREATE INDEX IF NOT EXISTS idx_agent_exec_agent ON agent_executions(agent_id, status);
         CREATE INDEX IF NOT EXISTS idx_audit_request ON audit_log(request_id);

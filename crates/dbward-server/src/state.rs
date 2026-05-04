@@ -109,15 +109,18 @@ pub struct AuthUser {
 
 impl AuthUser {
     /// Returns the effective permission level:
-    /// "admin" if any role is admin, "readonly" if all roles are readonly, otherwise "developer".
+    /// "admin" > "developer" > "readonly" > "approver" (custom roles can only approve).
     pub fn effective_permission(&self) -> &str {
         if self.roles.iter().any(|r| r == "admin") {
-            "admin"
-        } else if !self.roles.is_empty() && self.roles.iter().all(|r| r == "readonly") {
-            "readonly"
-        } else {
-            "developer"
+            return "admin";
         }
+        if self.roles.iter().any(|r| r == "developer") {
+            return "developer";
+        }
+        if self.roles.iter().any(|r| r == "readonly") {
+            return "readonly";
+        }
+        "approver"
     }
 
     pub fn has_role(&self, role: &str) -> bool {
