@@ -66,12 +66,6 @@ impl From<(StatusCode, String)> for ApiError {
     }
 }
 
-impl From<rusqlite::Error> for ApiError {
-    fn from(e: rusqlite::Error) -> Self {
-        Self::internal(e.to_string())
-    }
-}
-
 impl std::fmt::Display for ApiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.error)

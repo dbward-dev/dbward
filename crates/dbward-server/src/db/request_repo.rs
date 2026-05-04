@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use std::ops::Deref;
 
 // --- Row types ---
 
@@ -78,25 +79,28 @@ pub fn count_executions(conn: &Connection, request_id: &str) -> u32 {
 // --- Writes ---
 
 /// Insert a new request.
-pub fn insert_request(conn: &Connection, req: &NewRequest) -> Result<(), rusqlite::Error> {
+pub fn insert_request(conn: &Connection, req: &NewRequest, now: &str) -> Result<(), rusqlite::Error> {
     conn.execute(
         "INSERT INTO requests (id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, emergency, reason, workflow_id, workflow_snapshot_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        rusqlite::params![req.id, req.created_by, req.operation, req.environment, req.database_name, req.detail, req.status, chrono::Utc::now().to_rfc3339(), chrono::Utc::now().to_rfc3339(), req.emergency, req.reason, req.workflow_id, req.workflow_snapshot_json],
+        rusqlite::params![req.id, req.created_by, req.operation, req.environment, req.database_name, req.detail, req.status, now, now, req.emergency, req.reason, req.workflow_id, req.workflow_snapshot_json],
     )?;
     Ok(())
 }
 
 /// Insert an approval record.
-pub fn insert_approval(
-    conn: &Connection,
+pub fn insert_approval<C>(
+    conn: &C,
     request_id: &str,
     action: &str,
     actor_id: &str,
     step_index: i64,
     actor_role: &str,
-) -> Result<(), rusqlite::Error> {
+    now: &str,
+) -> Result<(), rusqlite::Error>
+where
+    C: Deref<Target = Connection> + ?Sized,
+{
     let id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
         rusqlite::params![id, request_id, action, actor_id, step_index, actor_role, now],
@@ -105,8 +109,10 @@ pub fn insert_approval(
 }
 
 /// Mark request as approved with resolved_at.
-pub fn mark_approved(conn: &Connection, id: &str) -> Result<(), rusqlite::Error> {
-    let now = chrono::Utc::now().to_rfc3339();
+pub fn mark_approved<C>(conn: &C, id: &str, now: &str) -> Result<(), rusqlite::Error>
+where
+    C: Deref<Target = Connection> + ?Sized,
+{
     conn.execute(
         "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
         rusqlite::params![now, now, id],
@@ -115,8 +121,10 @@ pub fn mark_approved(conn: &Connection, id: &str) -> Result<(), rusqlite::Error>
 }
 
 /// Mark request as rejected with resolved_at.
-pub fn mark_rejected(conn: &Connection, id: &str) -> Result<(), rusqlite::Error> {
-    let now = chrono::Utc::now().to_rfc3339();
+pub fn mark_rejected<C>(conn: &C, id: &str, now: &str) -> Result<(), rusqlite::Error>
+where
+    C: Deref<Target = Connection> + ?Sized,
+{
     conn.execute(
         "UPDATE requests SET status = 'rejected', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
         rusqlite::params![now, now, id],
@@ -125,8 +133,10 @@ pub fn mark_rejected(conn: &Connection, id: &str) -> Result<(), rusqlite::Error>
 }
 
 /// Touch updated_at only.
-pub fn touch_updated_at(conn: &Connection, id: &str) -> Result<(), rusqlite::Error> {
-    let now = chrono::Utc::now().to_rfc3339();
+pub fn touch_updated_at<C>(conn: &C, id: &str, now: &str) -> Result<(), rusqlite::Error>
+where
+    C: Deref<Target = Connection> + ?Sized,
+{
     conn.execute(
         "UPDATE requests SET updated_at = ?1 WHERE id = ?2",
         rusqlite::params![now, id],

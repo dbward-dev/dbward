@@ -505,13 +505,15 @@ async fn create_request(
     };
 
     let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
 
     crate::db::request_repo::insert_request(&conn, &crate::db::request_repo::NewRequest {
         id: &id, created_by: &user.user, operation, environment, database_name,
         detail, status, emergency, reason: reason.as_deref(),
         workflow_id: decision.workflow_id.as_deref(),
         workflow_snapshot_json: decision.workflow_snapshot_json.as_deref(),
-    })?;
+    }, &now)
+    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     if emergency {
         let token = state
@@ -650,8 +652,18 @@ async fn approve_request_inner(
         let tx = conn
             .transaction()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        crate::db::request_repo::mark_approved(&tx, id)?;
-        crate::db::request_repo::insert_approval(&tx, id, "approve", &approver.user, 0, approver.effective_permission())?;
+        crate::db::request_repo::mark_approved(&tx, id, &now)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::request_repo::insert_approval(
+            &tx,
+            id,
+            "approve",
+            &approver.user,
+            0,
+            approver.effective_permission(),
+            &now,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
@@ -788,10 +800,20 @@ async fn approve_request_inner(
         }
     }
 
+    let now = chrono::Utc::now().to_rfc3339();
     let tx = conn
         .transaction()
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    crate::db::request_repo::insert_approval(&tx, id, "approve", &approver.user, current_step as i64, &actor_role)?;
+    crate::db::request_repo::insert_approval(
+        &tx,
+        id,
+        "approve",
+        &approver.user,
+        current_step as i64,
+        &actor_role,
+        &now,
+    )
+    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let mut updated_approvals = existing_approvals.clone();
     updated_approvals.push((
@@ -808,7 +830,8 @@ async fn approve_request_inner(
             .all(|(i, s)| is_step_satisfied(s, &updated_approvals, i as i64));
 
     if all_satisfied {
-        crate::db::request_repo::mark_approved(&tx, id)?;
+        crate::db::request_repo::mark_approved(&tx, id, &now)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
@@ -837,7 +860,8 @@ async fn approve_request_inner(
             }),
         })
     } else {
-        crate::db::request_repo::touch_updated_at(&tx, id)?;
+        crate::db::request_repo::touch_updated_at(&tx, id, &now)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
@@ -933,11 +957,12 @@ async fn reject_request(
     {
         let mut conn = state.sqlite.lock().await;
 
-        let (req_user, status, database_name, environment): (String, String, String, String) = {
-            let ctx = crate::db::request_repo::get_request_context(&conn, &id)
-                .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
-            (ctx.created_by, ctx.status, ctx.database_name, ctx.environment)
-        };
+        let ctx = crate::db::request_repo::get_request_context(&conn, &id)
+            .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
+        let req_user = ctx.created_by.clone();
+        let status = ctx.status.clone();
+        let database_name = ctx.database_name.clone();
+        let environment = ctx.environment.clone();
 
         if status != "pending" {
             return Err(crate::api_error::ApiError::conflict(format!(
@@ -945,9 +970,7 @@ async fn reject_request(
             )));
         }
 
-        let workflow_snapshot_json = crate::db::request_repo::get_request_context(&conn, &id)
-            .ok()
-            .and_then(|c| c.workflow_snapshot_json);
+        let workflow_snapshot_json = ctx.workflow_snapshot_json.clone();
         let (approval_resource, step_idx, step_roles, total_steps) = current_approval_resource(
             &conn,
             &id,
@@ -968,8 +991,18 @@ async fn reject_request(
         let tx = conn
             .transaction()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        crate::db::request_repo::mark_rejected(&tx, &id)?;
-        crate::db::request_repo::insert_approval(&tx, &id, "reject", &user.user, 0, user.effective_permission())?;
+        crate::db::request_repo::mark_rejected(&tx, &id, &now)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        crate::db::request_repo::insert_approval(
+            &tx,
+            &id,
+            "reject",
+            &user.user,
+            0,
+            user.effective_permission(),
+            &now,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
@@ -1310,7 +1343,9 @@ async fn dispatch_request(
         }
     }
 
-    if !crate::db::request_repo::mark_dispatched(&conn, &id)? {
+    if !crate::db::request_repo::mark_dispatched(&conn, &id)
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+    {
         return Err(crate::api_error::ApiError::conflict(
             "request cannot be dispatched (wrong status)",
         ));
@@ -1454,20 +1489,14 @@ async fn agent_poll(
     let conn = state.sqlite.lock().await;
 
     // Record agent capabilities for claim-time verification
-    let now = chrono::Utc::now().to_rfc3339();
     let caps_json = serde_json::to_string(&json!({
         "databases": databases,
         "environments": environments,
         "operations": operations,
     }))
     .unwrap_or_else(|_| "{}".into());
-    conn.execute(
-        "INSERT INTO agents (id, token_id, capabilities_json, last_seen_at, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?4)
-         ON CONFLICT(id) DO UPDATE SET capabilities_json = ?3, last_seen_at = ?4",
-        rusqlite::params![user.user, user.token_id, caps_json, now],
-    )
-    .map_err(|e| crate::api_error::ApiError::internal(format!("agent registration failed: {e}")))?;
+    crate::db::agent_repo::upsert_agent(&conn, &user.user, &user.token_id, &caps_json)
+        .map_err(|e| crate::api_error::ApiError::internal(format!("agent registration failed: {e}")))?;
 
     // Build dynamic WHERE clause for capability filtering
     let mut where_clauses = vec!["status = 'dispatched'".to_string()];
@@ -1589,8 +1618,12 @@ async fn agent_claim(
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let exec_id = crate::db::agent_repo::create_execution_and_mark_running(
-        &conn, &id, &agent_id, &token_json,
-    )?;
+        &mut conn,
+        &id,
+        &agent_id,
+        &token_json,
+    )
+    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     Ok(Json(json!({
         "execution_id": exec_id,
@@ -1619,7 +1652,6 @@ async fn agent_result(
 
     let (request_id, req_status) = {
         let mut conn = state.sqlite.lock().await;
-        let now = chrono::Utc::now().to_rfc3339();
 
         let exec_ctx = crate::db::agent_repo::get_execution_context(&conn, &id)
             .map_err(|_| crate::api_error::ApiError::not_found("execution not found"))?;
@@ -1642,10 +1674,11 @@ async fn agent_result(
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         let req_status = crate::db::agent_repo::finish_execution(
-            &conn, &id, &exec_ctx.request_id, success, error_msg.as_deref(),
+            &mut conn, &id, &exec_ctx.request_id, success, error_msg.as_deref(),
             &req_ctx.operation, &req_ctx.environment, &req_ctx.database_name,
             &req_ctx.detail, &req_ctx.created_by,
-        )?;
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
         (exec_ctx.request_id, req_status)
     };
@@ -1787,7 +1820,8 @@ async fn create_workflow(
             }
         })?;
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "workflow", &id)?;
+        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "workflow", &id)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -1858,7 +1892,8 @@ async fn update_workflow(
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "workflow", &id)?;
+        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "workflow", &id)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -1902,7 +1937,8 @@ async fn delete_workflow(
             return Err(crate::api_error::ApiError::not_found("workflow not found"));
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "workflow", &id)?;
+        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "workflow", &id)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -2018,7 +2054,8 @@ async fn create_execution_policy(
             }
         })?;
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "execution_policy", &id)?;
+        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "execution_policy", &id)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -2071,7 +2108,8 @@ async fn update_execution_policy(
             ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "execution_policy", &id)?;
+        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "execution_policy", &id)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -2105,7 +2143,8 @@ async fn delete_execution_policy(
             ));
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "execution_policy", &id)?;
+        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "execution_policy", &id)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -2229,7 +2268,8 @@ async fn create_result_policy(
             }
         })?;
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "result_policy", &id)?;
+        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "result_policy", &id)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -2282,7 +2322,8 @@ async fn update_result_policy(
             ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "result_policy", &id)?;
+        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "result_policy", &id)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -2316,7 +2357,8 @@ async fn delete_result_policy(
             ));
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "result_policy", &id)?;
+        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "result_policy", &id)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -2430,7 +2472,8 @@ async fn create_notification_policy(
             }
         })?;
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "notification_policy", &id)?;
+        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_create", "notification_policy", &id)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -2476,7 +2519,8 @@ async fn update_notification_policy(
             ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "notification_policy", &id)?;
+        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_update", "notification_policy", &id)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
@@ -2510,7 +2554,8 @@ async fn delete_notification_policy(
             ));
         }
 
-        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "notification_policy", &id)?;
+        crate::db::audit_repo::insert_policy_change(&tx, &user.user, "policy_delete", "notification_policy", &id)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
     }
