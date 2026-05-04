@@ -29,8 +29,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 COPY . .
 
-# Touch all source files so cargo detects changes from dummy sources
-RUN find crates -name '*.rs' -exec touch {} +
+# Remove cargo fingerprints so incremental build detects source changes
+RUN --mount=type=cache,target=/app/target \
+    rm -rf /app/target/release/.fingerprint/dbward-*
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
