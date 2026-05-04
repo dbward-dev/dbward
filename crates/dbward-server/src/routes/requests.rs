@@ -129,30 +129,36 @@ pub(crate) async fn list_requests(
         .prepare(&query_sql)
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
-    let candidates: Vec<serde_json::Value> = stmt
+    let candidates: Vec<(serde_json::Value, String, Option<String>)> = stmt
         .query_map(rusqlite::params_from_iter(&bind_values), |row| {
-            Ok(json!({
-                "id": row.get::<_, String>(0)?,
-                "created_by": row.get::<_, String>(1)?,
-                "operation": row.get::<_, String>(2)?,
-                "environment": row.get::<_, String>(3)?,
-                "database_name": row.get::<_, String>(4)?,
-                "detail": row.get::<_, String>(5)?,
-                "status": row.get::<_, String>(6)?,
-                "emergency": row.get::<_, bool>(7)?,
-                "created_at": row.get::<_, String>(8)?,
-                "updated_at": row.get::<_, String>(9)?,
-                "resolved_at": row.get::<_, Option<String>>(10)?,
-                "reason": row.get::<_, Option<String>>(11)?,
-                "workflow_snapshot_json": row.get::<_, Option<String>>(12)?,
-            }))
+            let created_by: String = row.get(1)?;
+            let workflow_snapshot_json: Option<String> = row.get(12)?;
+            Ok((
+                json!({
+                    "id": row.get::<_, String>(0)?,
+                    "created_by": created_by,
+                    "operation": row.get::<_, String>(2)?,
+                    "environment": row.get::<_, String>(3)?,
+                    "database_name": row.get::<_, String>(4)?,
+                    "detail": row.get::<_, String>(5)?,
+                    "status": row.get::<_, String>(6)?,
+                    "emergency": row.get::<_, bool>(7)?,
+                    "created_at": row.get::<_, String>(8)?,
+                    "updated_at": row.get::<_, String>(9)?,
+                    "resolved_at": row.get::<_, Option<String>>(10)?,
+                    "reason": row.get::<_, Option<String>>(11)?,
+                }),
+                created_by,
+                workflow_snapshot_json,
+            ))
         })
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
+    let all_approvals = load_pending_request_approvals(&conn)?;
     let mut filtered = Vec::new();
-    for row in candidates {
+    for (row, created_by, workflow_snapshot_json) in &candidates {
         let resource = request_resource(
             row["created_by"].as_str().unwrap_or("").to_string(),
             row["status"].as_str().unwrap_or("").to_string(),
@@ -160,41 +166,21 @@ pub(crate) async fn list_requests(
             row["environment"].as_str().unwrap_or("").to_string(),
         );
         if authz::authorize_sync(&user, Action::ListRequests, resource).is_ok() {
-            filtered.push(row);
+            filtered.push(row.clone());
             continue;
         }
-        // Approvers can also see pending requests they can approve
-        if row["status"].as_str() == Some("pending") {
-            let ws: Option<String> = row.get("workflow_snapshot_json")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            let steps: Vec<crate::server_config::WorkflowStep> = ws
-                .as_deref()
-                .and_then(|s| serde_json::from_str(s).ok())
-                .unwrap_or_default();
-            let allowed_roles: Vec<String> = if steps.is_empty() {
-                Vec::new()
-            } else {
-                let approvals = crate::db::request_repo::get_approvals(&conn, row["id"].as_str().unwrap_or(""))
-                    .unwrap_or_default();
-                let current = steps.iter().enumerate().find_map(|(i, step)| {
-                    if !crate::services::request_lifecycle::is_step_satisfied(step, &approvals, i as i64) {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                });
-                current.and_then(|i| steps.get(i))
-                    .map(|step| step.approvers.iter().map(|g| g.role.clone()).collect())
-                    .unwrap_or_default()
-            };
-            let approval_resource = Resource::ApprovalStep {
-                requester_id: row["created_by"].as_str().unwrap_or("").to_string(),
-                allowed_roles,
-            };
-            if authz::authorize_sync(&user, Action::ApproveRequest, approval_resource).is_ok() {
-                filtered.push(row);
-            }
+        if row["status"].as_str() != Some("pending") {
+            continue;
+        }
+
+        if request_is_approvable_by_user(
+            &all_approvals,
+            row,
+            created_by,
+            workflow_snapshot_json.as_deref(),
+            &user,
+        ) {
+            filtered.push(row.clone());
         }
     }
 
@@ -250,68 +236,13 @@ pub(crate) fn list_requests_pending_for_me(
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     // Batch-load all approvals for pending requests (eliminates N+1)
-    let all_approvals: HashMap<String, Vec<(i64, String, String)>> = {
-        let mut stmt = conn
-            .prepare("SELECT request_id, step_index, actor_id, actor_role FROM approvals WHERE action = 'approve' AND request_id IN (SELECT id FROM requests WHERE status = 'pending')")
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            })
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        let mut map: HashMap<String, Vec<(i64, String, String)>> = HashMap::new();
-        for (req_id, step, actor, role) in rows {
-            map.entry(req_id).or_default().push((step, actor, role));
-        }
-        map
-    };
+    let all_approvals = load_pending_request_approvals(conn)?;
 
     let mut filtered: Vec<serde_json::Value> = Vec::new();
     for (row, created_by, ws_json) in &candidates {
-        let req_id = row["id"].as_str().unwrap_or("");
-        let approvals = all_approvals.get(req_id).cloned().unwrap_or_default();
-
-        let steps: Vec<crate::server_config::WorkflowStep> = ws_json
-            .as_deref()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or_default();
-
-        let current_step_idx = steps.iter().enumerate().find_map(|(i, step)| {
-            if !crate::services::request_lifecycle::is_step_satisfied(step, &approvals, i as i64) {
-                Some(i)
-            } else {
-                None
-            }
-        });
-
-        let allowed_roles: Vec<String> = current_step_idx
-            .and_then(|i| steps.get(i))
-            .map(|step| step.approvers.iter().map(|g| g.role.clone()).collect())
-            .unwrap_or_default();
-
-        let approval_resource = authz::Resource::ApprovalStep {
-            requester_id: created_by.clone(),
-            allowed_roles,
-        };
-
-        if authz::authorize_sync(user, Action::ApproveRequest, approval_resource).is_ok() {
-            if let Some(idx) = current_step_idx {
-                let already_approved = approvals
-                    .iter()
-                    .any(|(si, aid, _)| *si == idx as i64 && aid == &user.user);
-                if !already_approved {
-                    filtered.push(row.clone());
-                }
-            } else if steps.is_empty() {
-                filtered.push(row.clone());
-            }
+        if request_is_approvable_by_user(&all_approvals, row, created_by, ws_json.as_deref(), user)
+        {
+            filtered.push(row.clone());
         }
     }
 
@@ -323,6 +254,76 @@ pub(crate) fn list_requests_pending_for_me(
     Ok(Json(
         json!({"requests": page, "total": total, "limit": limit, "offset": offset}),
     ))
+}
+
+fn load_pending_request_approvals(
+    conn: &rusqlite::Connection,
+) -> Result<HashMap<String, Vec<(i64, String, String)>>, crate::api_error::ApiError> {
+    let mut stmt = conn
+        .prepare("SELECT request_id, step_index, actor_id, actor_role FROM approvals WHERE action = 'approve' AND request_id IN (SELECT id FROM requests WHERE status = 'pending')")
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+    let mut map: HashMap<String, Vec<(i64, String, String)>> = HashMap::new();
+    for (req_id, step, actor, role) in rows {
+        map.entry(req_id).or_default().push((step, actor, role));
+    }
+    Ok(map)
+}
+
+fn request_is_approvable_by_user(
+    all_approvals: &HashMap<String, Vec<(i64, String, String)>>,
+    row: &serde_json::Value,
+    created_by: &str,
+    workflow_snapshot_json: Option<&str>,
+    user: &crate::state::AuthUser,
+) -> bool {
+    let req_id = row["id"].as_str().unwrap_or("");
+    let approvals = all_approvals.get(req_id).cloned().unwrap_or_default();
+
+    let steps: Vec<crate::server_config::WorkflowStep> = workflow_snapshot_json
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+
+    let current_step_idx = steps.iter().enumerate().find_map(|(i, step)| {
+        if !crate::services::request_lifecycle::is_step_satisfied(step, &approvals, i as i64) {
+            Some(i)
+        } else {
+            None
+        }
+    });
+
+    let allowed_roles: Vec<String> = current_step_idx
+        .and_then(|i| steps.get(i))
+        .map(|step| step.approvers.iter().map(|g| g.role.clone()).collect())
+        .unwrap_or_default();
+
+    let approval_resource = authz::Resource::ApprovalStep {
+        requester_id: created_by.to_string(),
+        allowed_roles,
+    };
+
+    if authz::authorize_sync(user, Action::ApproveRequest, approval_resource).is_err() {
+        return false;
+    }
+
+    if let Some(idx) = current_step_idx {
+        !approvals
+            .iter()
+            .any(|(si, aid, _)| *si == idx as i64 && aid == &user.user)
+    } else {
+        steps.is_empty()
+    }
 }
 
 pub(crate) fn get_approvals_for_request(

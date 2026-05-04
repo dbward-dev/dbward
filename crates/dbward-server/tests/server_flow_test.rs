@@ -150,6 +150,10 @@ async fn production_requires_approval() {
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
     assert_eq!(body["status"], "approved");
+    assert_eq!(body["approved_by"], "bob");
+    assert_eq!(body["step_completed"], 0);
+    assert_eq!(body["current_step"], 1);
+    assert_eq!(body["total_steps"], 1);
     assert!(body["execution_token"].is_object());
 
     // Verify the token is valid
@@ -1647,6 +1651,98 @@ async fn get_request_and_pending_for_me_include_reason() {
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0]["id"], request_id);
     assert_eq!(requests[0]["reason"], reason);
+    assert!(requests[0].get("workflow_snapshot_json").is_none());
+}
+
+#[tokio::test]
+async fn list_requests_shows_only_approvable_pending_requests_without_snapshot_leak() {
+    let state = test_state_multistep();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead")
+        .await
+        .unwrap();
+    let (_, dba_token) = auth::create_token(&state, "dba1", "dba").await.unwrap();
+    let app = routes::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "production",
+                        "detail": "SELECT 1",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let request_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/api/requests")
+                .header("authorization", auth_header(&lead_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let requests = body["requests"].as_array().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["id"], request_id);
+    assert!(requests[0].get("workflow_snapshot_json").is_none());
+
+    app.clone()
+        .oneshot(
+            Request::post(&format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&lead_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/api/requests")
+                .header("authorization", auth_header(&lead_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert!(body["requests"].as_array().unwrap().is_empty());
+
+    let resp = app
+        .oneshot(
+            Request::get("/api/requests")
+                .header("authorization", auth_header(&dba_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let requests = body["requests"].as_array().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["id"], request_id);
 }
 
 #[tokio::test]
@@ -1910,7 +2006,9 @@ async fn multi_step_approval_team_lead_then_dba() {
     let body = body_json(resp).await;
     assert_eq!(body["status"], "pending");
     assert_eq!(body["step_completed"], 0);
+    assert_eq!(body["current_step"], 1);
     assert_eq!(body["total_steps"], 2);
+    assert!(body["execution_token"].is_null());
 
     // DBA approves step 1 → approved with token
     let resp = app
@@ -1927,6 +2025,10 @@ async fn multi_step_approval_team_lead_then_dba() {
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
     assert_eq!(body["status"], "approved");
+    assert_eq!(body["approved_by"], "dba1");
+    assert_eq!(body["step_completed"], 1);
+    assert_eq!(body["current_step"], 2);
+    assert_eq!(body["total_steps"], 2);
     assert!(body["execution_token"].is_object());
 }
 
@@ -1968,6 +2070,10 @@ async fn mode_any_either_role_can_approve() {
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
     assert_eq!(body["status"], "approved");
+    assert_eq!(body["approved_by"], "dba1");
+    assert_eq!(body["step_completed"], 0);
+    assert_eq!(body["current_step"], 1);
+    assert_eq!(body["total_steps"], 1);
     assert!(body["execution_token"].is_object());
 }
 
