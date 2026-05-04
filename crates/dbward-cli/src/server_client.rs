@@ -8,11 +8,33 @@ use serde_json::Value;
 pub struct ServerError {
     pub status: u16,
     pub body: String,
+    pub error_message: Option<String>,
+    pub code: Option<String>,
+    pub hint: Option<String>,
 }
 
 impl ServerError {
+    pub fn from_response(status: u16, body: String) -> Self {
+        let (error_message, code, hint) = serde_json::from_str::<Value>(&body)
+            .ok()
+            .map(|v| {
+                (
+                    v["error"].as_str().map(String::from),
+                    v["code"].as_str().map(String::from),
+                    v["hint"].as_str().map(String::from),
+                )
+            })
+            .unwrap_or((None, None, None));
+        Self { status, body, error_message, code, hint }
+    }
+
     pub fn into_core_error(self, context: &str) -> Error {
-        Error::Server(format!("{context} ({}): {}", self.status, self.body))
+        let msg = self.error_message.as_deref().unwrap_or(&self.body);
+        let mut out = format!("{context}: {msg}");
+        if let Some(hint) = &self.hint {
+            out.push_str(&format!("\n  Hint: {hint}"));
+        }
+        Error::Server(out)
     }
 }
 
@@ -43,10 +65,7 @@ impl ServerClient {
             .await
             .map_err(|e| Error::Server(format!("{context}: {e}")))?;
         if !status.is_success() {
-            return Err(ServerError {
-                status: status.as_u16(),
-                body: text,
-            }
+            return Err(ServerError::from_response(status.as_u16(), text)
             .into_core_error(context));
         }
         serde_json::from_str(&text)
@@ -56,20 +75,11 @@ impl ServerClient {
     /// Parse HTTP response, returning ServerError on failure for caller to handle.
     async fn parse_response_detailed(&self, resp: reqwest::Response) -> Result<Value, ServerError> {
         let status = resp.status();
-        let text = resp.text().await.map_err(|_| ServerError {
-            status: 0,
-            body: "failed to read response".into(),
-        })?;
+        let text = resp.text().await.map_err(|_| ServerError::from_response(0, "failed to read response".into()))?;
         if !status.is_success() {
-            return Err(ServerError {
-                status: status.as_u16(),
-                body: text,
-            });
+            return Err(ServerError::from_response(status.as_u16(), text));
         }
-        serde_json::from_str(&text).map_err(|_| ServerError {
-            status: status.as_u16(),
-            body: text,
-        })
+        serde_json::from_str(&text).map_err(|_| ServerError::from_response(status.as_u16(), text))
     }
 
     /// Create a request and return (id, status, optional execution_token).
@@ -204,10 +214,7 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| ServerError {
-                status: 0,
-                body: format!("dispatch failed: {e}"),
-            })?;
+            .map_err(|e| ServerError::from_response(0, format!("dispatch failed: {e}")))?;
 
         self.parse_response_detailed(resp).await
     }
@@ -273,10 +280,7 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| ServerError {
-                status: 0,
-                body: format!("approve failed: {e}"),
-            })?;
+            .map_err(|e| ServerError::from_response(0, format!("approve failed: {e}")))?;
 
         self.parse_response_detailed(resp).await
     }
@@ -292,10 +296,7 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| ServerError {
-                status: 0,
-                body: format!("reject failed: {e}"),
-            })?;
+            .map_err(|e| ServerError::from_response(0, format!("reject failed: {e}")))?;
 
         self.parse_response_detailed(resp).await
     }
