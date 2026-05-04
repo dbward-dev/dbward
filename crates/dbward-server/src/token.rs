@@ -25,7 +25,23 @@ impl TokenSigner {
             std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
             let mut rng = rand::rngs::OsRng {};
             let key = SigningKey::generate(&mut rng);
-            std::fs::write(&key_path, key.to_bytes()).map_err(|e| e.to_string())?;
+            let key_bytes = key.to_bytes();
+            #[cfg(unix)]
+            {
+                use std::io::Write;
+                use std::os::unix::fs::OpenOptionsExt;
+                std::fs::OpenOptions::new()
+                    .write(true).create(true).truncate(true)
+                    .mode(0o600)
+                    .open(&key_path)
+                    .map_err(|e| e.to_string())?
+                    .write_all(&key_bytes)
+                    .map_err(|e| e.to_string())?;
+            }
+            #[cfg(not(unix))]
+            {
+                std::fs::write(&key_path, &key_bytes).map_err(|e| e.to_string())?;
+            }
             std::fs::write(&pub_path, key.verifying_key().to_bytes()).map_err(|e| e.to_string())?;
             eprintln!("Generated signing keypair: {}", pub_path.display());
             key

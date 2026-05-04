@@ -21,6 +21,7 @@ impl AgentClient {
         &self,
         databases: &[String],
         environments: &[String],
+        operations: &[String],
     ) -> Result<Vec<Value>, Error> {
         let resp = self
             .client
@@ -29,6 +30,7 @@ impl AgentClient {
             .json(&serde_json::json!({
                 "databases": databases,
                 "environments": environments,
+                "operations": operations,
             }))
             .send()
             .await

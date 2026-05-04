@@ -42,6 +42,7 @@ async fn poll_once(
         .poll(
             &config.capabilities.databases,
             &config.capabilities.environments,
+            &config.capabilities.operations,
         )
         .await
     {

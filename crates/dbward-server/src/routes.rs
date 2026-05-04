@@ -307,7 +307,8 @@ async fn create_request(
         let token = state
             .token_signer
             .issue(&id, operation, environment, database_name, detail);
-        state.webhooks.dispatch(crate::webhook::WebhookEvent {
+        let notif_hooks = crate::db::get_notification_webhooks(&conn, database_name, environment);
+        state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
             event: "break_glass".into(),
             request_id: id.clone(),
             user: user.user.clone(),
@@ -323,7 +324,8 @@ async fn create_request(
             Json(json!({"id": id, "status": "break_glass", "execution_token": token})),
         ))
     } else if needs_approval {
-        state.webhooks.dispatch(crate::webhook::WebhookEvent {
+        let notif_hooks = crate::db::get_notification_webhooks(&conn, database_name, environment);
+        state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
             event: "request_created".into(),
             request_id: id.clone(),
             user: user.user.clone(),
@@ -401,7 +403,8 @@ async fn approve_request(
         .token_signer
         .issue(&id, &operation, &environment, &database_name, &detail);
 
-    state.webhooks.dispatch(crate::webhook::WebhookEvent {
+    let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
+    state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
         event: "request_approved".into(),
         request_id: id.clone(),
         user: req_user.clone(),
@@ -428,11 +431,11 @@ async fn reject_request(
 
     let mut conn = state.sqlite.lock().await;
 
-    let (req_user, status): (String, String) = conn
+    let (req_user, status, database_name, environment): (String, String, String, String) = conn
         .query_row(
-            "SELECT created_by, status FROM requests WHERE id = ?1",
+            "SELECT created_by, status, database_name, environment FROM requests WHERE id = ?1",
             rusqlite::params![id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
@@ -464,13 +467,14 @@ async fn reject_request(
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    state.webhooks.dispatch(crate::webhook::WebhookEvent {
+    let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
+    state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
         event: "request_rejected".into(),
         request_id: id.clone(),
         user: user.user.clone(),
         operation: "".into(),
-        environment: "".into(),
-        database: "".into(),
+        environment: environment.clone().into(),
+        database: database_name.clone().into(),
         detail: "".into(),
         approved_by: None,
         reason: None,
@@ -642,21 +646,22 @@ async fn dispatch_request(
     let user = auth::authenticate(&headers, &state).await?;
     auth::require_human(&user)?;
 
+    let conn = state.sqlite.lock().await;
+
+    // Check ownership
     let (requester, status, database_name, environment, resolved_at): (
         String,
         String,
         String,
         String,
         Option<String>,
-    ) = {
-        let conn = state.sqlite.lock().await;
-        conn.query_row(
+    ) = conn
+        .query_row(
             "SELECT created_by, status, database_name, environment, resolved_at FROM requests WHERE id = ?1",
             rusqlite::params![id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )
-        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?
-    };
+        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
     if user.user != requester && user.role != dbward_core::Role::Admin {
         return Err((
@@ -665,48 +670,46 @@ async fn dispatch_request(
         ));
     }
 
-    match status.as_str() {
-        "approved" | "auto_approved" | "break_glass" => {}
-        "dispatched" | "running" => {
-            return Err((StatusCode::CONFLICT, format!("request already {status}")));
-        }
-        "executed" | "failed" => {
-            // Check execution policy for re-execution
-            let conn = state.sqlite.lock().await;
-            let (max_exec, window_secs, retry) = crate::db::get_execution_policy(&conn, &database_name, &environment);
+    // For executed/failed: check re-execution policy before attempting atomic update
+    if status == "executed" || status == "failed" {
+        let (max_exec, window_secs, retry) = crate::db::get_execution_policy(&conn, &database_name, &environment);
 
-            // Check execution window
-            if let Some(ref resolved) = resolved_at {
-                if let Ok(resolved_time) = chrono::DateTime::parse_from_rfc3339(resolved) {
-                    let elapsed = chrono::Utc::now().signed_duration_since(resolved_time);
-                    if elapsed.num_seconds() as u64 > window_secs {
-                        return Err((StatusCode::GONE, "execution window expired".into()));
-                    }
+        if let Some(ref resolved) = resolved_at {
+            if let Ok(resolved_time) = chrono::DateTime::parse_from_rfc3339(resolved) {
+                let elapsed = chrono::Utc::now().signed_duration_since(resolved_time);
+                if elapsed.num_seconds() as u64 > window_secs {
+                    return Err((StatusCode::GONE, "execution window expired".into()));
                 }
             }
-
-            // Check execution count
-            let exec_count: u32 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM agent_executions WHERE request_id = ?1",
-                    rusqlite::params![id],
-                    |row| row.get(0),
-                )
-                .unwrap_or(0);
-            if status == "failed" && !retry {
-                return Err((StatusCode::CONFLICT, "retry on failure is disabled".into()));
-            }
-            if exec_count >= max_exec {
-                return Err((StatusCode::CONFLICT, format!("max executions ({max_exec}) reached")));
-            }
         }
-        _ => {
-            return Err((
-                StatusCode::CONFLICT,
-                format!("request status is {status}, cannot dispatch"),
-            ));
+
+        let exec_count: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_executions WHERE request_id = ?1",
+                rusqlite::params![id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if status == "failed" && !retry {
+            return Err((StatusCode::CONFLICT, "retry on failure is disabled".into()));
+        }
+        if exec_count >= max_exec {
+            return Err((StatusCode::CONFLICT, format!("max executions ({max_exec}) reached")));
         }
     }
+
+    // Atomic status transition
+    let now = chrono::Utc::now().to_rfc3339();
+    let rows = conn.execute(
+        "UPDATE requests SET status = 'dispatched', updated_at = ?1 WHERE id = ?2 AND status IN ('approved', 'auto_approved', 'break_glass', 'executed', 'failed')",
+        rusqlite::params![now, id],
+    ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if rows == 0 {
+        return Err((StatusCode::CONFLICT, "request cannot be dispatched (wrong status)".into()));
+    }
+
+    drop(conn);
 
     let slot = Arc::new(crate::state::ResultSlot {
         result: tokio::sync::Mutex::new(None),
@@ -714,19 +717,6 @@ async fn dispatch_request(
         created_at: Instant::now(),
     });
     state.result_channels.insert(id.clone(), slot).await;
-
-    let now = chrono::Utc::now().to_rfc3339();
-    let update_result = {
-        let conn = state.sqlite.lock().await;
-        conn.execute(
-            "UPDATE requests SET status = 'dispatched', updated_at = ?1 WHERE id = ?2",
-            rusqlite::params![now, id],
-        )
-    };
-    if let Err(e) = update_result {
-        let _ = state.result_channels.remove(&id).await;
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
-    }
 
     Ok(Json(json!({"id": id, "status": "dispatched"})))
 }
@@ -1173,21 +1163,25 @@ async fn create_workflow(
     let steps_json = steps.to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    let conn = state.sqlite.lock().await;
-    conn.execute(
-        "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
-        rusqlite::params![id, database, environment, ops_json, steps_json, require_reason, now],
-    )
-    .map_err(|e| {
-        if e.to_string().contains("UNIQUE") {
-            (StatusCode::CONFLICT, format!("workflow for {database}:{environment} already exists"))
-        } else {
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-        }
-    })?;
+    let mut conn = state.sqlite.lock().await;
+    {
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.execute(
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
+            rusqlite::params![id, database, environment, ops_json, steps_json, require_reason, now],
+        )
+        .map_err(|e| {
+            if e.to_string().contains("UNIQUE") {
+                (StatusCode::CONFLICT, format!("workflow for {database}:{environment} already exists"))
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            }
+        })?;
 
-    insert_policy_audit(&conn, &user.user, "policy_create", "workflow", &id)?;
+        insert_policy_audit(&tx, &user.user, "policy_create", "workflow", &id)?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
 
     Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
 }
@@ -1202,36 +1196,40 @@ async fn update_workflow(
     auth::require_human(&user)?;
     require_admin_role(&user)?;
 
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
 
     // Check exists
     conn.query_row("SELECT id FROM workflows WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
         .map_err(|_| (StatusCode::NOT_FOUND, "workflow not found".into()))?;
 
-    if let Some(steps) = body.get("steps") {
-        conn.execute(
-            "UPDATE workflows SET steps_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![steps.to_string(), now, id],
-        )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
-    if let Some(ops) = body.get("operations") {
-        conn.execute(
-            "UPDATE workflows SET operations_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![ops.to_string(), now, id],
-        )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
-    if let Some(v) = body.get("require_reason").and_then(|v| v.as_bool()) {
-        conn.execute(
-            "UPDATE workflows SET require_reason = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![v, now, id],
-        )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
+    {
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if let Some(steps) = body.get("steps") {
+            tx.execute(
+                "UPDATE workflows SET steps_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![steps.to_string(), now, id],
+            )
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        if let Some(ops) = body.get("operations") {
+            tx.execute(
+                "UPDATE workflows SET operations_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![ops.to_string(), now, id],
+            )
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        if let Some(v) = body.get("require_reason").and_then(|v| v.as_bool()) {
+            tx.execute(
+                "UPDATE workflows SET require_reason = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![v, now, id],
+            )
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
 
-    insert_policy_audit(&conn, &user.user, "policy_update", "workflow", &id)?;
+        insert_policy_audit(&tx, &user.user, "policy_update", "workflow", &id)?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
 
     Ok(Json(json!({"id": id, "updated": true})))
 }
@@ -1245,16 +1243,20 @@ async fn delete_workflow(
     auth::require_human(&user)?;
     require_admin_role(&user)?;
 
-    let conn = state.sqlite.lock().await;
-    let changes = conn
-        .execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id])
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut conn = state.sqlite.lock().await;
+    {
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let changes = tx
+            .execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id])
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    if changes == 0 {
-        return Err((StatusCode::NOT_FOUND, "workflow not found".into()));
+        if changes == 0 {
+            return Err((StatusCode::NOT_FOUND, "workflow not found".into()));
+        }
+
+        insert_policy_audit(&tx, &user.user, "policy_delete", "workflow", &id)?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
-
-    insert_policy_audit(&conn, &user.user, "policy_delete", "workflow", &id)?;
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }
@@ -1348,21 +1350,25 @@ async fn create_execution_policy(
     let id = format!("{database}:{environment}");
     let now = chrono::Utc::now().to_rfc3339();
 
-    let conn = state.sqlite.lock().await;
-    conn.execute(
-        "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
-        rusqlite::params![id, database, environment, max_executions, execution_window_secs, retry_on_failure, now],
-    )
-    .map_err(|e| {
-        if e.to_string().contains("UNIQUE") {
-            (StatusCode::CONFLICT, format!("execution policy for {database}:{environment} already exists"))
-        } else {
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-        }
-    })?;
+    let mut conn = state.sqlite.lock().await;
+    {
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.execute(
+            "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
+            rusqlite::params![id, database, environment, max_executions, execution_window_secs, retry_on_failure, now],
+        )
+        .map_err(|e| {
+            if e.to_string().contains("UNIQUE") {
+                (StatusCode::CONFLICT, format!("execution policy for {database}:{environment} already exists"))
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            }
+        })?;
 
-    insert_policy_audit(&conn, &user.user, "policy_create", "execution_policy", &id)?;
+        insert_policy_audit(&tx, &user.user, "policy_create", "execution_policy", &id)?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
 
     Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
 }
@@ -1377,32 +1383,36 @@ async fn update_execution_policy(
     auth::require_human(&user)?;
     require_admin_role(&user)?;
 
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.query_row("SELECT id FROM execution_policies WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
         .map_err(|_| (StatusCode::NOT_FOUND, "execution policy not found".into()))?;
 
-    if let Some(v) = body.get("max_executions").and_then(|v| v.as_i64()) {
-        conn.execute(
-            "UPDATE execution_policies SET max_executions = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![v, now, id],
-        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
-    if let Some(v) = body.get("execution_window_secs").and_then(|v| v.as_i64()) {
-        conn.execute(
-            "UPDATE execution_policies SET execution_window_secs = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![v, now, id],
-        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
-    if let Some(v) = body.get("retry_on_failure").and_then(|v| v.as_bool()) {
-        conn.execute(
-            "UPDATE execution_policies SET retry_on_failure = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![v, now, id],
-        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
+    {
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if let Some(v) = body.get("max_executions").and_then(|v| v.as_i64()) {
+            tx.execute(
+                "UPDATE execution_policies SET max_executions = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![v, now, id],
+            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        if let Some(v) = body.get("execution_window_secs").and_then(|v| v.as_i64()) {
+            tx.execute(
+                "UPDATE execution_policies SET execution_window_secs = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![v, now, id],
+            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        if let Some(v) = body.get("retry_on_failure").and_then(|v| v.as_bool()) {
+            tx.execute(
+                "UPDATE execution_policies SET retry_on_failure = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![v, now, id],
+            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
 
-    insert_policy_audit(&conn, &user.user, "policy_update", "execution_policy", &id)?;
+        insert_policy_audit(&tx, &user.user, "policy_update", "execution_policy", &id)?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
 
     Ok(Json(json!({"id": id, "updated": true})))
 }
@@ -1416,16 +1426,20 @@ async fn delete_execution_policy(
     auth::require_human(&user)?;
     require_admin_role(&user)?;
 
-    let conn = state.sqlite.lock().await;
-    let changes = conn
-        .execute("DELETE FROM execution_policies WHERE id = ?1", rusqlite::params![id])
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut conn = state.sqlite.lock().await;
+    {
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let changes = tx
+            .execute("DELETE FROM execution_policies WHERE id = ?1", rusqlite::params![id])
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    if changes == 0 {
-        return Err((StatusCode::NOT_FOUND, "execution policy not found".into()));
+        if changes == 0 {
+            return Err((StatusCode::NOT_FOUND, "execution policy not found".into()));
+        }
+
+        insert_policy_audit(&tx, &user.user, "policy_delete", "execution_policy", &id)?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
-
-    insert_policy_audit(&conn, &user.user, "policy_delete", "execution_policy", &id)?;
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }
@@ -1525,21 +1539,25 @@ async fn create_result_policy(
     let access_json = access.to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    let conn = state.sqlite.lock().await;
-    conn.execute(
-        "INSERT INTO result_policies (id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
-        rusqlite::params![id, database, environment, delivery_mode, storage_json, access_json, now],
-    )
-    .map_err(|e| {
-        if e.to_string().contains("UNIQUE") {
-            (StatusCode::CONFLICT, format!("result policy for {database}:{environment} already exists"))
-        } else {
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-        }
-    })?;
+    let mut conn = state.sqlite.lock().await;
+    {
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.execute(
+            "INSERT INTO result_policies (id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
+            rusqlite::params![id, database, environment, delivery_mode, storage_json, access_json, now],
+        )
+        .map_err(|e| {
+            if e.to_string().contains("UNIQUE") {
+                (StatusCode::CONFLICT, format!("result policy for {database}:{environment} already exists"))
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            }
+        })?;
 
-    insert_policy_audit(&conn, &user.user, "policy_create", "result_policy", &id)?;
+        insert_policy_audit(&tx, &user.user, "policy_create", "result_policy", &id)?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
 
     Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
 }
@@ -1554,32 +1572,36 @@ async fn update_result_policy(
     auth::require_human(&user)?;
     require_admin_role(&user)?;
 
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.query_row("SELECT id FROM result_policies WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
         .map_err(|_| (StatusCode::NOT_FOUND, "result policy not found".into()))?;
 
-    if let Some(v) = body.get("delivery_mode").and_then(|v| v.as_str()) {
-        conn.execute(
-            "UPDATE result_policies SET delivery_mode = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![v, now, id],
-        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
-    if let Some(v) = body.get("storage_config") {
-        conn.execute(
-            "UPDATE result_policies SET storage_config_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![v.to_string(), now, id],
-        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
-    if let Some(v) = body.get("access") {
-        conn.execute(
-            "UPDATE result_policies SET access_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![v.to_string(), now, id],
-        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
+    {
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if let Some(v) = body.get("delivery_mode").and_then(|v| v.as_str()) {
+            tx.execute(
+                "UPDATE result_policies SET delivery_mode = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![v, now, id],
+            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        if let Some(v) = body.get("storage_config") {
+            tx.execute(
+                "UPDATE result_policies SET storage_config_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![v.to_string(), now, id],
+            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+        if let Some(v) = body.get("access") {
+            tx.execute(
+                "UPDATE result_policies SET access_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![v.to_string(), now, id],
+            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
 
-    insert_policy_audit(&conn, &user.user, "policy_update", "result_policy", &id)?;
+        insert_policy_audit(&tx, &user.user, "policy_update", "result_policy", &id)?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
 
     Ok(Json(json!({"id": id, "updated": true})))
 }
@@ -1593,16 +1615,20 @@ async fn delete_result_policy(
     auth::require_human(&user)?;
     require_admin_role(&user)?;
 
-    let conn = state.sqlite.lock().await;
-    let changes = conn
-        .execute("DELETE FROM result_policies WHERE id = ?1", rusqlite::params![id])
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut conn = state.sqlite.lock().await;
+    {
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let changes = tx
+            .execute("DELETE FROM result_policies WHERE id = ?1", rusqlite::params![id])
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    if changes == 0 {
-        return Err((StatusCode::NOT_FOUND, "result policy not found".into()));
+        if changes == 0 {
+            return Err((StatusCode::NOT_FOUND, "result policy not found".into()));
+        }
+
+        insert_policy_audit(&tx, &user.user, "policy_delete", "result_policy", &id)?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
-
-    insert_policy_audit(&conn, &user.user, "policy_delete", "result_policy", &id)?;
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }
@@ -1693,21 +1719,25 @@ async fn create_notification_policy(
     let webhooks_json = webhooks.to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    let conn = state.sqlite.lock().await;
-    conn.execute(
-        "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, source, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, 'api', ?5, ?5)",
-        rusqlite::params![id, database, environment, webhooks_json, now],
-    )
-    .map_err(|e| {
-        if e.to_string().contains("UNIQUE") {
-            (StatusCode::CONFLICT, format!("notification policy for {database}:{environment} already exists"))
-        } else {
-            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-        }
-    })?;
+    let mut conn = state.sqlite.lock().await;
+    {
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.execute(
+            "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 'api', ?5, ?5)",
+            rusqlite::params![id, database, environment, webhooks_json, now],
+        )
+        .map_err(|e| {
+            if e.to_string().contains("UNIQUE") {
+                (StatusCode::CONFLICT, format!("notification policy for {database}:{environment} already exists"))
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            }
+        })?;
 
-    insert_policy_audit(&conn, &user.user, "policy_create", "notification_policy", &id)?;
+        insert_policy_audit(&tx, &user.user, "policy_create", "notification_policy", &id)?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
 
     Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
 }
@@ -1722,20 +1752,24 @@ async fn update_notification_policy(
     auth::require_human(&user)?;
     require_admin_role(&user)?;
 
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.query_row("SELECT id FROM notification_policies WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
         .map_err(|_| (StatusCode::NOT_FOUND, "notification policy not found".into()))?;
 
-    if let Some(v) = body.get("webhooks") {
-        conn.execute(
-            "UPDATE notification_policies SET webhooks_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![v.to_string(), now, id],
-        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
+    {
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        if let Some(v) = body.get("webhooks") {
+            tx.execute(
+                "UPDATE notification_policies SET webhooks_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![v.to_string(), now, id],
+            ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
 
-    insert_policy_audit(&conn, &user.user, "policy_update", "notification_policy", &id)?;
+        insert_policy_audit(&tx, &user.user, "policy_update", "notification_policy", &id)?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
 
     Ok(Json(json!({"id": id, "updated": true})))
 }
@@ -1749,16 +1783,20 @@ async fn delete_notification_policy(
     auth::require_human(&user)?;
     require_admin_role(&user)?;
 
-    let conn = state.sqlite.lock().await;
-    let changes = conn
-        .execute("DELETE FROM notification_policies WHERE id = ?1", rusqlite::params![id])
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let mut conn = state.sqlite.lock().await;
+    {
+        let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let changes = tx
+            .execute("DELETE FROM notification_policies WHERE id = ?1", rusqlite::params![id])
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    if changes == 0 {
-        return Err((StatusCode::NOT_FOUND, "notification policy not found".into()));
+        if changes == 0 {
+            return Err((StatusCode::NOT_FOUND, "notification policy not found".into()));
+        }
+
+        insert_policy_audit(&tx, &user.user, "policy_delete", "notification_policy", &id)?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
-
-    insert_policy_audit(&conn, &user.user, "policy_delete", "notification_policy", &id)?;
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }
