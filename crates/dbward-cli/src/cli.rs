@@ -263,9 +263,15 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             let content = std::fs::read_to_string(&agent_config_path).map_err(|e| {
                 dbward_core::Error::Config(format!("{}: {e}", agent_config_path.display()))
             })?;
-            let agent_config: dbward_core::AgentConfig = toml::from_str(&content).map_err(|e| {
-                dbward_core::Error::Config(format!("{}: {e}", agent_config_path.display()))
-            })?;
+            let agent_config: dbward_core::AgentConfig = {
+                let mut value: toml::Value = toml::from_str(&content).map_err(|e| {
+                    dbward_core::Error::Config(format!("{}: {e}", agent_config_path.display()))
+                })?;
+                dbward_core::env_expand::expand_env_vars(&mut value)?;
+                value.try_into().map_err(|e| {
+                    dbward_core::Error::Config(format!("{}: {e}", agent_config_path.display()))
+                })?
+            };
             return dbward_agent::run(agent_config).await;
         }
         Command::Dev { database_url, port } => {

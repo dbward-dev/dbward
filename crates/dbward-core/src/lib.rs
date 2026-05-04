@@ -2,6 +2,7 @@ mod audit;
 mod config;
 pub mod driver;
 mod engine;
+pub mod env_expand;
 mod error;
 mod query;
 mod rbac;

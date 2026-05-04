@@ -17,6 +17,7 @@ chrono.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 toml.workspace = true
+regex = "1"
 sqlx.workspace = true
 tokio.workspace = true
 ed25519-dalek = { version = "2", features = ["rand_core"] }

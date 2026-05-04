@@ -189,6 +189,10 @@ impl ServerConfig {
             return Ok(Self::default());
         }
         let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        toml::from_str(&content).map_err(|e| format!("{path:?}: {e}"))
+        let mut value: toml::Value =
+            toml::from_str(&content).map_err(|e| format!("{path:?}: {e}"))?;
+        dbward_core::env_expand::expand_env_vars(&mut value)
+            .map_err(|e| format!("{path:?}: {e}"))?;
+        value.try_into().map_err(|e| format!("{path:?}: {e}"))
     }
 }
