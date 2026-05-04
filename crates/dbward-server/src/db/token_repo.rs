@@ -1,13 +1,13 @@
 use rusqlite::Connection;
 
-pub struct TokenRow {
-    pub id: String,
-    pub subject_id: String,
-    pub role: String,
-    pub subject_type: String,
+pub(crate) struct TokenRow {
+    pub(crate) id: String,
+    pub(crate) subject_id: String,
+    pub(crate) role: String,
+    pub(crate) subject_type: String,
 }
 
-pub fn insert_token(
+pub(crate) fn insert_token(
     conn: &Connection,
     id: &str,
     subject_type: &str,
@@ -24,7 +24,11 @@ pub fn insert_token(
     Ok(())
 }
 
-pub fn revoke_token(conn: &Connection, token_id: &str, now: &str) -> Result<bool, rusqlite::Error> {
+pub(crate) fn revoke_token(
+    conn: &Connection,
+    token_id: &str,
+    now: &str,
+) -> Result<bool, rusqlite::Error> {
     let updated = conn.execute(
         "UPDATE tokens SET status = 'revoked', revoked_at = ?1 WHERE id = ?2",
         rusqlite::params![now, token_id],
@@ -32,7 +36,7 @@ pub fn revoke_token(conn: &Connection, token_id: &str, now: &str) -> Result<bool
     Ok(updated > 0)
 }
 
-pub fn lookup_active_token(
+pub(crate) fn lookup_active_token(
     conn: &Connection,
     prefix: &str,
     hash: &str,

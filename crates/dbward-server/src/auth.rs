@@ -129,7 +129,7 @@ async fn authenticate_api_token(
             subject_type: row.subject_type,
         }),
         Ok(None) => Err((StatusCode::UNAUTHORIZED, "invalid token".into())),
-        Err(_) => Err((StatusCode::UNAUTHORIZED, "invalid token".into())),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     }
 }
 
@@ -220,10 +220,17 @@ mod tests {
         let prefix_a = token_prefix(&token_a);
         {
             let conn = state.sqlite.lock().await;
-            conn.execute(
-                "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, role, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params!["fake-id", "user", "eve", "fakehash000", prefix_a, "admin", "active", "2024-01-01T00:00:00Z"],
-            ).unwrap();
+            crate::db::token_repo::insert_token(
+                &conn,
+                "fake-id",
+                "user",
+                "eve",
+                "fakehash000",
+                &prefix_a,
+                "admin",
+                "2024-01-01T00:00:00Z",
+            )
+            .unwrap();
         }
 
         // alice's token should still work despite prefix collision
