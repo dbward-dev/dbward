@@ -3,6 +3,19 @@ use dbward_core::token::ExecutionToken;
 use reqwest::Client;
 use serde_json::Value;
 
+/// Structured HTTP error from the server.
+#[derive(Debug)]
+pub struct ServerError {
+    pub status: u16,
+    pub body: String,
+}
+
+impl ServerError {
+    pub fn into_core_error(self, context: &str) -> Error {
+        Error::Server(format!("{context} ({}): {}", self.status, self.body))
+    }
+}
+
 pub struct ServerClient {
     base_url: String,
     api_token: String,
@@ -23,9 +36,19 @@ impl ServerClient {
         let status = resp.status();
         let text = resp.text().await.map_err(|e| Error::Server(format!("{context}: {e}")))?;
         if !status.is_success() {
-            return Err(Error::Server(format!("{context} ({status}): {text}")));
+            return Err(ServerError { status: status.as_u16(), body: text }.into_core_error(context));
         }
         serde_json::from_str(&text).map_err(|e| Error::Server(format!("{context}: invalid JSON: {e}")))
+    }
+
+    /// Parse HTTP response, returning ServerError on failure for caller to handle.
+    async fn parse_response_detailed(&self, resp: reqwest::Response) -> Result<Value, ServerError> {
+        let status = resp.status();
+        let text = resp.text().await.map_err(|_| ServerError { status: 0, body: "failed to read response".into() })?;
+        if !status.is_success() {
+            return Err(ServerError { status: status.as_u16(), body: text });
+        }
+        serde_json::from_str(&text).map_err(|_| ServerError { status: status.as_u16(), body: text })
     }
 
     /// Create a request and return (id, status, optional execution_token).
@@ -106,6 +129,23 @@ impl ServerClient {
         self.parse_response(resp, "list requests").await
     }
 
+    /// List pending requests the current user can approve.
+    pub async fn list_pending_for_me(&self, limit: Option<u32>) -> Result<Value, Error> {
+        let mut url = format!("{}/api/requests?pending_for_me=true", self.base_url);
+        if let Some(l) = limit {
+            url = format!("{url}&limit={l}");
+        }
+        let resp = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| Error::Server(format!("list pending-for-me failed: {e}")))?;
+
+        self.parse_response(resp, "list pending-for-me").await
+    }
+
     /// Get a single request by ID, optionally long-polling for status change.
     pub async fn get_request(&self, request_id: &str) -> Result<Value, Error> {
         self.get_request_with_wait(request_id, 0).await
@@ -129,7 +169,7 @@ impl ServerClient {
     }
 
     /// Dispatch a request for execution (on-demand).
-    pub async fn dispatch(&self, request_id: &str) -> Result<Value, Error> {
+    pub async fn dispatch(&self, request_id: &str) -> Result<Value, ServerError> {
         let resp = self
             .client
             .post(format!(
@@ -139,9 +179,9 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Server(format!("dispatch failed: {e}")))?;
+            .map_err(|e| ServerError { status: 0, body: format!("dispatch failed: {e}") })?;
 
-        self.parse_response(resp, "dispatch").await
+        self.parse_response_detailed(resp).await
     }
 
     /// Wait for execution result via long poll.
@@ -163,7 +203,25 @@ impl ServerClient {
     /// Dispatch and wait for result in one flow.
     pub async fn dispatch_and_wait(&self, request_id: &str) -> Result<Value, Error> {
         eprintln!("Dispatching request {request_id}...");
-        self.dispatch(request_id).await?;
+        if let Err(e) = self.dispatch(request_id).await {
+            let body_lower = e.body.to_lowercase();
+            if e.status == 404 {
+                return Err(Error::Server(format!("Request {request_id} not found")));
+            }
+            if e.status == 409 {
+                if body_lower.contains("wrong status") || body_lower.contains("pending") {
+                    return Err(Error::Server(format!(
+                        "Request is still pending approval. Ask an approver to run: dbward approve {request_id}"
+                    )));
+                }
+                if body_lower.contains("already dispatched") || body_lower.contains("dispatched") {
+                    return Err(Error::Server(format!(
+                        "Request is already dispatched. Run: dbward resume {request_id}"
+                    )));
+                }
+            }
+            return Err(e.into_core_error("dispatch"));
+        }
         eprintln!("Waiting for agent to execute...");
 
         tokio::select! {
@@ -177,7 +235,7 @@ impl ServerClient {
     }
 
     /// Approve a request.
-    pub async fn approve(&self, request_id: &str) -> Result<Value, Error> {
+    pub async fn approve(&self, request_id: &str) -> Result<Value, ServerError> {
         let resp = self
             .client
             .post(format!(
@@ -187,25 +245,13 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Server(format!("approve failed: {e}")))?;
+            .map_err(|e| ServerError { status: 0, body: format!("approve failed: {e}") })?;
 
-        let status_code = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| Error::Server(format!("approve failed: {e}")))?;
-
-        if !status_code.is_success() {
-            return Err(Error::Server(format!(
-                "approve failed ({}): {}",
-                status_code, text
-            )));
-        }
-        serde_json::from_str(&text).map_err(|e| Error::Server(format!("invalid response: {e}")))
+        self.parse_response_detailed(resp).await
     }
 
     /// Reject a request.
-    pub async fn reject(&self, request_id: &str) -> Result<Value, Error> {
+    pub async fn reject(&self, request_id: &str) -> Result<Value, ServerError> {
         let resp = self
             .client
             .post(format!(
@@ -215,21 +261,9 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Server(format!("reject failed: {e}")))?;
+            .map_err(|e| ServerError { status: 0, body: format!("reject failed: {e}") })?;
 
-        let status_code = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| Error::Server(format!("reject failed: {e}")))?;
-
-        if !status_code.is_success() {
-            return Err(Error::Server(format!(
-                "reject failed ({}): {}",
-                status_code, text
-            )));
-        }
-        serde_json::from_str(&text).map_err(|e| Error::Server(format!("invalid response: {e}")))
+        self.parse_response_detailed(resp).await
     }
 
     /// List audit log entries.

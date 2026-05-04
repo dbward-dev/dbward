@@ -150,14 +150,19 @@ async fn list_requests(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
     let (limit, offset) = parse_pagination(&params);
     let status_filter = params.get("status").filter(|s| !s.is_empty());
     let database_filter = params.get("database").filter(|s| !s.is_empty());
     let environment_filter = params.get("environment").filter(|s| !s.is_empty());
+    let pending_for_me = params.get("pending_for_me").map(|v| v == "true").unwrap_or(false);
 
     let conn = state.sqlite.lock().await;
+
+    if pending_for_me {
+        return list_requests_pending_for_me(&conn, &user, limit, offset);
+    }
 
     let is_admin = user.effective_permission() == "admin";
     let mut where_clauses: Vec<String> = Vec::new();
@@ -232,6 +237,103 @@ async fn list_requests(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(json!({"requests": rows, "total": total, "limit": limit, "offset": offset})))
+}
+
+fn list_requests_pending_for_me(
+    conn: &rusqlite::Connection,
+    user: &crate::state::AuthUser,
+    limit: i64,
+    offset: i64,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    // Fetch all pending requests with workflow snapshots
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at, workflow_snapshot_json FROM requests WHERE status = 'pending' ORDER BY created_at DESC",
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let candidates: Vec<(serde_json::Value, String, Option<String>)> = stmt
+        .query_map([], |row| {
+            let id: String = row.get(0)?;
+            let created_by: String = row.get(1)?;
+            let ws: Option<String> = row.get(11)?;
+            Ok((
+                json!({
+                    "id": id,
+                    "created_by": created_by,
+                    "operation": row.get::<_, String>(2)?,
+                    "environment": row.get::<_, String>(3)?,
+                    "database_name": row.get::<_, String>(4)?,
+                    "detail": row.get::<_, String>(5)?,
+                    "status": row.get::<_, String>(6)?,
+                    "emergency": row.get::<_, bool>(7)?,
+                    "created_at": row.get::<_, String>(8)?,
+                    "updated_at": row.get::<_, String>(9)?,
+                    "resolved_at": row.get::<_, Option<String>>(10)?,
+                }),
+                created_by,
+                ws,
+            ))
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut filtered: Vec<serde_json::Value> = Vec::new();
+    for (row, created_by, ws_json) in &candidates {
+        // Can't self-approve
+        if *created_by == user.user {
+            continue;
+        }
+        let steps: Vec<crate::server_config::WorkflowStep> = ws_json
+            .as_deref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+        if steps.is_empty() {
+            // Legacy: admin-only
+            if user.effective_permission() == "admin" {
+                filtered.push(row.clone());
+            }
+            continue;
+        }
+        let req_id = row["id"].as_str().unwrap_or("");
+        let approvals = get_approvals_for_request(conn, req_id)?;
+        let current_step = steps.iter().enumerate().find_map(|(i, step)| {
+            if !is_step_satisfied(step, &approvals, i as i64) { Some(i) } else { None }
+        });
+        if let Some(idx) = current_step {
+            let step = &steps[idx];
+            let user_can_approve = step.approvers.iter().any(|g| user.has_role(&g.role))
+                || user.effective_permission() == "admin";
+            // Exclude if user already approved this step
+            let already_approved = approvals.iter().any(|(si, aid, _)| *si == idx as i64 && aid == &user.user);
+            if user_can_approve && !already_approved {
+                filtered.push(row.clone());
+            }
+        }
+    }
+
+    let total = filtered.len() as i64;
+    let start = (offset as usize).min(filtered.len());
+    let end = (start + limit as usize).min(filtered.len());
+    let page = filtered[start..end].to_vec();
+
+    Ok(Json(json!({"requests": page, "total": total, "limit": limit, "offset": offset})))
+}
+
+fn get_approvals_for_request(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+) -> Result<Vec<(i64, String, String)>, (StatusCode, String)> {
+    let mut stmt = conn
+        .prepare("SELECT step_index, actor_id, actor_role FROM approvals WHERE request_id = ?1 AND action = 'approve'")
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    stmt.query_map(rusqlite::params![request_id], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
 async fn create_request(

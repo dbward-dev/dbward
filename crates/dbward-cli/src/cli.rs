@@ -115,6 +115,9 @@ enum Command {
         /// Filter by status (e.g. pending, approved, executed)
         #[arg(long)]
         status: Option<String>,
+        /// Show only pending requests you can approve
+        #[arg(long)]
+        pending_for_me: bool,
     },
     /// Resume and get result of an executed request
     Resume {
@@ -373,17 +376,46 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             Ok(())
         }
         Command::Approve { ref id } => {
-            let body = sc.approve(id).await?;
-            println!("{}", serde_json::to_string_pretty(&body)?);
+            match sc.approve(id).await {
+                Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
+                Err(e) => {
+                    if e.status == 404 {
+                        return Err(dbward_core::Error::Server(format!("Request {id} not found")));
+                    }
+                    if e.status == 409 && e.body.to_lowercase().contains("already approved") {
+                        return Err(dbward_core::Error::Server(format!(
+                            "Request is already approved. Run: dbward resume {id}"
+                        )));
+                    }
+                    if e.status == 403 {
+                        return Err(dbward_core::Error::Server(e.body));
+                    }
+                    return Err(e.into_core_error("approve"));
+                }
+            }
             Ok(())
         }
         Command::Reject { ref id } => {
-            let body = sc.reject(id).await?;
-            println!("{}", serde_json::to_string_pretty(&body)?);
+            match sc.reject(id).await {
+                Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
+                Err(e) => {
+                    if e.status == 404 {
+                        return Err(dbward_core::Error::Server(format!("Request {id} not found")));
+                    }
+                    if e.status == 403 {
+                        return Err(dbward_core::Error::Server(e.body));
+                    }
+                    return Err(e.into_core_error("reject"));
+                }
+            }
             Ok(())
         }
-        Command::List { ref limit, ref status } => {
-            let body = sc.list_requests(*limit, status.as_deref()).await?;
+        Command::List { ref limit, ref status, pending_for_me } => {
+            let body = if pending_for_me {
+                sc.list_pending_for_me(*limit).await?
+            } else {
+                sc.list_requests(*limit, status.as_deref()).await?
+            };
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&body)?);
                 return Ok(());
