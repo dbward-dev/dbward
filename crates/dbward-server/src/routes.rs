@@ -12,7 +12,7 @@ use crate::auth;
 use crate::state::AppState;
 
 fn require_admin_role(user: &crate::state::AuthUser) -> Result<(), (StatusCode, String)> {
-    if user.role == dbward_core::Role::Admin {
+    if user.effective_permission() == "admin" {
         Ok(())
     } else {
         Err((StatusCode::FORBIDDEN, "admin only".into()))
@@ -44,7 +44,7 @@ fn can_access_result(
     access_roles: &[String],
 ) -> bool {
     access_roles.iter().any(|role| {
-        (role == "requester" && user.user == requester) || role == &user.role.to_string()
+        (role == "requester" && user.user == requester) || role == user.effective_permission()
     })
 }
 
@@ -159,7 +159,7 @@ async fn list_requests(
 
     let conn = state.sqlite.lock().await;
 
-    let is_admin = user.role == dbward_core::Role::Admin;
+    let is_admin = user.effective_permission() == "admin";
     let mut where_clauses: Vec<String> = Vec::new();
     let mut bind_values: Vec<String> = Vec::new();
 
@@ -268,7 +268,7 @@ async fn create_request(
         ));
     }
     // Readonly cannot use break-glass
-    if emergency && user.role == dbward_core::Role::Readonly {
+    if emergency && user.effective_permission() == "readonly" {
         return Err((
             StatusCode::FORBIDDEN,
             "readonly users cannot use break-glass".into(),
@@ -277,13 +277,17 @@ async fn create_request(
 
     // Workflow evaluation: check workflows table first, then fall back to static policy
     let conn = state.sqlite.lock().await;
-    let (policy_action, workflow_require_reason) = crate::db::evaluate_workflow(&conn, database_name, environment, operation)
-        .unwrap_or_else(|| {
-            (state
-                .policy
-                .evaluate(environment, operation, &user.role.to_string())
-                .to_string(), false)
-        });
+    let workflow_eval = crate::db::evaluate_workflow(&conn, database_name, environment, operation);
+    let (policy_action, workflow_require_reason, workflow_id, workflow_snapshot_json) = match &workflow_eval {
+        Some((wf_id, steps, require_reason)) => {
+            let action = if steps.is_empty() { "auto_approve" } else { "require_approval" };
+            let snapshot = serde_json::to_string(steps).unwrap_or_else(|_| "[]".into());
+            (action.to_string(), *require_reason, Some(wf_id.clone()), Some(snapshot))
+        }
+        None => {
+            (state.policy.evaluate(environment, operation, user.effective_permission()).to_string(), false, None, None)
+        }
+    };
 
     if !emergency && workflow_require_reason && reason.as_ref().map_or(true, |r| r.is_empty()) {
         return Err((
@@ -306,8 +310,8 @@ async fn create_request(
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.execute(
-        "INSERT INTO requests (id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, emergency, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-        rusqlite::params![id, user.user, operation, environment, database_name, detail, status, now, now, emergency, reason],
+        "INSERT INTO requests (id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, emergency, reason, workflow_id, workflow_snapshot_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        rusqlite::params![id, user.user, operation, environment, database_name, detail, status, now, now, emergency, reason, workflow_id, workflow_snapshot_json],
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -363,74 +367,233 @@ async fn approve_request(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+    body_str: String,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let approver = auth::authenticate(&headers, &state).await?;
     auth::require_human(&approver)?;
-    require_admin_role(&approver)?;
 
-    let (req_user, operation, environment, database_name, detail, token, notif_hooks) = {
-        let mut conn = state.sqlite.lock().await;
+    let body_val: serde_json::Value = serde_json::from_str(&body_str).unwrap_or(json!({}));
 
-        let (req_user, status, operation, environment, database_name, detail): (String, String, String, String, String, String) = conn
-            .query_row(
-                "SELECT created_by, status, operation, environment, database_name, detail FROM requests WHERE id = ?1",
-                rusqlite::params![id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
-            )
-            .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+    let result = approve_request_inner(&state, &id, &approver, &body_val).await?;
 
-        if status != "pending" {
-            return Err((StatusCode::CONFLICT, format!("request is already {status}")));
+    // Post-transaction async work
+    if let Some(event) = result.webhook_event {
+        state.webhooks.dispatch_with_policy(result.notif_hooks, event);
+    }
+    state.request_notifier.notify(&id).await;
+
+    Ok(Json(result.response))
+}
+
+struct ApproveResult {
+    response: serde_json::Value,
+    notif_hooks: Vec<crate::webhook::WebhookConfig>,
+    webhook_event: Option<crate::webhook::WebhookEvent>,
+}
+
+async fn approve_request_inner(
+    state: &AppState,
+    id: &str,
+    approver: &crate::state::AuthUser,
+    body_val: &serde_json::Value,
+) -> Result<ApproveResult, (StatusCode, String)> {
+    let mut conn = state.sqlite.lock().await;
+
+    let (req_user, status, operation, environment, database_name, detail, workflow_snapshot_json): (String, String, String, String, String, String, Option<String>) = conn
+        .query_row(
+            "SELECT created_by, status, operation, environment, database_name, detail, workflow_snapshot_json FROM requests WHERE id = ?1",
+            rusqlite::params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
+        )
+        .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
+
+    if status != "pending" {
+        return Err((StatusCode::CONFLICT, format!("request is already {status}")));
+    }
+
+    if req_user == approver.user {
+        return Err((StatusCode::FORBIDDEN, "requester cannot approve their own request".into()));
+    }
+
+    // Parse workflow steps from snapshot
+    let steps: Vec<crate::server_config::WorkflowStep> = workflow_snapshot_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_default();
+
+    if steps.is_empty() {
+        // Legacy: admin-only single approval (no workflow snapshot)
+        if approver.effective_permission() != "admin" {
+            return Err((StatusCode::FORBIDDEN, "admin only".into()));
         }
-
-        if req_user == approver.user {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "requester cannot approve their own request".into(),
-            ));
-        }
-
         let now = chrono::Utc::now().to_rfc3339();
         let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         tx.execute(
             "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
             rusqlite::params![now, now, id],
-        )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         let approval_id = uuid::Uuid::new_v4().to_string();
         tx.execute(
-            "INSERT INTO approvals (id, request_id, action, actor_id, comment, created_at) VALUES (?1, ?2, 'approve', ?3, NULL, ?4)",
-            rusqlite::params![approval_id, id, approver.user, now],
-        )
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, 'approve', ?3, 0, ?4, NULL, ?5)",
+            rusqlite::params![approval_id, id, approver.user, approver.effective_permission(), now],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        let token = state
-            .token_signer
-            .issue(&id, &operation, &environment, &database_name, &detail);
-
+        let token = state.token_signer.issue(id, &operation, &environment, &database_name, &detail);
         let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
-        (req_user, operation, environment, database_name, detail, token, notif_hooks)
+        return Ok(ApproveResult {
+            response: json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
+            notif_hooks,
+            webhook_event: Some(crate::webhook::WebhookEvent {
+                event: "request_approved".into(), request_id: id.into(), user: req_user,
+                operation, environment, detail, database: database_name,
+                approved_by: Some(approver.user.clone()), reason: None,
+            }),
+        });
+    }
+
+    // Read existing approvals
+    let existing_approvals: Vec<(i64, String, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT step_index, actor_id, actor_role FROM approvals WHERE request_id = ?1 AND action = 'approve'"
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        stmt.query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect()
     };
 
-    state.webhooks.dispatch_with_policy(notif_hooks, crate::webhook::WebhookEvent {
-        event: "request_approved".into(),
-        request_id: id.clone(),
-        user: req_user.clone(),
-        operation: operation.clone(),
-        environment: environment.clone(),
-        detail: detail.clone(),
-            database: database_name.clone(),
-        approved_by: Some(approver.user.clone()),
-        reason: None,
+    // Calculate current step index (first unsatisfied step)
+    let current_step = steps.iter().enumerate().find_map(|(i, step)| {
+        if !is_step_satisfied(step, &existing_approvals, i as i64) { Some(i) } else { None }
+    }).unwrap_or(steps.len());
+
+    if current_step >= steps.len() {
+        return Err((StatusCode::CONFLICT, "all steps already satisfied".into()));
+    }
+
+    let step = &steps[current_step];
+
+    // Determine approver's role
+    let as_role = body_val.get("as_role").and_then(|v| v.as_str()).map(String::from);
+    let actor_role = if let Some(ref role) = as_role {
+        if !approver.has_role(role) {
+            return Err((StatusCode::FORBIDDEN, format!("you do not have role '{role}'")));
+        }
+        if !step.approvers.iter().any(|g| g.role == *role) {
+            return Err((StatusCode::FORBIDDEN, format!("role '{role}' is not an approver for current step")));
+        }
+        role.clone()
+    } else {
+        let found = step.approvers.iter().find_map(|g| {
+            if approver.has_role(&g.role) { Some(g.role.clone()) } else { None }
+        });
+        found.or_else(|| {
+            if approver.effective_permission() == "admin" {
+                step.approvers.first().map(|g| g.role.clone())
+            } else {
+                None
+            }
+        }).ok_or((StatusCode::FORBIDDEN, "you do not have a matching role for this step".into()))?
+    };
+
+    if existing_approvals.iter().any(|(si, aid, _)| *si == current_step as i64 && aid == &approver.user) {
+        return Err((StatusCode::CONFLICT, "you already approved this step".into()));
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let approval_id = uuid::Uuid::new_v4().to_string();
+    let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    tx.execute(
+        "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, 'approve', ?3, ?4, ?5, NULL, ?6)",
+        rusqlite::params![approval_id, id, approver.user, current_step as i64, actor_role, now],
+    ).map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            (StatusCode::CONFLICT, "you already approved this step".into())
+        } else {
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        }
+    })?;
+
+    let mut updated_approvals = existing_approvals.clone();
+    updated_approvals.push((current_step as i64, approver.user.clone(), actor_role.clone()));
+
+    let step_now_satisfied = is_step_satisfied(step, &updated_approvals, current_step as i64);
+    let all_satisfied = step_now_satisfied && steps.iter().enumerate().all(|(i, s)| {
+        is_step_satisfied(s, &updated_approvals, i as i64)
     });
 
-    state.request_notifier.notify(&id).await;
+    if all_satisfied {
+        tx.execute(
+            "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
+            rusqlite::params![now, now, id],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(
-        json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
-    ))
+        let token = state.token_signer.issue(id, &operation, &environment, &database_name, &detail);
+        let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
+        Ok(ApproveResult {
+            response: json!({"id": id, "status": "approved", "approved_by": approver.user, "execution_token": token}),
+            notif_hooks,
+            webhook_event: Some(crate::webhook::WebhookEvent {
+                event: "request_approved".into(), request_id: id.into(), user: req_user,
+                operation, environment, detail, database: database_name,
+                approved_by: Some(approver.user.clone()), reason: None,
+            }),
+        })
+    } else {
+        tx.execute(
+            "UPDATE requests SET updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![now, id],
+        ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+        let webhook_event = if step_now_satisfied {
+            Some(crate::webhook::WebhookEvent {
+                event: "step_approved".into(), request_id: id.into(), user: req_user,
+                operation: operation.clone(), environment: environment.clone(),
+                detail: detail.clone(), database: database_name.clone(),
+                approved_by: Some(approver.user.clone()), reason: None,
+            })
+        } else {
+            None
+        };
+        let notif_hooks = crate::db::get_notification_webhooks(&conn, &database_name, &environment);
+
+        let new_current = steps.iter().enumerate().find_map(|(i, s)| {
+            if !is_step_satisfied(s, &updated_approvals, i as i64) { Some(i) } else { None }
+        }).unwrap_or(steps.len());
+
+        Ok(ApproveResult {
+            response: json!({
+                "id": id, "status": "pending",
+                "step_completed": current_step, "current_step": new_current,
+                "total_steps": steps.len(),
+                "message": format!("Step {}/{} approved. Waiting for further approvals.", current_step + 1, steps.len()),
+            }),
+            notif_hooks,
+            webhook_event,
+        })
+    }
+}
+
+fn is_step_satisfied(
+    step: &crate::server_config::WorkflowStep,
+    approvals: &[(i64, String, String)],
+    step_index: i64,
+) -> bool {
+    let step_approvals: Vec<&(i64, String, String)> = approvals.iter()
+        .filter(|(si, _, _)| *si == step_index)
+        .collect();
+
+    match step.mode.as_str() {
+        "any" => step.approvers.iter().any(|g| {
+            step_approvals.iter().filter(|(_, _, role)| role == &g.role).count() >= g.min as usize
+        }),
+        _ => step.approvers.iter().all(|g| {
+            step_approvals.iter().filter(|(_, _, role)| role == &g.role).count() >= g.min as usize
+        }),
+    }
 }
 
 async fn reject_request(
@@ -456,7 +619,7 @@ async fn reject_request(
             return Err((StatusCode::CONFLICT, format!("request is already {status}")));
         }
 
-        if user.role != dbward_core::Role::Admin && user.user != req_user {
+        if user.effective_permission() != "admin" && user.user != req_user {
             return Err((
                 StatusCode::FORBIDDEN,
                 "only admin or the requester can reject".into(),
@@ -473,8 +636,8 @@ async fn reject_request(
 
         let approval_id = uuid::Uuid::new_v4().to_string();
         tx.execute(
-            "INSERT INTO approvals (id, request_id, action, actor_id, comment, created_at) VALUES (?1, ?2, 'reject', ?3, NULL, ?4)",
-            rusqlite::params![approval_id, id, user.user, now],
+            "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, 'reject', ?3, 0, ?4, NULL, ?5)",
+            rusqlite::params![approval_id, id, user.user, user.effective_permission(), now],
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         tx.commit().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -512,11 +675,11 @@ async fn get_request(
         .min(60);
 
     let build_response = |conn: &rusqlite::Connection, id: &str, state: &AppState| -> Result<serde_json::Value, (StatusCode, String)> {
-        let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at): (String, String, String, String, String, String, String, String, String, Option<String>) = conn
+        let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json): (String, String, String, String, String, String, String, String, String, Option<String>, Option<String>) = conn
             .query_row(
-                "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at FROM requests WHERE id = ?1",
+                "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json FROM requests WHERE id = ?1",
                 rusqlite::params![id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?)),
             )
             .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
@@ -532,6 +695,51 @@ async fn get_request(
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
 
+        // Include approval_progress when workflow snapshot exists
+        if let Some(ref snapshot) = workflow_snapshot_json {
+            if let Ok(steps) = serde_json::from_str::<Vec<crate::server_config::WorkflowStep>>(snapshot) {
+                if !steps.is_empty() {
+                    let approvals: Vec<(i64, String, String, String)> = conn
+                        .prepare("SELECT step_index, actor_id, actor_role, created_at FROM approvals WHERE request_id = ?1 AND action = 'approve'")
+                        .and_then(|mut stmt| {
+                            stmt.query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+                                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                        })
+                        .unwrap_or_default();
+
+                    let step_views: Vec<serde_json::Value> = steps.iter().enumerate().map(|(i, step)| {
+                        let step_apprs: Vec<serde_json::Value> = approvals.iter()
+                            .filter(|(si, _, _, _)| *si == i as i64)
+                            .map(|(_, user, role, at)| json!({"user": user, "role": role, "at": at}))
+                            .collect();
+                        let simple_approvals: Vec<(i64, String, String)> = approvals.iter()
+                            .map(|(si, uid, role, _)| (*si, uid.clone(), role.clone()))
+                            .collect();
+                        json!({
+                            "index": i,
+                            "mode": step.mode,
+                            "satisfied": is_step_satisfied(step, &simple_approvals, i as i64),
+                            "approvers_required": step.approvers.iter().map(|g| json!({"role": g.role, "min": g.min})).collect::<Vec<_>>(),
+                            "approvals": step_apprs,
+                        })
+                    }).collect();
+
+                    let current = steps.iter().enumerate().find_map(|(i, step)| {
+                        let simple: Vec<(i64, String, String)> = approvals.iter()
+                            .map(|(si, uid, role, _)| (*si, uid.clone(), role.clone()))
+                            .collect();
+                        if !is_step_satisfied(step, &simple, i as i64) { Some(i) } else { None }
+                    }).unwrap_or(steps.len());
+
+                    resp["approval_progress"] = json!({
+                        "current_step": current,
+                        "total_steps": steps.len(),
+                        "steps": step_views,
+                    });
+                }
+            }
+        }
+
         Ok(resp)
     };
 
@@ -540,7 +748,7 @@ async fn get_request(
         let conn = state.sqlite.lock().await;
         let resp = build_response(&conn, &id, &state)?;
         let created_by = resp["created_by"].as_str().unwrap_or("");
-        if user.role != dbward_core::Role::Admin && user.user != created_by {
+        if user.effective_permission() != "admin" && user.user != created_by {
             return Err((StatusCode::FORBIDDEN, "request access denied".into()));
         }
         let status = resp["status"].as_str().unwrap_or("").to_string();
@@ -571,25 +779,25 @@ async fn list_audit(
     let user = auth::authenticate(&headers, &state).await?;
 
     // Readonly: 403. Developer: own logs only. Admin: all.
-    match user.role {
-        dbward_core::Role::Readonly => {
+    match user.effective_permission() {
+        "readonly" => {
             return Err((StatusCode::FORBIDDEN, "admin or developer only".into()));
         }
-        dbward_core::Role::Developer => {
+        "admin" => {}
+        _ => {
             if let Some(u) = params.get("user").filter(|s| !s.is_empty()) {
                 if u != &user.user {
                     return Err((StatusCode::FORBIDDEN, "developers can only view their own audit logs".into()));
                 }
             }
         }
-        dbward_core::Role::Admin => {}
     }
 
     let (limit, offset) = parse_pagination(&params);
     // Developer: force filter to own user
-    let user_filter = match user.role {
-        dbward_core::Role::Developer => Some(user.user.clone()),
-        _ => params.get("user").filter(|s| !s.is_empty()).cloned(),
+    let user_filter = match user.effective_permission() {
+        "admin" => params.get("user").filter(|s| !s.is_empty()).cloned(),
+        _ => Some(user.user.clone()),
     };
     let user_filter = user_filter.as_deref();
     let operation_filter = params.get("operation").filter(|s| !s.is_empty());
@@ -703,7 +911,7 @@ async fn dispatch_request(
         )
         .map_err(|_| (StatusCode::NOT_FOUND, "request not found".into()))?;
 
-    if user.user != requester && user.role != dbward_core::Role::Admin {
+    if user.user != requester && user.effective_permission() != "admin" {
         return Err((
             StatusCode::FORBIDDEN,
             "only the requester can dispatch this request".into(),
@@ -1247,6 +1455,16 @@ async fn update_workflow(
     conn.query_row("SELECT id FROM workflows WHERE id = ?1", rusqlite::params![id], |_| Ok(()))
         .map_err(|_| (StatusCode::NOT_FOUND, "workflow not found".into()))?;
 
+    // Block changes if pending requests reference this workflow
+    let pending_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM requests WHERE workflow_id = ?1 AND status = 'pending'",
+        rusqlite::params![id],
+        |row| row.get(0),
+    ).unwrap_or(0);
+    if pending_count > 0 {
+        return Err((StatusCode::CONFLICT, format!("{pending_count} pending request(s) reference this workflow")));
+    }
+
     {
         let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         if let Some(steps) = body.get("steps") {
@@ -1288,6 +1506,17 @@ async fn delete_workflow(
     require_admin_role(&user)?;
 
     let mut conn = state.sqlite.lock().await;
+
+    // Block deletion if pending requests reference this workflow
+    let pending_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM requests WHERE workflow_id = ?1 AND status = 'pending'",
+        rusqlite::params![id],
+        |row| row.get(0),
+    ).unwrap_or(0);
+    if pending_count > 0 {
+        return Err((StatusCode::CONFLICT, format!("{pending_count} pending request(s) reference this workflow")));
+    }
+
     {
         let tx = conn.transaction().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         let changes = tx

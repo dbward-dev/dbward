@@ -3,7 +3,7 @@ use std::sync::Arc;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
-use dbward_core::{Engine, Environment, Role};
+use dbward_core::{Engine, Environment};
 use dbward_core::driver;
 
 async fn setup() -> (testcontainers::ContainerAsync<Postgres>, Arc<dyn driver::DatabaseDriver>, String) {
@@ -23,7 +23,7 @@ async fn execute_select() {
     let mut engine = Engine::from_driver(drv, &db_name, Environment::Development);
 
     let result = engine
-        .execute_query("test_user", Role::Admin, "SELECT 1 AS num, 'hello' AS msg")
+        .execute_query("test_user", "admin", "SELECT 1 AS num, 'hello' AS msg")
         .await
         .unwrap();
 
@@ -43,7 +43,7 @@ async fn execute_dml() {
     let result = engine
         .execute_query(
             "test_user",
-            Role::Developer,
+            "developer",
             "INSERT INTO test_dml (val) VALUES ('a'), ('b')",
         )
         .await
@@ -59,7 +59,7 @@ async fn readonly_cannot_dml() {
     let mut engine = Engine::from_driver(drv, &db_name, Environment::Development);
 
     let err = engine
-        .execute_query("readonly_user", Role::Readonly, "DELETE FROM nonexistent")
+        .execute_query("readonly_user", "readonly", "DELETE FROM nonexistent")
         .await;
 
     assert!(err.is_err());
@@ -72,7 +72,7 @@ async fn ddl_rejected() {
     let mut engine = Engine::from_driver(drv, &db_name, Environment::Development);
 
     let err = engine
-        .execute_query("admin", Role::Admin, "CREATE TABLE bad (id INT)")
+        .execute_query("admin", "admin", "CREATE TABLE bad (id INT)")
         .await;
 
     assert!(err.is_err());

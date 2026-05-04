@@ -1,26 +1,26 @@
-use crate::{Error, Operation, Role};
+use crate::{Error, Operation};
 
-/// Check whether `role` is allowed to perform `operation`.
+/// Check whether `role` (effective permission level) is allowed to perform `operation`.
 ///
 /// Matrix:
-///   - Admin: all operations
-///   - Developer: all except audit_search (read own logs only via CLI)
-///   - Readonly: migrate_status, audit_search, execute_query (SELECT only — caller enforces query type)
-pub fn check_permission(role: &Role, operation: &Operation) -> Result<(), Error> {
+///   - "admin": all operations
+///   - "readonly": migrate_status, audit_search, execute_query (SELECT only — caller enforces query type)
+///   - anything else ("developer", "dba", "team-lead", …): all except audit_search
+pub fn check_permission(role: &str, operation: &Operation) -> Result<(), Error> {
     let allowed = match role {
-        Role::Admin => true,
-        Role::Developer => !matches!(operation, Operation::AuditSearch),
-        Role::Readonly => matches!(
+        "admin" => true,
+        "readonly" => matches!(
             operation,
             Operation::MigrateStatus | Operation::AuditSearch | Operation::ExecuteQuery
         ),
+        _ => !matches!(operation, Operation::AuditSearch),
     };
 
     if allowed {
         Ok(())
     } else {
         Err(Error::PermissionDenied {
-            role: *role,
+            role: role.to_string(),
             operation: *operation,
         })
     }
@@ -41,32 +41,39 @@ mod tests {
             Operation::AuditSearch,
         ];
         for op in &ops {
-            assert!(check_permission(&Role::Admin, op).is_ok(), "admin should be allowed {op}");
+            assert!(check_permission("admin", op).is_ok(), "admin should be allowed {op}");
         }
     }
 
     #[test]
     fn developer_cannot_search_audit() {
-        assert!(check_permission(&Role::Developer, &Operation::AuditSearch).is_err());
+        assert!(check_permission("developer", &Operation::AuditSearch).is_err());
     }
 
     #[test]
     fn developer_can_migrate_and_execute() {
-        assert!(check_permission(&Role::Developer, &Operation::MigrateUp).is_ok());
-        assert!(check_permission(&Role::Developer, &Operation::ExecuteQuery).is_ok());
+        assert!(check_permission("developer", &Operation::MigrateUp).is_ok());
+        assert!(check_permission("developer", &Operation::ExecuteQuery).is_ok());
     }
 
     #[test]
     fn readonly_cannot_mutate() {
-        assert!(check_permission(&Role::Readonly, &Operation::MigrateUp).is_err());
-        assert!(check_permission(&Role::Readonly, &Operation::MigrateDown).is_err());
-        assert!(check_permission(&Role::Readonly, &Operation::MigrateCreate).is_err());
+        assert!(check_permission("readonly", &Operation::MigrateUp).is_err());
+        assert!(check_permission("readonly", &Operation::MigrateDown).is_err());
+        assert!(check_permission("readonly", &Operation::MigrateCreate).is_err());
     }
 
     #[test]
     fn readonly_can_read() {
-        assert!(check_permission(&Role::Readonly, &Operation::MigrateStatus).is_ok());
-        assert!(check_permission(&Role::Readonly, &Operation::ExecuteQuery).is_ok());
-        assert!(check_permission(&Role::Readonly, &Operation::AuditSearch).is_ok());
+        assert!(check_permission("readonly", &Operation::MigrateStatus).is_ok());
+        assert!(check_permission("readonly", &Operation::ExecuteQuery).is_ok());
+        assert!(check_permission("readonly", &Operation::AuditSearch).is_ok());
+    }
+
+    #[test]
+    fn custom_role_treated_as_developer() {
+        assert!(check_permission("dba", &Operation::ExecuteQuery).is_ok());
+        assert!(check_permission("team-lead", &Operation::MigrateUp).is_ok());
+        assert!(check_permission("dba", &Operation::AuditSearch).is_err());
     }
 }

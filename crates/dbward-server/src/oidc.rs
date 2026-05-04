@@ -1,11 +1,8 @@
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-
-use dbward_core::Role;
 
 use crate::server_config::OidcConfig;
 
@@ -71,8 +68,8 @@ impl OidcVerifier {
         }
     }
 
-    /// Verify a JWT and return (subject, role).
-    pub async fn verify(&self, token: &str) -> Result<(String, Role), String> {
+    /// Verify a JWT and return (subject, roles).
+    pub async fn verify(&self, token: &str) -> Result<(String, Vec<String>), String> {
         let header = decode_header(token).map_err(|e| format!("invalid JWT header: {e}"))?;
         let kid = header.kid.as_deref().unwrap_or("");
 
@@ -96,31 +93,31 @@ impl OidcVerifier {
             .claims;
 
         let identity = claims.email.clone().unwrap_or(claims.sub.clone());
-        let role = self.resolve_role(&claims);
+        let roles = self.resolve_roles(&claims);
 
-        Ok((identity, role))
+        Ok((identity, roles))
     }
 
-    fn resolve_role(&self, claims: &Claims) -> Role {
-        // Check role mappings in order
+    fn resolve_roles(&self, claims: &Claims) -> Vec<String> {
+        let mut roles = Vec::new();
         for mapping in &self.config.role_mappings {
             if let Some(ref subject) = mapping.subject {
                 let id = claims.email.as_deref().unwrap_or(&claims.sub);
                 if id == subject {
-                    return parse_role(&mapping.role);
+                    roles.push(mapping.role.clone());
+                    continue;
                 }
             }
             if let Some(ref claim_name) = mapping.claim {
                 if let Some(ref expected_value) = mapping.value {
-                    // Check in groups array
                     if claim_name == "groups" {
                         if let Some(ref groups) = claims.groups {
                             if groups.iter().any(|g| g == expected_value) {
-                                return parse_role(&mapping.role);
+                                roles.push(mapping.role.clone());
+                                continue;
                             }
                         }
                     }
-                    // Check in extra claims
                     if let Some(val) = claims.extra.get(claim_name.as_str()) {
                         if val.as_str() == Some(expected_value.as_str())
                             || val
@@ -128,14 +125,18 @@ impl OidcVerifier {
                                 .map(|a| a.iter().any(|v| v.as_str() == Some(expected_value.as_str())))
                                 .unwrap_or(false)
                         {
-                            return parse_role(&mapping.role);
+                            roles.push(mapping.role.clone());
+                            continue;
                         }
                     }
                 }
             }
         }
 
-        parse_role(&self.config.default_role)
+        if roles.is_empty() {
+            roles.push(self.config.default_role.clone());
+        }
+        roles
     }
 
     async fn get_decoding_key(&self, kid: &str) -> Result<DecodingKey, String> {
@@ -238,26 +239,10 @@ fn jwk_to_decoding_key(jwk: &Jwk) -> Result<DecodingKey, String> {
     }
 }
 
-fn parse_role(s: &str) -> Role {
-    match s {
-        "admin" => Role::Admin,
-        "developer" => Role::Developer,
-        _ => Role::Readonly,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::server_config::RoleMapping;
-
-    #[test]
-    fn parse_role_variants() {
-        assert!(matches!(parse_role("admin"), Role::Admin));
-        assert!(matches!(parse_role("developer"), Role::Developer));
-        assert!(matches!(parse_role("readonly"), Role::Readonly));
-        assert!(matches!(parse_role("unknown"), Role::Readonly));
-    }
 
     #[test]
     fn find_key_by_kid() {
@@ -304,7 +289,7 @@ mod tests {
     #[test]
     fn resolve_role_default_when_no_mappings() {
         let v = test_verifier(vec![], "readonly");
-        assert!(matches!(v.resolve_role(&claims("user1", None, None)), Role::Readonly));
+        assert_eq!(v.resolve_roles(&claims("user1", None, None)), vec!["readonly"]);
     }
 
     #[test]
@@ -312,8 +297,8 @@ mod tests {
         let v = test_verifier(vec![
             RoleMapping { subject: Some("admin@co.jp".into()), claim: None, value: None, role: "admin".into() },
         ], "readonly");
-        assert!(matches!(v.resolve_role(&claims("sub1", Some("admin@co.jp"), None)), Role::Admin));
-        assert!(matches!(v.resolve_role(&claims("sub1", Some("other@co.jp"), None)), Role::Readonly));
+        assert_eq!(v.resolve_roles(&claims("sub1", Some("admin@co.jp"), None)), vec!["admin"]);
+        assert_eq!(v.resolve_roles(&claims("sub1", Some("other@co.jp"), None)), vec!["readonly"]);
     }
 
     #[test]
@@ -321,16 +306,16 @@ mod tests {
         let v = test_verifier(vec![
             RoleMapping { subject: None, claim: Some("groups".into()), value: Some("db-admins".into()), role: "admin".into() },
         ], "readonly");
-        assert!(matches!(v.resolve_role(&claims("u", None, Some(vec!["db-admins", "users"]))), Role::Admin));
-        assert!(matches!(v.resolve_role(&claims("u", None, Some(vec!["users"]))), Role::Readonly));
+        assert_eq!(v.resolve_roles(&claims("u", None, Some(vec!["db-admins", "users"]))), vec!["admin"]);
+        assert_eq!(v.resolve_roles(&claims("u", None, Some(vec!["users"]))), vec!["readonly"]);
     }
 
     #[test]
-    fn resolve_role_first_match_wins() {
+    fn resolve_roles_collects_all_matching() {
         let v = test_verifier(vec![
             RoleMapping { subject: Some("u@x.com".into()), claim: None, value: None, role: "developer".into() },
             RoleMapping { subject: Some("u@x.com".into()), claim: None, value: None, role: "admin".into() },
         ], "readonly");
-        assert!(matches!(v.resolve_role(&claims("s", Some("u@x.com"), None)), Role::Developer));
+        assert_eq!(v.resolve_roles(&claims("s", Some("u@x.com"), None)), vec!["developer", "admin"]);
     }
 }

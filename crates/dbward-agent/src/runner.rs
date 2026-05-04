@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use dbward_core::{AgentConfig, Engine, Error, Role};
+use dbward_core::{AgentConfig, Engine, Error};
 use dbward_migrate::Migrator;
 use tracing::{error, info};
 
@@ -131,7 +131,7 @@ async fn execute_operation(
         "execute_query" => {
             let mut engine = Engine::new(resolved, env).await?;
             let result = engine
-                .execute_query("agent", Role::Developer, detail)
+                .execute_query("agent", "developer", detail)
                 .await?;
             if result.rows.is_empty() {
                 Ok(format!("Rows affected: {}", result.rows_affected))

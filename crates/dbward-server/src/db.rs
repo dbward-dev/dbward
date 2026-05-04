@@ -27,6 +27,8 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             detail TEXT NOT NULL,
             emergency INTEGER NOT NULL DEFAULT 0,
             reason TEXT,
+            workflow_id TEXT,
+            workflow_snapshot_json TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             resolved_at TEXT
@@ -38,6 +40,8 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             action TEXT NOT NULL,
             actor_id TEXT NOT NULL,
             comment TEXT,
+            step_index INTEGER NOT NULL DEFAULT 0,
+            actor_role TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             FOREIGN KEY (request_id) REFERENCES requests(id)
         );
@@ -84,6 +88,7 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
 
         CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_approvals_request ON approvals(request_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_unique_per_step ON approvals(request_id, step_index, actor_id);
         CREATE INDEX IF NOT EXISTS idx_agent_exec_request ON agent_executions(request_id);
         CREATE INDEX IF NOT EXISTS idx_agent_exec_agent ON agent_executions(agent_id, status);
         CREATE INDEX IF NOT EXISTS idx_audit_request ON audit_log(request_id);
@@ -98,7 +103,7 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             source TEXT NOT NULL DEFAULT 'api',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            UNIQUE(database_name, environment)
+            UNIQUE(database_name, environment, operations_json)
         );
 
         CREATE TABLE IF NOT EXISTS execution_policies (
@@ -218,14 +223,17 @@ pub fn sync_workflows(
 ) -> Result<(), rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
     for w in workflows {
-        let id = format!("{}:{}", w.database, w.environment);
-        let ops_json = serde_json::to_string(&w.operations).unwrap_or_else(|_| "[]".into());
+        let mut sorted_ops = w.operations.clone();
+        sorted_ops.sort();
+        let ops_json = serde_json::to_string(&sorted_ops).unwrap_or_else(|_| "[]".into());
+        let ops_tag = if sorted_ops.is_empty() { "*".to_string() } else { sorted_ops.join(",") };
+        let id = format!("{}:{}:{}", w.database, w.environment, ops_tag);
         let steps_json = serde_json::to_string(&w.steps).unwrap_or_else(|_| "[]".into());
         conn.execute(
             "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'toml', ?7, ?7)
-             ON CONFLICT(database_name, environment) DO UPDATE SET
-               operations_json = ?4, steps_json = ?5, require_reason = ?6, updated_at = ?7
+             ON CONFLICT(database_name, environment, operations_json) DO UPDATE SET
+               id = ?1, steps_json = ?5, require_reason = ?6, updated_at = ?7
              WHERE source = 'toml'",
             rusqlite::params![id, w.database, w.environment, ops_json, steps_json, w.require_reason, now],
         )?;
@@ -233,31 +241,13 @@ pub fn sync_workflows(
     Ok(())
 }
 
-fn workflow_action_for_operation(
-    operations_json: &str,
-    steps_json: &str,
-    operation: &str,
-) -> Option<String> {
-    let operations: Vec<String> = serde_json::from_str(operations_json).unwrap_or_default();
-    if !operations.is_empty() && !operations.iter().any(|op| op == operation) {
-        return None;
-    }
-
-    let steps: Vec<serde_json::Value> = serde_json::from_str(steps_json).unwrap_or_default();
-    Some(if steps.is_empty() {
-        "auto_approve".into()
-    } else {
-        "require_approval".into()
-    })
-}
-
-/// Evaluate workflow for a request. Returns Some((action, require_reason)) when a workflow matches.
+/// Evaluate workflow for a request. Returns Some((workflow_id, steps, require_reason)) when a workflow matches.
 pub fn evaluate_workflow(
     conn: &Connection,
     database: &str,
     environment: &str,
     operation: &str,
-) -> Option<(String, bool)> {
+) -> Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> {
     let candidates = [
         (database, environment),
         ("*", environment),
@@ -266,20 +256,37 @@ pub fn evaluate_workflow(
     ];
 
     for (db_name, env_name) in candidates {
-        let row: Option<(String, String, bool)> = conn
-            .query_row(
-                "SELECT operations_json, steps_json, require_reason FROM workflows WHERE database_name = ?1 AND environment = ?2",
-                rusqlite::params![db_name, env_name],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .ok();
+        let mut stmt = conn
+            .prepare("SELECT id, operations_json, steps_json, require_reason FROM workflows WHERE database_name = ?1 AND environment = ?2")
+            .ok()?;
+        let rows: Vec<(String, String, String, bool)> = stmt
+            .query_map(rusqlite::params![db_name, env_name], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .ok()?
+            .filter_map(|r| r.ok())
+            .collect();
 
-        if let Some((operations_json, steps_json, require_reason)) = row {
-            if let Some(action) =
-                workflow_action_for_operation(&operations_json, &steps_json, operation)
-            {
-                return Some((action, require_reason));
+        // Priority: exact operations match first, then catch-all (empty operations)
+        let mut exact_match: Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> = None;
+        let mut catchall_match: Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> = None;
+
+        for (id, operations_json, steps_json, require_reason) in &rows {
+            let operations: Vec<String> = serde_json::from_str(operations_json).unwrap_or_default();
+            let steps: Vec<crate::server_config::WorkflowStep> = serde_json::from_str(steps_json).unwrap_or_default();
+            if operations.is_empty() {
+                if catchall_match.is_none() {
+                    catchall_match = Some((id.clone(), steps, *require_reason));
+                }
+            } else if operations.iter().any(|op| op == operation) {
+                if exact_match.is_none() {
+                    exact_match = Some((id.clone(), steps, *require_reason));
+                }
             }
+        }
+
+        if let Some(m) = exact_match.or(catchall_match) {
+            return Some(m);
         }
     }
 

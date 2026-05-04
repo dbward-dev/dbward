@@ -13,14 +13,6 @@ pub enum Operation {
     AuditSearch,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Role {
-    Admin,
-    Developer,
-    Readonly,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Environment {
@@ -36,7 +28,7 @@ pub struct AuditEntry {
     pub id: String,
     pub timestamp: DateTime<Utc>,
     pub user: String,
-    pub role: Role,
+    pub role: String,
     pub operation: Operation,
     pub environment: Environment,
     /// Human-readable detail (e.g. SQL statement, migration name)
@@ -49,7 +41,7 @@ pub struct AuditEntry {
 impl AuditEntry {
     pub fn new(
         user: impl Into<String>,
-        role: Role,
+        role: impl Into<String>,
         operation: Operation,
         environment: Environment,
         detail: impl Into<String>,
@@ -58,7 +50,7 @@ impl AuditEntry {
             id: Uuid::new_v4().to_string(),
             timestamp: Utc::now(),
             user: user.into(),
-            role,
+            role: role.into(),
             operation,
             environment,
             detail: detail.into(),
@@ -87,16 +79,6 @@ impl std::fmt::Display for Operation {
     }
 }
 
-impl std::fmt::Display for Role {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Admin => write!(f, "admin"),
-            Self::Developer => write!(f, "developer"),
-            Self::Readonly => write!(f, "readonly"),
-        }
-    }
-}
-
 impl std::fmt::Display for Environment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -116,7 +98,7 @@ mod tests {
     fn audit_entry_serializes_to_json() {
         let entry = AuditEntry::new(
             "alice",
-            Role::Developer,
+            "developer",
             Operation::MigrateUp,
             Environment::Staging,
             "20260501_create_users.sql",
@@ -133,7 +115,7 @@ mod tests {
     fn audit_entry_failure() {
         let entry = AuditEntry::new(
             "bob",
-            Role::Admin,
+            "admin",
             Operation::ExecuteQuery,
             Environment::Production,
             "DELETE FROM users",

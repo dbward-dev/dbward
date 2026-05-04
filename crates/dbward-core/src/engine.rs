@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::config::ResolvedDatabaseConfig;
 use crate::driver::DatabaseDriver;
 use crate::query::{QueryResult, QueryType, classify_query};
-use crate::{AuditEntry, AuditLogger, Error, Environment, Operation, Role, check_permission};
+use crate::{AuditEntry, AuditLogger, Error, Environment, Operation, check_permission};
 
 pub struct Engine {
     driver: Arc<dyn DatabaseDriver>,
@@ -47,15 +47,15 @@ impl Engine {
     pub async fn execute_query(
         &mut self,
         user: &str,
-        role: Role,
+        role: &str,
         sql: &str,
     ) -> Result<QueryResult, Error> {
-        check_permission(&role, &Operation::ExecuteQuery)?;
+        check_permission(role, &Operation::ExecuteQuery)?;
         let query_type = classify_query(sql)?;
 
-        if role == Role::Readonly && !matches!(query_type, QueryType::Select) {
+        if role == "readonly" && !matches!(query_type, QueryType::Select) {
             return Err(Error::PermissionDenied {
-                role,
+                role: role.to_string(),
                 operation: Operation::ExecuteQuery,
             });
         }

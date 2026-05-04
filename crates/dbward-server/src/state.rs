@@ -4,8 +4,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
-use dbward_core::Role;
-
 use crate::oidc::OidcVerifier;
 use crate::policy::PolicyConfig;
 use crate::server_config::RetentionConfig;
@@ -105,6 +103,24 @@ pub struct AppState {
 pub struct AuthUser {
     pub token_id: String,
     pub user: String,
-    pub role: Role,
+    pub roles: Vec<String>,
     pub subject_type: String,
+}
+
+impl AuthUser {
+    /// Returns the effective permission level:
+    /// "admin" if any role is admin, "readonly" if all roles are readonly, otherwise "developer".
+    pub fn effective_permission(&self) -> &str {
+        if self.roles.iter().any(|r| r == "admin") {
+            "admin"
+        } else if !self.roles.is_empty() && self.roles.iter().all(|r| r == "readonly") {
+            "readonly"
+        } else {
+            "developer"
+        }
+    }
+
+    pub fn has_role(&self, role: &str) -> bool {
+        self.roles.iter().any(|r| r == role)
+    }
 }

@@ -156,7 +156,7 @@ enum TokenAction {
         #[arg(long)]
         user: String,
         #[arg(long, value_parser = parse_role)]
-        role: dbward_core::Role,
+        role: String,
         /// Create an agent token instead of a user token
         #[arg(long)]
         agent: bool,
@@ -187,12 +187,11 @@ enum MigrateAction {
     },
 }
 
-fn parse_role(s: &str) -> Result<dbward_core::Role, String> {
-    match s {
-        "admin" => Ok(dbward_core::Role::Admin),
-        "developer" => Ok(dbward_core::Role::Developer),
-        "readonly" => Ok(dbward_core::Role::Readonly),
-        _ => Err(format!("unknown role: {s}")),
+fn parse_role(s: &str) -> Result<String, String> {
+    if s.is_empty() {
+        Err("role cannot be empty".into())
+    } else {
+        Ok(s.to_string())
     }
 }
 
@@ -668,7 +667,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
                 };
                 let subject_type = if *agent { "agent" } else { "user" };
-                let (token_id, raw_token) = dbward_server::auth::create_token_with_type(&state, user, *role, subject_type)
+                let (token_id, raw_token) = dbward_server::auth::create_token_with_type(&state, user, role, subject_type)
                     .await
                     .map_err(dbward_core::Error::Server)?;
                 let type_label = if *agent { "agent" } else { "user" };
@@ -761,17 +760,17 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
 
     // Create tokens
     let (_, admin_token) = dbward_server::auth::create_token_with_type(
-        &state, "admin", dbward_core::Role::Admin, "user",
+        &state, "admin", "admin", "user",
     )
     .await
     .map_err(dbward_core::Error::Server)?;
     let (_, dev_token) = dbward_server::auth::create_token_with_type(
-        &state, "developer", dbward_core::Role::Developer, "user",
+        &state, "developer", "developer", "user",
     )
     .await
     .map_err(dbward_core::Error::Server)?;
     let (_, agent_token) = dbward_server::auth::create_token_with_type(
-        &state, "agent", dbward_core::Role::Admin, "agent",
+        &state, "agent", "admin", "agent",
     )
     .await
     .map_err(dbward_core::Error::Server)?;
@@ -900,19 +899,14 @@ mod tests {
 
     #[test]
     fn parse_role_valid() {
-        assert!(matches!(parse_role("admin"), Ok(dbward_core::Role::Admin)));
-        assert!(matches!(
-            parse_role("developer"),
-            Ok(dbward_core::Role::Developer)
-        ));
-        assert!(matches!(
-            parse_role("readonly"),
-            Ok(dbward_core::Role::Readonly)
-        ));
+        assert_eq!(parse_role("admin").unwrap(), "admin");
+        assert_eq!(parse_role("developer").unwrap(), "developer");
+        assert_eq!(parse_role("readonly").unwrap(), "readonly");
+        assert_eq!(parse_role("dba").unwrap(), "dba");
     }
 
     #[test]
     fn parse_role_invalid() {
-        assert!(parse_role("superuser").is_err());
+        assert!(parse_role("").is_err());
     }
 }

@@ -34,4 +34,7 @@ environment = "production"
 
 [[workflows.steps]]
 type = "approval"
-min_approvals = 1
+
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1

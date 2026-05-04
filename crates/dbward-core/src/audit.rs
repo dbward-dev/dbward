@@ -39,7 +39,7 @@ impl AuditLogger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Environment, Operation, Role};
+    use crate::{Environment, Operation};
 
     #[test]
     fn logs_json_line_to_writer() {
@@ -49,7 +49,7 @@ mod tests {
 
         let entry = AuditEntry::new(
             "alice",
-            Role::Developer,
+            "developer",
             Operation::MigrateUp,
             Environment::Staging,
             "20260501_create_users.sql",

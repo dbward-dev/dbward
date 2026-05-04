@@ -20,15 +20,22 @@ pub struct WorkflowDef {
 pub struct WorkflowStep {
     #[serde(rename = "type")]
     pub step_type: String,
-    #[serde(default = "default_min_approvals")]
-    pub min_approvals: u32,
-    #[serde(default)]
-    pub allowed_roles: Vec<String>,
+    #[serde(default = "default_step_mode")]
+    pub mode: String,
+    pub approvers: Vec<ApproverGroup>,
     #[serde(default = "default_true")]
     pub require_distinct_actors: bool,
 }
 
-fn default_min_approvals() -> u32 { 1 }
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+pub struct ApproverGroup {
+    pub role: String,
+    #[serde(default = "default_one")]
+    pub min: u32,
+}
+
+fn default_step_mode() -> String { "all".into() }
+fn default_one() -> u32 { 1 }
 fn default_true() -> bool { true }
 
 #[derive(Debug, Clone, Deserialize)]

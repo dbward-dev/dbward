@@ -4,8 +4,6 @@ use rusqlite::params;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use dbward_core::Role;
-
 use crate::state::{AppState, AuthUser};
 
 fn hash_token(raw: &str) -> String {
@@ -27,7 +25,7 @@ fn token_prefix(raw: &str) -> String {
 pub async fn create_token(
     state: &AppState,
     user: &str,
-    role: Role,
+    role: &str,
 ) -> Result<(String, String), String> {
     create_token_with_type(state, user, role, "user").await
 }
@@ -36,7 +34,7 @@ pub async fn create_token(
 pub async fn create_token_with_type(
     state: &AppState,
     user: &str,
-    role: Role,
+    role: &str,
     subject_type: &str,
 ) -> Result<(String, String), String> {
     let token_id = Uuid::new_v4().to_string();
@@ -47,7 +45,7 @@ pub async fn create_token_with_type(
     let conn = state.sqlite.lock().await;
     conn.execute(
         "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, role, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![token_id, subject_type, user, hash, prefix, role.to_string(), "active", Utc::now().to_rfc3339()],
+        params![token_id, subject_type, user, hash, prefix, role, "active", Utc::now().to_rfc3339()],
     )
     .map_err(|e| e.to_string())?;
 
@@ -113,14 +111,14 @@ pub async fn authenticate(
             StatusCode::INTERNAL_SERVER_ERROR,
             "OIDC verifier not initialized".into(),
         ))?;
-        let (identity, role) = oidc
+        let (identity, roles) = oidc
             .verify(raw_token)
             .await
             .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
         Ok(AuthUser {
             token_id: format!("oidc:{identity}"),
             user: identity,
-            role,
+            roles,
             subject_type: "user".into(),
         })
     } else {
@@ -152,21 +150,10 @@ async fn authenticate_api_token(
 
     match result {
         Ok((id, user, role_str, subject_type)) => {
-            let role = match role_str.as_str() {
-                "admin" => Role::Admin,
-                "developer" => Role::Developer,
-                "readonly" => Role::Readonly,
-                _ => {
-                    return Err((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "invalid role in db".into(),
-                    ));
-                }
-            };
             Ok(AuthUser {
                 token_id: id,
                 user,
-                role,
+                roles: vec![role_str],
                 subject_type,
             })
         }
@@ -200,7 +187,7 @@ mod tests {
     #[tokio::test]
     async fn create_and_verify_token() {
         let state = test_state();
-        let (token_id, raw_token) = create_token(&state, "alice", Role::Developer)
+        let (token_id, raw_token) = create_token(&state, "alice", "developer")
             .await
             .unwrap();
 
@@ -212,14 +199,14 @@ mod tests {
 
         let user = authenticate(&headers, &state).await.unwrap();
         assert_eq!(user.user, "alice");
-        assert_eq!(user.role, Role::Developer);
+        assert_eq!(user.effective_permission(), "developer");
         assert_eq!(user.token_id, token_id);
     }
 
     #[tokio::test]
     async fn revoked_token_rejected() {
         let state = test_state();
-        let (token_id, raw_token) = create_token(&state, "bob", Role::Admin).await.unwrap();
+        let (token_id, raw_token) = create_token(&state, "bob", "admin").await.unwrap();
         revoke_token(&state, &token_id).await.unwrap();
 
         let mut headers = HeaderMap::new();
@@ -243,7 +230,7 @@ mod tests {
     #[tokio::test]
     async fn wrong_token_rejected() {
         let state = test_state();
-        create_token(&state, "alice", Role::Developer)
+        create_token(&state, "alice", "developer")
             .await
             .unwrap();
 
@@ -259,7 +246,7 @@ mod tests {
     #[tokio::test]
     async fn prefix_collision_still_authenticates() {
         let state = test_state();
-        let (_, token_a) = create_token(&state, "alice", Role::Developer)
+        let (_, token_a) = create_token(&state, "alice", "developer")
             .await
             .unwrap();
 

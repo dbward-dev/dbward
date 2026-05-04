@@ -1,11 +1,11 @@
 use thiserror::Error;
 
-use crate::{Operation, Role};
+use crate::Operation;
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("{role} is not allowed to perform {operation}")]
-    PermissionDenied { role: Role, operation: Operation },
+    PermissionDenied { role: String, operation: Operation },
 
     #[error("DDL statements must go through migrations")]
     DdlNotAllowed,

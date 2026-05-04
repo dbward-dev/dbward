@@ -18,4 +18,4 @@ pub use engine::Engine;
 pub use error::Error;
 pub use query::{QueryResult, classify_query};
 pub use rbac::check_permission;
-pub use types::{AuditEntry, Environment, Operation, Role};
+pub use types::{AuditEntry, Environment, Operation};

@@ -8,7 +8,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower::ServiceExt;
 
-use dbward_core::Role;
 use dbward_server::{AppState, ResultChannels, auth, db, routes, token::TokenSigner};
 
 fn test_state() -> AppState {
@@ -36,8 +35,11 @@ fn test_state() -> AppState {
             operations: vec![],
             steps: vec![dbward_server::server_config::WorkflowStep {
                 step_type: "approval".into(),
-                min_approvals: 1,
-                allowed_roles: vec![],
+                mode: "all".into(),
+                approvers: vec![dbward_server::server_config::ApproverGroup {
+                    role: "admin".into(),
+                    min: 1,
+                }],
                 require_distinct_actors: true,
             }],
             require_reason: false,
@@ -79,7 +81,7 @@ async fn health_check() {
 #[tokio::test]
 async fn auto_approve_non_production() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
     let app = routes::router(state);
@@ -106,10 +108,10 @@ async fn auto_approve_non_production() {
 #[tokio::test]
 async fn production_requires_approval() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
-    let (_, bob_token) = auth::create_token(&state, "bob", Role::Admin)
+    let (_, bob_token) = auth::create_token(&state, "bob", "admin")
         .await
         .unwrap();
     let app = routes::router(state);
@@ -140,7 +142,8 @@ async fn production_requires_approval() {
         .oneshot(
             Request::post(&format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&bob_token))
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
                 .unwrap(),
         )
         .await
@@ -161,7 +164,7 @@ async fn production_requires_approval() {
 #[tokio::test]
 async fn self_approve_rejected() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Admin)
+    let (_, alice_token) = auth::create_token(&state, "alice", "admin")
         .await
         .unwrap();
     let app = routes::router(state);
@@ -188,7 +191,8 @@ async fn self_approve_rejected() {
         .oneshot(
             Request::post(&format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&alice_token))
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
                 .unwrap(),
         )
         .await
@@ -200,10 +204,10 @@ async fn self_approve_rejected() {
 #[tokio::test]
 async fn non_admin_cannot_approve_requests() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
-    let (_, bob_token) = auth::create_token(&state, "bob", Role::Developer)
+    let (_, bob_token) = auth::create_token(&state, "bob", "developer")
         .await
         .unwrap();
     let app = routes::router(state);
@@ -228,7 +232,8 @@ async fn non_admin_cannot_approve_requests() {
         .oneshot(
             Request::post(&format!("/api/requests/{request_id}/approve"))
                 .header("authorization", auth_header(&bob_token))
-                .body(Body::empty())
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
                 .unwrap(),
         )
         .await
@@ -240,10 +245,10 @@ async fn non_admin_cannot_approve_requests() {
 #[tokio::test]
 async fn complete_flow_via_agent() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
-    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", Role::Admin, "agent")
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
         .await
         .unwrap();
 
@@ -329,10 +334,10 @@ async fn complete_flow_via_agent() {
 #[tokio::test]
 async fn non_admin_cannot_read_other_users_request() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
-    let (_, bob_token) = auth::create_token(&state, "bob", Role::Developer)
+    let (_, bob_token) = auth::create_token(&state, "bob", "developer")
         .await
         .unwrap();
     let app = routes::router(state);
@@ -386,10 +391,10 @@ async fn public_key_endpoint() {
 async fn agent_full_flow() {
     // Setup: server with alice (developer) and agent tokens
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
-    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", Role::Admin, "agent")
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
         .await
         .unwrap();
 
@@ -534,10 +539,10 @@ async fn agent_full_flow() {
 #[tokio::test]
 async fn stream_result_after_agent_posts_still_succeeds() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
-    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", Role::Admin, "agent")
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
         .await
         .unwrap();
 
@@ -618,7 +623,7 @@ async fn stream_result_after_agent_posts_still_succeeds() {
 #[tokio::test]
 async fn agent_poll_empty_when_no_approved() {
     let state = test_state();
-    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", Role::Admin, "agent")
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
         .await
         .unwrap();
 
@@ -641,10 +646,10 @@ async fn agent_poll_empty_when_no_approved() {
 #[tokio::test]
 async fn agent_cannot_claim_pending() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
-    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", Role::Admin, "agent")
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
         .await
         .unwrap();
 
@@ -689,18 +694,18 @@ async fn workflow_operations_are_respected() {
             "INSERT OR REPLACE INTO workflows (id, database_name, environment, operations_json, steps_json, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, 'api', ?6, ?6)",
             rusqlite::params![
-                "app:development",
+                "app:development:migrate_status",
                 "app",
                 "development",
                 r#"["migrate_status"]"#,
-                r#"[{"type":"approval","min_approvals":1}]"#,
+                r#"[{"type":"approval","mode":"all","approvers":[{"role":"admin","min":1}],"require_distinct_actors":true}]"#,
                 "2026-05-03T00:00:00Z",
             ],
         )
         .unwrap();
     }
 
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
     let app = routes::router(state);
@@ -738,7 +743,7 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
     };
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
     let app = routes::router(state);
@@ -764,7 +769,7 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
 #[tokio::test]
 async fn non_admin_cannot_use_agent_endpoints() {
     let state = test_state();
-    let (_, user_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, user_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
     let app = routes::router(state);
@@ -801,10 +806,10 @@ async fn result_stream_honors_result_policy_access() {
         )
         .unwrap();
     }
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
-    let (_, bob_token) = auth::create_token(&state, "bob", Role::Developer)
+    let (_, bob_token) = auth::create_token(&state, "bob", "developer")
         .await
         .unwrap();
 
@@ -852,13 +857,13 @@ async fn result_stream_honors_result_policy_access() {
 #[tokio::test]
 async fn only_claiming_agent_can_submit_result() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
-    let (_, agent1_token) = auth::create_token_with_type(&state, "agent-1", Role::Admin, "agent")
+    let (_, agent1_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
         .await
         .unwrap();
-    let (_, agent2_token) = auth::create_token_with_type(&state, "agent-2", Role::Admin, "agent")
+    let (_, agent2_token) = auth::create_token_with_type(&state, "agent-2", "admin", "agent")
         .await
         .unwrap();
 
@@ -937,10 +942,10 @@ async fn failed_request_still_respects_max_executions() {
         )
         .unwrap();
     }
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
-    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", Role::Admin, "agent")
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
         .await
         .unwrap();
 
@@ -1017,8 +1022,8 @@ async fn failed_request_still_respects_max_executions() {
 #[tokio::test]
 async fn agent_token_cannot_approve() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
-    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", Role::Admin, "agent").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent").await.unwrap();
 
     let app = routes::router(state);
 
@@ -1041,7 +1046,8 @@ async fn agent_token_cannot_approve() {
             .method("POST")
             .uri(&format!("/api/requests/{id}/approve"))
             .header("authorization", auth_header(&agent_token))
-            .body(Body::empty())
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
             .unwrap(),
     ).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
@@ -1050,7 +1056,7 @@ async fn agent_token_cannot_approve() {
 #[tokio::test]
 async fn user_token_cannot_poll_agent() {
     let state = test_state();
-    let (_, admin_token) = auth::create_token(&state, "admin", Role::Admin).await.unwrap();
+    let (_, admin_token) = auth::create_token(&state, "admin", "admin").await.unwrap();
 
     let app = routes::router(state);
 
@@ -1070,7 +1076,7 @@ async fn user_token_cannot_poll_agent() {
 #[tokio::test]
 async fn readonly_cannot_read_audit() {
     let state = test_state();
-    let (_, ro_token) = auth::create_token(&state, "viewer", Role::Readonly).await.unwrap();
+    let (_, ro_token) = auth::create_token(&state, "viewer", "readonly").await.unwrap();
 
     let app = routes::router(state);
 
@@ -1098,8 +1104,8 @@ async fn readonly_cannot_read_audit() {
 #[tokio::test]
 async fn developer_can_read_own_audit() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", Role::Developer).await.unwrap();
-    let (_, admin_token) = auth::create_token(&state, "admin1", Role::Admin).await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
 
     let app = routes::router(state);
 
@@ -1151,7 +1157,7 @@ async fn developer_can_read_own_audit() {
 #[tokio::test]
 async fn requester_can_reject_own_request() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
 
     let app = routes::router(state);
 
@@ -1182,7 +1188,7 @@ async fn requester_can_reject_own_request() {
 #[tokio::test]
 async fn complete_endpoint_removed() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "alice", Role::Admin).await.unwrap();
+    let (_, token) = auth::create_token(&state, "alice", "admin").await.unwrap();
 
     let app = routes::router(state);
 
@@ -1202,9 +1208,9 @@ async fn complete_endpoint_removed() {
 #[tokio::test]
 async fn dispatch_requires_owner_or_admin() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
-    let (_, bob_token) = auth::create_token(&state, "bob", Role::Developer).await.unwrap();
-    let (_, admin_token) = auth::create_token(&state, "admin", Role::Admin).await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
+    let (_, bob_token) = auth::create_token(&state, "bob", "developer").await.unwrap();
+    let (_, admin_token) = auth::create_token(&state, "admin", "admin").await.unwrap();
 
     let app = routes::router(state);
 
@@ -1247,8 +1253,8 @@ async fn dispatch_requires_owner_or_admin() {
 #[tokio::test]
 async fn agent_capability_mismatch_blocks_claim() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
-    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", Role::Admin, "agent").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent").await.unwrap();
 
     let app = routes::router(state);
 
@@ -1313,7 +1319,7 @@ async fn require_reason_blocks_request_without_reason() {
             [],
         ).unwrap();
     }
-    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
 
     // Request without reason -> 400
     let app = routes::router(state.clone());
@@ -1346,4 +1352,291 @@ async fn require_reason_blocks_request_without_reason() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: Multi-step workflow approval tests
+// ---------------------------------------------------------------------------
+
+fn test_state_multistep() -> AppState {
+    let conn = Connection::open_in_memory().unwrap();
+    db::init(&conn).unwrap();
+    let workflows = vec![
+        dbward_server::server_config::WorkflowDef {
+            database: "*".into(),
+            environment: "development".into(),
+            operations: vec![],
+            steps: vec![],
+            require_reason: false,
+        },
+        // 2-step: team-lead then dba
+        dbward_server::server_config::WorkflowDef {
+            database: "*".into(),
+            environment: "production".into(),
+            operations: vec![],
+            steps: vec![
+                dbward_server::server_config::WorkflowStep {
+                    step_type: "approval".into(),
+                    mode: "all".into(),
+                    approvers: vec![dbward_server::server_config::ApproverGroup { role: "team-lead".into(), min: 1 }],
+                    require_distinct_actors: true,
+                },
+                dbward_server::server_config::WorkflowStep {
+                    step_type: "approval".into(),
+                    mode: "all".into(),
+                    approvers: vec![dbward_server::server_config::ApproverGroup { role: "dba".into(), min: 1 }],
+                    require_distinct_actors: true,
+                },
+            ],
+            require_reason: false,
+        },
+        // mode=any: either team-lead or dba
+        dbward_server::server_config::WorkflowDef {
+            database: "*".into(),
+            environment: "staging".into(),
+            operations: vec![],
+            steps: vec![
+                dbward_server::server_config::WorkflowStep {
+                    step_type: "approval".into(),
+                    mode: "any".into(),
+                    approvers: vec![
+                        dbward_server::server_config::ApproverGroup { role: "team-lead".into(), min: 1 },
+                        dbward_server::server_config::ApproverGroup { role: "dba".into(), min: 1 },
+                    ],
+                    require_distinct_actors: true,
+                },
+            ],
+            require_reason: false,
+        },
+    ];
+    db::sync_workflows(&conn, &workflows).unwrap();
+    AppState {
+        sqlite: Arc::new(Mutex::new(conn)),
+        token_signer: Arc::new(TokenSigner::generate()),
+        webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        oidc: None,
+        auth_mode: "token".to_string(),
+        policy: Arc::new(Default::default()),
+        result_channels: Arc::new(ResultChannels::new()),
+        retention: Default::default(),
+        request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
+    }
+}
+
+#[tokio::test]
+async fn multi_step_approval_team_lead_then_dba() {
+    let state = test_state_multistep();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
+    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead").await.unwrap();
+    let (_, dba_token) = auth::create_token(&state, "dba1", "dba").await.unwrap();
+
+    let app = routes::router(state.clone());
+
+    // Alice creates production request → pending
+    let resp = app.clone().oneshot(
+        Request::post("/api/requests")
+            .header("authorization", auth_header(&alice_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"operation": "execute_query", "environment": "production", "detail": "DELETE FROM old"}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), 201);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "pending");
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    // DBA tries to approve step 0 (needs team-lead) → 403
+    let resp = app.clone().oneshot(
+        Request::post(&format!("/api/requests/{request_id}/approve"))
+            .header("authorization", auth_header(&dba_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // Team-lead approves step 0 → still pending (step 1 remains)
+    let resp = app.clone().oneshot(
+        Request::post(&format!("/api/requests/{request_id}/approve"))
+            .header("authorization", auth_header(&lead_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "pending");
+    assert_eq!(body["step_completed"], 0);
+    assert_eq!(body["total_steps"], 2);
+
+    // DBA approves step 1 → approved with token
+    let resp = app.clone().oneshot(
+        Request::post(&format!("/api/requests/{request_id}/approve"))
+            .header("authorization", auth_header(&dba_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "approved");
+    assert!(body["execution_token"].is_object());
+}
+
+#[tokio::test]
+async fn mode_any_either_role_can_approve() {
+    let state = test_state_multistep();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
+    let (_, dba_token) = auth::create_token(&state, "dba1", "dba").await.unwrap();
+
+    let app = routes::router(state.clone());
+
+    // Alice creates staging request → pending (mode=any step)
+    let resp = app.clone().oneshot(
+        Request::post("/api/requests")
+            .header("authorization", auth_header(&alice_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"operation": "execute_query", "environment": "staging", "detail": "SELECT 1"}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), 201);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "pending");
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    // DBA approves (mode=any, so dba alone is enough) → approved
+    let resp = app.clone().oneshot(
+        Request::post(&format!("/api/requests/{request_id}/approve"))
+            .header("authorization", auth_header(&dba_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "approved");
+    assert!(body["execution_token"].is_object());
+}
+
+#[tokio::test]
+async fn same_user_cannot_approve_twice_in_same_step() {
+    let state = test_state_multistep();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
+    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead").await.unwrap();
+
+    let app = routes::router(state.clone());
+
+    let resp = app.clone().oneshot(
+        Request::post("/api/requests")
+            .header("authorization", auth_header(&alice_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"operation": "execute_query", "environment": "production", "detail": "DELETE FROM old"}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+    let body = body_json(resp).await;
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    // Lead approves step 0
+    let resp = app.clone().oneshot(
+        Request::post(&format!("/api/requests/{request_id}/approve"))
+            .header("authorization", auth_header(&lead_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Lead tries to approve again (now step 1, but lead doesn't have dba role) → 403
+    let resp = app.clone().oneshot(
+        Request::post(&format!("/api/requests/{request_id}/approve"))
+            .header("authorization", auth_header(&lead_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn wrong_role_cannot_approve_current_step() {
+    let state = test_state_multistep();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+
+    let app = routes::router(state.clone());
+
+    let resp = app.clone().oneshot(
+        Request::post("/api/requests")
+            .header("authorization", auth_header(&alice_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"operation": "execute_query", "environment": "production", "detail": "DELETE FROM old"}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+    let body = body_json(resp).await;
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    // Developer (not team-lead or dba) tries to approve → 403
+    let resp = app.clone().oneshot(
+        Request::post(&format!("/api/requests/{request_id}/approve"))
+            .header("authorization", auth_header(&dev_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn get_request_includes_approval_progress() {
+    let state = test_state_multistep();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
+    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead").await.unwrap();
+
+    let app = routes::router(state.clone());
+
+    let resp = app.clone().oneshot(
+        Request::post("/api/requests")
+            .header("authorization", auth_header(&alice_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({"operation": "execute_query", "environment": "production", "detail": "SELECT 1"}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+    let body = body_json(resp).await;
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    // Check progress before any approvals
+    let resp = app.clone().oneshot(
+        Request::get(&format!("/api/requests/{request_id}"))
+            .header("authorization", auth_header(&alice_token))
+            .body(Body::empty())
+            .unwrap(),
+    ).await.unwrap();
+    let body = body_json(resp).await;
+    let progress = &body["approval_progress"];
+    assert_eq!(progress["current_step"], 0);
+    assert_eq!(progress["total_steps"], 2);
+    assert_eq!(progress["steps"][0]["satisfied"], false);
+    assert_eq!(progress["steps"][1]["satisfied"], false);
+
+    // Lead approves step 0
+    app.clone().oneshot(
+        Request::post(&format!("/api/requests/{request_id}/approve"))
+            .header("authorization", auth_header(&lead_token))
+            .header("content-type", "application/json")
+            .body(Body::from(json!({}).to_string()))
+            .unwrap(),
+    ).await.unwrap();
+
+    // Check progress after step 0 approved
+    let resp = app.clone().oneshot(
+        Request::get(&format!("/api/requests/{request_id}"))
+            .header("authorization", auth_header(&alice_token))
+            .body(Body::empty())
+            .unwrap(),
+    ).await.unwrap();
+    let body = body_json(resp).await;
+    let progress = &body["approval_progress"];
+    assert_eq!(progress["current_step"], 1);
+    assert_eq!(progress["steps"][0]["satisfied"], true);
+    assert_eq!(progress["steps"][1]["satisfied"], false);
 }

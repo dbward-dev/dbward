@@ -18,6 +18,7 @@ fn default_events() -> Vec<String> {
         "request_rejected".into(),
         "request_completed".into(),
         "break_glass".into(),
+        "step_approved".into(),
     ]
 }
 
@@ -252,5 +253,6 @@ mod tests {
         assert!(events.contains(&"request_rejected".to_string()));
         assert!(events.contains(&"request_completed".to_string()));
         assert!(events.contains(&"break_glass".to_string()));
+        assert!(events.contains(&"step_approved".to_string()));
     }
 }
