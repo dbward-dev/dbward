@@ -1,9 +1,8 @@
-use axum::extract::{Query, State};
+use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use serde_json::json;
-use std::collections::HashMap;
 
 use crate::auth;
 use crate::authz::{self, Action, Resource};

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use crate::auth;
 use crate::authz::{self, Action, Resource};
 use crate::state::AppState;
-use super::parse_pagination;
+use super::requests::parse_pagination;
 
 pub(crate) async fn list_audit(
     State(state): State<AppState>,

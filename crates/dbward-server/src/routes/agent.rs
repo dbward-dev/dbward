@@ -1,9 +1,8 @@
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::Json;
 use serde_json::json;
-use std::collections::HashMap;
 
 use crate::auth;
 use crate::authz::{self, Action, Resource};
@@ -64,7 +63,7 @@ pub(crate) async fn agent_poll(
     let mut where_clauses = vec!["status = 'dispatched'".to_string()];
     let mut bind_values: Vec<String> = Vec::new();
 
-    if super::should_filter_capability(&databases) {
+    if super::requests::should_filter_capability(&databases) {
         let placeholders: Vec<String> = databases
             .iter()
             .enumerate()
@@ -73,7 +72,7 @@ pub(crate) async fn agent_poll(
         where_clauses.push(format!("database_name IN ({})", placeholders.join(",")));
         bind_values.extend(databases.clone());
     }
-    if super::should_filter_capability(&environments) {
+    if super::requests::should_filter_capability(&environments) {
         let placeholders: Vec<String> = environments
             .iter()
             .enumerate()
@@ -82,7 +81,7 @@ pub(crate) async fn agent_poll(
         where_clauses.push(format!("environment IN ({})", placeholders.join(",")));
         bind_values.extend(environments.clone());
     }
-    if super::should_filter_capability(&operations) {
+    if super::requests::should_filter_capability(&operations) {
         let placeholders: Vec<String> = operations
             .iter()
             .enumerate()

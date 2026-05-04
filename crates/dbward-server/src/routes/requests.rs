@@ -1,8 +1,7 @@
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::get;
-use axum::{Json, Router};
+use axum::Json;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;

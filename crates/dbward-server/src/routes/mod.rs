@@ -7,8 +7,10 @@ use axum::routing::get;
 use axum::Router;
 
 use crate::state::AppState;
-
-pub use requests::*;
+use requests::{
+    approve_request, create_request, dispatch_request, get_public_key, get_request, health,
+    list_requests, reject_request, stream_result,
+};
 
 pub fn router(state: AppState) -> Router {
     Router::new()
