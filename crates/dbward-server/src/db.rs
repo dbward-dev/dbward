@@ -94,6 +94,7 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             environment TEXT NOT NULL,
             operations_json TEXT NOT NULL DEFAULT '[]',
             steps_json TEXT NOT NULL DEFAULT '[]',
+            require_reason INTEGER NOT NULL DEFAULT 0,
             source TEXT NOT NULL DEFAULT 'api',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -163,6 +164,31 @@ fn recover_in_flight_requests(conn: &Connection) -> Result<(), rusqlite::Error> 
     Ok(())
 }
 
+/// Purge old completed requests and audit logs based on TTL.
+pub fn purge_old_records(conn: &Connection, request_ttl_days: u32, audit_ttl_days: u32) -> Result<(usize, usize), rusqlite::Error> {
+    let req_cutoff = (chrono::Utc::now() - chrono::Duration::days(request_ttl_days as i64)).to_rfc3339();
+    let audit_cutoff = (chrono::Utc::now() - chrono::Duration::days(audit_ttl_days as i64)).to_rfc3339();
+
+    // Delete child rows first to satisfy FK constraints
+    conn.execute(
+        "DELETE FROM approvals WHERE request_id IN (SELECT id FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected'))",
+        rusqlite::params![req_cutoff],
+    )?;
+    conn.execute(
+        "DELETE FROM agent_executions WHERE request_id IN (SELECT id FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected'))",
+        rusqlite::params![req_cutoff],
+    )?;
+    let req_deleted = conn.execute(
+        "DELETE FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected')",
+        rusqlite::params![req_cutoff],
+    )?;
+    let audit_deleted = conn.execute(
+        "DELETE FROM audit_log WHERE created_at < ?1",
+        rusqlite::params![audit_cutoff],
+    )?;
+    Ok((req_deleted, audit_deleted))
+}
+
 /// Reclaim expired leases: reset running→approved so client can re-dispatch.
 pub fn reclaim_expired_leases(conn: &Connection) -> Result<usize, rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
@@ -196,12 +222,12 @@ pub fn sync_workflows(
         let ops_json = serde_json::to_string(&w.operations).unwrap_or_else(|_| "[]".into());
         let steps_json = serde_json::to_string(&w.steps).unwrap_or_else(|_| "[]".into());
         conn.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, source, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, 'toml', ?6, ?6)
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'toml', ?7, ?7)
              ON CONFLICT(database_name, environment) DO UPDATE SET
-               operations_json = ?4, steps_json = ?5, updated_at = ?6
+               operations_json = ?4, steps_json = ?5, require_reason = ?6, updated_at = ?7
              WHERE source = 'toml'",
-            rusqlite::params![id, w.database, w.environment, ops_json, steps_json, now],
+            rusqlite::params![id, w.database, w.environment, ops_json, steps_json, w.require_reason, now],
         )?;
     }
     Ok(())
@@ -225,13 +251,13 @@ fn workflow_action_for_operation(
     })
 }
 
-/// Evaluate workflow for a request. Returns Some(action) when a workflow matches.
+/// Evaluate workflow for a request. Returns Some((action, require_reason)) when a workflow matches.
 pub fn evaluate_workflow(
     conn: &Connection,
     database: &str,
     environment: &str,
     operation: &str,
-) -> Option<String> {
+) -> Option<(String, bool)> {
     let candidates = [
         (database, environment),
         ("*", environment),
@@ -240,19 +266,19 @@ pub fn evaluate_workflow(
     ];
 
     for (db_name, env_name) in candidates {
-        let row: Option<(String, String)> = conn
+        let row: Option<(String, String, bool)> = conn
             .query_row(
-                "SELECT operations_json, steps_json FROM workflows WHERE database_name = ?1 AND environment = ?2",
+                "SELECT operations_json, steps_json, require_reason FROM workflows WHERE database_name = ?1 AND environment = ?2",
                 rusqlite::params![db_name, env_name],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .ok();
 
-        if let Some((operations_json, steps_json)) = row {
+        if let Some((operations_json, steps_json, require_reason)) = row {
             if let Some(action) =
                 workflow_action_for_operation(&operations_json, &steps_json, operation)
             {
-                return Some(action);
+                return Some((action, require_reason));
             }
         }
     }
@@ -462,5 +488,68 @@ mod tests {
         assert_eq!(req2, "approved");
         assert_eq!(exec1.0, "failed");
         assert!(exec1.1.unwrap().contains("server restarted"));
+    }
+
+    #[test]
+    fn purge_old_records_deletes_expired() {
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn).unwrap();
+
+        let old = "2020-01-01T00:00:00+00:00";
+        let recent = chrono::Utc::now().to_rfc3339();
+
+        // Old executed request (should be purged)
+        conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at)
+             VALUES ('old-1', 'alice', 'execute_query', 'dev', 'app', 'executed', 'SELECT 1', ?1, ?1)",
+            rusqlite::params![old],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO approvals (id, request_id, action, actor_id, created_at)
+             VALUES ('apr-1', 'old-1', 'approve', 'bob', ?1)",
+            rusqlite::params![old],
+        ).unwrap();
+
+        // Recent executed request (should NOT be purged)
+        conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at)
+             VALUES ('new-1', 'alice', 'execute_query', 'dev', 'app', 'executed', 'SELECT 1', ?1, ?1)",
+            rusqlite::params![recent],
+        ).unwrap();
+
+        // Old pending request (should NOT be purged — still active)
+        conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at)
+             VALUES ('old-2', 'alice', 'execute_query', 'dev', 'app', 'pending', 'SELECT 1', ?1, ?1)",
+            rusqlite::params![old],
+        ).unwrap();
+
+        // Old audit log
+        conn.execute(
+            "INSERT INTO audit_log (id, actor_id, operation, environment, database_name, detail, status, created_at)
+             VALUES ('aud-1', 'alice', 'execute_query', 'dev', 'app', 'SELECT 1', 'ok', ?1)",
+            rusqlite::params![old],
+        ).unwrap();
+
+        // Recent audit log
+        conn.execute(
+            "INSERT INTO audit_log (id, actor_id, operation, environment, database_name, detail, status, created_at)
+             VALUES ('aud-2', 'alice', 'execute_query', 'dev', 'app', 'SELECT 1', 'ok', ?1)",
+            rusqlite::params![recent],
+        ).unwrap();
+
+        let (req_del, audit_del) = purge_old_records(&conn, 90, 365).unwrap();
+        assert_eq!(req_del, 1); // old-1 purged
+        assert_eq!(audit_del, 1); // aud-1 purged
+
+        // Verify remaining
+        let req_count: i64 = conn.query_row("SELECT COUNT(*) FROM requests", [], |r| r.get(0)).unwrap();
+        assert_eq!(req_count, 2); // new-1 + old-2
+
+        let apr_count: i64 = conn.query_row("SELECT COUNT(*) FROM approvals", [], |r| r.get(0)).unwrap();
+        assert_eq!(apr_count, 0); // orphaned approval cleaned up
+
+        let aud_count: i64 = conn.query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0)).unwrap();
+        assert_eq!(aud_count, 1); // aud-2 remains
     }
 }

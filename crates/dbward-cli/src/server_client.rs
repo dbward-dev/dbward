@@ -73,10 +73,21 @@ impl ServerClient {
     }
 
     /// List all requests.
-    pub async fn list_requests(&self) -> Result<Value, Error> {
+    pub async fn list_requests(&self, limit: Option<u32>, status: Option<&str>) -> Result<Value, Error> {
+        let mut url = format!("{}/api/requests", self.base_url);
+        let mut query_parts: Vec<String> = Vec::new();
+        if let Some(l) = limit {
+            query_parts.push(format!("limit={l}"));
+        }
+        if let Some(s) = status {
+            query_parts.push(format!("status={s}"));
+        }
+        if !query_parts.is_empty() {
+            url = format!("{url}?{}", query_parts.join("&"));
+        }
         let resp = self
             .client
-            .get(format!("{}/api/requests", self.base_url))
+            .get(&url)
             .bearer_auth(&self.api_token)
             .send()
             .await
@@ -238,5 +249,53 @@ impl ServerClient {
             )));
         }
         serde_json::from_str(&text).map_err(|e| Error::Server(format!("invalid response: {e}")))
+    }
+
+    /// List audit log entries.
+    pub async fn list_audit(
+        &self,
+        limit: Option<u32>,
+        user: Option<&str>,
+        operation: Option<&str>,
+        status: Option<&str>,
+    ) -> Result<Value, Error> {
+        let mut url = format!("{}/api/audit", self.base_url);
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(l) = limit {
+            parts.push(format!("limit={l}"));
+        }
+        if let Some(u) = user {
+            parts.push(format!("user={u}"));
+        }
+        if let Some(o) = operation {
+            parts.push(format!("operation={o}"));
+        }
+        if let Some(s) = status {
+            parts.push(format!("status={s}"));
+        }
+        if !parts.is_empty() {
+            url = format!("{url}?{}", parts.join("&"));
+        }
+        let resp = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| Error::Server(format!("list audit failed: {e}")))?;
+
+        let status_code = resp.status();
+        let body: Value = resp
+            .json()
+            .await
+            .map_err(|e| Error::Server(format!("invalid response: {e}")))?;
+
+        if !status_code.is_success() {
+            return Err(Error::Server(format!(
+                "list audit failed ({}): {}",
+                status_code, body
+            )));
+        }
+        Ok(body)
     }
 }

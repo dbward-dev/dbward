@@ -73,10 +73,12 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
+        let mut tx = self.pool.begin().await.map_err(|e| Error::Database(e.to_string()))?;
         let result = sqlx::query(sql)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| Error::Database(e.to_string()))?;
+        tx.commit().await.map_err(|e| Error::Database(e.to_string()))?;
         Ok(result.rows_affected())
     }
 
@@ -169,10 +171,12 @@ impl DatabaseDriver for MysqlDriver {
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
+        let mut tx = self.pool.begin().await.map_err(|e| Error::Database(e.to_string()))?;
         let result = sqlx::query(sql)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| Error::Database(e.to_string()))?;
+        tx.commit().await.map_err(|e| Error::Database(e.to_string()))?;
         Ok(result.rows_affected())
     }
 

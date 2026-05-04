@@ -24,6 +24,10 @@ pub struct Cli {
     #[arg(long, env = "DBWARD_ENV")]
     environment: Option<String>,
 
+    /// Output format: table (default) or json
+    #[arg(long, default_value = "table")]
+    format: String,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -58,8 +62,8 @@ enum Command {
         /// Emergency bypass (skip approval, requires --reason)
         #[arg(long)]
         emergency: bool,
-        /// Reason for emergency bypass
-        #[arg(long, requires = "emergency")]
+        /// Reason for this request
+        #[arg(long)]
         reason: Option<String>,
         /// Save result to a specific file
         #[arg(long)]
@@ -69,7 +73,16 @@ enum Command {
         no_save: bool,
     },
     /// Search audit log
-    Audit,
+    Audit {
+        #[arg(long)]
+        limit: Option<u32>,
+        #[arg(long)]
+        user: Option<String>,
+        #[arg(long)]
+        operation: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+    },
     /// Start MCP stdio server
     Mcp,
     /// Start the dbward HTTP server
@@ -88,7 +101,14 @@ enum Command {
     /// Reject a pending request
     Reject { id: String },
     /// List pending requests
-    List,
+    List {
+        /// Maximum number of requests to return
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Filter by status (e.g. pending, approved, executed)
+        #[arg(long)]
+        status: Option<String>,
+    },
     /// Resume and get result of an executed request
     Resume {
         id: String,
@@ -265,6 +285,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
     let sc = server_client::ServerClient::new(&server_url, &api_token);
     let db_name = config.resolve_database_name(cli.database.as_deref())?;
     let env_str = cli.environment.as_deref().unwrap_or("development");
+    let json_output = cli.format == "json";
 
     match cli.command {
         Command::Execute {
@@ -288,7 +309,11 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             match status.as_str() {
                 "auto_approved" | "break_glass" => {
                     let resp = sc.dispatch_and_wait(&id).await?;
-                    print_execution_result(&resp);
+                    if json_output {
+                        println!("{}", serde_json::to_string_pretty(&resp)?);
+                    } else {
+                        print_execution_result(&resp);
+                    }
                     save_result(&id, &resp, output.as_deref(), no_save);
                 }
                 "pending" => {
@@ -320,7 +345,11 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             match status.as_str() {
                 "auto_approved" | "break_glass" => {
                     let resp = sc.dispatch_and_wait(&id).await?;
-                    print_execution_result(&resp);
+                    if json_output {
+                        println!("{}", serde_json::to_string_pretty(&resp)?);
+                    } else {
+                        print_execution_result(&resp);
+                    }
                 }
                 "pending" => {
                     eprintln!("Request {id} requires approval.");
@@ -344,8 +373,12 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             println!("{}", serde_json::to_string_pretty(&body)?);
             Ok(())
         }
-        Command::List => {
-            let body = sc.list_requests().await?;
+        Command::List { ref limit, ref status } => {
+            let body = sc.list_requests(*limit, status.as_deref()).await?;
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&body)?);
+                return Ok(());
+            }
             let empty = vec![];
             let requests = body["requests"]
                 .as_array()
@@ -354,37 +387,88 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             if requests.is_empty() {
                 println!("No requests.");
             } else {
+                println!(
+                    "{:<10} {:<14} {:<10} {:<14} {:<10} {}",
+                    "ID", "STATUS", "USER", "ENV", "OP", "DETAIL"
+                );
                 for r in requests {
                     let id = r["id"].as_str().unwrap_or("?");
+                    let short_id = &id[..id.len().min(8)];
                     let status = r["status"].as_str().unwrap_or("?");
                     let user = r["created_by"].as_str().unwrap_or("?");
                     let op = r["operation"].as_str().unwrap_or("?");
                     let env = r["environment"].as_str().unwrap_or("?");
                     let detail = r["detail"].as_str().unwrap_or("");
-                    let short = if detail.len() > 60 {
-                        &detail[..60]
+                    let short_detail = if detail.len() > 40 {
+                        format!("{}...", &detail[..37])
                     } else {
-                        detail
+                        detail.to_string()
                     };
-                    println!("[{status}] {id}  {user}  {op}  {env}  {short}");
+                    println!(
+                        "{:<10} {:<14} {:<10} {:<14} {:<10} {}",
+                        short_id, status, user, env, op, short_detail
+                    );
                 }
             }
             Ok(())
         }
         Command::Resume { ref id, ref output, no_save } => {
             let resp = sc.dispatch_and_wait(id).await?;
-            print_execution_result(&resp);
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                print_execution_result(&resp);
+            }
             save_result(id, &resp, output.as_deref(), no_save);
             Ok(())
         }
         Command::Result { ref id } => {
             let resp = load_result(id)?;
-            print_execution_result(&resp);
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                print_execution_result(&resp);
+            }
             Ok(())
         }
         Command::Mcp => mcp::run_stdio(config, cli.database.as_deref(), sc).await,
-        Command::Audit => {
-            println!("Audit search: not yet implemented.");
+        Command::Audit { ref limit, ref user, ref operation, ref status } => {
+            let body = sc.list_audit(*limit, user.as_deref(), operation.as_deref(), status.as_deref()).await?;
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&body)?);
+                return Ok(());
+            }
+            let empty = vec![];
+            let entries = body["audit_log"].as_array().unwrap_or(&empty);
+            if entries.is_empty() {
+                println!("No audit log entries.");
+            } else {
+                println!(
+                    "{:<10} {:<22} {:<10} {:<14} {:<10} {:<10} {:<12} {}",
+                    "ID", "TIMESTAMP", "USER", "OPERATION", "ENV", "DATABASE", "STATUS", "DETAIL"
+                );
+                for e in entries {
+                    let id = e["id"].as_str().unwrap_or("?");
+                    let short_id = &id[..id.len().min(8)];
+                    let ts = e["created_at"].as_str().unwrap_or("?");
+                    let ts_short = &ts[..ts.len().min(19)];
+                    let actor = e["actor_id"].as_str().unwrap_or("?");
+                    let op = e["operation"].as_str().unwrap_or("?");
+                    let env = e["environment"].as_str().unwrap_or("?");
+                    let db = e["database_name"].as_str().unwrap_or("?");
+                    let st = e["status"].as_str().unwrap_or("?");
+                    let detail = e["detail"].as_str().unwrap_or("");
+                    let short_detail = if detail.len() > 40 {
+                        format!("{}...", &detail[..37])
+                    } else {
+                        detail.to_string()
+                    };
+                    println!(
+                        "{:<10} {:<22} {:<10} {:<14} {:<10} {:<10} {:<12} {}",
+                        short_id, ts_short, actor, op, env, db, st, short_detail
+                    );
+                }
+            }
             Ok(())
         }
         // Handled above
@@ -405,7 +489,7 @@ fn print_execution_result(resp: &serde_json::Value) {
     }
     if let Some(result) = resp.get("result") {
         if result.is_null() {
-            println!("Executed successfully.");
+            eprintln!("Executed successfully.");
         } else if let Some(text) = result.as_str() {
             println!("{text}");
         } else {
@@ -415,7 +499,7 @@ fn print_execution_result(resp: &serde_json::Value) {
             );
         }
     } else {
-        println!("Executed successfully.");
+        eprintln!("Executed successfully.");
     }
 }
 
@@ -540,6 +624,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 auth_mode,
                 policy: std::sync::Arc::new(server_cfg.policy),
                 result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
+                retention: server_cfg.retention,
             };
             let addr: std::net::SocketAddr = listen
                 .parse()
@@ -567,6 +652,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     auth_mode: "token".to_string(),
                     policy: std::sync::Arc::new(Default::default()),
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
+                    retention: Default::default(),
                 };
                 let subject_type = if *agent { "agent" } else { "user" };
                 let (token_id, raw_token) = dbward_server::auth::create_token_with_type(&state, user, *role, subject_type)
@@ -600,6 +686,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     auth_mode: "token".to_string(),
                     policy: std::sync::Arc::new(Default::default()),
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
+                    retention: Default::default(),
                 };
                 dbward_server::auth::revoke_token(&state, id)
                     .await

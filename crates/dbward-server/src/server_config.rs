@@ -12,6 +12,8 @@ pub struct WorkflowDef {
     pub operations: Vec<String>,
     #[serde(default)]
     pub steps: Vec<WorkflowStep>,
+    #[serde(default)]
+    pub require_reason: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
@@ -29,6 +31,26 @@ pub struct WorkflowStep {
 fn default_min_approvals() -> u32 { 1 }
 fn default_true() -> bool { true }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct RetentionConfig {
+    #[serde(default = "default_request_ttl")]
+    pub request_ttl_days: u32,
+    #[serde(default = "default_audit_ttl")]
+    pub audit_ttl_days: u32,
+}
+
+fn default_request_ttl() -> u32 { 90 }
+fn default_audit_ttl() -> u32 { 365 }
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            request_ttl_days: default_request_ttl(),
+            audit_ttl_days: default_audit_ttl(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ServerConfig {
     #[serde(default = "default_listen")]
@@ -40,6 +62,8 @@ pub struct ServerConfig {
     pub auth: Option<AuthConfig>,
     #[serde(default)]
     pub policy: PolicyConfig,
+    #[serde(default)]
+    pub retention: RetentionConfig,
     #[serde(default)]
     pub workflows: Vec<WorkflowDef>,
     #[serde(default)]

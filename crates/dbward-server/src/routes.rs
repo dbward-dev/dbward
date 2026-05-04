@@ -1,9 +1,10 @@
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -16,6 +17,25 @@ fn require_admin_role(user: &crate::state::AuthUser) -> Result<(), (StatusCode, 
     } else {
         Err((StatusCode::FORBIDDEN, "admin only".into()))
     }
+}
+
+fn insert_policy_audit(
+    conn: &rusqlite::Connection,
+    user: &str,
+    op_type: &str,
+    policy_type: &str,
+    id: &str,
+) -> Result<(), (StatusCode, String)> {
+    let (db, env) = id.split_once(':').unwrap_or((id, ""));
+    let audit_id = uuid::Uuid::new_v4().to_string();
+    let detail_json = serde_json::json!({"type": policy_type, "id": id}).to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO audit_log (id, request_id, actor_id, operation, environment, database_name, detail, status, created_at) VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, 'policy_change', ?7)",
+        rusqlite::params![audit_id, user, op_type, env, db, detail_json, now],
+    )
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(())
 }
 
 fn can_access_result(
@@ -112,62 +132,106 @@ async fn get_public_key(State(state): State<AppState>) -> impl IntoResponse {
     )
 }
 
+fn parse_pagination(params: &HashMap<String, String>) -> (i64, i64) {
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(50)
+        .clamp(1, 200);
+    let offset = params
+        .get("offset")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0)
+        .max(0);
+    (limit, offset)
+}
+
 async fn list_requests(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
+    let (limit, offset) = parse_pagination(&params);
+    let status_filter = params.get("status").filter(|s| !s.is_empty());
+    let database_filter = params.get("database").filter(|s| !s.is_empty());
+    let environment_filter = params.get("environment").filter(|s| !s.is_empty());
 
     let conn = state.sqlite.lock().await;
-    let rows: Vec<serde_json::Value> = if user.role == dbward_core::Role::Admin {
-        let mut stmt = conn
-            .prepare("SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at FROM requests ORDER BY created_at DESC")
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-        stmt.query_map([], |row| {
-            Ok(json!({
-                "id": row.get::<_, String>(0)?,
-                "created_by": row.get::<_, String>(1)?,
-                "operation": row.get::<_, String>(2)?,
-                "environment": row.get::<_, String>(3)?,
-                "database_name": row.get::<_, String>(4)?,
-                "detail": row.get::<_, String>(5)?,
-                "status": row.get::<_, String>(6)?,
-                "emergency": row.get::<_, bool>(7)?,
-                "created_at": row.get::<_, String>(8)?,
-                "updated_at": row.get::<_, String>(9)?,
-                "resolved_at": row.get::<_, Option<String>>(10)?,
-            }))
-        })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .filter_map(|r| r.ok())
-        .collect()
+    let is_admin = user.role == dbward_core::Role::Admin;
+    let mut where_clauses: Vec<String> = Vec::new();
+    let mut bind_values: Vec<String> = Vec::new();
+
+    if !is_admin {
+        bind_values.push(user.user.clone());
+        where_clauses.push(format!("created_by = ?{}", bind_values.len()));
+    }
+    if let Some(s) = status_filter {
+        bind_values.push(s.clone());
+        where_clauses.push(format!("status = ?{}", bind_values.len()));
+    }
+    if let Some(d) = database_filter {
+        bind_values.push(d.clone());
+        where_clauses.push(format!("database_name = ?{}", bind_values.len()));
+    }
+    if let Some(e) = environment_filter {
+        bind_values.push(e.clone());
+        where_clauses.push(format!("environment = ?{}", bind_values.len()));
+    }
+
+    let where_sql = if where_clauses.is_empty() {
+        String::new()
     } else {
-        let mut stmt = conn
-            .prepare("SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at FROM requests WHERE created_by = ?1 ORDER BY created_at DESC")
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-        stmt.query_map(rusqlite::params![user.user], |row| {
-            Ok(json!({
-                "id": row.get::<_, String>(0)?,
-                "created_by": row.get::<_, String>(1)?,
-                "operation": row.get::<_, String>(2)?,
-                "environment": row.get::<_, String>(3)?,
-                "database_name": row.get::<_, String>(4)?,
-                "detail": row.get::<_, String>(5)?,
-                "status": row.get::<_, String>(6)?,
-                "emergency": row.get::<_, bool>(7)?,
-                "created_at": row.get::<_, String>(8)?,
-                "updated_at": row.get::<_, String>(9)?,
-                "resolved_at": row.get::<_, Option<String>>(10)?,
-            }))
-        })
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .filter_map(|r| r.ok())
-        .collect()
+        format!("WHERE {}", where_clauses.join(" AND "))
     };
 
-    Ok(Json(json!({"requests": rows})))
+    let count_sql = format!("SELECT COUNT(*) FROM requests {where_sql}");
+    let mut count_stmt = conn
+        .prepare(&count_sql)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let total: i64 = count_stmt
+        .query_row(rusqlite::params_from_iter(&bind_values), |row| row.get(0))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let query_sql = format!(
+        "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at FROM requests {where_sql} ORDER BY created_at DESC LIMIT ?{} OFFSET ?{}",
+        bind_values.len() + 1,
+        bind_values.len() + 2,
+    );
+    let mut stmt = conn
+        .prepare(&query_sql)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = bind_values
+        .iter()
+        .map(|v| Box::new(v.clone()) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
+    all_params.push(Box::new(limit));
+    all_params.push(Box::new(offset));
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map(param_refs.as_slice(), |row| {
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "created_by": row.get::<_, String>(1)?,
+                "operation": row.get::<_, String>(2)?,
+                "environment": row.get::<_, String>(3)?,
+                "database_name": row.get::<_, String>(4)?,
+                "detail": row.get::<_, String>(5)?,
+                "status": row.get::<_, String>(6)?,
+                "emergency": row.get::<_, bool>(7)?,
+                "created_at": row.get::<_, String>(8)?,
+                "updated_at": row.get::<_, String>(9)?,
+                "resolved_at": row.get::<_, Option<String>>(10)?,
+            }))
+        })
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(Json(json!({"requests": rows, "total": total, "limit": limit, "offset": offset})))
 }
 
 async fn create_request(
@@ -205,13 +269,21 @@ async fn create_request(
 
     // Workflow evaluation: check workflows table first, then fall back to static policy
     let conn = state.sqlite.lock().await;
-    let policy_action = crate::db::evaluate_workflow(&conn, database_name, environment, operation)
+    let (policy_action, workflow_require_reason) = crate::db::evaluate_workflow(&conn, database_name, environment, operation)
         .unwrap_or_else(|| {
-            state
+            (state
                 .policy
                 .evaluate(environment, operation, &user.role.to_string())
-                .to_string()
+                .to_string(), false)
         });
+
+    if !emergency && workflow_require_reason && reason.as_ref().map_or(true, |r| r.is_empty()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "reason is required by workflow policy".into(),
+        ));
+    }
+
     let needs_approval = !emergency && policy_action == "require_approval";
 
     let status = if emergency {
@@ -450,17 +522,91 @@ async fn get_request(
 async fn list_audit(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let user = auth::authenticate(&headers, &state).await?;
-    require_admin_role(&user)?;
+
+    // Readonly: 403. Developer: own logs only. Admin: all.
+    match user.role {
+        dbward_core::Role::Readonly => {
+            return Err((StatusCode::FORBIDDEN, "admin or developer only".into()));
+        }
+        dbward_core::Role::Developer => {
+            if let Some(u) = params.get("user").filter(|s| !s.is_empty()) {
+                if u != &user.user {
+                    return Err((StatusCode::FORBIDDEN, "developers can only view their own audit logs".into()));
+                }
+            }
+        }
+        dbward_core::Role::Admin => {}
+    }
+
+    let (limit, offset) = parse_pagination(&params);
+    // Developer: force filter to own user
+    let user_filter = match user.role {
+        dbward_core::Role::Developer => Some(user.user.clone()),
+        _ => params.get("user").filter(|s| !s.is_empty()).cloned(),
+    };
+    let user_filter = user_filter.as_deref();
+    let operation_filter = params.get("operation").filter(|s| !s.is_empty());
+    let status_filter = params.get("status").filter(|s| !s.is_empty());
+    let database_filter = params.get("database").filter(|s| !s.is_empty());
 
     let conn = state.sqlite.lock().await;
-    let mut stmt = conn
-        .prepare("SELECT id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at FROM audit_log ORDER BY created_at DESC LIMIT 100")
+
+    let mut where_clauses: Vec<String> = Vec::new();
+    let mut bind_values: Vec<String> = Vec::new();
+
+    if let Some(u) = user_filter {
+        bind_values.push(u.to_string());
+        where_clauses.push(format!("actor_id = ?{}", bind_values.len()));
+    }
+    if let Some(o) = operation_filter {
+        bind_values.push(o.to_string());
+        where_clauses.push(format!("operation = ?{}", bind_values.len()));
+    }
+    if let Some(s) = status_filter {
+        bind_values.push(s.to_string());
+        where_clauses.push(format!("status = ?{}", bind_values.len()));
+    }
+    if let Some(d) = database_filter {
+        bind_values.push(d.to_string());
+        where_clauses.push(format!("database_name = ?{}", bind_values.len()));
+    }
+
+    let where_sql = if where_clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", where_clauses.join(" AND "))
+    };
+
+    let count_sql = format!("SELECT COUNT(*) FROM audit_log {where_sql}");
+    let mut count_stmt = conn
+        .prepare(&count_sql)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let total: i64 = count_stmt
+        .query_row(rusqlite::params_from_iter(&bind_values), |row| row.get(0))
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    let query_sql = format!(
+        "SELECT id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at FROM audit_log {where_sql} ORDER BY created_at DESC LIMIT ?{} OFFSET ?{}",
+        bind_values.len() + 1,
+        bind_values.len() + 2,
+    );
+    let mut stmt = conn
+        .prepare(&query_sql)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = bind_values
+        .iter()
+        .map(|v| Box::new(v.clone()) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
+    all_params.push(Box::new(limit));
+    all_params.push(Box::new(offset));
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = all_params.iter().map(|p| p.as_ref()).collect();
+
     let rows: Vec<serde_json::Value> = stmt
-        .query_map([], |row| {
+        .query_map(param_refs.as_slice(), |row| {
             Ok(json!({
                 "id": row.get::<_, String>(0)?,
                 "request_id": row.get::<_, Option<String>>(1)?,
@@ -480,7 +626,7 @@ async fn list_audit(
         .filter_map(|r| r.ok())
         .collect();
 
-    Ok(Json(json!({"audit_log": rows})))
+    Ok(Json(json!({"audit_log": rows, "total": total, "limit": limit, "offset": offset})))
 }
 
 // ---------------------------------------------------------------------------
@@ -945,7 +1091,7 @@ async fn list_workflows(
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
-        .prepare("SELECT id, database_name, environment, operations_json, steps_json, source, created_at, updated_at FROM workflows ORDER BY database_name, environment")
+        .prepare("SELECT id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at FROM workflows ORDER BY database_name, environment")
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let rows: Vec<serde_json::Value> = stmt
@@ -958,9 +1104,10 @@ async fn list_workflows(
                 "environment": row.get::<_, String>(2)?,
                 "operations": ops,
                 "steps": steps,
-                "source": row.get::<_, String>(5)?,
-                "created_at": row.get::<_, String>(6)?,
-                "updated_at": row.get::<_, String>(7)?,
+                "require_reason": row.get::<_, bool>(5)?,
+                "source": row.get::<_, String>(6)?,
+                "created_at": row.get::<_, String>(7)?,
+                "updated_at": row.get::<_, String>(8)?,
             }))
         })
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
@@ -981,7 +1128,7 @@ async fn get_workflow(
     let conn = state.sqlite.lock().await;
     let row = conn
         .query_row(
-            "SELECT id, database_name, environment, operations_json, steps_json, source, created_at, updated_at FROM workflows WHERE id = ?1",
+            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at FROM workflows WHERE id = ?1",
             rusqlite::params![id],
             |row| {
                 let ops: serde_json::Value = serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
@@ -992,9 +1139,10 @@ async fn get_workflow(
                     "environment": row.get::<_, String>(2)?,
                     "operations": ops,
                     "steps": steps,
-                    "source": row.get::<_, String>(5)?,
-                    "created_at": row.get::<_, String>(6)?,
-                    "updated_at": row.get::<_, String>(7)?,
+                    "require_reason": row.get::<_, bool>(5)?,
+                    "source": row.get::<_, String>(6)?,
+                    "created_at": row.get::<_, String>(7)?,
+                    "updated_at": row.get::<_, String>(8)?,
                 }))
             },
         )
@@ -1018,6 +1166,7 @@ async fn create_workflow(
         .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
     let operations = body.get("operations").cloned().unwrap_or(json!([]));
     let steps = body.get("steps").cloned().unwrap_or(json!([]));
+    let require_reason = body["require_reason"].as_bool().unwrap_or(false);
 
     let id = format!("{database}:{environment}");
     let ops_json = operations.to_string();
@@ -1026,9 +1175,9 @@ async fn create_workflow(
 
     let conn = state.sqlite.lock().await;
     conn.execute(
-        "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, source, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'api', ?6, ?6)",
-        rusqlite::params![id, database, environment, ops_json, steps_json, now],
+        "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
+        rusqlite::params![id, database, environment, ops_json, steps_json, require_reason, now],
     )
     .map_err(|e| {
         if e.to_string().contains("UNIQUE") {
@@ -1037,6 +1186,8 @@ async fn create_workflow(
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         }
     })?;
+
+    insert_policy_audit(&conn, &user.user, "policy_create", "workflow", &id)?;
 
     Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
 }
@@ -1072,6 +1223,15 @@ async fn update_workflow(
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
+    if let Some(v) = body.get("require_reason").and_then(|v| v.as_bool()) {
+        conn.execute(
+            "UPDATE workflows SET require_reason = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![v, now, id],
+        )
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    insert_policy_audit(&conn, &user.user, "policy_update", "workflow", &id)?;
 
     Ok(Json(json!({"id": id, "updated": true})))
 }
@@ -1093,6 +1253,8 @@ async fn delete_workflow(
     if changes == 0 {
         return Err((StatusCode::NOT_FOUND, "workflow not found".into()));
     }
+
+    insert_policy_audit(&conn, &user.user, "policy_delete", "workflow", &id)?;
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }
@@ -1200,6 +1362,8 @@ async fn create_execution_policy(
         }
     })?;
 
+    insert_policy_audit(&conn, &user.user, "policy_create", "execution_policy", &id)?;
+
     Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
 }
 
@@ -1238,6 +1402,8 @@ async fn update_execution_policy(
         ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
+    insert_policy_audit(&conn, &user.user, "policy_update", "execution_policy", &id)?;
+
     Ok(Json(json!({"id": id, "updated": true})))
 }
 
@@ -1258,6 +1424,8 @@ async fn delete_execution_policy(
     if changes == 0 {
         return Err((StatusCode::NOT_FOUND, "execution policy not found".into()));
     }
+
+    insert_policy_audit(&conn, &user.user, "policy_delete", "execution_policy", &id)?;
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }
@@ -1371,6 +1539,8 @@ async fn create_result_policy(
         }
     })?;
 
+    insert_policy_audit(&conn, &user.user, "policy_create", "result_policy", &id)?;
+
     Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
 }
 
@@ -1409,6 +1579,8 @@ async fn update_result_policy(
         ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
+    insert_policy_audit(&conn, &user.user, "policy_update", "result_policy", &id)?;
+
     Ok(Json(json!({"id": id, "updated": true})))
 }
 
@@ -1429,6 +1601,8 @@ async fn delete_result_policy(
     if changes == 0 {
         return Err((StatusCode::NOT_FOUND, "result policy not found".into()));
     }
+
+    insert_policy_audit(&conn, &user.user, "policy_delete", "result_policy", &id)?;
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }
@@ -1533,6 +1707,8 @@ async fn create_notification_policy(
         }
     })?;
 
+    insert_policy_audit(&conn, &user.user, "policy_create", "notification_policy", &id)?;
+
     Ok((StatusCode::CREATED, Json(json!({"id": id, "database": database, "environment": environment}))))
 }
 
@@ -1559,6 +1735,8 @@ async fn update_notification_policy(
         ).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
+    insert_policy_audit(&conn, &user.user, "policy_update", "notification_policy", &id)?;
+
     Ok(Json(json!({"id": id, "updated": true})))
 }
 
@@ -1579,6 +1757,8 @@ async fn delete_notification_policy(
     if changes == 0 {
         return Err((StatusCode::NOT_FOUND, "notification policy not found".into()));
     }
+
+    insert_policy_audit(&conn, &user.user, "policy_delete", "notification_policy", &id)?;
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }

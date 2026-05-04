@@ -21,12 +21,14 @@ fn test_state() -> AppState {
             environment: "development".into(),
             operations: vec![],
             steps: vec![],
+            require_reason: false,
         },
         dbward_server::server_config::WorkflowDef {
             database: "*".into(),
             environment: "staging".into(),
             operations: vec![],
             steps: vec![],
+            require_reason: false,
         },
         dbward_server::server_config::WorkflowDef {
             database: "*".into(),
@@ -38,6 +40,7 @@ fn test_state() -> AppState {
                 allowed_roles: vec![],
                 require_distinct_actors: true,
             }],
+            require_reason: false,
         },
     ];
     db::sync_workflows(&conn, &workflows).unwrap();
@@ -49,6 +52,7 @@ fn test_state() -> AppState {
         auth_mode: "token".to_string(),
         policy: Arc::new(Default::default()),
         result_channels: Arc::new(ResultChannels::new()),
+        retention: Default::default(),
     }
 }
 
@@ -730,6 +734,7 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         auth_mode: "token".to_string(),
         policy: Arc::new(Default::default()),
         result_channels: Arc::new(ResultChannels::new()),
+        retention: Default::default(),
     };
     let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer)
         .await
@@ -1089,6 +1094,59 @@ async fn readonly_cannot_read_audit() {
 }
 
 #[tokio::test]
+async fn developer_can_read_own_audit() {
+    let state = test_state();
+    let (_, dev_token) = auth::create_token(&state, "dev1", Role::Developer).await.unwrap();
+    let (_, admin_token) = auth::create_token(&state, "admin1", Role::Admin).await.unwrap();
+
+    let app = routes::router(state);
+
+    // Developer can access audit (gets own logs)
+    let resp = app.clone().oneshot(
+        Request::builder()
+            .method("GET")
+            .uri("/api/audit")
+            .header("authorization", auth_header(&dev_token))
+            .body(Body::empty())
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Developer cannot filter by another user
+    let resp = app.clone().oneshot(
+        Request::builder()
+            .method("GET")
+            .uri("/api/audit?user=admin1")
+            .header("authorization", auth_header(&dev_token))
+            .body(Body::empty())
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Developer can filter by own user explicitly
+    let resp = app.clone().oneshot(
+        Request::builder()
+            .method("GET")
+            .uri("/api/audit?user=dev1")
+            .header("authorization", auth_header(&dev_token))
+            .body(Body::empty())
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Admin can filter by any user
+    let resp = app.oneshot(
+        Request::builder()
+            .method("GET")
+            .uri("/api/audit?user=dev1")
+            .header("authorization", auth_header(&admin_token))
+            .body(Body::empty())
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn requester_can_reject_own_request() {
     let state = test_state();
     let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
@@ -1239,4 +1297,51 @@ async fn agent_capability_mismatch_blocks_claim() {
             .unwrap(),
     ).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn require_reason_blocks_request_without_reason() {
+    let state = test_state();
+    // Insert a workflow with require_reason=true for app:development
+    {
+        let conn = state.sqlite.lock().await;
+        conn.execute(
+            "INSERT OR REPLACE INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
+             VALUES ('app:development', 'app', 'development', '[]', '[]', 1, 'api', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+    }
+    let (_, alice_token) = auth::create_token(&state, "alice", Role::Developer).await.unwrap();
+
+    // Request without reason -> 400
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "development", "database": "app", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Request with reason -> success
+    let app = routes::router(state);
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "development", "database": "app", "detail": "SELECT 1", "reason": "debugging issue #42"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
 }

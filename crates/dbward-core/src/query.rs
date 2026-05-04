@@ -19,30 +19,54 @@ pub struct QueryResult {
 }
 
 pub fn classify_query(sql: &str) -> Result<QueryType, Error> {
-    // Reject multi-statement queries (SQL injection prevention)
-    let trimmed_end = sql.trim_end().trim_end_matches(';');
-    if trimmed_end.contains(';') {
-        return Err(Error::MultiStatement);
+    let statements: Vec<&str> = sql
+        .split(';')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if statements.is_empty() {
+        return Err(Error::Config("empty query".into()));
     }
 
-    let upper = sql.trim_start().to_uppercase();
-    if upper.starts_with("WITH") {
-        // Writable CTE detection: scan CTE bodies for DML keywords
-        if let Some(dml) = detect_writable_cte(&upper) {
-            return Ok(dml);
+    let mut has_select = false;
+    let mut has_dml = false;
+    let mut last_type = None;
+
+    for stmt in &statements {
+        let upper = stmt.trim_start().to_uppercase();
+        let qt = if upper.starts_with("WITH") {
+            if let Some(dml) = detect_writable_cte(&upper) {
+                dml
+            } else {
+                QueryType::Select
+            }
+        } else if upper.starts_with("SELECT") {
+            QueryType::Select
+        } else if upper.starts_with("INSERT") {
+            QueryType::Insert
+        } else if upper.starts_with("UPDATE") {
+            QueryType::Update
+        } else if upper.starts_with("DELETE") {
+            QueryType::Delete
+        } else {
+            return Err(Error::DdlNotAllowed);
+        };
+
+        match &qt {
+            QueryType::Select => has_select = true,
+            _ => has_dml = true,
         }
-        Ok(QueryType::Select)
-    } else if upper.starts_with("SELECT") {
-        Ok(QueryType::Select)
-    } else if upper.starts_with("INSERT") {
-        Ok(QueryType::Insert)
-    } else if upper.starts_with("UPDATE") {
-        Ok(QueryType::Update)
-    } else if upper.starts_with("DELETE") {
-        Ok(QueryType::Delete)
-    } else {
-        Err(Error::DdlNotAllowed)
+        last_type = Some(qt);
     }
+
+    if has_select && has_dml {
+        return Err(Error::Config(
+            "cannot mix SELECT and DML in multi-statement query".into(),
+        ));
+    }
+
+    last_type.ok_or_else(|| Error::Config("empty query".into()))
 }
 
 /// Scan CTE bodies (content inside parentheses after AS) for DML keywords.
@@ -123,9 +147,34 @@ mod tests {
     }
 
     #[test]
-    fn rejects_multi_statement() {
-        assert!(classify_query("SELECT 1; DROP TABLE users").is_err());
-        assert!(classify_query("SELECT 1; SELECT 2").is_err());
+    fn allows_multi_statement_dml() {
+        assert!(matches!(
+            classify_query("INSERT INTO t VALUES (1); UPDATE t SET x = 2"),
+            Ok(QueryType::Update)
+        ));
+        assert!(matches!(
+            classify_query("DELETE FROM t; INSERT INTO t VALUES (1)"),
+            Ok(QueryType::Insert)
+        ));
+    }
+
+    #[test]
+    fn rejects_mixed_select_dml() {
+        assert!(classify_query("SELECT 1; DELETE FROM users").is_err());
+        assert!(classify_query("INSERT INTO t VALUES (1); SELECT 1").is_err());
+    }
+
+    #[test]
+    fn allows_multi_select() {
+        assert!(matches!(
+            classify_query("SELECT 1; SELECT 2"),
+            Ok(QueryType::Select)
+        ));
+    }
+
+    #[test]
+    fn rejects_ddl_in_multi_statement() {
+        assert!(classify_query("INSERT INTO t VALUES (1); DROP TABLE t").is_err());
     }
 
     #[test]
