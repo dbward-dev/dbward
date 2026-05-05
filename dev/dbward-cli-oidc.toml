@@ -1,0 +1,11 @@
+default_database = "app"
+migrations_dir = "/workspace/db/migrations"
+
+[server]
+url = "http://dbward-server:3000"
+
+[server.oidc]
+issuer = "http://localhost:8080/realms/dbward"
+client_id = "dbward-cli"
+
+[databases.app]

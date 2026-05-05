@@ -149,6 +149,37 @@ services:
     ports:
       - "9999:9999"
 
+  # OIDC CLI users (use with: docker compose run --rm alice-oidc login --device)
+  alice-oidc:
+    build: *dbward-build
+    entrypoint: ["dbward", "--config", "/config/dbward-cli-oidc.toml"]
+    command: ["whoami"]
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    network_mode: host
+    volumes:
+      - ./:/workspace
+      - ./dev/dbward-cli-oidc.toml:/config/dbward-cli-oidc.toml:ro
+      - oidc-credentials:/root/.dbward
+    profiles:
+      - oidc
+
+  bob-oidc:
+    build: *dbward-build
+    entrypoint: ["dbward", "--config", "/config/dbward-cli-oidc.toml"]
+    command: ["whoami"]
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    network_mode: host
+    volumes:
+      - ./:/workspace
+      - ./dev/dbward-cli-oidc.toml:/config/dbward-cli-oidc.toml:ro
+      - oidc-credentials:/root/.dbward
+    profiles:
+      - oidc
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     command: ["start-dev", "--import-realm"]
@@ -166,3 +197,4 @@ volumes:
   pgdata:
   server-data:
   dev-tokens:
+  oidc-credentials:
