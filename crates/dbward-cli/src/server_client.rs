@@ -329,6 +329,27 @@ impl ServerClient {
         self.parse_response_detailed(resp).await
     }
 
+    /// Cancel a request.
+    pub async fn cancel_request(
+        &self,
+        request_id: &str,
+        reason: Option<&str>,
+    ) -> Result<Value, ServerError> {
+        let mut req = self
+            .client
+            .post(format!("{}/api/requests/{}/cancel", self.base_url, request_id))
+            .bearer_auth(&self.api_token);
+        if let Some(reason) = reason {
+            req = req.json(&serde_json::json!({ "reason": reason }));
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| ServerError::from_response(0, format!("cancel failed: {e}")))?;
+
+        self.parse_response_detailed(resp).await
+    }
+
     /// List audit log entries.
     pub async fn list_audit(
         &self,

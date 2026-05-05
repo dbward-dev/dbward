@@ -46,7 +46,10 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             workflow_snapshot_json TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            resolved_at TEXT
+            resolved_at TEXT,
+            cancelled_by TEXT,
+            cancelled_at TEXT,
+            cancel_reason TEXT
         );
 
         CREATE TABLE IF NOT EXISTS approvals (
@@ -184,6 +187,14 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             ON result_access(selector_type, selector_value);
         ",
     )?;
+
+    for sql in [
+        "ALTER TABLE requests ADD COLUMN cancelled_by TEXT",
+        "ALTER TABLE requests ADD COLUMN cancelled_at TEXT",
+        "ALTER TABLE requests ADD COLUMN cancel_reason TEXT",
+    ] {
+        let _ = conn.execute(sql, []);
+    }
 
     maintenance::recover_in_flight_requests(conn)?;
 

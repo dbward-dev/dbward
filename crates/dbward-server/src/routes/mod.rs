@@ -9,13 +9,14 @@ use axum::routing::get;
 
 use crate::state::AppState;
 use requests::{
-    approve_request, create_request, dispatch_request, get_public_key, get_request, health,
-    list_requests, reject_request, stream_result,
+    approve_request, cancel_request, create_request, dispatch_request, get_public_key,
+    get_request, health, list_requests, ready, reject_request, stream_result,
 };
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/ready", get(ready))
         .route("/api/requests", get(list_requests).post(create_request))
         .route("/api/requests/{id}", get(get_request))
         .route(
@@ -29,6 +30,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/requests/{id}/dispatch",
             axum::routing::post(dispatch_request),
+        )
+        .route(
+            "/api/requests/{id}/cancel",
+            axum::routing::post(cancel_request),
         )
         .route("/api/requests/{id}/result/stream", get(stream_result))
         .route(

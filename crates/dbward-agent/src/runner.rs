@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use dbward_core::{AgentConfig, Engine, Error};
@@ -5,33 +6,52 @@ use dbward_migrate::Migrator;
 
 use crate::server_client::AgentClient;
 
+const ALIVE_PROBE_PATH: &str = "/tmp/dbward-agent-alive";
+const READY_PROBE_PATH: &str = "/tmp/dbward-agent-ready";
+
 /// Run the agent poll loop. Blocks until interrupted.
 pub async fn run(config: AgentConfig) -> Result<(), Error> {
     let client = AgentClient::new(&config.server.url, &config.server.agent_token);
     let poll_interval = Duration::from_millis(config.poll_interval_ms);
+    let draining = std::sync::Arc::new(AtomicBool::new(false));
+    let in_flight = std::sync::Arc::new(AtomicUsize::new(0));
 
     // Fetch server's public key for token verification
     let public_key = client.get_public_key().await?;
+    write_probe(ALIVE_PROBE_PATH)?;
+    write_probe(READY_PROBE_PATH)?;
+    let _probe_guard = ProbeGuard;
     eprintln!(
         "agent {} started, polling {}",
         config.agent_id, config.server.url
     );
 
+    install_shutdown_task(draining.clone());
+    let mut drain_started_at = None;
+
     loop {
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("agent shutting down");
+        if draining.load(Ordering::SeqCst) {
+            if drain_started_at.is_none() {
+                drain_started_at = Some(tokio::time::Instant::now());
+                let _ = remove_probe(READY_PROBE_PATH);
+                eprintln!("agent draining");
+            }
+            if should_exit_drain(&draining, &in_flight) {
+                eprintln!("agent shut down");
                 return Ok(());
             }
-            _ = poll_once(&config, &client, &public_key) => {}
-        }
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("agent shutting down");
-                return Ok(());
+            if drain_timed_out(drain_started_at, config.drain_timeout_secs) {
+                return Err(Error::Server(format!(
+                    "drain timed out after {}s",
+                    config.drain_timeout_secs
+                )));
             }
-            _ = tokio::time::sleep(poll_interval) => {}
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            continue;
         }
+
+        poll_once(&config, &client, &public_key, &in_flight).await;
+        tokio::time::sleep(poll_interval).await;
     }
 }
 
@@ -39,6 +59,7 @@ async fn poll_once(
     config: &AgentConfig,
     client: &AgentClient,
     public_key: &ed25519_dalek::VerifyingKey,
+    in_flight: &AtomicUsize,
 ) {
     let jobs = match client
         .poll(
@@ -61,9 +82,11 @@ async fn poll_once(
             None => continue,
         };
 
+        in_flight.fetch_add(1, Ordering::SeqCst);
         if let Err(e) = execute_job(config, client, public_key, &request_id, &job).await {
             eprintln!("job {request_id} failed: {e}");
         }
+        in_flight.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
@@ -121,6 +144,89 @@ async fn execute_job(
         .send_result(exec_id, success, result_value, None)
         .await?;
     Ok(())
+}
+
+fn install_shutdown_task(draining: std::sync::Arc<AtomicBool>) {
+    tokio::spawn(async move {
+        wait_for_shutdown_signal().await;
+        draining.store(true, Ordering::SeqCst);
+        let _ = remove_probe(READY_PROBE_PATH);
+    });
+}
+
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        let ctrl_c = tokio::signal::ctrl_c();
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to register SIGTERM handler");
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = sigterm.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+fn should_exit_drain(draining: &AtomicBool, in_flight: &AtomicUsize) -> bool {
+    draining.load(Ordering::SeqCst) && in_flight.load(Ordering::SeqCst) == 0
+}
+
+fn drain_timed_out(started_at: Option<tokio::time::Instant>, drain_timeout_secs: u64) -> bool {
+    started_at.is_some_and(|started| started.elapsed() >= Duration::from_secs(drain_timeout_secs))
+}
+
+fn write_probe(path: &str) -> Result<(), Error> {
+    std::fs::write(path, b"ok").map_err(Error::Io)
+}
+
+fn remove_probe(path: &str) -> Result<(), Error> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(Error::Io(err)),
+    }
+}
+
+struct ProbeGuard;
+
+impl Drop for ProbeGuard {
+    fn drop(&mut self) {
+        let _ = remove_probe(ALIVE_PROBE_PATH);
+        let _ = remove_probe(READY_PROBE_PATH);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drain_requires_flag_and_zero_inflight() {
+        let draining = AtomicBool::new(false);
+        let in_flight = AtomicUsize::new(0);
+        assert!(!should_exit_drain(&draining, &in_flight));
+
+        draining.store(true, Ordering::SeqCst);
+        in_flight.store(1, Ordering::SeqCst);
+        assert!(!should_exit_drain(&draining, &in_flight));
+
+        in_flight.store(0, Ordering::SeqCst);
+        assert!(should_exit_drain(&draining, &in_flight));
+    }
+
+    #[test]
+    fn probe_file_helpers_round_trip() {
+        let path = format!("/tmp/dbward-agent-test-{}", std::process::id());
+        remove_probe(&path).unwrap();
+        write_probe(&path).unwrap();
+        assert!(std::path::Path::new(&path).exists());
+        remove_probe(&path).unwrap();
+        assert!(!std::path::Path::new(&path).exists());
+    }
 }
 
 async fn execute_operation(

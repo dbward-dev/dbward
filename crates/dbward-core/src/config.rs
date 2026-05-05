@@ -85,6 +85,8 @@ pub struct AgentConfig {
     pub poll_interval_ms: u64,
     #[serde(default = "default_lease_duration")]
     pub lease_duration_secs: u64,
+    #[serde(default = "default_drain_timeout")]
+    pub drain_timeout_secs: u64,
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent_tasks: u32,
     pub server: AgentServerConfig,
@@ -153,6 +155,9 @@ fn default_poll_interval() -> u64 {
 }
 fn default_lease_duration() -> u64 {
     300
+}
+fn default_drain_timeout() -> u64 {
+    60
 }
 fn default_max_concurrent() -> u32 {
     2

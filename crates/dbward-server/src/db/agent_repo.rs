@@ -31,30 +31,36 @@ pub fn get_agent_capabilities(conn: &Connection, agent_id: &str) -> Option<Strin
     .ok()
 }
 
-/// Create agent execution and mark request as running. Returns execution_id.
+/// Claim a dispatched request, create agent execution, and mark request as running.
 pub fn create_execution_and_mark_running(
     conn: &mut Connection,
     request_id: &str,
     agent_id: &str,
     execution_token_json: &str,
-) -> Result<String, rusqlite::Error> {
+) -> Result<Option<String>, rusqlite::Error> {
     let now = chrono::Utc::now();
     let now_rfc3339 = now.to_rfc3339();
     let lease_expires = (now + chrono::Duration::minutes(5)).to_rfc3339();
     let exec_id = uuid::Uuid::new_v4().to_string();
 
     let tx = conn.transaction()?;
+    let claimed = tx.execute(
+        "UPDATE requests
+         SET status = 'running', updated_at = ?1
+         WHERE id = ?2 AND status = 'dispatched'",
+        rusqlite::params![now_rfc3339, request_id],
+    )?;
+    if claimed == 0 {
+        tx.rollback()?;
+        return Ok(None);
+    }
     tx.execute(
         "INSERT INTO agent_executions (id, request_id, agent_id, status, execution_token_json, lease_expires_at, started_at, created_at)
          VALUES (?1, ?2, ?3, 'claimed', ?4, ?5, ?6, ?6)",
         rusqlite::params![exec_id, request_id, agent_id, execution_token_json, lease_expires, now_rfc3339],
     )?;
-    tx.execute(
-        "UPDATE requests SET status = 'running', updated_at = ?1 WHERE id = ?2",
-        rusqlite::params![now_rfc3339, request_id],
-    )?;
     tx.commit()?;
-    Ok(exec_id)
+    Ok(Some(exec_id))
 }
 
 /// Execution context for result submission.
@@ -98,18 +104,31 @@ pub fn finish_execution(
 ) -> Result<String, rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
     let exec_status = if success { "completed" } else { "failed" };
-    let req_status = if success { "executed" } else { "failed" };
     let audit_id = uuid::Uuid::new_v4().to_string();
 
     let tx = conn.transaction()?;
+    let current_request_status: String = tx.query_row(
+        "SELECT status FROM requests WHERE id = ?1",
+        rusqlite::params![request_id],
+        |row| row.get(0),
+    )?;
+    let req_status = if current_request_status == "cancelled" {
+        "cancelled"
+    } else if success {
+        "executed"
+    } else {
+        "failed"
+    };
     tx.execute(
         "UPDATE agent_executions SET status = ?1, finished_at = ?2, error_message = ?3 WHERE id = ?4",
         rusqlite::params![exec_status, now, error_msg, execution_id],
     )?;
-    tx.execute(
-        "UPDATE requests SET status = ?1, updated_at = ?2, resolved_at = ?2 WHERE id = ?3",
-        rusqlite::params![req_status, now, request_id],
-    )?;
+    if current_request_status != "cancelled" {
+        tx.execute(
+            "UPDATE requests SET status = ?1, updated_at = ?2, resolved_at = ?2 WHERE id = ?3",
+            rusqlite::params![req_status, now, request_id],
+        )?;
+    }
     tx.execute(
         "INSERT INTO audit_log (id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11)",
         rusqlite::params![audit_id, request_id, execution_id, actor, operation, environment, database_name, detail, req_status, error_msg, now],

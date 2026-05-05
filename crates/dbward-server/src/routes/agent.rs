@@ -184,13 +184,18 @@ pub(crate) async fn agent_claim(
     let token_json = serde_json::to_string(&token)
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
-    let exec_id = crate::db::agent_repo::create_execution_and_mark_running(
+    let Some(exec_id) = crate::db::agent_repo::create_execution_and_mark_running(
         &mut conn,
         &id,
         &agent_id,
         &token_json,
     )
-    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+    else {
+        return Err(crate::api_error::ApiError::conflict(
+            "request status is no longer dispatched, cannot claim",
+        ));
+    };
 
     Ok(Json(json!({
         "execution_id": exec_id,

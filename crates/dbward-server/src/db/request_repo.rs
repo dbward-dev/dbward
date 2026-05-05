@@ -172,6 +172,29 @@ where
     Ok(())
 }
 
+/// Mark request as cancelled unless already terminal. Returns true if updated.
+pub fn mark_cancelled(
+    conn: &Connection,
+    id: &str,
+    actor: &str,
+    reason: Option<&str>,
+    now: &str,
+) -> Result<bool, rusqlite::Error> {
+    let rows = conn.execute(
+        "UPDATE requests
+         SET status = 'cancelled',
+             cancelled_by = ?1,
+             cancelled_at = ?2,
+             cancel_reason = ?3,
+             updated_at = ?2,
+             resolved_at = ?2
+         WHERE id = ?4
+           AND status NOT IN ('executed', 'failed', 'rejected', 'cancelled')",
+        rusqlite::params![actor, now, reason, id],
+    )?;
+    Ok(rows > 0)
+}
+
 /// Touch updated_at only.
 pub fn touch_updated_at<C>(conn: &C, id: &str, now: &str) -> Result<(), rusqlite::Error>
 where

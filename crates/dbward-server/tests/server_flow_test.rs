@@ -145,6 +145,16 @@ async fn health_check() {
 }
 
 #[tokio::test]
+async fn ready_check() {
+    let app = routes::router(test_state());
+    let resp = app
+        .oneshot(Request::get("/ready").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
 async fn auto_approve_non_production() {
     let state = test_state();
     let (_, token) = auth::create_token(&state, "alice", "developer")
@@ -2132,6 +2142,570 @@ async fn agent_capability_mismatch_blocks_claim() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn cancel_requires_requester_or_admin() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, bob_token) = auth::create_token(&state, "bob", "developer")
+        .await
+        .unwrap();
+    let (_, admin_token) = auth::create_token(&state, "admin", "admin").await.unwrap();
+
+    let app = routes::router(state);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT 1"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let id = body["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{id}/cancel"))
+                .header("authorization", auth_header(&bob_token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":"nope"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{id}/cancel"))
+                .header("authorization", auth_header(&admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":"stop"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "cancelled");
+}
+
+#[tokio::test]
+async fn cancel_allows_pending_approved_dispatched_and_running() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, approver_token) = auth::create_token(&state, "approver", "admin")
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
+        .await
+        .unwrap();
+    let app = routes::router(state.clone());
+
+    let pending_resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"operation":"execute_query","environment":"production","database":"default","detail":"SELECT 1"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let pending_id = body_json(pending_resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{pending_id}/cancel"))
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":"pending"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let approved_resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"operation":"execute_query","environment":"production","database":"default","detail":"SELECT 2"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let approved_id = body_json(approved_resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{approved_id}/approve"))
+                .header("authorization", auth_header(&approver_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{approved_id}/cancel"))
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":"approved"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let dispatched_resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT 3"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let dispatched_id = body_json(dispatched_resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{dispatched_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{dispatched_id}/cancel"))
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":"dispatched"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let running_resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT 4"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let running_id = body_json(running_resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{running_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post("/api/agent/poll")
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"databases":["default"],"environments":["development"],"operations":["execute_query"]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let claim_resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{running_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(claim_resp.status(), StatusCode::OK);
+    let execution_id = body_json(claim_resp).await["execution_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{running_id}/cancel"))
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":"running"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let result_resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{execution_id}/result"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"success":true,"result":{"ok":true}}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result_resp.status(), StatusCode::OK);
+
+    let request_resp = app
+        .oneshot(
+            Request::get(format!("/api/requests/{running_id}"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let request_body = body_json(request_resp).await;
+    assert_eq!(request_body["status"], "cancelled");
+}
+
+#[tokio::test]
+async fn cancel_rejects_terminal_states() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, admin_token) = auth::create_token(&state, "admin", "admin").await.unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
+        .await
+        .unwrap();
+    let app = routes::router(state.clone());
+
+    let rejected_resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"operation":"execute_query","environment":"production","database":"default","detail":"SELECT 1"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let rejected_id = body_json(rejected_resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{rejected_id}/reject"))
+                .header("authorization", auth_header(&admin_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let executed_resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT 2"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let executed_id = body_json(executed_resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{executed_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post("/api/agent/poll")
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"databases":["default"],"environments":["development"],"operations":["execute_query"]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let executed_claim = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{executed_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let executed_execution_id = body_json(executed_claim).await["execution_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{executed_execution_id}/result"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"success":true,"result":{"ok":true}}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let failed_resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT 3"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let failed_id = body_json(failed_resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{failed_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post("/api/agent/poll")
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"databases":["default"],"environments":["development"],"operations":["execute_query"]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let failed_claim = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{failed_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let failed_execution_id = body_json(failed_claim).await["execution_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{failed_execution_id}/result"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"success":false,"error":"boom"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let cancelled_resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT 4"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let cancelled_id = body_json(cancelled_resp).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{cancelled_id}/cancel"))
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":"once"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    for id in [&rejected_id, &executed_id, &failed_id, &cancelled_id] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/api/requests/{id}/cancel"))
+                    .header("authorization", auth_header(&alice_token))
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"reason":"again"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+}
+
+#[tokio::test]
+async fn claim_race_returns_conflict_for_second_claim() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
+        .await
+        .unwrap();
+    let app = routes::router(state);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT race"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let second = app
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]

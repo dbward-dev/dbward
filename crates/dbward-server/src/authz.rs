@@ -34,6 +34,8 @@ p, user, approver, Global, RejectRequest
 p, user, approver, ApprovalStep, RejectRequest
 p, user, approver, Global, DispatchRequest
 p, user, approver, Request, DispatchRequest
+p, user, approver, Global, CancelRequest
+p, user, approver, Request, CancelRequest
 p, user, approver, Global, ReadResult
 p, user, approver, Result, ReadResult
 p, user, developer, Global, ListAudit
@@ -65,6 +67,7 @@ pub enum Action {
     ApproveRequest,
     RejectRequest,
     DispatchRequest,
+    CancelRequest,
     ReadResult,
     ListAudit,
     AgentPoll,
@@ -86,6 +89,7 @@ impl Action {
             Self::ApproveRequest => "ApproveRequest",
             Self::RejectRequest => "RejectRequest",
             Self::DispatchRequest => "DispatchRequest",
+            Self::CancelRequest => "CancelRequest",
             Self::ReadResult => "ReadResult",
             Self::ListAudit => "ListAudit",
             Self::AgentPoll => "AgentPoll",
@@ -255,6 +259,7 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
         ("ApproveRequest", Resource::Global) => true,
         ("RejectRequest", Resource::Global) => true,
         ("DispatchRequest", Resource::Global) => true,
+        ("CancelRequest", Resource::Global) => true,
         ("ReadResult", Resource::Global) => true,
         ("ListRequests", Resource::Request { requester_id, .. }) => {
             is_admin(principal) || principal.user == *requester_id
@@ -304,6 +309,9 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
                     .any(|g| principal.groups.iter().any(|own| own == g))
         }
         ("DispatchRequest", Resource::Request { requester_id, .. }) => {
+            is_admin(principal) || principal.user == *requester_id
+        }
+        ("CancelRequest", Resource::Request { requester_id, .. }) => {
             is_admin(principal) || principal.user == *requester_id
         }
         (
@@ -380,6 +388,7 @@ fn deny_message(action: Action) -> String {
         Action::ApproveRequest => "approval is not allowed".into(),
         Action::RejectRequest => "rejection is not allowed".into(),
         Action::DispatchRequest => "dispatch is not allowed".into(),
+        Action::CancelRequest => "cancel is not allowed".into(),
         Action::ReadResult => "result access denied".into(),
         Action::ListAudit => "audit access denied".into(),
         Action::AgentPoll => "agent poll is not allowed".into(),

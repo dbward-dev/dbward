@@ -74,6 +74,14 @@ pub(crate) async fn health() -> impl IntoResponse {
     Json(json!({"status": "ok"}))
 }
 
+pub(crate) async fn ready(State(state): State<AppState>) -> impl IntoResponse {
+    let conn = state.sqlite.lock().await;
+    match conn.query_row("SELECT 1", [], |row| row.get::<_, i64>(0)) {
+        Ok(1) => StatusCode::OK,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
+    }
+}
+
 pub(crate) async fn get_public_key(State(state): State<AppState>) -> impl IntoResponse {
     let bytes = state.token_signer.verifying_key().to_bytes();
     (
@@ -736,6 +744,96 @@ pub(crate) async fn reject_request(
     state.request_notifier.notify(&id).await;
 
     Ok(Json(json!({"id": id, "status": "rejected"})))
+}
+
+pub(crate) async fn cancel_request(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    body_str: String,
+) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
+    let user = auth::authenticate(&headers, &state).await?;
+    authz::authorize(&user, Action::CancelRequest, Resource::Global).await?;
+
+    let body_val: serde_json::Value = serde_json::from_str(&body_str).unwrap_or(json!({}));
+    let cancel_reason = body_val["reason"].as_str().map(str::to_string);
+
+    let (id, requester, operation, environment, database_name, detail, notif_hooks) = {
+        let conn = state.sqlite.lock().await;
+        let id = resolve_id(&conn, &id)?;
+        let ctx = crate::db::request_repo::get_request_context(&conn, &id)
+            .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
+
+        authz::authorize_sync(
+            &user,
+            Action::CancelRequest,
+            request_resource(
+                ctx.created_by.clone(),
+                ctx.status.clone(),
+                ctx.database_name.clone(),
+                ctx.environment.clone(),
+            ),
+        )?;
+
+        if matches!(
+            ctx.status.as_str(),
+            "executed" | "failed" | "rejected" | "cancelled"
+        ) {
+            return Err(crate::api_error::ApiError::conflict(format!(
+                "request is already {}",
+                ctx.status
+            )));
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let updated = crate::db::request_repo::mark_cancelled(
+            &conn,
+            &id,
+            &user.user,
+            cancel_reason.as_deref(),
+            &now,
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        if !updated {
+            return Err(crate::api_error::ApiError::conflict("request cannot be cancelled"));
+        }
+
+        let notif_hooks =
+            crate::db::policy_repo::get_notification_webhooks(&conn, &ctx.database_name, &ctx.environment);
+        (
+            id,
+            ctx.created_by,
+            ctx.operation,
+            ctx.environment,
+            ctx.database_name,
+            ctx.detail,
+            notif_hooks,
+        )
+    };
+
+    state.request_notifier.notify(&id).await;
+    let actor_role = user.effective_permission().to_string();
+    state.webhooks.dispatch_with_policy(
+        notif_hooks,
+        crate::webhook::WebhookEvent {
+            event: "request_cancelled".into(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            request_id: id.clone(),
+            status: "cancelled".into(),
+            requester,
+            actor: user.user,
+            actor_role: Some(actor_role),
+            operation,
+            environment,
+            database: database_name,
+            detail,
+            reason: cancel_reason,
+            next_step: None,
+            cli_command: None,
+        },
+    );
+
+    Ok(Json(json!({"id": id, "status": "cancelled"})))
 }
 
 pub(crate) async fn get_request(

@@ -32,15 +32,15 @@ pub fn purge_old_records(
         (chrono::Utc::now() - chrono::Duration::days(audit_ttl_days as i64)).to_rfc3339();
 
     conn.execute(
-        "DELETE FROM approvals WHERE request_id IN (SELECT id FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected'))",
+        "DELETE FROM approvals WHERE request_id IN (SELECT id FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected', 'cancelled'))",
         rusqlite::params![req_cutoff],
     )?;
     conn.execute(
-        "DELETE FROM agent_executions WHERE request_id IN (SELECT id FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected'))",
+        "DELETE FROM agent_executions WHERE request_id IN (SELECT id FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected', 'cancelled'))",
         rusqlite::params![req_cutoff],
     )?;
     let req_deleted = conn.execute(
-        "DELETE FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected')",
+        "DELETE FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected', 'cancelled')",
         rusqlite::params![req_cutoff],
     )?;
     let audit_deleted = conn.execute(
@@ -87,7 +87,7 @@ mod tests {
 
         conn.execute(
             "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at)
-             VALUES ('old-1', 'alice', 'execute_query', 'dev', 'app', 'executed', 'SELECT 1', ?1, ?1)",
+             VALUES ('old-1', 'alice', 'execute_query', 'dev', 'app', 'cancelled', 'SELECT 1', ?1, ?1)",
             rusqlite::params![old],
         ).unwrap();
         conn.execute(

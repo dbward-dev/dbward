@@ -122,6 +122,12 @@ enum Command {
     Approve { id: String },
     /// Reject a pending request
     Reject { id: String },
+    /// Cancel a request
+    Cancel {
+        id: String,
+        #[arg(long)]
+        reason: Option<String>,
+    },
     /// List pending requests
     List {
         /// Maximum number of requests to return
@@ -477,6 +483,23 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                         return Err(dbward_core::Error::Server(e.body));
                     }
                     return Err(e.into_core_error("reject"));
+                }
+            }
+            Ok(())
+        }
+        Command::Cancel { ref id, ref reason } => {
+            match sc.cancel_request(id, reason.as_deref()).await {
+                Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
+                Err(e) => {
+                    if e.status == 404 {
+                        return Err(dbward_core::Error::Server(format!(
+                            "Request {id} not found"
+                        )));
+                    }
+                    if e.status == 403 {
+                        return Err(dbward_core::Error::Server(e.body));
+                    }
+                    return Err(e.into_core_error("cancel"));
                 }
             }
             Ok(())
@@ -1108,6 +1131,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         agent_id: "dev-agent".into(),
         poll_interval_ms: 500,
         lease_duration_secs: 300,
+        drain_timeout_secs: 60,
         max_concurrent_tasks: 2,
         server: dbward_core::AgentServerConfig {
             url: server_url,
