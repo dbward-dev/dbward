@@ -120,6 +120,7 @@ pub enum Resource {
     ApprovalStep {
         requester_id: String,
         allowed_roles: Vec<String>,
+        allowed_groups: Vec<String>,
     },
     AgentExecution {
         agent_id: String,
@@ -266,6 +267,7 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
             Resource::ApprovalStep {
                 requester_id,
                 allowed_roles,
+                allowed_groups,
             },
         ) => {
             if principal.user == *requester_id {
@@ -274,16 +276,19 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
             if is_admin(principal) {
                 return true;
             }
-            !allowed_roles.is_empty()
-                && allowed_roles
+            allowed_roles
+                .iter()
+                .any(|role| principal.roles.iter().any(|own| own == role))
+                || allowed_groups
                     .iter()
-                    .any(|role| principal.roles.iter().any(|own| own == role))
+                    .any(|g| principal.groups.iter().any(|own| own == g))
         }
         (
             "RejectRequest",
             Resource::ApprovalStep {
                 requester_id,
                 allowed_roles,
+                allowed_groups,
             },
         ) => {
             is_admin(principal)
@@ -291,6 +296,9 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
                 || allowed_roles
                     .iter()
                     .any(|role| principal.roles.iter().any(|own| own == role))
+                || allowed_groups
+                    .iter()
+                    .any(|g| principal.groups.iter().any(|own| own == g))
         }
         ("DispatchRequest", Resource::Request { requester_id, .. }) => {
             is_admin(principal) || principal.user == *requester_id
@@ -301,10 +309,9 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
                 requester_id,
                 access_roles,
             },
-        ) => access_roles.iter().any(|role| {
-            (role == "requester" && principal.user == *requester_id)
-                || role == &principal.permission
-        }),
+        ) => access_roles
+            .iter()
+            .any(|entry| matches_selector(principal, entry, requester_id)),
         ("ListAudit", Resource::AuditQuery { requested_user }) => {
             if is_admin(principal) {
                 return true;
@@ -348,6 +355,19 @@ fn permission_rank(permission: &str) -> i8 {
 
 fn is_admin(principal: &Principal) -> bool {
     principal.permission == "admin"
+}
+
+/// Evaluate a principal selector entry against the given principal.
+/// Supports: "requester", "role:<name>", "group:<name>", "user:<id>", bare role name.
+pub fn matches_selector(principal: &Principal, selector: &str, requester_id: &str) -> bool {
+    match selector {
+        "requester" => principal.user == requester_id,
+        s if s.starts_with("role:") => principal.roles.iter().any(|r| r == &s[5..]),
+        s if s.starts_with("group:") => principal.groups.iter().any(|g| g == &s[6..]),
+        s if s.starts_with("user:") => principal.user == s[5..],
+        // Backward compat: bare string matches effective permission or role
+        bare => bare == principal.permission || principal.roles.iter().any(|r| r == bare),
+    }
 }
 
 fn deny_message(action: Action) -> String {
@@ -431,6 +451,7 @@ mod tests {
         let resource = Resource::ApprovalStep {
             requester_id: "alice".into(),
             allowed_roles: vec!["admin".into()],
+            allowed_groups: vec![],
         };
 
         assert_eq!(
@@ -448,6 +469,7 @@ mod tests {
         let resource = Resource::ApprovalStep {
             requester_id: "alice".into(),
             allowed_roles: vec!["ops".into()],
+            allowed_groups: vec![],
         };
 
         assert!(

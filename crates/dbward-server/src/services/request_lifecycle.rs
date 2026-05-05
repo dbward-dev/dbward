@@ -61,8 +61,7 @@ pub(crate) async fn approve_request_inner(
             Action::ApproveRequest,
             Resource::ApprovalStep {
                 requester_id: req_user.clone(),
-                allowed_roles: Vec::new(),
-            },
+                allowed_roles: Vec::new(), allowed_groups: vec![], },
         )?;
         let now = chrono::Utc::now().to_rfc3339();
         let tx = conn
@@ -152,8 +151,7 @@ pub(crate) async fn approve_request_inner(
                 .approvers
                 .iter()
                 .map(|group| group.role.clone())
-                .collect(),
-        },
+                .collect(), allowed_groups: vec![], },
     )?;
 
     // Determine approver's role

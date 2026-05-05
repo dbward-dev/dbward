@@ -311,6 +311,7 @@ fn request_is_approvable_by_user(
     let approval_resource = authz::Resource::ApprovalStep {
         requester_id: created_by.to_string(),
         allowed_roles,
+        allowed_groups: vec![],
     };
 
     if authz::authorize_sync(user, Action::ApproveRequest, approval_resource).is_err() {
@@ -348,8 +349,7 @@ pub(crate) fn current_approval_resource(
         return Ok((
             Resource::ApprovalStep {
                 requester_id,
-                allowed_roles: Vec::new(),
-            },
+                allowed_roles: Vec::new(), allowed_groups: vec![], },
             0,
             Vec::new(),
             0,
@@ -382,8 +382,7 @@ pub(crate) fn current_approval_resource(
     Ok((
         Resource::ApprovalStep {
             requester_id,
-            allowed_roles: allowed_roles.clone(),
-        },
+            allowed_roles: allowed_roles.clone(), allowed_groups: vec![], },
         current_step,
         allowed_roles,
         steps.len(),
