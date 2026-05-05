@@ -24,6 +24,13 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             revoked_at TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS token_groups (
+            token_id TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            FOREIGN KEY (token_id) REFERENCES tokens(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_token_groups_token ON token_groups(token_id);
+
         CREATE TABLE IF NOT EXISTS requests (
             id TEXT PRIMARY KEY,
             created_by TEXT NOT NULL,

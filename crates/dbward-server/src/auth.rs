@@ -29,12 +29,31 @@ pub async fn create_token(
     create_token_with_type(state, user, role, "user").await
 }
 
+pub async fn create_token_with_groups(
+    state: &AppState,
+    user: &str,
+    role: &str,
+    groups: &[&str],
+) -> Result<(String, String), String> {
+    create_token_with_type_and_groups(state, user, role, "user", groups).await
+}
+
 /// Create a new API token with explicit subject_type ("user" or "agent").
 pub async fn create_token_with_type(
     state: &AppState,
     user: &str,
     role: &str,
     subject_type: &str,
+) -> Result<(String, String), String> {
+    create_token_with_type_and_groups(state, user, role, subject_type, &[]).await
+}
+
+async fn create_token_with_type_and_groups(
+    state: &AppState,
+    user: &str,
+    role: &str,
+    subject_type: &str,
+    groups: &[&str],
 ) -> Result<(String, String), String> {
     let token_id = Uuid::new_v4().to_string();
     let raw_token = format!("dbw_{}", Uuid::new_v4().to_string().replace('-', ""));
@@ -53,6 +72,11 @@ pub async fn create_token_with_type(
         &Utc::now().to_rfc3339(),
     )
     .map_err(|e| e.to_string())?;
+    if !groups.is_empty() {
+        let owned_groups: Vec<String> = groups.iter().map(|group| (*group).to_string()).collect();
+        crate::db::token_repo::insert_token_groups(&conn, &token_id, &owned_groups)
+            .map_err(|e| e.to_string())?;
+    }
 
     Ok((token_id, raw_token))
 }
@@ -134,7 +158,7 @@ async fn authenticate_api_token(
             token_id: row.id,
             user: row.subject_id,
             roles: vec![row.role],
-            groups: vec![],
+            groups: row.groups,
             subject_type: row.subject_type,
         }),
         Ok(None) => Err((StatusCode::UNAUTHORIZED, "invalid token".into())),
@@ -181,6 +205,29 @@ mod tests {
         assert_eq!(user.user, "alice");
         assert_eq!(user.effective_permission(), "developer");
         assert_eq!(user.token_id, token_id);
+    }
+
+    #[tokio::test]
+    async fn create_and_verify_token_with_groups() {
+        let state = test_state();
+        let (_, raw_token) = create_token_with_groups(
+            &state,
+            "alice",
+            "readonly",
+            &["prod-approvers", "data-team"],
+        )
+        .await
+        .unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            format!("Bearer {raw_token}").parse().unwrap(),
+        );
+
+        let user = authenticate(&headers, &state).await.unwrap();
+        assert_eq!(user.user, "alice");
+        assert_eq!(user.groups, vec!["prod-approvers", "data-team"]);
     }
 
     #[tokio::test]

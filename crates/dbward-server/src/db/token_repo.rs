@@ -5,6 +5,7 @@ pub(crate) struct TokenRow {
     pub(crate) subject_id: String,
     pub(crate) role: String,
     pub(crate) subject_type: String,
+    pub(crate) groups: Vec<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -37,6 +38,20 @@ pub(crate) fn revoke_token(
     Ok(updated > 0)
 }
 
+pub(crate) fn insert_token_groups(
+    conn: &Connection,
+    token_id: &str,
+    groups: &[String],
+) -> Result<(), rusqlite::Error> {
+    for group in groups {
+        conn.execute(
+            "INSERT INTO token_groups (token_id, group_name) VALUES (?1, ?2)",
+            rusqlite::params![token_id, group],
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) fn lookup_active_token(
     conn: &Connection,
     prefix: &str,
@@ -45,14 +60,28 @@ pub(crate) fn lookup_active_token(
     match conn.query_row(
         "SELECT id, subject_id, role, subject_type FROM tokens WHERE token_prefix = ?1 AND token_hash = ?2 AND status = 'active'",
         rusqlite::params![prefix, hash],
-        |row| Ok(TokenRow {
-            id: row.get(0)?,
-            subject_id: row.get(1)?,
-            role: row.get(2)?,
-            subject_type: row.get(3)?,
-        }),
+        |row| Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        )),
     ) {
-        Ok(row) => Ok(Some(row)),
+        Ok((id, subject_id, role, subject_type)) => {
+            let groups = {
+                let mut stmt =
+                    conn.prepare("SELECT group_name FROM token_groups WHERE token_id = ?1")?;
+                stmt.query_map([&id], |row| row.get(0))?
+                    .collect::<Result<Vec<String>, _>>()?
+            };
+            Ok(Some(TokenRow {
+                id,
+                subject_id,
+                role,
+                subject_type,
+                groups,
+            }))
+        }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e),
     }

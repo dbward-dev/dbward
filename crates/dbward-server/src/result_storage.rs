@@ -11,8 +11,7 @@ pub struct ResultStore {
 
 impl ResultStore {
     pub fn new_local(root_dir: &str) -> Result<Self, String> {
-        std::fs::create_dir_all(root_dir)
-            .map_err(|e| format!("create result dir: {e}"))?;
+        std::fs::create_dir_all(root_dir).map_err(|e| format!("create result dir: {e}"))?;
         let store = object_store::local::LocalFileSystem::new_with_prefix(root_dir)
             .map_err(|e| format!("local storage init: {e}"))?;
         Ok(Self {
@@ -120,5 +119,17 @@ mod tests {
 
         assert_eq!(store.backend(), "local");
         assert_eq!(store.storage_key("req-001"), "shared/results/req-001.json");
+    }
+
+    #[test]
+    fn new_local_creates_missing_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("nested/results/store");
+        assert!(!target.exists());
+
+        let store = ResultStore::new_local(target.to_str().unwrap()).unwrap();
+
+        assert_eq!(store.backend(), "local");
+        assert!(target.is_dir());
     }
 }

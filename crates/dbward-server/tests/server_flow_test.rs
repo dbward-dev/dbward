@@ -73,6 +73,58 @@ fn test_state_with_store() -> (AppState, TempDir) {
     (state, dir)
 }
 
+fn test_state_group_approval_with_store() -> (AppState, TempDir) {
+    let conn = Connection::open_in_memory().unwrap();
+    db::init(&conn).unwrap();
+    let workflows = vec![
+        dbward_server::server_config::WorkflowDef {
+            database: "*".into(),
+            environment: "development".into(),
+            operations: vec![],
+            steps: vec![],
+            require_reason: false,
+        },
+        dbward_server::server_config::WorkflowDef {
+            database: "*".into(),
+            environment: "production".into(),
+            operations: vec![],
+            steps: vec![dbward_server::server_config::WorkflowStep {
+                step_type: "approval".into(),
+                mode: "all".into(),
+                approvers: vec![dbward_server::server_config::ApproverGroup {
+                    role: None,
+                    group: Some("prod-approvers".into()),
+                    min: 1,
+                }],
+                require_distinct_actors: true,
+            }],
+            require_reason: false,
+        },
+    ];
+    db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let result_store = Arc::new(
+        dbward_server::result_storage::ResultStore::new_local(dir.path().to_str().unwrap())
+            .unwrap()
+            .with_prefix("shared"),
+    );
+
+    let state = AppState {
+        sqlite: Arc::new(Mutex::new(conn)),
+        token_signer: Arc::new(TokenSigner::generate()),
+        webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        oidc: None,
+        auth_mode: "token".to_string(),
+        policy: Arc::new(Default::default()),
+        result_channels: Arc::new(ResultChannels::new()),
+        retention: Default::default(),
+        request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
+        result_store: Some(result_store),
+    };
+    (state, dir)
+}
+
 fn auth_header(token: &str) -> String {
     format!("Bearer {token}")
 }
@@ -384,6 +436,406 @@ async fn list_results_only_returns_accessible_rows() {
     let results = body["results"].as_array().unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0]["request_id"], "req-visible");
+}
+
+#[tokio::test]
+async fn shared_results_are_stored_and_exposed_only_to_shared_users() {
+    let (state, dir) = test_state_with_store();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, bob_token) = auth::create_token(&state, "bob", "developer")
+        .await
+        .unwrap();
+    let (_, carol_token) = auth::create_token(&state, "carol", "developer")
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
+        .await
+        .unwrap();
+    let app = routes::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "staging",
+                        "database": "app",
+                        "detail": "SELECT 1",
+                        "share_with": ["user:bob"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp).await;
+    let shared_request_id = body["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{shared_request_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{shared_request_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let shared_exec_id = body["execution_id"].as_str().unwrap().to_string();
+
+    let shared_result = json!({"rows": [{"value": 1}]});
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{shared_exec_id}/result"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"success": true, "result": shared_result.clone()}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    {
+        let conn = state.sqlite.lock().await;
+        let (status, storage_key, content_length): (String, String, i64) = conn
+            .query_row(
+                "SELECT status, storage_key, content_length FROM request_results WHERE request_id = ?1",
+                [&shared_request_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "stored");
+        assert_eq!(storage_key, format!("shared/{shared_request_id}.json"));
+        assert!(content_length > 0);
+
+        let selectors: Vec<(String, String)> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT selector_type, selector_value FROM result_access WHERE request_id = ?1 ORDER BY selector_type, selector_value",
+                )
+                .unwrap();
+            stmt.query_map([&shared_request_id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .map(|row| row.unwrap())
+                .collect()
+        };
+        assert_eq!(
+            selectors,
+            vec![
+                ("requester".to_string(), "".to_string()),
+                ("role".to_string(), "admin".to_string()),
+                ("user".to_string(), "bob".to_string()),
+            ]
+        );
+    }
+
+    let shared_path = dir
+        .path()
+        .join("shared")
+        .join(format!("{shared_request_id}.json"));
+    assert!(shared_path.exists());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/requests/{shared_request_id}/result/content"))
+                .header("authorization", auth_header(&bob_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body, shared_result);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/requests/{shared_request_id}/result/content"))
+                .header("authorization", auth_header(&carol_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/api/results")
+                .header("authorization", auth_header(&bob_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["request_id"], shared_request_id);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "staging",
+                        "database": "app",
+                        "detail": "SELECT 2"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp).await;
+    let direct_request_id = body["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{direct_request_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{direct_request_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let direct_exec_id = body["execution_id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{direct_exec_id}/result"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"success": true, "result": {"rows": [{"value": 2}]}}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    {
+        let conn = state.sqlite.lock().await;
+        let stored_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM request_results WHERE request_id = ?1",
+                [&direct_request_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_count, 0);
+    }
+    assert!(
+        !dir.path()
+            .join("shared")
+            .join(format!("{direct_request_id}.json"))
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn group_approver_can_execute_and_read_group_shared_result() {
+    let (state, _dir) = test_state_group_approval_with_store();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, bob_token) =
+        auth::create_token_with_groups(&state, "bob", "readonly", &["prod-approvers", "data-team"])
+            .await
+            .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
+        .await
+        .unwrap();
+    let app = routes::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "production",
+                        "database": "app",
+                        "detail": "SELECT 42",
+                        "share_with": ["group:data-team"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "pending");
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&bob_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "approved");
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{request_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{request_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let exec_id = body["execution_id"].as_str().unwrap().to_string();
+
+    let stored_result = json!({"rows": [{"value": 42}]});
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{exec_id}/result"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"success": true, "result": stored_result.clone()}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    {
+        let conn = state.sqlite.lock().await;
+        let selectors: Vec<(String, String)> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT selector_type, selector_value FROM result_access WHERE request_id = ?1 ORDER BY selector_type, selector_value",
+                )
+                .unwrap();
+            stmt.query_map([&request_id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .map(|row| row.unwrap())
+                .collect()
+        };
+        assert_eq!(
+            selectors,
+            vec![
+                ("group".to_string(), "data-team".to_string()),
+                ("requester".to_string(), "".to_string()),
+                ("role".to_string(), "admin".to_string()),
+            ]
+        );
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/requests/{request_id}/result/content"))
+                .header("authorization", auth_header(&bob_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body, stored_result);
+
+    let resp = app
+        .oneshot(
+            Request::get("/api/results")
+                .header("authorization", auth_header(&bob_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["request_id"], request_id);
 }
 
 #[tokio::test]

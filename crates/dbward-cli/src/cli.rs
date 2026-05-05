@@ -905,9 +905,15 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                         dbward_server::server_config::ResultStorageConfig::Local { root_dir } => {
                             dbward_server::result_storage::ResultStore::new_local(root_dir)
                         }
-                        dbward_server::server_config::ResultStorageConfig::S3 { bucket, region, endpoint } => {
-                            dbward_server::result_storage::ResultStore::new_s3(bucket, region, endpoint.as_deref())
-                        }
+                        dbward_server::server_config::ResultStorageConfig::S3 {
+                            bucket,
+                            region,
+                            endpoint,
+                        } => dbward_server::result_storage::ResultStore::new_s3(
+                            bucket,
+                            region,
+                            endpoint.as_deref(),
+                        ),
                     };
                     match store {
                         Ok(s) => Some(std::sync::Arc::new(s)),
