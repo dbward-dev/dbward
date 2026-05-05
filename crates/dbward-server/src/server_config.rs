@@ -92,6 +92,22 @@ pub struct ServerConfig {
     pub result_policies: Vec<ResultPolicyDef>,
     #[serde(default)]
     pub notification_policies: Vec<NotificationPolicyDef>,
+    #[serde(default)]
+    pub result_storage: ResultStorageConfig,
+}
+
+/// Result storage backend configuration.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "backend", rename_all = "snake_case")]
+pub enum ResultStorageConfig {
+    Local { root_dir: String },
+    S3 { bucket: String, region: String, endpoint: Option<String> },
+}
+
+impl Default for ResultStorageConfig {
+    fn default() -> Self {
+        Self::Local { root_dir: "data/results".into() }
+    }
 }
 
 /// Notification policy definition from TOML config.

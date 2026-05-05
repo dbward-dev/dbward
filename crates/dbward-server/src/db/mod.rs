@@ -34,6 +34,7 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             detail TEXT NOT NULL,
             emergency INTEGER NOT NULL DEFAULT 0,
             reason TEXT,
+            share_with_json TEXT,
             workflow_id TEXT,
             workflow_snapshot_json TEXT,
             created_at TEXT NOT NULL,
@@ -149,6 +150,29 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             updated_at TEXT NOT NULL,
             UNIQUE(database_name, environment)
         );
+
+        CREATE TABLE IF NOT EXISTS request_results (
+            request_id TEXT PRIMARY KEY,
+            storage_backend TEXT NOT NULL,
+            storage_key TEXT NOT NULL,
+            content_length INTEGER NOT NULL,
+            checksum_sha256 TEXT NOT NULL,
+            retention_days INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'stored',
+            stored_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            FOREIGN KEY (request_id) REFERENCES requests(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_request_results_expires ON request_results(expires_at);
+
+        CREATE TABLE IF NOT EXISTS result_access (
+            request_id TEXT NOT NULL,
+            selector_type TEXT NOT NULL,
+            selector_value TEXT NOT NULL,
+            FOREIGN KEY (request_id) REFERENCES requests(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_result_access_lookup
+            ON result_access(selector_type, selector_value);
         ",
     )?;
 

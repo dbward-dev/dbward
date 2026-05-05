@@ -109,6 +109,7 @@ pub struct AppState {
     pub result_channels: Arc<ResultChannels>,
     pub retention: RetentionConfig,
     pub request_notifier: Arc<RequestNotifier>,
+    pub result_store: Option<Arc<crate::result_storage::ResultStore>>,
 }
 
 #[derive(Debug, Clone)]

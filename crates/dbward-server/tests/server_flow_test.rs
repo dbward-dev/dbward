@@ -57,7 +57,8 @@ fn test_state() -> AppState {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-    }
+    result_store: None,
+        }
 }
 
 fn auth_header(token: &str) -> String {
@@ -857,7 +858,8 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-    };
+    result_store: None,
+        };
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
@@ -1952,7 +1954,8 @@ fn test_state_multistep() -> AppState {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-    }
+    result_store: None,
+        }
 }
 
 #[tokio::test]

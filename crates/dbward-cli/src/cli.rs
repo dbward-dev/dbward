@@ -840,6 +840,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                 retention: server_cfg.retention,
                 request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
+            result_store: None,
             };
             let addr: std::net::SocketAddr = listen
                 .parse()
@@ -874,7 +875,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                     retention: Default::default(),
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                };
+                result_store: None,
+            };
                 let subject_type = if *agent { "agent" } else { "user" };
                 let (token_id, raw_token) =
                     dbward_server::auth::create_token_with_type(&state, user, role, subject_type)
@@ -910,7 +912,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                     retention: Default::default(),
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                };
+                result_store: None,
+            };
                 dbward_server::auth::revoke_token(&state, id)
                     .await
                     .map_err(dbward_core::Error::Server)?;
@@ -966,7 +969,8 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
         retention: Default::default(),
         request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-    };
+    result_store: None,
+            };
 
     // Create tokens
     let (_, admin_token) =
