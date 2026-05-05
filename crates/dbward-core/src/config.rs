@@ -36,6 +36,10 @@ pub struct ClientOidcConfig {
     pub issuer: String,
     pub client_id: String,
     pub discovery_url: Option<String>,
+    /// Internal base URL for OIDC HTTP calls when issuer is not directly reachable.
+    /// All endpoint URLs from discovery have their issuer prefix replaced with this.
+    /// Example: issuer=http://localhost:8080/realms/dbward, backchannel_url=http://keycloak:8080/realms/dbward
+    pub backchannel_url: Option<String>,
     /// URL base shown to user for browser access (e.g. http://localhost:8080/realms/dbward)
     /// When set, replaces issuer host in displayed URLs like device flow verification_uri.
     pub browser_url: Option<String>,

@@ -52,8 +52,9 @@ pub async fn login(
     issuer: &str,
     client_id: &str,
     discovery_url: Option<&str>,
+    backchannel_url: Option<&str>,
 ) -> Result<(), String> {
-    let discovery = discover_with_override(issuer, discovery_url).await?;
+    let discovery = discover_with_override(issuer, discovery_url, backchannel_url).await?;
 
     // PKCE
     let verifier = generate_random(43);
@@ -127,13 +128,15 @@ pub async fn login_device(
     client_id: &str,
     discovery_url: Option<&str>,
     browser_url: Option<&str>,
+    backchannel_url: Option<&str>,
 ) -> Result<(), String> {
-    let discovery = discover_with_override(issuer, discovery_url).await?;
+    let discovery = discover_with_override(issuer, discovery_url, backchannel_url).await?;
     let device_endpoint = discovery.device_authorization_endpoint.unwrap_or_else(|| {
         discovery
             .authorization_endpoint
             .replace("/authorize", "/device/authorize")
     });
+    let token_endpoint = discovery.token_endpoint.clone();
 
     let client = reqwest::Client::new();
     let resp: serde_json::Value = client
@@ -168,7 +171,7 @@ pub async fn login_device(
         }
 
         let resp = client
-            .post(&discovery.token_endpoint)
+            .post(&token_endpoint)
             .form(&[
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
                 ("device_code", device_code),
@@ -331,12 +334,13 @@ pub async fn load_token(issuer: &str, client_id: &str) -> Result<String, String>
 }
 
 async fn discover(issuer: &str) -> Result<OidcDiscovery, String> {
-    discover_with_override(issuer, None).await
+    discover_with_override(issuer, None, None).await
 }
 
 async fn discover_with_override(
     issuer: &str,
     discovery_url: Option<&str>,
+    backchannel_url: Option<&str>,
 ) -> Result<OidcDiscovery, String> {
     let url = match discovery_url {
         Some(u) => u.to_string(),
@@ -345,12 +349,28 @@ async fn discover_with_override(
             issuer.trim_end_matches('/')
         ),
     };
-    reqwest::get(&url)
+    let mut disc: OidcDiscovery = reqwest::get(&url)
         .await
         .map_err(|e| format!("OIDC discovery failed: {e}"))?
         .json()
         .await
-        .map_err(|e| format!("invalid discovery response: {e}"))
+        .map_err(|e| format!("invalid discovery response: {e}"))?;
+    // Rewrite endpoints for backchannel access
+    if let Some(base) = backchannel_url {
+        let rewrite = |u: &str| -> String {
+            if u.starts_with(issuer) {
+                format!("{}{}", base, &u[issuer.len()..])
+            } else {
+                u.to_string()
+            }
+        };
+        disc.token_endpoint = rewrite(&disc.token_endpoint);
+        disc.authorization_endpoint = rewrite(&disc.authorization_endpoint);
+        if let Some(ref ep) = disc.device_authorization_endpoint {
+            disc.device_authorization_endpoint = Some(rewrite(ep));
+        }
+    }
+    Ok(disc)
 }
 
 async fn wait_for_callback(port: u16, expected_state: &str) -> Result<String, String> {

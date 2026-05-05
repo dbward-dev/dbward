@@ -7,6 +7,5 @@ url = "http://localhost:13000"
 [server.oidc]
 issuer = "http://localhost:8080/realms/dbward"
 client_id = "dbward-cli"
-discovery_url = "http://localhost:8080/realms/dbward/.well-known/openid-configuration"
 
 [databases.app]

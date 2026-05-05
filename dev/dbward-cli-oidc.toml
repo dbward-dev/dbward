@@ -5,8 +5,9 @@ migrations_dir = "/workspace/db/migrations"
 url = "http://dbward-server:3000"
 
 [server.oidc]
-issuer = "http://keycloak:8080/realms/dbward"
+issuer = "http://localhost:8080/realms/dbward"
 client_id = "dbward-cli"
-browser_url = "http://localhost:8080/realms/dbward"
+# Container can't reach localhost:8080, so rewrite OIDC endpoints to keycloak:8080
+backchannel_url = "http://keycloak:8080/realms/dbward"
 
 [databases.app]
