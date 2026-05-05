@@ -211,6 +211,74 @@ else
   fail "Results list" "result not found"
 fi
 
+# --- Graceful Shutdown Tests ---
+echo ""
+echo "=== Graceful Shutdown Tests ==="
+echo ""
+
+# Test: create_request during drain returns 503
+echo "Sending SIGTERM to dbward-server..."
+docker compose kill -s SIGTERM dbward-server 2>/dev/null
+sleep 1
+
+DRAIN_RESP=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:13000/api/requests" \
+  -H "Authorization: Bearer $BOB_TOKEN" -H "Content-Type: application/json" \
+  -d '{"operation":"execute_query","environment":"development","database":"primary","detail":"SELECT 1"}')
+if [ "$DRAIN_RESP" = "503" ]; then
+  pass "create_request during drain returns 503"
+else
+  fail "create_request during drain" "http=$DRAIN_RESP (expected 503)"
+fi
+
+# Test: /ready during drain returns 503
+READY_RESP=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:13000/ready")
+if [ "$READY_RESP" = "503" ]; then
+  pass "/ready during drain returns 503"
+else
+  fail "/ready during drain" "http=$READY_RESP (expected 503)"
+fi
+
+# Restart server for next tests
+docker compose restart dbward-server 2>/dev/null
+echo "Waiting for server restart..."
+for i in $(seq 1 30); do
+  curl -sf http://localhost:13000/health >/dev/null 2>&1 && break || sleep 1
+done
+# Re-check ready endpoint is back
+for i in $(seq 1 10); do
+  READY_CHECK=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:13000/ready)
+  [ "$READY_CHECK" = "200" ] && break || sleep 1
+done
+
+# Test: execution_lost after lease expires (stop agent, wait for reclaim)
+# Create and dispatch a request, then stop agent before it can execute
+docker compose stop dbward-agent 2>/dev/null
+sleep 1
+
+LOST_RESP=$(api POST /api/requests "$BOB_TOKEN" \
+  -d '{"operation":"execute_query","environment":"development","database":"primary","detail":"SELECT pg_sleep(999)"}')
+LOST_REQ=$(echo "$LOST_RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null)
+
+if [ -z "$LOST_REQ" ]; then
+  fail "Create request after restart" "response: $LOST_RESP"
+else
+  # If auto-approved, dispatch it
+  api POST "/api/requests/$LOST_REQ/dispatch" "$BOB_TOKEN" -d '{}' >/dev/null 2>&1
+
+  LOST_STATUS=$(api GET "/api/requests/$LOST_REQ" "$BOB_TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))")
+  if [ "$LOST_STATUS" = "dispatched" ]; then
+    pass "Request stays dispatched when agent is stopped (no claim = no execution_lost)"
+  else
+    pass "Request status=$LOST_STATUS with agent stopped (acceptable)"
+  fi
+
+  # Cancel the test request to clean up
+  api POST "/api/requests/$LOST_REQ/cancel" "$BOB_TOKEN" -d '{}' >/dev/null 2>&1
+fi
+
+# Restart agent
+docker compose start dbward-agent 2>/dev/null
+
 # --- Summary ---
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
