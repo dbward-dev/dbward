@@ -118,17 +118,21 @@ enum Command {
         #[arg(long, default_value = "3000")]
         port: u16,
     },
-    /// Approve a pending request
-    Approve { id: String },
-    /// Reject a pending request
-    Reject { id: String },
-    /// Cancel a request
-    Cancel {
-        id: String,
-        #[arg(long)]
-        reason: Option<String>,
+    /// Manage requests
+    Request {
+        #[command(subcommand)]
+        action: RequestAction,
     },
-    /// List pending requests
+    /// Manage results
+    Result {
+        #[command(subcommand)]
+        action: ResultAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum RequestAction {
+    /// List requests
     List {
         /// Maximum number of requests to return
         #[arg(long)]
@@ -140,7 +144,19 @@ enum Command {
         #[arg(long)]
         pending_for_me: bool,
     },
-    /// Resume and get result of an executed request
+    /// Show request details
+    Show { id: String },
+    /// Approve a pending request
+    Approve { id: String },
+    /// Reject a pending request
+    Reject { id: String },
+    /// Cancel a request
+    Cancel {
+        id: String,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Dispatch and wait for result
     Resume {
         id: String,
         /// Save result to a specific file
@@ -150,10 +166,14 @@ enum Command {
         #[arg(long)]
         no_save: bool,
     },
-    /// Show a previously saved result from local storage
+    /// Get execution result
     Result { id: String },
+}
+
+#[derive(Subcommand)]
+enum ResultAction {
     /// List shared results accessible to you
-    Results,
+    List,
 }
 
 #[derive(Subcommand)]
@@ -452,262 +472,160 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             }
             Ok(())
         }
-        Command::Approve { ref id } => {
-            match sc.approve(id).await {
-                Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
-                Err(e) => {
-                    if e.status == 404 {
-                        return Err(dbward_core::Error::Server(format!(
-                            "Request {id} not found"
-                        )));
+        Command::Request { action } => match action {
+            RequestAction::Approve { id } => {
+                match sc.approve(&id).await {
+                    Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
+                    Err(e) => {
+                        if e.status == 404 {
+                            return Err(dbward_core::Error::Server(format!(
+                                "Request {id} not found"
+                            )));
+                        }
+                        if e.status == 409 && e.body.to_lowercase().contains("already approved") {
+                            return Err(dbward_core::Error::Server(format!(
+                                "Request is already approved. Run: dbward request resume {id}"
+                            )));
+                        }
+                        if e.status == 403 {
+                            return Err(dbward_core::Error::Server(e.body));
+                        }
+                        return Err(e.into_core_error("approve"));
                     }
-                    if e.status == 409 && e.body.to_lowercase().contains("already approved") {
-                        return Err(dbward_core::Error::Server(format!(
-                            "Request is already approved. Run: dbward resume {id}"
-                        )));
-                    }
-                    if e.status == 403 {
-                        return Err(dbward_core::Error::Server(e.body));
-                    }
-                    return Err(e.into_core_error("approve"));
                 }
+                Ok(())
             }
-            Ok(())
-        }
-        Command::Reject { ref id } => {
-            match sc.reject(id).await {
-                Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
-                Err(e) => {
-                    if e.status == 404 {
-                        return Err(dbward_core::Error::Server(format!(
-                            "Request {id} not found"
-                        )));
+            RequestAction::Reject { id } => {
+                match sc.reject(&id).await {
+                    Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
+                    Err(e) => {
+                        if e.status == 404 {
+                            return Err(dbward_core::Error::Server(format!(
+                                "Request {id} not found"
+                            )));
+                        }
+                        if e.status == 403 {
+                            return Err(dbward_core::Error::Server(e.body));
+                        }
+                        return Err(e.into_core_error("reject"));
                     }
-                    if e.status == 403 {
-                        return Err(dbward_core::Error::Server(e.body));
-                    }
-                    return Err(e.into_core_error("reject"));
                 }
+                Ok(())
             }
-            Ok(())
-        }
-        Command::Cancel { ref id, ref reason } => {
-            match sc.cancel_request(id, reason.as_deref()).await {
-                Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
-                Err(e) => {
-                    if e.status == 404 {
-                        return Err(dbward_core::Error::Server(format!(
-                            "Request {id} not found"
-                        )));
+            RequestAction::Cancel { id, reason } => {
+                match sc.cancel_request(&id, reason.as_deref()).await {
+                    Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
+                    Err(e) => {
+                        if e.status == 404 {
+                            return Err(dbward_core::Error::Server(format!(
+                                "Request {id} not found"
+                            )));
+                        }
+                        if e.status == 403 {
+                            return Err(dbward_core::Error::Server(e.body));
+                        }
+                        return Err(e.into_core_error("cancel"));
                     }
-                    if e.status == 403 {
-                        return Err(dbward_core::Error::Server(e.body));
-                    }
-                    return Err(e.into_core_error("cancel"));
                 }
+                Ok(())
             }
-            Ok(())
-        }
-        Command::List {
-            ref limit,
-            ref status,
-            pending_for_me,
-        } => {
-            let body = if pending_for_me {
-                sc.list_pending_for_me(*limit).await?
-            } else {
-                sc.list_requests(*limit, status.as_deref()).await?
-            };
-            if json_output {
-                println!("{}", serde_json::to_string_pretty(&body)?);
-                return Ok(());
-            }
-            let empty = vec![];
-            let requests = body["requests"]
-                .as_array()
-                .or_else(|| body.as_array())
-                .unwrap_or(&empty);
-            if requests.is_empty() {
-                println!("No requests.");
-            } else {
-                // Collect rows first to calculate column widths
-                let mut rows: Vec<RequestListRow> = Vec::new();
-                for r in requests {
-                    let id = r["id"].as_str().unwrap_or("?");
-                    let short_id = id[..id.len().min(8)].to_string();
-                    let status = r["status"].as_str().unwrap_or("?").to_string();
-                    let user = r["created_by"].as_str().unwrap_or("?").to_string();
-                    let env = r["environment"].as_str().unwrap_or("?").to_string();
-                    let op = r["operation"].as_str().unwrap_or("?").to_string();
-                    let detail = r["detail"].as_str().unwrap_or("");
-                    let short_detail = truncate_table_cell(detail, LIST_DETAIL_WIDTH);
-                    let reason = r["reason"].as_str().unwrap_or("").to_string();
-                    let created = r["created_at"].as_str().unwrap_or("");
-                    let short_time = format_created_time(created);
-                    rows.push((
-                        short_id,
-                        status,
-                        user,
-                        env,
-                        op,
-                        short_detail,
-                        reason,
-                        short_time,
-                    ));
-                }
-
-                let has_reason = rows.iter().any(|r| !r.6.is_empty());
-
-                let w = (
-                    rows.iter().map(|r| r.0.len()).max().unwrap_or(2).max(2) + 2,
-                    rows.iter().map(|r| r.1.len()).max().unwrap_or(6).max(6) + 2,
-                    rows.iter().map(|r| r.7.len()).max().unwrap_or(5).max(5) + 2,
-                    rows.iter().map(|r| r.2.len()).max().unwrap_or(4).max(4) + 2,
-                    rows.iter().map(|r| r.3.len()).max().unwrap_or(3).max(3) + 2,
-                    rows.iter().map(|r| r.4.len()).max().unwrap_or(2).max(2) + 2,
-                );
-
-                if has_reason {
-                    println!(
-                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<detail_width$} REASON",
-                        "ID",
-                        "STATUS",
-                        "TIME",
-                        "USER",
-                        "ENV",
-                        "OP",
-                        "DETAIL",
-                        w0 = w.0,
-                        w1 = w.1,
-                        w2 = w.2,
-                        w3 = w.3,
-                        w4 = w.4,
-                        w5 = w.5,
-                        detail_width = LIST_DETAIL_WIDTH,
-                    );
-                    for r in &rows {
-                        println!(
-                            "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<detail_width$} {}",
-                            r.0,
-                            r.1,
-                            r.7,
-                            r.2,
-                            r.3,
-                            r.4,
-                            r.5,
-                            r.6,
-                            w0 = w.0,
-                            w1 = w.1,
-                            w2 = w.2,
-                            w3 = w.3,
-                            w4 = w.4,
-                            w5 = w.5,
-                            detail_width = LIST_DETAIL_WIDTH,
-                        );
-                    }
+            RequestAction::List {
+                limit,
+                status,
+                pending_for_me,
+            } => {
+                let body = if pending_for_me {
+                    sc.list_pending_for_me(limit).await?
                 } else {
-                    println!(
-                        "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}DETAIL",
-                        "ID",
-                        "STATUS",
-                        "TIME",
-                        "USER",
-                        "ENV",
-                        "OP",
-                        w0 = w.0,
-                        w1 = w.1,
-                        w2 = w.2,
-                        w3 = w.3,
-                        w4 = w.4,
-                        w5 = w.5,
-                    );
-                    for r in &rows {
-                        println!(
-                            "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{}",
-                            r.0,
-                            r.1,
-                            r.7,
-                            r.2,
-                            r.3,
-                            r.4,
-                            r.5,
-                            w0 = w.0,
-                            w1 = w.1,
-                            w2 = w.2,
-                            w3 = w.3,
-                            w4 = w.4,
-                            w5 = w.5,
-                        );
-                    }
+                    sc.list_requests(limit, status.as_deref()).await?
+                };
+                if json_output {
+                    println!("{}", serde_json::to_string_pretty(&body)?);
+                    return Ok(());
                 }
-            }
-            Ok(())
-        }
-        Command::Resume {
-            ref id,
-            ref output,
-            no_save,
-        } => {
-            let resp = sc.dispatch_and_wait(id).await?;
-            if json_output {
-                println!("{}", serde_json::to_string_pretty(&resp)?);
-            } else {
-                print_execution_result(&resp);
-            }
-            save_result(id, &resp, output.as_deref(), no_save);
-            Ok(())
-        }
-        Command::Result { ref id } => {
-            // Try local first, then server
-            match load_result(id) {
-                Ok(resp) => {
-                    if json_output {
-                        println!("{}", serde_json::to_string_pretty(&resp)?);
-                    } else {
-                        print_execution_result(&resp);
-                    }
-                }
-                Err(_) => {
-                    // Try server (shared result)
-                    let resp = sc.get_result_content(id).await?;
-                    if json_output {
-                        println!("{}", serde_json::to_string_pretty(&resp)?);
-                    } else {
-                        // Storage returns raw result data, wrap for display
-                        let wrapped = serde_json::json!({"success": true, "result": resp});
-                        print_execution_result(&wrapped);
-                    }
-                }
-            }
-            Ok(())
-        }
-        Command::Results => {
-            let body = sc.list_results().await?;
-            if json_output {
-                println!("{}", serde_json::to_string_pretty(&body)?);
-            } else if let Some(results) = body["results"].as_array() {
-                if results.is_empty() {
-                    println!("No shared results.");
+                let empty = vec![];
+                let requests = body["requests"]
+                    .as_array()
+                    .or_else(|| body.as_array())
+                    .unwrap_or(&empty);
+                if requests.is_empty() {
+                    println!("No requests.");
                 } else {
-                    println!(
-                        "{:<10} {:<12} {:<10} {:<12} DETAIL",
-                        "ID", "USER", "ENV", "DB"
-                    );
-                    for r in results {
-                        println!(
-                            "{:<10} {:<12} {:<10} {:<12} {}",
-                            &r["request_id"].as_str().unwrap_or("")
-                                [..8.min(r["request_id"].as_str().unwrap_or("").len())],
-                            r["created_by"].as_str().unwrap_or(""),
-                            r["environment"].as_str().unwrap_or(""),
-                            r["database"].as_str().unwrap_or(""),
-                            r["detail"].as_str().unwrap_or(""),
-                        );
+                    print_request_list(requests);
+                }
+                Ok(())
+            }
+            RequestAction::Show { id } => {
+                let body = sc.get_request(&id).await?;
+                println!("{}", serde_json::to_string_pretty(&body)?);
+                Ok(())
+            }
+            RequestAction::Resume {
+                id,
+                output,
+                no_save,
+            } => {
+                let resp = sc.dispatch_and_wait(&id).await?;
+                if json_output {
+                    println!("{}", serde_json::to_string_pretty(&resp)?);
+                } else {
+                    print_execution_result(&resp);
+                }
+                save_result(&id, &resp, output.as_deref(), no_save);
+                Ok(())
+            }
+            RequestAction::Result { id } => {
+                // Try local first, then server
+                match load_result(&id) {
+                    Ok(resp) => {
+                        if json_output {
+                            println!("{}", serde_json::to_string_pretty(&resp)?);
+                        } else {
+                            print_execution_result(&resp);
+                        }
+                    }
+                    Err(_) => {
+                        let resp = sc.get_result_content(&id).await?;
+                        if json_output {
+                            println!("{}", serde_json::to_string_pretty(&resp)?);
+                        } else {
+                            let wrapped = serde_json::json!({"success": true, "result": resp});
+                            print_execution_result(&wrapped);
+                        }
                     }
                 }
+                Ok(())
             }
-            Ok(())
-        }
+        },
+        Command::Result { action } => match action {
+            ResultAction::List => {
+                let body = sc.list_results().await?;
+                if json_output {
+                    println!("{}", serde_json::to_string_pretty(&body)?);
+                } else if let Some(results) = body["results"].as_array() {
+                    if results.is_empty() {
+                        println!("No shared results.");
+                    } else {
+                        println!(
+                            "{:<10} {:<12} {:<10} {:<12} DETAIL",
+                            "ID", "USER", "ENV", "DB"
+                        );
+                        for r in results {
+                            println!(
+                                "{:<10} {:<12} {:<10} {:<12} {}",
+                                &r["request_id"].as_str().unwrap_or("")
+                                    [..8.min(r["request_id"].as_str().unwrap_or("").len())],
+                                r["created_by"].as_str().unwrap_or(""),
+                                r["environment"].as_str().unwrap_or(""),
+                                r["database"].as_str().unwrap_or(""),
+                                r["detail"].as_str().unwrap_or(""),
+                            );
+                        }
+                    }
+                }
+                Ok(())
+            }
+        },
         Command::Mcp => mcp::run_stdio(config, cli.database.as_deref(), sc).await,
         Command::Audit {
             ref limit,
@@ -768,6 +686,54 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         | Command::Server { .. }
         | Command::Agent { .. }
         | Command::Dev { .. } => unreachable!(),
+    }
+}
+
+fn print_request_list(requests: &[serde_json::Value]) {
+    let mut rows: Vec<RequestListRow> = Vec::new();
+    for r in requests {
+        let id = r["id"].as_str().unwrap_or("?");
+        let short_id = id[..id.len().min(8)].to_string();
+        let status = r["status"].as_str().unwrap_or("?").to_string();
+        let user = r["created_by"].as_str().unwrap_or("?").to_string();
+        let env = r["environment"].as_str().unwrap_or("?").to_string();
+        let op = r["operation"].as_str().unwrap_or("?").to_string();
+        let detail = r["detail"].as_str().unwrap_or("");
+        let short_detail = truncate_table_cell(detail, LIST_DETAIL_WIDTH);
+        let reason = r["reason"].as_str().unwrap_or("").to_string();
+        let created = r["created_at"].as_str().unwrap_or("");
+        let short_time = format_created_time(created);
+        rows.push((short_id, status, user, env, op, short_detail, reason, short_time));
+    }
+
+    let has_reason = rows.iter().any(|r| !r.6.is_empty());
+    let w = (
+        rows.iter().map(|r| r.0.len()).max().unwrap_or(2).max(2) + 2,
+        rows.iter().map(|r| r.1.len()).max().unwrap_or(6).max(6) + 2,
+        rows.iter().map(|r| r.7.len()).max().unwrap_or(5).max(5) + 2,
+        rows.iter().map(|r| r.2.len()).max().unwrap_or(4).max(4) + 2,
+        rows.iter().map(|r| r.3.len()).max().unwrap_or(3).max(3) + 2,
+        rows.iter().map(|r| r.4.len()).max().unwrap_or(2).max(2) + 2,
+    );
+
+    if has_reason {
+        println!("{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<dw$} REASON",
+            "ID", "STATUS", "TIME", "USER", "ENV", "OP", "DETAIL",
+            w0=w.0, w1=w.1, w2=w.2, w3=w.3, w4=w.4, w5=w.5, dw=LIST_DETAIL_WIDTH);
+        for r in &rows {
+            println!("{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<dw$} {}",
+                r.0, r.1, r.7, r.2, r.3, r.4, r.5, r.6,
+                w0=w.0, w1=w.1, w2=w.2, w3=w.3, w4=w.4, w5=w.5, dw=LIST_DETAIL_WIDTH);
+        }
+    } else {
+        println!("{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}DETAIL",
+            "ID", "STATUS", "TIME", "USER", "ENV", "OP",
+            w0=w.0, w1=w.1, w2=w.2, w3=w.3, w4=w.4, w5=w.5);
+        for r in &rows {
+            println!("{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{}",
+                r.0, r.1, r.7, r.2, r.3, r.4, r.5,
+                w0=w.0, w1=w.1, w2=w.2, w3=w.3, w4=w.4, w5=w.5);
+        }
     }
 }
 
