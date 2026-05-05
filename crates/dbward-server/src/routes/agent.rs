@@ -220,7 +220,7 @@ pub(crate) async fn agent_heartbeat(
     let conn = state.sqlite.lock().await;
     let new_expires = chrono::Utc::now() + chrono::Duration::seconds(300);
     let updated = conn.execute(
-        "UPDATE agent_executions SET lease_expires_at = ?1, updated_at = ?1
+        "UPDATE agent_executions SET lease_expires_at = ?1
          WHERE id = ?2 AND status = 'claimed'",
         rusqlite::params![new_expires.to_rfc3339(), id],
     ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
