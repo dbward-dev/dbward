@@ -77,21 +77,12 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| Error::Database(e.to_string()))?;
-        let result = sqlx::query(sql)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| Error::Database(e.to_string()))?;
-        tx.commit()
+        let result = sqlx::raw_sql(sql)
+            .execute(&self.pool)
             .await
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(result.rows_affected())
     }
-
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), Error> {
         let mut tx = self
             .pool
@@ -225,21 +216,12 @@ impl DatabaseDriver for MysqlDriver {
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| Error::Database(e.to_string()))?;
-        let result = sqlx::query(sql)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| Error::Database(e.to_string()))?;
-        tx.commit()
+        let result = sqlx::raw_sql(sql)
+            .execute(&self.pool)
             .await
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(result.rows_affected())
     }
-
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), Error> {
         let mut tx = self
             .pool
