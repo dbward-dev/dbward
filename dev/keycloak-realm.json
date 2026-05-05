@@ -7,8 +7,12 @@
       "enabled": true,
       "publicClient": true,
       "directAccessGrantsEnabled": true,
-      "redirectUris": ["http://localhost:*"],
-      "webOrigins": ["*"],
+      "redirectUris": [
+        "http://localhost:*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
       "protocol": "openid-connect",
       "standardFlowEnabled": true,
       "protocolMappers": [
@@ -24,14 +28,25 @@
             "userinfo.token.claim": "true"
           }
         }
-      ]
+      ],
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": "true"
+      }
     }
   ],
   "groups": [
-    { "name": "dbward-admins" },
-    { "name": "dbward-developers" },
-    { "name": "dba-team" },
-    { "name": "backend-team" }
+    {
+      "name": "dbward-admins"
+    },
+    {
+      "name": "dbward-developers"
+    },
+    {
+      "name": "dba-team"
+    },
+    {
+      "name": "backend-team"
+    }
   ],
   "users": [
     {
@@ -42,8 +57,17 @@
       "emailVerified": true,
       "enabled": true,
       "requiredActions": [],
-      "credentials": [{ "type": "password", "value": "alice", "temporary": false }],
-      "groups": ["dbward-developers", "backend-team"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "dbward-developers",
+        "backend-team"
+      ]
     },
     {
       "username": "bob",
@@ -53,8 +77,16 @@
       "emailVerified": true,
       "enabled": true,
       "requiredActions": [],
-      "credentials": [{ "type": "password", "value": "bob", "temporary": false }],
-      "groups": ["dbward-admins"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "dbward-admins"
+      ]
     },
     {
       "username": "carol",
@@ -64,8 +96,16 @@
       "emailVerified": true,
       "enabled": true,
       "requiredActions": [],
-      "credentials": [{ "type": "password", "value": "carol", "temporary": false }],
-      "groups": ["dba-team"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "carol",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "dba-team"
+      ]
     }
   ]
 }

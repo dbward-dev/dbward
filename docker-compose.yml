@@ -157,11 +157,13 @@ services:
     working_dir: /workspace
     stdin_open: true
     tty: true
-    network_mode: host
     volumes:
       - ./:/workspace
       - ./dev/dbward-cli-oidc.toml:/config/dbward-cli-oidc.toml:ro
       - oidc-credentials:/root/.dbward
+    depends_on:
+      - keycloak
+      - dbward-server
     profiles:
       - oidc
 
@@ -172,11 +174,13 @@ services:
     working_dir: /workspace
     stdin_open: true
     tty: true
-    network_mode: host
     volumes:
       - ./:/workspace
       - ./dev/dbward-cli-oidc.toml:/config/dbward-cli-oidc.toml:ro
       - oidc-credentials:/root/.dbward
+    depends_on:
+      - keycloak
+      - dbward-server
     profiles:
       - oidc
 
