@@ -298,36 +298,36 @@ pub async fn load_token(issuer: &str, client_id: &str) -> Result<String, String>
     let expires = chrono::DateTime::parse_from_rfc3339(&creds.expires_at)
         .map_err(|e| format!("invalid expires_at: {e}"))?;
 
-    // If fully expired, must re-login
-    if chrono::Utc::now() > expires {
-        return Err("token expired. Run: dbward login".into());
-    }
+    let now = chrono::Utc::now();
+    let needs_refresh = now > expires || expires < now + chrono::Duration::minutes(5);
 
-    // Try refresh if near expiry (best-effort, don't fail if refresh fails)
-    let refresh_threshold = chrono::Utc::now() + chrono::Duration::minutes(5);
-    if expires < refresh_threshold
-        && let Some(ref refresh_token) = creds.refresh_token
-        && let Ok(discovery) = discover(issuer).await
-        && let Ok(resp) = reqwest::Client::new()
-            .post(&discovery.token_endpoint)
-            .form(&[
-                ("grant_type", "refresh_token"),
-                ("refresh_token", refresh_token),
-                ("client_id", client_id),
-            ])
-            .send()
-            .await
-        && resp.status().is_success()
-        && let Ok(token_resp) = resp.json::<TokenResponse>().await
-    {
-        let new_expires = chrono::Utc::now()
-            + chrono::Duration::seconds(token_resp.expires_in.unwrap_or(3600) as i64);
-        creds.access_token = token_resp.access_token;
-        if let Some(rt) = token_resp.refresh_token {
-            creds.refresh_token = Some(rt);
+    // Try refresh if expired or near expiry
+    if needs_refresh {
+        if let Some(ref refresh_token) = creds.refresh_token
+            && let Ok(discovery) = discover(issuer).await
+            && let Ok(resp) = reqwest::Client::new()
+                .post(&discovery.token_endpoint)
+                .form(&[
+                    ("grant_type", "refresh_token"),
+                    ("refresh_token", refresh_token),
+                    ("client_id", client_id),
+                ])
+                .send()
+                .await
+            && resp.status().is_success()
+            && let Ok(token_resp) = resp.json::<TokenResponse>().await
+        {
+            let new_expires = chrono::Utc::now()
+                + chrono::Duration::seconds(token_resp.expires_in.unwrap_or(3600) as i64);
+            creds.access_token = token_resp.access_token;
+            if let Some(rt) = token_resp.refresh_token {
+                creds.refresh_token = Some(rt);
+            }
+            creds.expires_at = new_expires.to_rfc3339();
+            let _ = save_credentials(&creds);
+        } else if now > expires {
+            return Err("token expired. Run: dbward login".into());
         }
-        creds.expires_at = new_expires.to_rfc3339();
-        let _ = save_credentials(&creds);
     }
 
     Ok(creds.access_token)
