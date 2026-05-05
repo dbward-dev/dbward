@@ -1,6 +1,10 @@
 {
   "realm": "dbward",
   "enabled": true,
+  "accessTokenLifespan": 3600,
+  "ssoSessionIdleTimeout": 86400,
+  "ssoSessionMaxLifespan": 604800,
+  "offlineSessionIdleTimeout": 2592000,
   "clients": [
     {
       "clientId": "dbward-cli",
