@@ -126,6 +126,7 @@ pub async fn login_device(
     issuer: &str,
     client_id: &str,
     discovery_url: Option<&str>,
+    browser_url: Option<&str>,
 ) -> Result<(), String> {
     let discovery = discover_with_override(issuer, discovery_url).await?;
     let device_endpoint = discovery.device_authorization_endpoint.unwrap_or_else(|| {
@@ -153,7 +154,11 @@ pub async fn login_device(
     let device_code = resp["device_code"].as_str().ok_or("missing device_code")?;
     let interval = resp["interval"].as_u64().unwrap_or(5);
 
-    eprintln!("Visit: {verification_uri}");
+    let display_uri = match browser_url {
+        Some(base) => verification_uri.replace(issuer, base),
+        None => verification_uri.to_string(),
+    };
+    eprintln!("Visit: {display_uri}");
     eprintln!("Enter code: {user_code}");
 
     // Poll for token

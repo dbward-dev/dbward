@@ -36,6 +36,9 @@ pub struct ClientOidcConfig {
     pub issuer: String,
     pub client_id: String,
     pub discovery_url: Option<String>,
+    /// URL base shown to user for browser access (e.g. http://localhost:8080/realms/dbward)
+    /// When set, replaces issuer host in displayed URLs like device flow verification_uri.
+    pub browser_url: Option<String>,
 }
 
 impl ClientConfig {

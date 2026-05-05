@@ -330,7 +330,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             .as_ref()
             .ok_or_else(|| dbward_core::Error::Config("[server.oidc] not configured".into()))?;
         if *device {
-            oidc_login::login_device(&oc.issuer, &oc.client_id, oc.discovery_url.as_deref()).await
+            oidc_login::login_device(&oc.issuer, &oc.client_id, oc.discovery_url.as_deref(), oc.browser_url.as_deref()).await
         } else {
             oidc_login::login(&oc.issuer, &oc.client_id, oc.discovery_url.as_deref()).await
         }
