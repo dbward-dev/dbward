@@ -2646,6 +2646,68 @@ async fn cancel_rejects_terminal_states() {
 }
 
 #[tokio::test]
+async fn cancel_notifies_waiting_get_request() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let app = routes::router(state);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"operation":"execute_query","environment":"production","database":"default","detail":"SELECT wait"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let wait_app = app.clone();
+    let wait_token = alice_token.clone();
+    let wait_id = id.clone();
+    let waiter = tokio::spawn(async move {
+        wait_app
+            .oneshot(
+                Request::get(format!("/api/requests/{wait_id}?wait=5"))
+                    .header("authorization", auth_header(&wait_token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let cancel_resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{id}/cancel"))
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"reason":"wake waiter"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancel_resp.status(), StatusCode::OK);
+
+    let wait_resp = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+        .await
+        .expect("waiting GET should be notified")
+        .unwrap();
+    assert_eq!(wait_resp.status(), StatusCode::OK);
+    let body = body_json(wait_resp).await;
+    assert_eq!(body["status"], "cancelled");
+}
+
+#[tokio::test]
 async fn claim_race_returns_conflict_for_second_claim() {
     let state = test_state();
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")

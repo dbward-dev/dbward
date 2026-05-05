@@ -200,35 +200,6 @@ impl Drop for ProbeGuard {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn drain_requires_flag_and_zero_inflight() {
-        let draining = AtomicBool::new(false);
-        let in_flight = AtomicUsize::new(0);
-        assert!(!should_exit_drain(&draining, &in_flight));
-
-        draining.store(true, Ordering::SeqCst);
-        in_flight.store(1, Ordering::SeqCst);
-        assert!(!should_exit_drain(&draining, &in_flight));
-
-        in_flight.store(0, Ordering::SeqCst);
-        assert!(should_exit_drain(&draining, &in_flight));
-    }
-
-    #[test]
-    fn probe_file_helpers_round_trip() {
-        let path = format!("/tmp/dbward-agent-test-{}", std::process::id());
-        remove_probe(&path).unwrap();
-        write_probe(&path).unwrap();
-        assert!(std::path::Path::new(&path).exists());
-        remove_probe(&path).unwrap();
-        assert!(!std::path::Path::new(&path).exists());
-    }
-}
-
 async fn execute_operation(
     resolved: &dbward_core::ResolvedDatabaseConfig,
     env: dbward_core::Environment,
@@ -290,5 +261,34 @@ async fn execute_operation(
             }
         }
         _ => Err(Error::Server(format!("unsupported operation: {operation}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drain_requires_flag_and_zero_inflight() {
+        let draining = AtomicBool::new(false);
+        let in_flight = AtomicUsize::new(0);
+        assert!(!should_exit_drain(&draining, &in_flight));
+
+        draining.store(true, Ordering::SeqCst);
+        in_flight.store(1, Ordering::SeqCst);
+        assert!(!should_exit_drain(&draining, &in_flight));
+
+        in_flight.store(0, Ordering::SeqCst);
+        assert!(should_exit_drain(&draining, &in_flight));
+    }
+
+    #[test]
+    fn probe_file_helpers_round_trip() {
+        let path = format!("/tmp/dbward-agent-test-{}", std::process::id());
+        remove_probe(&path).unwrap();
+        write_probe(&path).unwrap();
+        assert!(std::path::Path::new(&path).exists());
+        remove_probe(&path).unwrap();
+        assert!(!std::path::Path::new(&path).exists());
     }
 }

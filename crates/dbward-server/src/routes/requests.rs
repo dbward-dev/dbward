@@ -795,11 +795,16 @@ pub(crate) async fn cancel_request(
         )
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         if !updated {
-            return Err(crate::api_error::ApiError::conflict("request cannot be cancelled"));
+            return Err(crate::api_error::ApiError::conflict(
+                "request cannot be cancelled",
+            ));
         }
 
-        let notif_hooks =
-            crate::db::policy_repo::get_notification_webhooks(&conn, &ctx.database_name, &ctx.environment);
+        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(
+            &conn,
+            &ctx.database_name,
+            &ctx.environment,
+        );
         (
             id,
             ctx.created_by,

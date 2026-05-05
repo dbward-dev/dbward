@@ -337,7 +337,10 @@ impl ServerClient {
     ) -> Result<Value, ServerError> {
         let mut req = self
             .client
-            .post(format!("{}/api/requests/{}/cancel", self.base_url, request_id))
+            .post(format!(
+                "{}/api/requests/{}/cancel",
+                self.base_url, request_id
+            ))
             .bearer_auth(&self.api_token);
         if let Some(reason) = reason {
             req = req.json(&serde_json::json!({ "reason": reason }));

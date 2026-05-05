@@ -72,6 +72,40 @@ pub fn reclaim_expired_leases(conn: &Connection) -> Result<usize, rusqlite::Erro
     Ok(count)
 }
 
+/// Purge expired results: delete from storage and DB.
+/// Returns list of request_ids whose storage objects should be deleted.
+#[allow(dead_code)]
+pub fn collect_expired_results(
+    conn: &Connection,
+) -> Result<Vec<(String, String)>, rusqlite::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut stmt = conn.prepare(
+        "SELECT request_id, storage_key FROM request_results WHERE expires_at < ?1 AND status = 'stored'",
+    )?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map(rusqlite::params![now], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(rows)
+}
+
+/// Remove DB records for expired results (call after storage deletion).
+#[allow(dead_code)]
+pub fn delete_expired_result_records(
+    conn: &Connection,
+    request_id: &str,
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "DELETE FROM result_access WHERE request_id = ?1",
+        rusqlite::params![request_id],
+    )?;
+    conn.execute(
+        "DELETE FROM request_results WHERE request_id = ?1",
+        rusqlite::params![request_id],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,36 +168,4 @@ mod tests {
             .unwrap();
         assert_eq!(aud_count, 1);
     }
-}
-
-/// Purge expired results: delete from storage and DB.
-/// Returns list of request_ids whose storage objects should be deleted.
-pub fn collect_expired_results(
-    conn: &Connection,
-) -> Result<Vec<(String, String)>, rusqlite::Error> {
-    let now = chrono::Utc::now().to_rfc3339();
-    let mut stmt = conn.prepare(
-        "SELECT request_id, storage_key FROM request_results WHERE expires_at < ?1 AND status = 'stored'",
-    )?;
-    let rows: Vec<(String, String)> = stmt
-        .query_map(rusqlite::params![now], |row| Ok((row.get(0)?, row.get(1)?)))?
-        .filter_map(|r| r.ok())
-        .collect();
-    Ok(rows)
-}
-
-/// Remove DB records for expired results (call after storage deletion).
-pub fn delete_expired_result_records(
-    conn: &Connection,
-    request_id: &str,
-) -> Result<(), rusqlite::Error> {
-    conn.execute(
-        "DELETE FROM result_access WHERE request_id = ?1",
-        rusqlite::params![request_id],
-    )?;
-    conn.execute(
-        "DELETE FROM request_results WHERE request_id = ?1",
-        rusqlite::params![request_id],
-    )?;
-    Ok(())
 }

@@ -9,8 +9,8 @@ use axum::routing::get;
 
 use crate::state::AppState;
 use requests::{
-    approve_request, cancel_request, create_request, dispatch_request, get_public_key,
-    get_request, health, list_requests, ready, reject_request, stream_result,
+    approve_request, cancel_request, create_request, dispatch_request, get_public_key, get_request,
+    health, list_requests, ready, reject_request, stream_result,
 };
 
 pub fn router(state: AppState) -> Router {
