@@ -41,6 +41,7 @@ services:
       interval: 3s
       timeout: 5s
       retries: 20
+    stop_grace_period: 120s
 
   dbward-agent:
     build: *dbward-build
