@@ -29,11 +29,11 @@ pub struct Cli {
     config: PathBuf,
 
     /// Select named database from config
-    #[arg(long, env = "DBWARD_DATABASE")]
+    #[arg(long, env = "DBWARD_DATABASE", global = true)]
     database: Option<String>,
 
     /// Override environment for this request
-    #[arg(long, env = "DBWARD_ENV")]
+    #[arg(long, env = "DBWARD_ENV", global = true)]
     environment: Option<String>,
 
     /// Output format: table (default) or json
