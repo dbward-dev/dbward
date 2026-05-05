@@ -209,14 +209,17 @@ fn authz_match(
     policy_obj: Dynamic,
 ) -> Dynamic {
     let allowed = parse_dynamic::<Principal>(&sub)
-        .zip(parse_dynamic::<Resource>(&obj)).map(|(principal, resource)| (
+        .zip(parse_dynamic::<Resource>(&obj))
+        .map(|(principal, resource)| {
+            (
                 principal,
                 resource,
                 act.to_string(),
                 policy_sub_type.to_string(),
                 policy_perm.to_string(),
                 policy_obj.to_string(),
-            ))
+            )
+        })
         .map(
             |(principal, resource, act, policy_sub_type, policy_perm, policy_obj)| {
                 principal.subject_type == policy_sub_type
@@ -359,7 +362,7 @@ fn is_admin(principal: &Principal) -> bool {
 
 /// Evaluate a principal selector entry against the given principal.
 /// Supports: "requester", "role:<name>", "group:<name>", "user:<id>", bare role name.
-pub fn matches_selector(principal: &Principal, selector: &str, requester_id: &str) -> bool {
+fn matches_selector(principal: &Principal, selector: &str, requester_id: &str) -> bool {
     match selector {
         "requester" => principal.user == requester_id,
         s if s.starts_with("role:") => principal.roles.iter().any(|r| r == &s[5..]),
@@ -405,6 +408,21 @@ mod tests {
             user: name.into(),
             roles: roles.iter().map(|role| (*role).to_string()).collect(),
             groups: vec![],
+            subject_type: subject_type.into(),
+        }
+    }
+
+    fn user_with_groups(
+        name: &str,
+        roles: &[&str],
+        groups: &[&str],
+        subject_type: &str,
+    ) -> AuthUser {
+        AuthUser {
+            token_id: "t".into(),
+            user: name.into(),
+            roles: roles.iter().map(|role| (*role).to_string()).collect(),
+            groups: groups.iter().map(|group| (*group).to_string()).collect(),
             subject_type: subject_type.into(),
         }
     }
@@ -474,6 +492,40 @@ mod tests {
 
         assert!(
             authorize(&principal, Action::RejectRequest, resource)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn matches_selector_supports_all_selector_types() {
+        let principal = Principal::from(&user_with_groups(
+            "bob",
+            &["ops", "developer"],
+            &["sre", "prod-approvers"],
+            "user",
+        ));
+
+        assert!(matches_selector(&principal, "requester", "bob"));
+        assert!(matches_selector(&principal, "role:ops", "alice"));
+        assert!(matches_selector(&principal, "group:sre", "alice"));
+        assert!(matches_selector(&principal, "user:bob", "alice"));
+        assert!(matches_selector(&principal, "developer", "alice"));
+        assert!(!matches_selector(&principal, "group:dba", "alice"));
+        assert!(!matches_selector(&principal, "user:alice", "alice"));
+    }
+
+    #[tokio::test]
+    async fn group_approver_can_approve_current_step() {
+        let principal = user_with_groups("bob", &["team-a"], &["prod-approvers"], "user");
+        let resource = Resource::ApprovalStep {
+            requester_id: "alice".into(),
+            allowed_roles: vec![],
+            allowed_groups: vec!["prod-approvers".into()],
+        };
+
+        assert!(
+            authorize(&principal, Action::ApproveRequest, resource)
                 .await
                 .is_ok()
         );

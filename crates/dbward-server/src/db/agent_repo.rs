@@ -83,6 +83,7 @@ pub fn get_execution_context(
 }
 
 /// Finalize execution: update execution status, request status, insert audit log.
+#[allow(clippy::too_many_arguments)]
 pub fn finish_execution(
     conn: &mut Connection,
     execution_id: &str,

@@ -21,6 +21,29 @@ pub(crate) struct ApproveResult {
     pub webhook_event: Option<crate::webhook::WebhookEvent>,
 }
 
+pub(crate) fn approver_key(group: &crate::server_config::ApproverGroup) -> Option<String> {
+    group
+        .role
+        .as_ref()
+        .map(|role| format!("role:{role}"))
+        .or_else(|| group.group.as_ref().map(|grp| format!("group:{grp}")))
+}
+
+pub(crate) fn step_allowed_roles_groups(
+    step: &crate::server_config::WorkflowStep,
+) -> (Vec<String>, Vec<String>) {
+    (
+        step.approvers
+            .iter()
+            .filter_map(|group| group.role.clone())
+            .collect(),
+        step.approvers
+            .iter()
+            .filter_map(|group| group.group.clone())
+            .collect(),
+    )
+}
+
 pub(crate) async fn approve_request_inner(
     sqlite: &tokio::sync::Mutex<rusqlite::Connection>,
     token_signer: &TokenSigner,
@@ -61,7 +84,9 @@ pub(crate) async fn approve_request_inner(
             Action::ApproveRequest,
             Resource::ApprovalStep {
                 requester_id: req_user.clone(),
-                allowed_roles: Vec::new(), allowed_groups: vec![], },
+                allowed_roles: Vec::new(),
+                allowed_groups: vec![],
+            },
         )?;
         let now = chrono::Utc::now().to_rfc3339();
         let tx = conn
@@ -142,16 +167,15 @@ pub(crate) async fn approve_request_inner(
 
     let step = &steps[current_step];
 
+    let (allowed_roles, allowed_groups) = step_allowed_roles_groups(step);
     authz::authorize_sync(
         approver,
         Action::ApproveRequest,
         Resource::ApprovalStep {
             requester_id: req_user.clone(),
-            allowed_roles: step
-                .approvers
-                .iter()
-                .filter_map(|group| group.role.clone())
-                .collect(), allowed_groups: vec![], },
+            allowed_roles,
+            allowed_groups,
+        },
     )?;
 
     // Determine approver's role
@@ -166,38 +190,42 @@ pub(crate) async fn approve_request_inner(
             ))
             .with_code("as_role_not_held"));
         }
-        if !step.approvers.iter().any(|g| g.role.as_deref() == Some(role)) {
+        if !step
+            .approvers
+            .iter()
+            .any(|g| g.role.as_deref() == Some(role))
+        {
             return Err(crate::api_error::ApiError::forbidden(format!(
                 "role '{role}' is not an approver for current step"
             ))
             .with_code("as_role_not_allowed_for_step"));
         }
-        role.clone()
+        format!("role:{role}")
     } else {
         let found = step.approvers.iter().find_map(|g| {
-            if let Some(ref r) = g.role {
-                if approver.has_role(r) {
-                    return Some(r.clone());
-                }
+            if let Some(ref r) = g.role
+                && approver.has_role(r)
+            {
+                return Some(format!("role:{r}"));
             }
-            if let Some(ref grp) = g.group {
-                if approver.groups.contains(grp) {
-                    return Some(grp.clone());
-                }
+            if let Some(ref grp) = g.group
+                && approver.groups.contains(grp)
+            {
+                return Some(format!("group:{grp}"));
             }
             None
         });
         found
             .or_else(|| {
                 if approver.effective_permission() == "admin" {
-                    step.approvers.first().and_then(|g| g.role.clone())
+                    step.approvers.first().and_then(approver_key)
                 } else {
                     None
                 }
             })
             .ok_or_else(|| {
                 crate::api_error::ApiError::forbidden(
-                    "you do not have a matching role for this step",
+                    "you do not have a matching role or group for this step",
                 )
                 .with_code("no_matching_approver_role")
             })?
@@ -358,20 +386,144 @@ pub(crate) fn is_step_satisfied(
 
     match step.mode.as_str() {
         "any" => step.approvers.iter().any(|g| {
-            let key = g.role.as_deref().or(g.group.as_deref()).unwrap_or("");
-            step_approvals
-                .iter()
-                .filter(|(_, _, role)| role == key)
-                .count()
-                >= g.min as usize
+            approver_key(g).is_some_and(|key| {
+                step_approvals
+                    .iter()
+                    .filter(|(_, _, role)| *role == key)
+                    .count()
+                    >= g.min as usize
+            })
         }),
         _ => step.approvers.iter().all(|g| {
-            let key = g.role.as_deref().or(g.group.as_deref()).unwrap_or("");
-            step_approvals
-                .iter()
-                .filter(|(_, _, role)| role == key)
-                .count()
-                >= g.min as usize
+            approver_key(g).is_some_and(|key| {
+                step_approvals
+                    .iter()
+                    .filter(|(_, _, role)| *role == key)
+                    .count()
+                    >= g.min as usize
+            })
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db;
+    use crate::db::request_repo::NewRequest;
+    use crate::state::{AppState, ResultChannels};
+    use crate::token::TokenSigner;
+    use rusqlite::Connection;
+    use std::sync::Arc;
+
+    fn test_state() -> AppState {
+        let conn = Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        AppState {
+            sqlite: Arc::new(tokio::sync::Mutex::new(conn)),
+            token_signer: Arc::new(TokenSigner::generate()),
+            webhooks: Arc::new(crate::webhook::WebhookDispatcher::empty()),
+            oidc: None,
+            auth_mode: "token".to_string(),
+            policy: Arc::new(Default::default()),
+            result_channels: Arc::new(ResultChannels::new()),
+            retention: Default::default(),
+            request_notifier: Arc::new(crate::state::RequestNotifier::new()),
+        }
+    }
+
+    fn approver(user: &str, roles: &[&str], groups: &[&str]) -> crate::state::AuthUser {
+        crate::state::AuthUser {
+            token_id: format!("oidc:{user}"),
+            user: user.into(),
+            roles: roles.iter().map(|role| (*role).to_string()).collect(),
+            groups: groups.iter().map(|group| (*group).to_string()).collect(),
+            subject_type: "user".into(),
+        }
+    }
+
+    async fn insert_pending_request(state: &AppState, id: &str, workflow_snapshot_json: &str) {
+        let conn = state.sqlite.lock().await;
+        db::request_repo::insert_request(
+            &conn,
+            &NewRequest {
+                id,
+                created_by: "alice",
+                operation: "execute_query",
+                environment: "production",
+                database_name: "app",
+                detail: "SELECT 1",
+                status: "pending",
+                emergency: false,
+                reason: None,
+                workflow_id: Some("wf"),
+                workflow_snapshot_json: Some(workflow_snapshot_json),
+            },
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn group_approval_records_group_selector() {
+        let state = test_state();
+        let request_id = "8c5e16c4-4f9d-4d8f-b983-d4cd6dfd4411";
+        insert_pending_request(
+            &state,
+            request_id,
+            r#"[{"type":"approval","mode":"all","approvers":[{"group":"prod-approvers","min":1}],"require_distinct_actors":true}]"#,
+        )
+        .await;
+
+        let result = approve_request_inner(
+            &state.sqlite,
+            state.token_signer.as_ref(),
+            request_id,
+            &approver("bob", &["team-a"], &["prod-approvers"]),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.response["status"], "approved");
+
+        let conn = state.sqlite.lock().await;
+        let rows = db::request_repo::get_approvals(&conn, request_id).unwrap();
+        assert_eq!(rows, vec![(0, "bob".into(), "group:prod-approvers".into())]);
+    }
+
+    #[test]
+    fn is_step_satisfied_distinguishes_role_and_group_with_same_name() {
+        let step = crate::server_config::WorkflowStep {
+            step_type: "approval".into(),
+            mode: "all".into(),
+            approvers: vec![
+                crate::server_config::ApproverGroup {
+                    role: Some("ops".into()),
+                    group: None,
+                    min: 1,
+                },
+                crate::server_config::ApproverGroup {
+                    role: None,
+                    group: Some("ops".into()),
+                    min: 1,
+                },
+            ],
+            require_distinct_actors: true,
+        };
+
+        assert!(!is_step_satisfied(
+            &step,
+            &[(0, "bob".into(), "group:ops".into())],
+            0,
+        ));
+        assert!(is_step_satisfied(
+            &step,
+            &[
+                (0, "bob".into(), "group:ops".into()),
+                (0, "carol".into(), "role:ops".into()),
+            ],
+            0,
+        ));
     }
 }

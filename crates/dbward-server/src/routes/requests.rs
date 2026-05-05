@@ -11,6 +11,23 @@ use crate::auth;
 use crate::authz::{self, Action, Resource};
 use crate::state::AppState;
 
+type ApprovalRecord = (i64, String, String);
+type ApprovalMap = HashMap<String, Vec<ApprovalRecord>>;
+type RequestRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
 /// Resolve a short or full request ID, returning appropriate error.
 fn resolve_id(
     conn: &rusqlite::Connection,
@@ -258,7 +275,7 @@ pub(crate) fn list_requests_pending_for_me(
 
 fn load_pending_request_approvals(
     conn: &rusqlite::Connection,
-) -> Result<HashMap<String, Vec<(i64, String, String)>>, crate::api_error::ApiError> {
+) -> Result<ApprovalMap, crate::api_error::ApiError> {
     let mut stmt = conn
         .prepare("SELECT request_id, step_index, actor_id, actor_role FROM approvals WHERE action = 'approve' AND request_id IN (SELECT id FROM requests WHERE status = 'pending')")
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
@@ -274,7 +291,7 @@ fn load_pending_request_approvals(
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-    let mut map: HashMap<String, Vec<(i64, String, String)>> = HashMap::new();
+    let mut map: ApprovalMap = HashMap::new();
     for (req_id, step, actor, role) in rows {
         map.entry(req_id).or_default().push((step, actor, role));
     }
@@ -282,7 +299,7 @@ fn load_pending_request_approvals(
 }
 
 fn request_is_approvable_by_user(
-    all_approvals: &HashMap<String, Vec<(i64, String, String)>>,
+    all_approvals: &ApprovalMap,
     row: &serde_json::Value,
     created_by: &str,
     workflow_snapshot_json: Option<&str>,
@@ -303,15 +320,15 @@ fn request_is_approvable_by_user(
         }
     });
 
-    let allowed_roles: Vec<String> = current_step_idx
+    let (allowed_roles, allowed_groups) = current_step_idx
         .and_then(|i| steps.get(i))
-        .map(|step| step.approvers.iter().filter_map(|g| g.role.clone()).collect())
+        .map(crate::services::request_lifecycle::step_allowed_roles_groups)
         .unwrap_or_default();
 
     let approval_resource = authz::Resource::ApprovalStep {
         requester_id: created_by.to_string(),
         allowed_roles,
-        allowed_groups: vec![],
+        allowed_groups,
     };
 
     if authz::authorize_sync(user, Action::ApproveRequest, approval_resource).is_err() {
@@ -319,9 +336,17 @@ fn request_is_approvable_by_user(
     }
 
     if let Some(idx) = current_step_idx {
-        !approvals
-            .iter()
-            .any(|(si, aid, _)| *si == idx as i64 && aid == &user.user)
+        let step = match steps.get(idx) {
+            Some(step) => step,
+            None => return false,
+        };
+        if step.require_distinct_actors {
+            !approvals
+                .iter()
+                .any(|(si, aid, _)| *si == idx as i64 && aid == &user.user)
+        } else {
+            true
+        }
     } else {
         steps.is_empty()
     }
@@ -349,7 +374,9 @@ pub(crate) fn current_approval_resource(
         return Ok((
             Resource::ApprovalStep {
                 requester_id,
-                allowed_roles: Vec::new(), allowed_groups: vec![], },
+                allowed_roles: Vec::new(),
+                allowed_groups: vec![],
+            },
             0,
             Vec::new(),
             0,
@@ -369,22 +396,24 @@ pub(crate) fn current_approval_resource(
         })
         .unwrap_or(steps.len());
 
-    let allowed_roles: Vec<String> = steps
+    let (allowed_roles, allowed_groups) = steps
         .get(current_step)
-        .map(|step| {
-            step.approvers
-                .iter()
-                .filter_map(|group| group.role.clone())
-                .collect()
-        })
+        .map(crate::services::request_lifecycle::step_allowed_roles_groups)
         .unwrap_or_default();
+    let allowed_labels: Vec<String> = allowed_roles
+        .iter()
+        .map(|role| format!("role:{role}"))
+        .chain(allowed_groups.iter().map(|group| format!("group:{group}")))
+        .collect();
 
     Ok((
         Resource::ApprovalStep {
             requester_id,
-            allowed_roles: allowed_roles.clone(), allowed_groups: vec![], },
+            allowed_roles: allowed_roles.clone(),
+            allowed_groups: allowed_groups.clone(),
+        },
         current_step,
-        allowed_roles,
+        allowed_labels,
         steps.len(),
     ))
 }
@@ -727,7 +756,7 @@ pub(crate) async fn get_request(
                           id: &str,
                           state: &AppState|
      -> Result<serde_json::Value, crate::api_error::ApiError> {
-        let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason): (String, String, String, String, String, String, String, String, String, Option<String>, Option<String>, Option<String>) = conn
+        let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason): RequestRow = conn
             .query_row(
                 "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason FROM requests WHERE id = ?1",
                 rusqlite::params![id],
@@ -755,8 +784,9 @@ pub(crate) async fn get_request(
         if let Some(ref snapshot) = workflow_snapshot_json
             && let Ok(steps) =
                 serde_json::from_str::<Vec<crate::server_config::WorkflowStep>>(snapshot)
-                && !steps.is_empty() {
-                    let approvals: Vec<(i64, String, String, String)> = conn
+            && !steps.is_empty()
+        {
+            let approvals: Vec<(i64, String, String, String)> = conn
                         .prepare("SELECT step_index, actor_id, actor_role, created_at FROM approvals WHERE request_id = ?1 AND action = 'approve'")
                         .and_then(|mut stmt| {
                             stmt.query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
@@ -764,7 +794,7 @@ pub(crate) async fn get_request(
                         })
                         .unwrap_or_default();
 
-                    let step_views: Vec<serde_json::Value> = steps.iter().enumerate().map(|(i, step)| {
+            let step_views: Vec<serde_json::Value> = steps.iter().enumerate().map(|(i, step)| {
                         let step_apprs: Vec<serde_json::Value> = approvals.iter()
                             .filter(|(si, _, _, _)| *si == i as i64)
                             .map(|(_, user, role, at)| json!({"user": user, "role": role, "at": at}))
@@ -781,30 +811,30 @@ pub(crate) async fn get_request(
                         })
                     }).collect();
 
-                    let current = steps
+            let current = steps
+                .iter()
+                .enumerate()
+                .find_map(|(i, step)| {
+                    let simple: Vec<(i64, String, String)> = approvals
                         .iter()
-                        .enumerate()
-                        .find_map(|(i, step)| {
-                            let simple: Vec<(i64, String, String)> = approvals
-                                .iter()
-                                .map(|(si, uid, role, _)| (*si, uid.clone(), role.clone()))
-                                .collect();
-                            if !crate::services::request_lifecycle::is_step_satisfied(
-                                step, &simple, i as i64,
-                            ) {
-                                Some(i)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(steps.len());
+                        .map(|(si, uid, role, _)| (*si, uid.clone(), role.clone()))
+                        .collect();
+                    if !crate::services::request_lifecycle::is_step_satisfied(
+                        step, &simple, i as i64,
+                    ) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(steps.len());
 
-                    resp["approval_progress"] = json!({
-                        "current_step": current,
-                        "total_steps": steps.len(),
-                        "steps": step_views,
-                    });
-                }
+            resp["approval_progress"] = json!({
+                "current_step": current,
+                "total_steps": steps.len(),
+                "steps": step_views,
+            });
+        }
 
         Ok(resp)
     };
@@ -890,16 +920,17 @@ pub(crate) async fn dispatch_request(
             crate::db::policy_repo::get_execution_policy(&conn, &database_name, &environment);
 
         if let Some(ref resolved) = resolved_at
-            && let Ok(resolved_time) = chrono::DateTime::parse_from_rfc3339(resolved) {
-                let elapsed = chrono::Utc::now().signed_duration_since(resolved_time);
-                if elapsed.num_seconds() as u64 > window_secs {
-                    return Err(crate::api_error::ApiError::new(
-                        StatusCode::GONE,
-                        "execution window expired",
-                    )
-                    .with_code("execution_window_expired"));
-                }
+            && let Ok(resolved_time) = chrono::DateTime::parse_from_rfc3339(resolved)
+        {
+            let elapsed = chrono::Utc::now().signed_duration_since(resolved_time);
+            if elapsed.num_seconds() as u64 > window_secs {
+                return Err(crate::api_error::ApiError::new(
+                    StatusCode::GONE,
+                    "execution window expired",
+                )
+                .with_code("execution_window_expired"));
             }
+        }
 
         let exec_count = crate::db::request_repo::count_executions(&conn, &id);
         if status == "failed" && !retry {

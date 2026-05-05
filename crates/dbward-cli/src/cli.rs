@@ -10,6 +10,16 @@ use crate::oidc_login;
 use crate::server_client;
 
 const LIST_DETAIL_WIDTH: usize = 30;
+type RequestListRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+);
 
 #[derive(Parser)]
 #[command(name = "dbward", about = "DB operations workflow + approval engine")]
@@ -474,16 +484,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 println!("No requests.");
             } else {
                 // Collect rows first to calculate column widths
-                let mut rows: Vec<(
-                    String,
-                    String,
-                    String,
-                    String,
-                    String,
-                    String,
-                    String,
-                    String,
-                )> = Vec::new();
+                let mut rows: Vec<RequestListRow> = Vec::new();
                 for r in requests {
                     let id = r["id"].as_str().unwrap_or("?");
                     let short_id = id[..id.len().min(8)].to_string();

@@ -37,7 +37,8 @@ fn test_state() -> AppState {
                 step_type: "approval".into(),
                 mode: "all".into(),
                 approvers: vec![dbward_server::server_config::ApproverGroup {
-                    role: "admin".into(),
+                    role: Some("admin".into()),
+                    group: None,
                     min: 1,
                 }],
                 require_distinct_actors: true,
@@ -1896,7 +1897,8 @@ fn test_state_multistep() -> AppState {
                     step_type: "approval".into(),
                     mode: "all".into(),
                     approvers: vec![dbward_server::server_config::ApproverGroup {
-                        role: "team-lead".into(),
+                        role: Some("team-lead".into()),
+                        group: None,
                         min: 1,
                     }],
                     require_distinct_actors: true,
@@ -1905,7 +1907,8 @@ fn test_state_multistep() -> AppState {
                     step_type: "approval".into(),
                     mode: "all".into(),
                     approvers: vec![dbward_server::server_config::ApproverGroup {
-                        role: "dba".into(),
+                        role: Some("dba".into()),
+                        group: None,
                         min: 1,
                     }],
                     require_distinct_actors: true,
@@ -1923,11 +1926,13 @@ fn test_state_multistep() -> AppState {
                 mode: "any".into(),
                 approvers: vec![
                     dbward_server::server_config::ApproverGroup {
-                        role: "team-lead".into(),
+                        role: Some("team-lead".into()),
+                        group: None,
                         min: 1,
                     },
                     dbward_server::server_config::ApproverGroup {
-                        role: "dba".into(),
+                        role: Some("dba".into()),
+                        group: None,
                         min: 1,
                     },
                 ],

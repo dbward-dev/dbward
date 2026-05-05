@@ -7,6 +7,7 @@ pub(crate) struct TokenRow {
     pub(crate) subject_type: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn insert_token(
     conn: &Connection,
     id: &str,
