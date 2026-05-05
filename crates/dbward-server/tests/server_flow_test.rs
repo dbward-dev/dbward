@@ -3639,3 +3639,182 @@ async fn get_request_includes_approval_progress() {
     assert_eq!(progress["steps"][0]["satisfied"], true);
     assert_eq!(progress["steps"][1]["satisfied"], false);
 }
+
+#[tokio::test]
+async fn heartbeat_extends_lease() {
+    let state = test_state();
+    let app = routes::router(state.clone());
+    let (_, token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
+        .await
+        .unwrap();
+
+    // Create + dispatch
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation":"execute_query","environment":"development","database":"primary","detail":"SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let request_id = body["id"].as_str().unwrap().to_string();
+
+    app.clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{request_id}/dispatch"))
+                .header("authorization", auth_header(&token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Claim
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{request_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let exec_id = body["execution_id"].as_str().unwrap().to_string();
+
+    // Get initial lease
+    let initial_lease: String = {
+        let conn = state.sqlite.lock().await;
+        conn.query_row(
+            "SELECT lease_expires_at FROM agent_executions WHERE id = ?1",
+            rusqlite::params![exec_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+
+    // Heartbeat
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{exec_id}/heartbeat"))
+                .header("authorization", auth_header(&agent_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Verify lease was extended
+    let new_lease: String = {
+        let conn = state.sqlite.lock().await;
+        conn.query_row(
+            "SELECT lease_expires_at FROM agent_executions WHERE id = ?1",
+            rusqlite::params![exec_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    assert!(new_lease > initial_lease, "lease should be extended");
+}
+
+#[tokio::test]
+async fn stream_result_works_with_short_id() {
+    let state = test_state();
+    let app = routes::router(state.clone());
+    let (_, token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
+        .await
+        .unwrap();
+
+    // Create + dispatch
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation":"execute_query","environment":"development","database":"primary","detail":"SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let full_id = body["id"].as_str().unwrap().to_string();
+    let short_id = &full_id[..8];
+
+    // Dispatch with short ID
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{short_id}/dispatch"))
+                .header("authorization", auth_header(&token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Claim + submit result
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{full_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let exec_id = body["execution_id"].as_str().unwrap().to_string();
+
+    app.clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{exec_id}/result"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"success": true, "result": {"answer": 42}}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Stream with short ID — should find the channel
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/requests/{short_id}/result/stream"))
+                .header("authorization", auth_header(&token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["success"], true);
+}
