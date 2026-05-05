@@ -7,7 +7,10 @@ url = "http://dbward-server:3000"
 [server.oidc]
 issuer = "http://localhost:8080/realms/dbward"
 client_id = "dbward-cli"
-# Container can't reach localhost:8080, so rewrite OIDC endpoints to keycloak:8080
+# Container can't reach localhost:8080, so:
+# - discovery_url: fetch discovery doc from keycloak:8080
+# - backchannel_url: rewrite returned endpoints to keycloak:8080
+discovery_url = "http://keycloak:8080/realms/dbward/.well-known/openid-configuration"
 backchannel_url = "http://keycloak:8080/realms/dbward"
 
 [databases.app]
