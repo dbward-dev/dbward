@@ -150,6 +150,67 @@ else
   fail "Auto-approve" "status=$STATUS"
 fi
 
+# --- Test: Result sharing with --share-with ---
+echo ""
+echo "=== Result Sharing Tests ==="
+
+# Bob creates request with share_with
+SHARE_REQ=$(api POST /api/requests "$BOB_TOKEN" \
+  -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 42","share_with":["group:backend-team"]}')
+SHARE_ID=$(echo "$SHARE_REQ" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")
+SHARE_STATUS=$(echo "$SHARE_REQ" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))")
+if [ "$SHARE_STATUS" = "auto_approved" ] && [ -n "$SHARE_ID" ]; then
+  pass "Bob creates shared request (auto_approved): $SHARE_ID"
+else
+  fail "Create shared request" "status=$SHARE_STATUS id=$SHARE_ID"
+fi
+
+# Dispatch and wait for agent execution
+api POST "/api/requests/$SHARE_ID/dispatch" "$BOB_TOKEN" -d '{}' >/dev/null 2>&1
+sleep 4
+
+# Check request is executed
+EXEC_STATUS=$(api GET "/api/requests/$SHARE_ID" "$BOB_TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))")
+if [ "$EXEC_STATUS" = "executed" ]; then
+  pass "Shared request executed by agent"
+else
+  fail "Shared request execution" "status=$EXEC_STATUS"
+fi
+
+# Alice (backend-team) can access the result
+CONTENT_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
+  "http://localhost:13000/api/requests/$SHARE_ID/result/content" \
+  -H "Authorization: Bearer $ALICE_TOKEN")
+if [ "$CONTENT_RESP" = "200" ]; then
+  pass "Alice (backend-team) can access shared result"
+else
+  fail "Alice access shared result" "http=$CONTENT_RESP"
+fi
+
+# Carol (dba-team, NOT backend-team) cannot access
+CAROL_RESP=$(curl -s -o /dev/null -w "%{http_code}" \
+  "http://localhost:13000/api/requests/$SHARE_ID/result/content" \
+  -H "Authorization: Bearer $CAROL_TOKEN")
+if [ "$CAROL_RESP" = "403" ]; then
+  pass "Carol (dba-team) cannot access result shared with backend-team"
+else
+  fail "Carol denied access" "http=$CAROL_RESP"
+fi
+
+# Alice can see it in results list
+RESULTS_LIST=$(api GET /api/results "$ALICE_TOKEN")
+HAS_RESULT=$(echo "$RESULTS_LIST" | python3 -c "
+import sys,json
+d=json.load(sys.stdin)
+results=d.get('results',[])
+print('yes' if any(r.get('request_id','').startswith('$SHARE_ID'[:8]) for r in results) else 'no')
+")
+if [ "$HAS_RESULT" = "yes" ]; then
+  pass "Alice sees shared result in /api/results list"
+else
+  fail "Results list" "result not found"
+fi
+
 # --- Summary ---
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

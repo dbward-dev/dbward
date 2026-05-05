@@ -11,6 +11,8 @@ pub struct ResultStore {
 
 impl ResultStore {
     pub fn new_local(root_dir: &str) -> Result<Self, String> {
+        std::fs::create_dir_all(root_dir)
+            .map_err(|e| format!("create result dir: {e}"))?;
         let store = object_store::local::LocalFileSystem::new_with_prefix(root_dir)
             .map_err(|e| format!("local storage init: {e}"))?;
         Ok(Self {

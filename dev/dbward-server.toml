@@ -67,3 +67,8 @@ min = 1
 url = "http://webhook-receiver:9999"
 format = "generic"
 events = ["request_created", "request_approved", "request_rejected", "request_completed", "break_glass", "step_approved"]
+
+# Result storage (local filesystem inside container)
+[result_storage]
+backend = "local"
+root_dir = "/data/results"
