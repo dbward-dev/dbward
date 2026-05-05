@@ -4,6 +4,7 @@ pub mod authz;
 pub mod db;
 pub mod oidc;
 pub mod policy;
+pub mod result_storage;
 pub mod routes;
 pub mod server_config;
 pub mod services;

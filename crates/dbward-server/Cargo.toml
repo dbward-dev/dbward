@@ -28,9 +28,12 @@ hmac = "0.12"
 toml.workspace = true
 jsonwebtoken = "9"
 base64 = "0.22"
+object_store = { version = "0.11", features = ["aws"] }
+async-trait = "0.1"
 casbin = { version = "2.20", default-features = false, features = ["runtime-tokio"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 hyper = "1"
 http-body-util = "0.1"
+tempfile = "3"
