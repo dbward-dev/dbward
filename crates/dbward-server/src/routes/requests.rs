@@ -490,10 +490,8 @@ pub(crate) async fn create_request(
         )
         .with_code("emergency_reason_required"));
     }
-    // Readonly and approver-only roles cannot use break-glass
-    if emergency
-        && (user.effective_permission() == "readonly" || user.effective_permission() == "approver")
-    {
+    // Break-glass role check (configurable via auth.break_glass_roles)
+    if emergency && !state.break_glass_roles.iter().any(|r| user.has_role(r)) {
         return Err(crate::api_error::ApiError::forbidden(
             "insufficient permissions for break-glass",
         )

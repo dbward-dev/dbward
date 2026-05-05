@@ -62,7 +62,7 @@ fn test_state() -> AppState {
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
         result_store: None,
-        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
     }
 }
 
@@ -127,7 +127,7 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
         result_store: Some(result_store),
-        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
     };
     (state, dir)
 }
@@ -1637,7 +1637,7 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
         result_store: None,
-        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
     };
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
@@ -3363,7 +3363,7 @@ fn test_state_multistep() -> AppState {
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
         result_store: None,
-        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
     }
 }
 
@@ -3421,7 +3421,7 @@ fn test_state_multistep_allow_same() -> AppState {
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
         result_store: None,
-        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
     }
 }
 

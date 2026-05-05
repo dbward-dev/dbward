@@ -125,6 +125,7 @@ pub struct AppState {
     pub request_notifier: Arc<RequestNotifier>,
     pub result_store: Option<Arc<crate::result_storage::ResultStore>>,
     pub draining: Arc<std::sync::atomic::AtomicBool>,
+    pub break_glass_roles: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

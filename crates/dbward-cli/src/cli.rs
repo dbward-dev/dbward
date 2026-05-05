@@ -992,7 +992,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                         }
                     }
                 },
-                draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: server_cfg.auth.as_ref().map(|a| a.break_glass_roles.clone()).unwrap_or_else(|| vec!["admin".into(), "developer".into()]),
             };
             let addr: std::net::SocketAddr = listen
                 .parse()
@@ -1028,7 +1028,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     retention: Default::default(),
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
                     result_store: None,
-                    draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
                 };
                 let subject_type = if *agent { "agent" } else { "user" };
                 let (token_id, raw_token) =
@@ -1066,7 +1066,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     retention: Default::default(),
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
                     result_store: None,
-                    draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
                 };
                 dbward_server::auth::revoke_token(&state, id)
                     .await
@@ -1125,7 +1125,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         retention: Default::default(),
         request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
         result_store: None,
-        draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
     };
 
     // Create tokens

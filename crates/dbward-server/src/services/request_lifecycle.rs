@@ -456,7 +456,7 @@ mod tests {
             retention: Default::default(),
             request_notifier: Arc::new(crate::state::RequestNotifier::new()),
             result_store: None,
-            draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            draining: Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
         }
     }
 

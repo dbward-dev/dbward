@@ -173,6 +173,12 @@ pub struct AuthConfig {
     #[serde(default = "default_auth_mode")]
     pub mode: String,
     pub oidc: Option<OidcConfig>,
+    #[serde(default = "default_break_glass_roles")]
+    pub break_glass_roles: Vec<String>,
+}
+
+fn default_break_glass_roles() -> Vec<String> {
+    vec!["admin".into(), "developer".into()]
 }
 
 #[derive(Debug, Clone, Deserialize)]
