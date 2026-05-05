@@ -28,50 +28,50 @@ fn walk(value: &mut toml::Value, path: &str) -> Result<(), Error> {
                 walk(val, &format!("{path}[{i}]"))?;
             }
         }
-        toml::Value::String(s)
-            if s.contains("${") => {
-                let mut err: Option<Error> = None;
-                let expanded = ENV_RE.replace_all(s, |caps: &regex::Captures| {
-                    if err.is_some() {
-                        return String::new();
-                    }
-                    let var = &caps[1];
-                    let default = caps.get(2).map(|m| m.as_str());
+        toml::Value::String(s) if s.contains("${") => {
+            let mut err: Option<Error> = None;
+            let expanded = ENV_RE.replace_all(s, |caps: &regex::Captures| {
+                if err.is_some() {
+                    return String::new();
+                }
+                let var = &caps[1];
+                let default = caps.get(2).map(|m| m.as_str());
 
-                    if let Some(d) = default
-                        && d.contains("${") {
+                if let Some(d) = default
+                    && d.contains("${")
+                {
+                    err = Some(Error::Config(format!(
+                        "{path}: nested ${{}} expansion is not supported"
+                    )));
+                    return String::new();
+                }
+
+                match std::env::var(var) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        if let Some(d) = default {
+                            d.to_string()
+                        } else {
                             err = Some(Error::Config(format!(
-                                "{path}: nested ${{}} expansion is not supported"
+                                "{path}: environment variable {var} is not set"
                             )));
-                            return String::new();
-                        }
-
-                    match std::env::var(var) {
-                        Ok(v) => v,
-                        Err(_) => {
-                            if let Some(d) = default {
-                                d.to_string()
-                            } else {
-                                err = Some(Error::Config(format!(
-                                    "{path}: environment variable {var} is not set"
-                                )));
-                                String::new()
-                            }
+                            String::new()
                         }
                     }
-                });
-
-                if let Some(e) = err {
-                    return Err(e);
                 }
+            });
 
-                // Check for leftover unexpanded ${
-                if expanded.contains("${") {
-                    return Err(Error::Config(format!("{path}: malformed ${{}} expression")));
-                }
-
-                *s = expanded.into_owned();
+            if let Some(e) = err {
+                return Err(e);
             }
+
+            // Check for leftover unexpanded ${
+            if expanded.contains("${") {
+                return Err(Error::Config(format!("{path}: malformed ${{}} expression")));
+            }
+
+            *s = expanded.into_owned();
+        }
         _ => {}
     }
     Ok(())

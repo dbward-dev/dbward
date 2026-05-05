@@ -5,6 +5,7 @@ use std::sync::Arc;
 /// Wraps object_store for result storage operations.
 pub struct ResultStore {
     store: Arc<dyn ObjectStore>,
+    backend: &'static str,
     prefix: String,
 }
 
@@ -14,6 +15,7 @@ impl ResultStore {
             .map_err(|e| format!("local storage init: {e}"))?;
         Ok(Self {
             store: Arc::new(store),
+            backend: "local",
             prefix: String::new(),
         })
     }
@@ -30,6 +32,7 @@ impl ResultStore {
             .map_err(|e| format!("s3 storage init: {e}"))?;
         Ok(Self {
             store: Arc::new(store),
+            backend: "s3",
             prefix: String::new(),
         })
     }
@@ -40,10 +43,18 @@ impl ResultStore {
     }
 
     fn object_path(&self, request_id: &str) -> ObjectPath {
+        ObjectPath::from(self.storage_key(request_id))
+    }
+
+    pub fn backend(&self) -> &'static str {
+        self.backend
+    }
+
+    pub fn storage_key(&self, request_id: &str) -> String {
         if self.prefix.is_empty() {
-            ObjectPath::from(format!("{request_id}.json"))
+            format!("{request_id}.json")
         } else {
-            ObjectPath::from(format!("{}/{request_id}.json", self.prefix))
+            format!("{}/{request_id}.json", self.prefix)
         }
     }
 
@@ -96,5 +107,16 @@ mod tests {
 
         store.delete("req-001").await.unwrap();
         assert!(store.get("req-001").await.is_err());
+    }
+
+    #[test]
+    fn storage_key_includes_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ResultStore::new_local(dir.path().to_str().unwrap())
+            .unwrap()
+            .with_prefix("shared/results/");
+
+        assert_eq!(store.backend(), "local");
+        assert_eq!(store.storage_key("req-001"), "shared/results/req-001.json");
     }
 }

@@ -429,7 +429,7 @@ mod tests {
             result_channels: Arc::new(ResultChannels::new()),
             retention: Default::default(),
             request_notifier: Arc::new(crate::state::RequestNotifier::new()),
-        result_store: None,
+            result_store: None,
         }
     }
 
@@ -459,6 +459,7 @@ mod tests {
                 reason: None,
                 workflow_id: Some("wf"),
                 workflow_snapshot_json: Some(workflow_snapshot_json),
+                share_with_json: None,
             },
             "2026-01-01T00:00:00Z",
         )

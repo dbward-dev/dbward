@@ -80,10 +80,9 @@ pub fn evaluate_workflow(
                 if catchall_match.is_none() {
                     catchall_match = Some((id.clone(), steps, *require_reason));
                 }
-            } else if operations.iter().any(|op| op == operation)
-                && exact_match.is_none() {
-                    exact_match = Some((id.clone(), steps, *require_reason));
-                }
+            } else if operations.iter().any(|op| op == operation) && exact_match.is_none() {
+                exact_match = Some((id.clone(), steps, *require_reason));
+            }
         }
 
         if let Some(m) = exact_match.or(catchall_match) {

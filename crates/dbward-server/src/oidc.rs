@@ -104,27 +104,29 @@ impl OidcVerifier {
                 }
             }
             if let Some(ref claim_name) = mapping.claim
-                && let Some(ref expected_value) = mapping.value {
-                    if claim_name == "groups"
-                        && let Some(ref groups) = claims.groups
-                            && groups.iter().any(|g| g == expected_value) {
-                                roles.push(mapping.role.clone());
-                                continue;
-                            }
-                    if let Some(val) = claims.extra.get(claim_name.as_str())
-                        && (val.as_str() == Some(expected_value.as_str())
-                            || val
-                                .as_array()
-                                .map(|a| {
-                                    a.iter()
-                                        .any(|v| v.as_str() == Some(expected_value.as_str()))
-                                })
-                                .unwrap_or(false))
-                        {
-                            roles.push(mapping.role.clone());
-                            continue;
-                        }
+                && let Some(ref expected_value) = mapping.value
+            {
+                if claim_name == "groups"
+                    && let Some(ref groups) = claims.groups
+                    && groups.iter().any(|g| g == expected_value)
+                {
+                    roles.push(mapping.role.clone());
+                    continue;
                 }
+                if let Some(val) = claims.extra.get(claim_name.as_str())
+                    && (val.as_str() == Some(expected_value.as_str())
+                        || val
+                            .as_array()
+                            .map(|a| {
+                                a.iter()
+                                    .any(|v| v.as_str() == Some(expected_value.as_str()))
+                            })
+                            .unwrap_or(false))
+                {
+                    roles.push(mapping.role.clone());
+                    continue;
+                }
+            }
         }
 
         if roles.is_empty() {
@@ -144,9 +146,10 @@ impl OidcVerifier {
             let cache = self.jwks.read().await;
             if let Some(ref cached) = *cache
                 && cached.fetched_at.elapsed() < Duration::from_secs(3600)
-                    && let Some(key) = find_key(&cached.keys, kid) {
-                        return Ok(key);
-                    }
+                && let Some(key) = find_key(&cached.keys, kid)
+            {
+                return Ok(key);
+            }
         }
 
         // Refresh JWKS

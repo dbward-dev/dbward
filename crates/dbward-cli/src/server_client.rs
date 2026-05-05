@@ -73,6 +73,16 @@ pub struct ServerClient {
     client: Client,
 }
 
+pub struct CreateRequest<'a> {
+    pub operation: &'a str,
+    pub environment: &'a str,
+    pub database: &'a str,
+    pub detail: &'a str,
+    pub emergency: bool,
+    pub reason: Option<&'a str>,
+    pub share_with: Option<&'a [String]>,
+}
+
 impl ServerClient {
     pub fn new(base_url: &str, api_token: &str) -> Self {
         Self {
@@ -116,27 +126,21 @@ impl ServerClient {
     /// Create a request and return (id, status, optional execution_token).
     pub async fn create_request(
         &self,
-        operation: &str,
-        environment: &str,
-        database: &str,
-        detail: &str,
-        emergency: bool,
-        reason: Option<&str>,
-        share_with: Option<&[String]>,
+        req: CreateRequest<'_>,
     ) -> Result<(String, String, Option<ExecutionToken>), Error> {
         let mut body = serde_json::json!({
-            "operation": operation,
-            "environment": environment,
-            "database": database,
-            "detail": detail,
+            "operation": req.operation,
+            "environment": req.environment,
+            "database": req.database,
+            "detail": req.detail,
         });
-        if emergency {
+        if req.emergency {
             body["emergency"] = serde_json::json!(true);
         }
-        if let Some(r) = reason {
+        if let Some(r) = req.reason {
             body["reason"] = serde_json::json!(r);
         }
-        if let Some(sw) = share_with {
+        if let Some(sw) = req.share_with {
             body["share_with"] = serde_json::json!(sw);
         }
         let resp = self
@@ -360,6 +364,34 @@ impl ServerClient {
 
         self.parse_response(resp, "list audit").await
     }
+
+    pub async fn get_result_content(
+        &self,
+        request_id: &str,
+    ) -> Result<serde_json::Value, dbward_core::Error> {
+        let resp = self
+            .client
+            .get(format!(
+                "{}/api/requests/{}/result/content",
+                self.base_url, request_id
+            ))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| dbward_core::Error::Server(format!("get result: {e}")))?;
+        self.parse_response(resp, "get result content").await
+    }
+
+    pub async fn list_results(&self) -> Result<serde_json::Value, dbward_core::Error> {
+        let resp = self
+            .client
+            .get(format!("{}/api/results", self.base_url))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| dbward_core::Error::Server(format!("list results: {e}")))?;
+        self.parse_response(resp, "list results").await
+    }
 }
 
 #[cfg(test)]
@@ -409,32 +441,5 @@ mod tests {
             }
             other => panic!("unexpected error variant: {other:?}"),
         }
-    }
-}
-
-impl ServerClient {
-    pub async fn get_result_content(&self, request_id: &str) -> Result<serde_json::Value, dbward_core::Error> {
-        let resp = self
-            .client
-            .get(format!(
-                "{}/api/requests/{}/result/content",
-                self.base_url, request_id
-            ))
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| dbward_core::Error::Server(format!("get result: {e}")))?;
-        self.parse_response(resp, "get result content").await
-    }
-
-    pub async fn list_results(&self) -> Result<serde_json::Value, dbward_core::Error> {
-        let resp = self
-            .client
-            .get(format!("{}/api/results", self.base_url))
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| dbward_core::Error::Server(format!("list results: {e}")))?;
-        self.parse_response(resp, "list results").await
     }
 }

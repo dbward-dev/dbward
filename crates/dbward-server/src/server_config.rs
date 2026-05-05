@@ -100,13 +100,21 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "backend", rename_all = "snake_case")]
 pub enum ResultStorageConfig {
-    Local { root_dir: String },
-    S3 { bucket: String, region: String, endpoint: Option<String> },
+    Local {
+        root_dir: String,
+    },
+    S3 {
+        bucket: String,
+        region: String,
+        endpoint: Option<String>,
+    },
 }
 
 impl Default for ResultStorageConfig {
     fn default() -> Self {
-        Self::Local { root_dir: "data/results".into() }
+        Self::Local {
+            root_dir: "data/results".into(),
+        }
     }
 }
 

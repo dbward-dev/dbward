@@ -5,6 +5,7 @@ use hyper::Request;
 use rusqlite::Connection;
 use serde_json::{Value, json};
 use std::sync::Arc;
+use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tower::ServiceExt;
 
@@ -57,8 +58,19 @@ fn test_state() -> AppState {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-    result_store: None,
-        }
+        result_store: None,
+    }
+}
+
+fn test_state_with_store() -> (AppState, TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut state = test_state();
+    state.result_store = Some(Arc::new(
+        dbward_server::result_storage::ResultStore::new_local(dir.path().to_str().unwrap())
+            .unwrap()
+            .with_prefix("shared"),
+    ));
+    (state, dir)
 }
 
 fn auth_header(token: &str) -> String {
@@ -242,6 +254,136 @@ async fn non_admin_cannot_approve_requests() {
         .unwrap();
 
     assert_eq!(resp.status(), 403);
+}
+
+#[tokio::test]
+async fn shared_result_content_requires_matching_result_access() {
+    let (state, _dir) = test_state_with_store();
+    let (_, owner_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, other_token) = auth::create_token(&state, "bob", "developer")
+        .await
+        .unwrap();
+    let request_id = "11111111-1111-4111-8111-111111111111";
+
+    {
+        let conn = state.sqlite.lock().await;
+        conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, share_with_json, created_at, updated_at)
+             VALUES (?1, 'alice', 'execute_query', 'staging', 'app', 'executed', 'SELECT 1', '[\"group:data\"]', 't1', 't1')",
+            [request_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at)
+             VALUES (?1, 'local', ?2, 12, 'abc', 30, 'stored', '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z')",
+            [request_id, "shared/11111111-1111-4111-8111-111111111111.json"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO result_access (request_id, selector_type, selector_value) VALUES (?1, 'requester', '')",
+            [request_id],
+        )
+        .unwrap();
+    }
+    state
+        .result_store
+        .as_ref()
+        .unwrap()
+        .put(request_id, br#"{"rows":[1]}"#)
+        .await
+        .unwrap();
+
+    let app = routes::router(state.clone());
+
+    let owner_resp = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/requests/{request_id}/result/content"))
+                .header("authorization", auth_header(&owner_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(owner_resp.status(), StatusCode::OK);
+    let owner_bytes = owner_resp.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&owner_bytes[..], br#"{"rows":[1]}"#);
+
+    let other_resp = app
+        .oneshot(
+            Request::get(format!("/api/requests/{request_id}/result/content"))
+                .header("authorization", auth_header(&other_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(other_resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn list_results_only_returns_accessible_rows() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+
+    {
+        let conn = state.sqlite.lock().await;
+        conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at)
+             VALUES (?1, 'alice', 'execute_query', 'staging', 'app', 'executed', 'SELECT 1', 't1', 't1')",
+            ["req-visible"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at)
+             VALUES (?1, 'carol', 'execute_query', 'staging', 'app', 'executed', 'SELECT 2', 't1', 't1')",
+            ["req-hidden"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at)
+             VALUES (?1, 'local', 'shared/req-visible.json', 12, 'abc', 30, 'stored', '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z')",
+            ["req-visible"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at)
+             VALUES (?1, 'local', 'shared/req-hidden.json', 12, 'abc', 30, 'stored', '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z')",
+            ["req-hidden"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO result_access (request_id, selector_type, selector_value) VALUES (?1, 'requester', '')",
+            ["req-visible"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO result_access (request_id, selector_type, selector_value) VALUES (?1, 'group', 'finance')",
+            ["req-hidden"],
+        )
+        .unwrap();
+    }
+
+    let app = routes::router(state);
+    let resp = app
+        .oneshot(
+            Request::get("/api/results")
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["request_id"], "req-visible");
 }
 
 #[tokio::test]
@@ -858,8 +1000,8 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-    result_store: None,
-        };
+        result_store: None,
+    };
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
         .unwrap();
@@ -1954,8 +2096,8 @@ fn test_state_multistep() -> AppState {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-    result_store: None,
-        }
+        result_store: None,
+    }
 }
 
 #[tokio::test]

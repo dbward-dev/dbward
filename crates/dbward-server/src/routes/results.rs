@@ -29,17 +29,19 @@ pub async fn get_result_content(
         .map_err(|_| ApiError::not_found("request not found"))?;
 
     // Check request_results exists
-    let (status, storage_key): (String, String) = conn
+    let status: String = conn
         .query_row(
-            "SELECT status, storage_key FROM request_results WHERE request_id = ?1",
+            "SELECT status FROM request_results WHERE request_id = ?1",
             [&request_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| row.get(0),
         )
         .map_err(|_| ApiError::not_found("result not stored for this request"))?;
 
     if status == "storage_failed" {
-        return Err(ApiError::conflict("result storage failed; not available for sharing")
-            .with_code("result_storage_failed"));
+        return Err(
+            ApiError::conflict("result storage failed; not available for sharing")
+                .with_code("result_storage_failed"),
+        );
     }
 
     // Check expires_at
@@ -51,31 +53,36 @@ pub async fn get_result_content(
         )
         .unwrap_or_default();
     if !expires_at.is_empty() && expires_at < chrono::Utc::now().to_rfc3339() {
-        return Err(ApiError::new(StatusCode::GONE, "result has expired")
-            .with_code("result_expired"));
+        return Err(
+            ApiError::new(StatusCode::GONE, "result has expired").with_code("result_expired")
+        );
     }
 
     // Access control via result_access table
     let selectors: Vec<(String, String)> = {
         let mut stmt = conn
-            .prepare("SELECT selector_type, selector_value FROM result_access WHERE request_id = ?1")
+            .prepare(
+                "SELECT selector_type, selector_value FROM result_access WHERE request_id = ?1",
+            )
             .map_err(|e| ApiError::internal(e.to_string()))?;
-        stmt
-            .query_map([&request_id], |row| Ok((row.get(0)?, row.get(1)?)))
+        stmt.query_map([&request_id], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| ApiError::internal(e.to_string()))?
             .filter_map(|r| r.ok())
             .collect()
     };
 
-    let allowed = selectors.iter().any(|(sel_type, sel_value)| {
-        match sel_type.as_str() {
+    let allowed = selectors
+        .iter()
+        .any(|(sel_type, sel_value)| match sel_type.as_str() {
             "requester" => user.user == created_by,
-            "role" => user.roles.iter().any(|r| r == sel_value) || user.effective_permission() == sel_value,
+            "role" => {
+                user.roles.iter().any(|r| r == sel_value)
+                    || user.effective_permission() == sel_value
+            }
             "group" => user.groups.iter().any(|g| g == sel_value),
             "user" => user.user == *sel_value,
             _ => false,
-        }
-    });
+        });
 
     if !allowed {
         return Err(ApiError::forbidden("you do not have access to this result")
@@ -85,9 +92,13 @@ pub async fn get_result_content(
     drop(conn);
 
     // Read from storage
-    let store = state.result_store.as_ref()
+    let store = state
+        .result_store
+        .as_ref()
         .ok_or_else(|| ApiError::internal("result storage not configured"))?;
-    let data = store.get(&request_id).await
+    let data = store
+        .get(&request_id)
+        .await
         .map_err(|e| ApiError::internal(format!("storage read: {e}")))?;
 
     Ok((
@@ -162,9 +173,13 @@ pub async fn list_results(
     );
     params.push(chrono::Utc::now().to_rfc3339());
 
-    let mut stmt = conn.prepare(&sql).map_err(|e| ApiError::internal(e.to_string()))?;
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-        params.iter().map(|p| p as &dyn rusqlite::types::ToSql).collect();
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params
+        .iter()
+        .map(|p| p as &dyn rusqlite::types::ToSql)
+        .collect();
 
     let results: Vec<serde_json::Value> = stmt
         .query_map(param_refs.as_slice(), |row| {

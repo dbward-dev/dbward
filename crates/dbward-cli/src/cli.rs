@@ -360,17 +360,21 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             no_save,
             ref share_with,
         } => {
-            let sw = if share_with.is_empty() { None } else { Some(share_with.as_slice()) };
+            let sw = if share_with.is_empty() {
+                None
+            } else {
+                Some(share_with.as_slice())
+            };
             let (id, status, _token) = sc
-                .create_request(
-                    "execute_query",
-                    env_str,
-                    &db_name,
-                    sql,
+                .create_request(server_client::CreateRequest {
+                    operation: "execute_query",
+                    environment: env_str,
+                    database: &db_name,
+                    detail: sql,
                     emergency,
-                    reason.as_deref(),
-                    sw,
-                )
+                    reason: reason.as_deref(),
+                    share_with: sw,
+                })
                 .await?;
 
             match status.as_str() {
@@ -406,7 +410,15 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             };
 
             let (id, status, _token) = sc
-                .create_request(operation, env_str, &db_name, &detail, false, None, None)
+                .create_request(server_client::CreateRequest {
+                    operation,
+                    environment: env_str,
+                    database: &db_name,
+                    detail: &detail,
+                    emergency: false,
+                    reason: None,
+                    share_with: None,
+                })
                 .await?;
 
             match status.as_str() {
@@ -649,13 +661,14 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     println!("No shared results.");
                 } else {
                     println!(
-                        "{:<10} {:<12} {:<10} {:<12} {}",
-                        "ID", "USER", "ENV", "DB", "DETAIL"
+                        "{:<10} {:<12} {:<10} {:<12} DETAIL",
+                        "ID", "USER", "ENV", "DB"
                     );
                     for r in results {
                         println!(
                             "{:<10} {:<12} {:<10} {:<12} {}",
-                            &r["request_id"].as_str().unwrap_or("")[..8.min(r["request_id"].as_str().unwrap_or("").len())],
+                            &r["request_id"].as_str().unwrap_or("")
+                                [..8.min(r["request_id"].as_str().unwrap_or("").len())],
                             r["created_by"].as_str().unwrap_or(""),
                             r["environment"].as_str().unwrap_or(""),
                             r["database"].as_str().unwrap_or(""),
@@ -887,7 +900,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                 retention: server_cfg.retention,
                 request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-            result_store: None,
+                result_store: None,
             };
             let addr: std::net::SocketAddr = listen
                 .parse()
@@ -922,8 +935,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                     retention: Default::default(),
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                result_store: None,
-            };
+                    result_store: None,
+                };
                 let subject_type = if *agent { "agent" } else { "user" };
                 let (token_id, raw_token) =
                     dbward_server::auth::create_token_with_type(&state, user, role, subject_type)
@@ -959,8 +972,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                     retention: Default::default(),
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                result_store: None,
-            };
+                    result_store: None,
+                };
                 dbward_server::auth::revoke_token(&state, id)
                     .await
                     .map_err(dbward_core::Error::Server)?;
@@ -1016,8 +1029,8 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
         retention: Default::default(),
         request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-    result_store: None,
-            };
+        result_store: None,
+    };
 
     // Create tokens
     let (_, admin_token) =

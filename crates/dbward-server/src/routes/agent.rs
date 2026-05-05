@@ -159,23 +159,24 @@ pub(crate) async fn agent_claim(
 
     // Verify agent has capability for this job
     if let Some(caps_json) = crate::db::agent_repo::get_agent_capabilities(&conn, &agent_id)
-        && let Ok(caps) = serde_json::from_str::<serde_json::Value>(&caps_json) {
-            let matches = |arr: &serde_json::Value, val: &str| -> bool {
-                arr.as_array().is_none_or(|a| {
-                    a.is_empty()
-                        || a.iter()
-                            .any(|v| v.as_str() == Some(val) || v.as_str() == Some("*"))
-                })
-            };
-            if !matches(&caps["databases"], &database)
-                || !matches(&caps["environments"], &environment)
-                || !matches(&caps["operations"], &operation)
-            {
-                return Err(crate::api_error::ApiError::forbidden(
-                    "agent lacks capability for this job",
-                ));
-            }
+        && let Ok(caps) = serde_json::from_str::<serde_json::Value>(&caps_json)
+    {
+        let matches = |arr: &serde_json::Value, val: &str| -> bool {
+            arr.as_array().is_none_or(|a| {
+                a.is_empty()
+                    || a.iter()
+                        .any(|v| v.as_str() == Some(val) || v.as_str() == Some("*"))
+            })
+        };
+        if !matches(&caps["databases"], &database)
+            || !matches(&caps["environments"], &environment)
+            || !matches(&caps["operations"], &operation)
+        {
+            return Err(crate::api_error::ApiError::forbidden(
+                "agent lacks capability for this job",
+            ));
         }
+    }
 
     let token = state
         .token_signer
@@ -271,57 +272,76 @@ pub(crate) async fn agent_result(
             .and_then(|s| serde_json::from_str(&s).ok())
         };
 
-        if let Some(ref selectors) = share_with {
-            if let Some(ref store) = state.result_store {
-                let data = serde_json::to_vec(&result).unwrap_or_default();
-                let content_length = data.len() as i64;
-                let checksum = format!("{:x}", sha2::Sha256::digest(&data));
+        if let Some(ref selectors) = share_with
+            && let Some(ref store) = state.result_store
+        {
+            let data = serde_json::to_vec(&result).unwrap_or_default();
+            let content_length = data.len() as i64;
+            let checksum = format!("{:x}", sha2::Sha256::digest(&data));
+            let storage_key = store.storage_key(&request_id);
+            let backend = store.backend();
 
-                match store.put(&request_id, &data).await {
-                    Ok(()) => {
+            match store.put(&request_id, &data).await {
+                Ok(()) => {
+                    let now = chrono::Utc::now().to_rfc3339();
+                    let retention_days = 30i64; // TODO: from result_policy
+                    let expires_at =
+                        (chrono::Utc::now() + chrono::Duration::days(retention_days)).to_rfc3339();
+                    let db_write_result = {
+                        let mut conn = state.sqlite.lock().await;
+                        let tx = conn.transaction();
+                        tx.and_then(|tx| {
+                                tx.execute(
+                                    "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'stored', ?7, ?8)",
+                                    rusqlite::params![request_id, backend, storage_key, content_length, checksum, retention_days, now, expires_at],
+                                )?;
+                                tx.execute(
+                                    "DELETE FROM result_access WHERE request_id = ?1",
+                                    rusqlite::params![request_id],
+                                )?;
+
+                                // Expand selectors into result_access.
+                                let mut all_selectors =
+                                    vec!["requester".to_string(), "role:admin".to_string()];
+                                all_selectors.extend(selectors.iter().cloned());
+                                for sel in &all_selectors {
+                                    let (sel_type, sel_value) = if sel == "requester" {
+                                        ("requester", "")
+                                    } else if let Some(v) = sel.strip_prefix("role:") {
+                                        ("role", v)
+                                    } else if let Some(v) = sel.strip_prefix("group:") {
+                                        ("group", v)
+                                    } else if let Some(v) = sel.strip_prefix("user:") {
+                                        ("user", v)
+                                    } else {
+                                        ("role", sel.as_str())
+                                    };
+                                    tx.execute(
+                                        "INSERT INTO result_access (request_id, selector_type, selector_value) VALUES (?1, ?2, ?3)",
+                                        rusqlite::params![request_id, sel_type, sel_value],
+                                    )?;
+                                }
+                                tx.commit()
+                            })
+                    };
+
+                    if db_write_result.is_err() {
+                        let _ = store.delete(&request_id).await;
                         let conn = state.sqlite.lock().await;
-                        let now = chrono::Utc::now().to_rfc3339();
-                        let retention_days = 30i64; // TODO: from result_policy
-                        let expires_at = (chrono::Utc::now()
-                            + chrono::Duration::days(retention_days))
-                        .to_rfc3339();
-                        let backend = "local"; // TODO: from config
-
                         let _ = conn.execute(
-                            "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'stored', ?7, ?8)",
-                            rusqlite::params![request_id, backend, format!("{request_id}.json"), content_length, checksum, retention_days, now, expires_at],
-                        );
-
-                        // Expand selectors into result_access
-                        let mut all_selectors = vec!["requester".to_string(), "role:admin".to_string()];
-                        all_selectors.extend(selectors.iter().cloned());
-                        for sel in &all_selectors {
-                            let (sel_type, sel_value) = if sel == "requester" {
-                                ("requester", "")
-                            } else if let Some(v) = sel.strip_prefix("role:") {
-                                ("role", v)
-                            } else if let Some(v) = sel.strip_prefix("group:") {
-                                ("group", v)
-                            } else if let Some(v) = sel.strip_prefix("user:") {
-                                ("user", v)
-                            } else {
-                                ("role", sel.as_str())
-                            };
-                            let _ = conn.execute(
-                                "INSERT INTO result_access (request_id, selector_type, selector_value) VALUES (?1, ?2, ?3)",
-                                rusqlite::params![request_id, sel_type, sel_value],
+                                "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, ?2, ?3, 0, '', ?4, 'storage_failed', ?5, ?5)",
+                                rusqlite::params![request_id, backend, storage_key, retention_days, now],
                             );
-                        }
                     }
-                    Err(_) => {
-                        // Storage failed — record but don't fail the request
-                        let conn = state.sqlite.lock().await;
-                        let now = chrono::Utc::now().to_rfc3339();
-                        let _ = conn.execute(
+                }
+                Err(_) => {
+                    // Storage failed — record but don't fail the request
+                    let conn = state.sqlite.lock().await;
+                    let now = chrono::Utc::now().to_rfc3339();
+                    let _ = conn.execute(
                             "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, 'unknown', '', 0, '', 30, 'storage_failed', ?2, ?2)",
                             rusqlite::params![request_id, now],
                         );
-                    }
                 }
             }
         }

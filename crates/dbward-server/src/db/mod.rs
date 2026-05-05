@@ -171,6 +171,8 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
             selector_value TEXT NOT NULL,
             FOREIGN KEY (request_id) REFERENCES requests(id)
         );
+        CREATE INDEX IF NOT EXISTS idx_result_access_request
+            ON result_access(request_id);
         CREATE INDEX IF NOT EXISTS idx_result_access_lookup
             ON result_access(selector_type, selector_value);
         ",

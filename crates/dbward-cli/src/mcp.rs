@@ -182,7 +182,15 @@ async fn submit_and_wait(
     detail: &str,
 ) -> Result<String, String> {
     let (req_id, status, _token) = client
-        .create_request(operation, environment, database, detail, false, None, None)
+        .create_request(crate::server_client::CreateRequest {
+            operation,
+            environment,
+            database,
+            detail,
+            emergency: false,
+            reason: None,
+            share_with: None,
+        })
         .await
         .map_err(|e| e.to_string())?;
 
