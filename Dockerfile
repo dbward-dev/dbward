@@ -23,21 +23,19 @@ RUN mkdir -p \
  && printf '%s\n' 'pub fn placeholder() {}' > crates/dbward-agent/src/lib.rs \
  && printf '%s\n' 'fn main() {}' > crates/dbward-cli/src/main.rs
 
-# Build dependencies only (cached unless Cargo.toml/Cargo.lock change)
+# Pre-build dependencies only (cached unless Cargo.toml/Cargo.lock change)
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     cargo build --release --package dbward --bin dbward 2>/dev/null || true
 
 COPY . .
 
-# Purge OUR crate artifacts so cargo recompiles them; third-party deps stay cached
+# Force recompile of our crates using cargo clean -p (proper invalidation).
+# Third-party deps remain cached in the mount.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    for name in dbward dbward_core dbward_migrate dbward_server dbward_agent; do \
-      rm -rf /app/target/release/.fingerprint/${name}-*; \
-      rm -f /app/target/release/deps/${name}-*; \
-      rm -f /app/target/release/deps/lib${name}-*; \
-    done \
+    cargo clean --release \
+      -p dbward -p dbward-core -p dbward-migrate -p dbward-server -p dbward-agent \
  && cargo build --release --package dbward --bin dbward \
  && cp /app/target/release/dbward /usr/local/bin/dbward
 
