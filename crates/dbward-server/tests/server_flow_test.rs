@@ -62,7 +62,8 @@ fn test_state() -> AppState {
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
         result_store: None,
-        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
     }
 }
 
@@ -127,7 +128,8 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
         result_store: Some(result_store),
-        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
     };
     (state, dir)
 }
@@ -1637,7 +1639,8 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
         result_store: None,
-        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
     };
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
@@ -1660,6 +1663,72 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
     assert_eq!(resp.status(), 201);
     let body = body_json(resp).await;
     assert_eq!(body["status"], "auto_approved");
+}
+
+#[tokio::test]
+async fn emergency_request_respects_admin_only_break_glass_roles() {
+    let mut state = test_state();
+    state.break_glass_roles = vec!["admin".into()];
+    let (_, dev_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let app = routes::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&dev_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "production",
+                        "detail": "SELECT 1",
+                        "emergency": true,
+                        "reason": "urgent fix"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body = body_json(resp).await;
+    assert_eq!(body["code"], "break_glass_forbidden");
+}
+
+#[tokio::test]
+async fn emergency_request_is_disabled_when_break_glass_roles_is_empty() {
+    let mut state = test_state();
+    state.break_glass_roles = vec![];
+    let (_, admin_token) = auth::create_token(&state, "alice", "admin").await.unwrap();
+    let app = routes::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "production",
+                        "detail": "SELECT 1",
+                        "emergency": true,
+                        "reason": "urgent fix"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body = body_json(resp).await;
+    assert_eq!(body["code"], "break_glass_forbidden");
 }
 
 #[tokio::test]
@@ -3363,7 +3432,8 @@ fn test_state_multistep() -> AppState {
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
         result_store: None,
-        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
     }
 }
 
@@ -3421,7 +3491,8 @@ fn test_state_multistep_allow_same() -> AppState {
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
         result_store: None,
-        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)), break_glass_roles: vec!["admin".into(), "developer".into()],
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
     }
 }
 

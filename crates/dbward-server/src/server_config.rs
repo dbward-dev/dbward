@@ -177,8 +177,13 @@ pub struct AuthConfig {
     pub break_glass_roles: Vec<String>,
 }
 
-fn default_break_glass_roles() -> Vec<String> {
-    vec!["admin".into(), "developer".into()]
+pub const DEFAULT_BREAK_GLASS_ROLES: &[&str] = &["admin", "developer"];
+
+pub fn default_break_glass_roles() -> Vec<String> {
+    DEFAULT_BREAK_GLASS_ROLES
+        .iter()
+        .map(|role| (*role).to_string())
+        .collect()
 }
 
 #[derive(Debug, Clone, Deserialize)]
