@@ -1,3 +1,4 @@
+use crate::auth::authenticate;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -5,8 +6,6 @@ use axum::response::IntoResponse;
 use serde_json::json;
 
 use crate::api_error::ApiError;
-use crate::auth::authenticate;
-use crate::authz;
 use crate::state::AppState;
 
 /// GET /api/requests/{id}/result/content — retrieve stored result (access controlled)

@@ -182,7 +182,7 @@ async fn submit_and_wait(
     detail: &str,
 ) -> Result<String, String> {
     let (req_id, status, _token) = client
-        .create_request(operation, environment, database, detail, false, None)
+        .create_request(operation, environment, database, detail, false, None, None)
         .await
         .map_err(|e| e.to_string())?;
 

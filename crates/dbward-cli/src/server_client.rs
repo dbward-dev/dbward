@@ -122,6 +122,7 @@ impl ServerClient {
         detail: &str,
         emergency: bool,
         reason: Option<&str>,
+        share_with: Option<&[String]>,
     ) -> Result<(String, String, Option<ExecutionToken>), Error> {
         let mut body = serde_json::json!({
             "operation": operation,
@@ -134,6 +135,9 @@ impl ServerClient {
         }
         if let Some(r) = reason {
             body["reason"] = serde_json::json!(r);
+        }
+        if let Some(sw) = share_with {
+            body["share_with"] = serde_json::json!(sw);
         }
         let resp = self
             .client
@@ -405,5 +409,32 @@ mod tests {
             }
             other => panic!("unexpected error variant: {other:?}"),
         }
+    }
+}
+
+impl ServerClient {
+    pub async fn get_result_content(&self, request_id: &str) -> Result<serde_json::Value, dbward_core::Error> {
+        let resp = self
+            .client
+            .get(format!(
+                "{}/api/requests/{}/result/content",
+                self.base_url, request_id
+            ))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| dbward_core::Error::Server(format!("get result: {e}")))?;
+        self.parse_response(resp, "get result content").await
+    }
+
+    pub async fn list_results(&self) -> Result<serde_json::Value, dbward_core::Error> {
+        let resp = self
+            .client
+            .get(format!("{}/api/results", self.base_url))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| dbward_core::Error::Server(format!("list results: {e}")))?;
+        self.parse_response(resp, "list results").await
     }
 }

@@ -83,6 +83,9 @@ enum Command {
         /// Do not save result locally
         #[arg(long)]
         no_save: bool,
+        /// Share result with specified principals (e.g. group:backend-team, user:bob)
+        #[arg(long = "share-with")]
+        share_with: Vec<String>,
     },
     /// Search audit log
     Audit {
@@ -143,6 +146,8 @@ enum Command {
     },
     /// Show a previously saved result from local storage
     Result { id: String },
+    /// List shared results accessible to you
+    Results,
 }
 
 #[derive(Subcommand)]
@@ -353,7 +358,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             ref reason,
             ref output,
             no_save,
+            ref share_with,
         } => {
+            let sw = if share_with.is_empty() { None } else { Some(share_with.as_slice()) };
             let (id, status, _token) = sc
                 .create_request(
                     "execute_query",
@@ -362,6 +369,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     sql,
                     emergency,
                     reason.as_deref(),
+                    sw,
                 )
                 .await?;
 
@@ -398,7 +406,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             };
 
             let (id, status, _token) = sc
-                .create_request(operation, env_str, &db_name, &detail, false, None)
+                .create_request(operation, env_str, &db_name, &detail, false, None, None)
                 .await?;
 
             match status.as_str() {
@@ -611,11 +619,50 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             Ok(())
         }
         Command::Result { ref id } => {
-            let resp = load_result(id)?;
+            // Try local first, then server
+            match load_result(id) {
+                Ok(resp) => {
+                    if json_output {
+                        println!("{}", serde_json::to_string_pretty(&resp)?);
+                    } else {
+                        print_execution_result(&resp);
+                    }
+                }
+                Err(_) => {
+                    // Try server (shared result)
+                    let resp = sc.get_result_content(id).await?;
+                    if json_output {
+                        println!("{}", serde_json::to_string_pretty(&resp)?);
+                    } else {
+                        print_execution_result(&resp);
+                    }
+                }
+            }
+            Ok(())
+        }
+        Command::Results => {
+            let body = sc.list_results().await?;
             if json_output {
-                println!("{}", serde_json::to_string_pretty(&resp)?);
-            } else {
-                print_execution_result(&resp);
+                println!("{}", serde_json::to_string_pretty(&body)?);
+            } else if let Some(results) = body["results"].as_array() {
+                if results.is_empty() {
+                    println!("No shared results.");
+                } else {
+                    println!(
+                        "{:<10} {:<12} {:<10} {:<12} {}",
+                        "ID", "USER", "ENV", "DB", "DETAIL"
+                    );
+                    for r in results {
+                        println!(
+                            "{:<10} {:<12} {:<10} {:<12} {}",
+                            &r["request_id"].as_str().unwrap_or("")[..8.min(r["request_id"].as_str().unwrap_or("").len())],
+                            r["created_by"].as_str().unwrap_or(""),
+                            r["environment"].as_str().unwrap_or(""),
+                            r["database"].as_str().unwrap_or(""),
+                            r["detail"].as_str().unwrap_or(""),
+                        );
+                    }
+                }
             }
             Ok(())
         }
