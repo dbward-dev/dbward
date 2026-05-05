@@ -22,11 +22,7 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
 
     if current_version == 0 {
         // Check if tables already exist (unsupported legacy DB)
-        let has_tables: bool = conn.query_row(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='requests'",
-            [],
-            |row| row.get(0),
-        )?;
+        let has_tables = has_user_tables(conn)?;
         if has_tables {
             return Err(rusqlite::Error::QueryReturnedNoRows); // unversioned DB with existing tables
         }
@@ -50,8 +46,21 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+fn has_user_tables(conn: &Connection) -> Result<bool, rusqlite::Error> {
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name NOT LIKE 'sqlite_%'
+        )",
+        [],
+        |row| row.get(0),
+    )
+}
+
 /// Apply a single migration step. Add new versions here.
-fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Error> {
+fn apply_migration(_conn: &Connection, version: i64) -> Result<(), rusqlite::Error> {
     match version {
         // Future migrations:
         // 2 => conn.execute_batch("ALTER TABLE requests ADD COLUMN foo TEXT"),
@@ -264,7 +273,9 @@ mod tests {
         assert!(tables.contains(&"audit_log".to_string()));
 
         // Verify version is set
-        let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
         assert_eq!(version, LATEST_SCHEMA_VERSION);
     }
 
@@ -332,7 +343,8 @@ mod tests {
     #[test]
     fn init_fails_on_newer_version() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.pragma_update(None, "user_version", LATEST_SCHEMA_VERSION + 1).unwrap();
+        conn.pragma_update(None, "user_version", LATEST_SCHEMA_VERSION + 1)
+            .unwrap();
         assert!(init(&conn).is_err());
     }
 
@@ -340,7 +352,16 @@ mod tests {
     fn init_fails_on_unversioned_existing_db() {
         let conn = Connection::open_in_memory().unwrap();
         // Create a table without setting user_version
-        conn.execute_batch("CREATE TABLE requests (id TEXT PRIMARY KEY)").unwrap();
+        conn.execute_batch("CREATE TABLE requests (id TEXT PRIMARY KEY)")
+            .unwrap();
+        assert!(init(&conn).is_err());
+    }
+
+    #[test]
+    fn init_fails_on_unversioned_db_with_non_dbward_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE external_data (id TEXT PRIMARY KEY)")
+            .unwrap();
         assert!(init(&conn).is_err());
     }
 }

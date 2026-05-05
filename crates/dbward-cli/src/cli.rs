@@ -287,9 +287,7 @@ async fn authenticate(config: &ClientConfig) -> Result<(String, String), dbward_
         match oidc_login::load_token(&oc.issuer, &oc.client_id).await {
             Ok(token) => return Ok((server_url, token)),
             Err(e) => {
-                return Err(dbward_core::Error::Auth(
-                    e.to_string(),
-                ));
+                return Err(dbward_core::Error::Auth(e.to_string()));
             }
         }
     }
@@ -354,9 +352,22 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             .as_ref()
             .ok_or_else(|| dbward_core::Error::Config("[server.oidc] not configured".into()))?;
         if *device {
-            oidc_login::login_device(&oc.issuer, &oc.client_id, oc.discovery_url.as_deref(), oc.browser_url.as_deref(), oc.backchannel_url.as_deref()).await
+            oidc_login::login_device(
+                &oc.issuer,
+                &oc.client_id,
+                oc.discovery_url.as_deref(),
+                oc.browser_url.as_deref(),
+                oc.backchannel_url.as_deref(),
+            )
+            .await
         } else {
-            oidc_login::login(&oc.issuer, &oc.client_id, oc.discovery_url.as_deref(), oc.backchannel_url.as_deref()).await
+            oidc_login::login(
+                &oc.issuer,
+                &oc.client_id,
+                oc.discovery_url.as_deref(),
+                oc.backchannel_url.as_deref(),
+            )
+            .await
         }
         .map_err(dbward_core::Error::Auth)?;
         return Ok(());
@@ -703,7 +714,16 @@ fn print_request_list(requests: &[serde_json::Value]) {
         let reason = r["reason"].as_str().unwrap_or("").to_string();
         let created = r["created_at"].as_str().unwrap_or("");
         let short_time = format_created_time(created);
-        rows.push((short_id, status, user, env, op, short_detail, reason, short_time));
+        rows.push((
+            short_id,
+            status,
+            user,
+            env,
+            op,
+            short_detail,
+            reason,
+            short_time,
+        ));
     }
 
     let has_reason = rows.iter().any(|r| !r.6.is_empty());
@@ -717,22 +737,76 @@ fn print_request_list(requests: &[serde_json::Value]) {
     );
 
     if has_reason {
-        println!("{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<dw$} REASON",
-            "ID", "STATUS", "TIME", "USER", "ENV", "OP", "DETAIL",
-            w0=w.0, w1=w.1, w2=w.2, w3=w.3, w4=w.4, w5=w.5, dw=LIST_DETAIL_WIDTH);
+        println!(
+            "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<dw$} REASON",
+            "ID",
+            "STATUS",
+            "TIME",
+            "USER",
+            "ENV",
+            "OP",
+            "DETAIL",
+            w0 = w.0,
+            w1 = w.1,
+            w2 = w.2,
+            w3 = w.3,
+            w4 = w.4,
+            w5 = w.5,
+            dw = LIST_DETAIL_WIDTH
+        );
         for r in &rows {
-            println!("{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<dw$} {}",
-                r.0, r.1, r.7, r.2, r.3, r.4, r.5, r.6,
-                w0=w.0, w1=w.1, w2=w.2, w3=w.3, w4=w.4, w5=w.5, dw=LIST_DETAIL_WIDTH);
+            println!(
+                "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{:<dw$} {}",
+                r.0,
+                r.1,
+                r.7,
+                r.2,
+                r.3,
+                r.4,
+                r.5,
+                r.6,
+                w0 = w.0,
+                w1 = w.1,
+                w2 = w.2,
+                w3 = w.3,
+                w4 = w.4,
+                w5 = w.5,
+                dw = LIST_DETAIL_WIDTH
+            );
         }
     } else {
-        println!("{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}DETAIL",
-            "ID", "STATUS", "TIME", "USER", "ENV", "OP",
-            w0=w.0, w1=w.1, w2=w.2, w3=w.3, w4=w.4, w5=w.5);
+        println!(
+            "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}DETAIL",
+            "ID",
+            "STATUS",
+            "TIME",
+            "USER",
+            "ENV",
+            "OP",
+            w0 = w.0,
+            w1 = w.1,
+            w2 = w.2,
+            w3 = w.3,
+            w4 = w.4,
+            w5 = w.5
+        );
         for r in &rows {
-            println!("{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{}",
-                r.0, r.1, r.7, r.2, r.3, r.4, r.5,
-                w0=w.0, w1=w.1, w2=w.2, w3=w.3, w4=w.4, w5=w.5);
+            println!(
+                "{:<w0$}{:<w1$}{:<w2$}{:<w3$}{:<w4$}{:<w5$}{}",
+                r.0,
+                r.1,
+                r.7,
+                r.2,
+                r.3,
+                r.4,
+                r.5,
+                w0 = w.0,
+                w1 = w.1,
+                w2 = w.2,
+                w3 = w.3,
+                w4 = w.4,
+                w5 = w.5
+            );
         }
     }
 }
@@ -953,7 +1027,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                     retention: Default::default(),
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                    result_store: None, draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    result_store: None,
+                    draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 };
                 let subject_type = if *agent { "agent" } else { "user" };
                 let (token_id, raw_token) =
@@ -990,7 +1065,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                     retention: Default::default(),
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                    result_store: None, draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    result_store: None,
+                    draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 };
                 dbward_server::auth::revoke_token(&state, id)
                     .await
@@ -1047,7 +1123,8 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
         retention: Default::default(),
         request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None, draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        result_store: None,
+        draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     // Create tokens
@@ -1230,5 +1307,41 @@ mod tests {
     fn format_created_time_falls_back_for_invalid_input() {
         assert_eq!(format_created_time("not-a-timestamp"), "?");
         assert_eq!(format_created_time("2026-05-05T01:🦀:27+09:00"), "?");
+    }
+
+    #[test]
+    fn global_options_parse_before_subcommand() {
+        let cli = Cli::try_parse_from([
+            "dbward",
+            "--environment",
+            "production",
+            "--database",
+            "primary",
+            "execute",
+            "SELECT 1",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.environment.as_deref(), Some("production"));
+        assert_eq!(cli.database.as_deref(), Some("primary"));
+        assert!(matches!(cli.command, Command::Execute { .. }));
+    }
+
+    #[test]
+    fn global_options_parse_after_subcommand() {
+        let cli = Cli::try_parse_from([
+            "dbward",
+            "execute",
+            "SELECT 1",
+            "--environment",
+            "production",
+            "--database",
+            "primary",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.environment.as_deref(), Some("production"));
+        assert_eq!(cli.database.as_deref(), Some("primary"));
+        assert!(matches!(cli.command, Command::Execute { .. }));
     }
 }
