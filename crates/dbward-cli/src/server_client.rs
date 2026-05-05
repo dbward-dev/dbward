@@ -288,12 +288,32 @@ impl ServerClient {
         eprintln!("Waiting for agent to execute...");
 
         tokio::select! {
-            result = self.stream_result(request_id) => result,
+            result = self.stream_result(request_id) => {
+                match result {
+                    Ok(v) => Ok(v),
+                    Err(_) => {
+                        // Channel may have been consumed (race). Check request status.
+                        self.get_request_result_fallback(request_id).await
+                    }
+                }
+            },
             _ = tokio::signal::ctrl_c() => {
                 eprintln!("\nInterrupted. Request {request_id} is dispatched.");
                 eprintln!("Run: dbward resume {request_id}");
                 Err(Error::Server("interrupted".into()))
             }
+        }
+    }
+
+    async fn get_request_result_fallback(&self, request_id: &str) -> Result<Value, Error> {
+        let req = self.get_request(request_id).await?;
+        let status = req["status"].as_str().unwrap_or("");
+        if status == "executed" || status == "failed" {
+            Ok(req)
+        } else {
+            Err(Error::Server(format!(
+                "Result relay expired. Request status: {status}. Try: dbward resume {request_id}"
+            )))
         }
     }
 
