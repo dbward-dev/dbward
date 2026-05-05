@@ -134,16 +134,40 @@ async fn execute_job(
         Err(e) => {
             let msg = e.to_string();
             eprintln!("job {request_id} execution failed: {msg}");
-            client.send_result(exec_id, false, None, Some(&msg)).await?;
+            send_result_with_retry(client, exec_id, false, None, Some(&msg)).await;
             return Ok(());
         }
     };
 
     eprintln!("job {request_id} execution completed");
-    client
-        .send_result(exec_id, success, result_value, None)
-        .await?;
+    send_result_with_retry(client, exec_id, success, result_value, None).await;
     Ok(())
+}
+
+async fn send_result_with_retry(
+    client: &crate::server_client::AgentClient,
+    exec_id: &str,
+    success: bool,
+    result: Option<serde_json::Value>,
+    error: Option<&str>,
+) {
+    let mut backoff = std::time::Duration::from_secs(1);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300); // 5 min
+
+    loop {
+        match client.send_result(exec_id, success, result.clone(), error).await {
+            Ok(_) => return,
+            Err(e) => {
+                if tokio::time::Instant::now() + backoff > deadline {
+                    eprintln!("result submit failed after retries: {e}");
+                    return;
+                }
+                eprintln!("result submit failed, retrying in {backoff:?}: {e}");
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(std::time::Duration::from_secs(15));
+            }
+        }
+    }
 }
 
 fn install_shutdown_task(draining: std::sync::Arc<AtomicBool>) {

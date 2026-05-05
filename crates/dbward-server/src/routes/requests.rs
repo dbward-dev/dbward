@@ -75,6 +75,9 @@ pub(crate) async fn health() -> impl IntoResponse {
 }
 
 pub(crate) async fn ready(State(state): State<AppState>) -> impl IntoResponse {
+    if state.draining.load(std::sync::atomic::Ordering::Relaxed) {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
     let conn = state.sqlite.lock().await;
     match conn.query_row("SELECT 1", [], |row| row.get::<_, i64>(0)) {
         Ok(1) => StatusCode::OK,
@@ -431,6 +434,12 @@ pub(crate) async fn create_request(
     headers: HeaderMap,
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
+    if state.draining.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(crate::api_error::ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "server is shutting down",
+        ).with_code("server_shutting_down"));
+    }
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::CreateRequest, Resource::Global).await?;
 
@@ -1142,12 +1151,23 @@ pub(crate) async fn stream_result(
     let wait = tokio::time::timeout(std::time::Duration::from_secs(300), async {
         loop {
             slot.notify.notified().await;
+            if state.draining.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(());
+            }
             if slot.result.lock().await.is_some() {
-                break;
+                return Ok(());
             }
         }
     })
     .await;
+    if matches!(wait, Ok(Err(()))) {
+        return Err(crate::api_error::ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "server is shutting down",
+        )
+        .with_code("server_shutting_down")
+        .with_hint(&format!("dbward resume {id}")));
+    }
     if wait.is_err() {
         return Err(crate::api_error::ApiError::new(
             StatusCode::GATEWAY_TIMEOUT,

@@ -96,6 +96,14 @@ impl RequestNotifier {
     pub async fn remove(&self, request_id: &str) {
         self.notifiers.lock().await.remove(request_id);
     }
+
+    pub fn notify_all(&self) {
+        if let Ok(map) = self.notifiers.try_lock() {
+            for n in map.values() {
+                n.notify_waiters();
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -110,6 +118,7 @@ pub struct AppState {
     pub retention: RetentionConfig,
     pub request_notifier: Arc<RequestNotifier>,
     pub result_store: Option<Arc<crate::result_storage::ResultStore>>,
+    pub draining: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Debug, Clone)]

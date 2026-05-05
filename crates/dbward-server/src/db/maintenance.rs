@@ -32,15 +32,15 @@ pub fn purge_old_records(
         (chrono::Utc::now() - chrono::Duration::days(audit_ttl_days as i64)).to_rfc3339();
 
     conn.execute(
-        "DELETE FROM approvals WHERE request_id IN (SELECT id FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected', 'cancelled'))",
+        "DELETE FROM approvals WHERE request_id IN (SELECT id FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected', 'cancelled', 'execution_lost'))",
         rusqlite::params![req_cutoff],
     )?;
     conn.execute(
-        "DELETE FROM agent_executions WHERE request_id IN (SELECT id FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected', 'cancelled'))",
+        "DELETE FROM agent_executions WHERE request_id IN (SELECT id FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected', 'cancelled', 'execution_lost'))",
         rusqlite::params![req_cutoff],
     )?;
     let req_deleted = conn.execute(
-        "DELETE FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected', 'cancelled')",
+        "DELETE FROM requests WHERE created_at < ?1 AND status IN ('executed', 'failed', 'rejected', 'cancelled', 'execution_lost')",
         rusqlite::params![req_cutoff],
     )?;
     let audit_deleted = conn.execute(
@@ -54,8 +54,9 @@ pub fn purge_old_records(
 pub fn reclaim_expired_leases(conn: &Connection) -> Result<usize, rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute_batch("BEGIN")?;
+    // Mark as execution_lost instead of re-dispatching (prevents duplicate execution)
     let count = conn.execute(
-        "UPDATE requests SET status = 'approved', updated_at = ?1
+        "UPDATE requests SET status = 'execution_lost', updated_at = ?1
          WHERE status = 'running' AND id IN (
            SELECT request_id FROM agent_executions
            WHERE status = 'claimed' AND lease_expires_at < ?1
@@ -63,8 +64,8 @@ pub fn reclaim_expired_leases(conn: &Connection) -> Result<usize, rusqlite::Erro
         rusqlite::params![now],
     )?;
     conn.execute(
-        "UPDATE agent_executions SET status = 'failed', finished_at = ?1,
-         error_message = 'lease expired'
+        "UPDATE agent_executions SET status = 'lost', finished_at = ?1,
+         error_message = 'lease expired, execution outcome unknown'
          WHERE status = 'claimed' AND lease_expires_at < ?1",
         rusqlite::params![now],
     )?;

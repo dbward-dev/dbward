@@ -51,7 +51,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
         }
     });
 
-    let app = routes::router(state);
+    let app = routes::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -60,7 +60,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
     eprintln!("dbward server listening on {addr}");
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(state))
         .await
         .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
 
@@ -68,20 +68,29 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
     Ok(())
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(state: AppState) {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
     {
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("failed to register SIGTERM handler");
         tokio::select! {
-            _ = ctrl_c => eprintln!("\nReceived SIGINT, shutting down..."),
-            _ = sigterm.recv() => eprintln!("\nReceived SIGTERM, shutting down..."),
+            _ = ctrl_c => eprintln!("\nReceived SIGINT, draining..."),
+            _ = sigterm.recv() => eprintln!("\nReceived SIGTERM, draining..."),
         }
     }
     #[cfg(not(unix))]
     {
         ctrl_c.await.ok();
-        eprintln!("\nReceived SIGINT, shutting down...");
+        eprintln!("\nReceived SIGINT, draining...");
     }
+
+    // Phase 1: Drain — notify waiting clients, reject new requests
+    state.draining.store(true, std::sync::atomic::Ordering::SeqCst);
+    state.request_notifier.notify_all();
+
+    // Give time for agent result submits to arrive
+    let drain_secs = state.retention.request_ttl_days.min(20) as u64;
+    tokio::time::sleep(std::time::Duration::from_secs(drain_secs.max(20))).await;
+    eprintln!("Drain complete, shutting down listener...");
 }

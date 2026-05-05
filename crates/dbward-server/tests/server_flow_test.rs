@@ -58,7 +58,7 @@ fn test_state() -> AppState {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None,
+        result_store: None, draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }
 }
 
@@ -120,7 +120,7 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: Some(result_store),
+        result_store: Some(result_store), draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
     (state, dir)
 }
@@ -1462,7 +1462,7 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None,
+        result_store: None, draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
@@ -3184,7 +3184,7 @@ fn test_state_multistep() -> AppState {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None,
+        result_store: None, draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }
 }
 

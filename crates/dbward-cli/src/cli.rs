@@ -952,6 +952,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                         }
                     }
                 },
+                draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             };
             let addr: std::net::SocketAddr = listen
                 .parse()
@@ -986,7 +987,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                     retention: Default::default(),
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                    result_store: None,
+                    result_store: None, draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 };
                 let subject_type = if *agent { "agent" } else { "user" };
                 let (token_id, raw_token) =
@@ -1023,7 +1024,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                     retention: Default::default(),
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                    result_store: None,
+                    result_store: None, draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 };
                 dbward_server::auth::revoke_token(&state, id)
                     .await
@@ -1080,7 +1081,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
         retention: Default::default(),
         request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None,
+        result_store: None, draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
 
     // Create tokens
