@@ -2,7 +2,7 @@
 mode = "both"
 
 [auth.oidc]
-issuer = "http://localhost:8080/realms/dbward"
+issuer = "http://keycloak:8080/realms/dbward"
 client_id = "dbward-cli"
 default_role = "readonly"
 jwks_uri = "http://keycloak:8080/realms/dbward/protocol/openid-connect/certs"

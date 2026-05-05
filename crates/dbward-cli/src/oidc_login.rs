@@ -158,7 +158,12 @@ pub async fn login_device(
 
     // Poll for token
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                return Err("login cancelled".into());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(interval)) => {}
+        }
 
         let resp = client
             .post(&discovery.token_endpoint)
