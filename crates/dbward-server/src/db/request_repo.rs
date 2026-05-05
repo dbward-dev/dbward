@@ -11,6 +11,7 @@ pub struct RequestContext {
     pub environment: String,
     pub database_name: String,
     pub detail: String,
+    pub workflow_id: Option<String>,
     pub workflow_snapshot_json: Option<String>,
     pub resolved_at: Option<String>,
 }
@@ -71,7 +72,7 @@ pub enum ResolveError {
 /// Load request context for approve/reject/dispatch/claim.
 pub fn get_request_context(conn: &Connection, id: &str) -> Result<RequestContext, rusqlite::Error> {
     conn.query_row(
-        "SELECT created_by, status, operation, environment, database_name, detail, workflow_snapshot_json, resolved_at FROM requests WHERE id = ?1",
+        "SELECT created_by, status, operation, environment, database_name, detail, workflow_id, workflow_snapshot_json, resolved_at FROM requests WHERE id = ?1",
         rusqlite::params![id],
         |row| Ok(RequestContext {
             created_by: row.get(0)?,
@@ -80,8 +81,9 @@ pub fn get_request_context(conn: &Connection, id: &str) -> Result<RequestContext
             environment: row.get(3)?,
             database_name: row.get(4)?,
             detail: row.get(5)?,
-            workflow_snapshot_json: row.get(6)?,
-            resolved_at: row.get(7)?,
+            workflow_id: row.get(6)?,
+            workflow_snapshot_json: row.get(7)?,
+            resolved_at: row.get(8)?,
         }),
     )
 }

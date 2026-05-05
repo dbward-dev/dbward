@@ -86,7 +86,9 @@ async fn shutdown_signal(state: AppState) {
     }
 
     // Phase 1: Drain — notify waiting clients, reject new requests
-    state.draining.store(true, std::sync::atomic::Ordering::SeqCst);
+    state
+        .draining
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     state.request_notifier.notify_all().await;
     state.result_channels.notify_all().await;
 

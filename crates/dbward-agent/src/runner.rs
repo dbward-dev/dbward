@@ -126,8 +126,7 @@ async fn execute_job(
     };
 
     // Heartbeat task: extend lease while executing
-    let heartbeat_interval =
-        std::time::Duration::from_secs(config.lease_duration_secs / 3);
+    let heartbeat_interval = std::time::Duration::from_secs(config.lease_duration_secs / 3);
     let hb_client = client.clone();
     let hb_exec_id = exec_id.to_string();
     let hb_handle = tokio::spawn(async move {
@@ -173,7 +172,10 @@ async fn send_result_with_retry(
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300); // 5 min
 
     loop {
-        match client.send_result(exec_id, success, result.clone(), error).await {
+        match client
+            .send_result(exec_id, success, result.clone(), error)
+            .await
+        {
             Ok(_) => return,
             Err(e) => {
                 if tokio::time::Instant::now() + backoff > deadline {

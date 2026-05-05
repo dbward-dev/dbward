@@ -21,14 +21,16 @@ fn test_state() -> AppState {
             environment: "development".into(),
             operations: vec![],
             steps: vec![],
-            require_reason: false, allow_same_approver_across_steps: false,
+            require_reason: false,
+            allow_same_approver_across_steps: false,
         },
         dbward_server::server_config::WorkflowDef {
             database: "*".into(),
             environment: "staging".into(),
             operations: vec![],
             steps: vec![],
-            require_reason: false, allow_same_approver_across_steps: false,
+            require_reason: false,
+            allow_same_approver_across_steps: false,
         },
         dbward_server::server_config::WorkflowDef {
             database: "*".into(),
@@ -44,7 +46,8 @@ fn test_state() -> AppState {
                 }],
                 require_distinct_actors: true,
             }],
-            require_reason: false, allow_same_approver_across_steps: false,
+            require_reason: false,
+            allow_same_approver_across_steps: false,
         },
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
@@ -58,7 +61,8 @@ fn test_state() -> AppState {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None, draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        result_store: None,
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }
 }
 
@@ -82,7 +86,8 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
             environment: "development".into(),
             operations: vec![],
             steps: vec![],
-            require_reason: false, allow_same_approver_across_steps: false,
+            require_reason: false,
+            allow_same_approver_across_steps: false,
         },
         dbward_server::server_config::WorkflowDef {
             database: "*".into(),
@@ -98,7 +103,8 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
                 }],
                 require_distinct_actors: true,
             }],
-            require_reason: false, allow_same_approver_across_steps: false,
+            require_reason: false,
+            allow_same_approver_across_steps: false,
         },
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
@@ -120,7 +126,8 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: Some(result_store), draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        result_store: Some(result_store),
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
     (state, dir)
 }
@@ -1629,7 +1636,8 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None, draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        result_store: None,
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
@@ -3284,7 +3292,8 @@ fn test_state_multistep() -> AppState {
             environment: "development".into(),
             operations: vec![],
             steps: vec![],
-            require_reason: false, allow_same_approver_across_steps: false,
+            require_reason: false,
+            allow_same_approver_across_steps: false,
         },
         // 2-step: team-lead then dba
         dbward_server::server_config::WorkflowDef {
@@ -3313,7 +3322,8 @@ fn test_state_multistep() -> AppState {
                     require_distinct_actors: true,
                 },
             ],
-            require_reason: false, allow_same_approver_across_steps: false,
+            require_reason: false,
+            allow_same_approver_across_steps: false,
         },
         // mode=any: either team-lead or dba
         dbward_server::server_config::WorkflowDef {
@@ -3337,7 +3347,8 @@ fn test_state_multistep() -> AppState {
                 ],
                 require_distinct_actors: true,
             }],
-            require_reason: false, allow_same_approver_across_steps: false,
+            require_reason: false,
+            allow_same_approver_across_steps: false,
         },
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
@@ -3351,7 +3362,66 @@ fn test_state_multistep() -> AppState {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None, draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        result_store: None,
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    }
+}
+
+fn test_state_multistep_allow_same() -> AppState {
+    let conn = Connection::open_in_memory().unwrap();
+    db::init(&conn).unwrap();
+    let workflows = vec![
+        dbward_server::server_config::WorkflowDef {
+            database: "*".into(),
+            environment: "development".into(),
+            operations: vec![],
+            steps: vec![],
+            require_reason: false,
+            allow_same_approver_across_steps: false,
+        },
+        dbward_server::server_config::WorkflowDef {
+            database: "*".into(),
+            environment: "production".into(),
+            operations: vec![],
+            steps: vec![
+                dbward_server::server_config::WorkflowStep {
+                    step_type: "approval".into(),
+                    mode: "all".into(),
+                    approvers: vec![dbward_server::server_config::ApproverGroup {
+                        role: Some("admin".into()),
+                        group: None,
+                        min: 1,
+                    }],
+                    require_distinct_actors: true,
+                },
+                dbward_server::server_config::WorkflowStep {
+                    step_type: "approval".into(),
+                    mode: "all".into(),
+                    approvers: vec![dbward_server::server_config::ApproverGroup {
+                        role: Some("admin".into()),
+                        group: None,
+                        min: 1,
+                    }],
+                    require_distinct_actors: true,
+                },
+            ],
+            require_reason: false,
+            allow_same_approver_across_steps: true,
+        },
+    ];
+    db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
+    AppState {
+        sqlite: Arc::new(Mutex::new(conn)),
+        token_signer: Arc::new(TokenSigner::generate()),
+        webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        oidc: None,
+        auth_mode: "token".to_string(),
+        policy: Arc::new(Default::default()),
+        result_channels: Arc::new(ResultChannels::new()),
+        retention: Default::default(),
+        request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
+        result_store: None,
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }
 }
 
@@ -3434,6 +3504,135 @@ async fn multi_step_approval_team_lead_then_dba() {
     assert_eq!(body["step_completed"], 1);
     assert_eq!(body["current_step"], 2);
     assert_eq!(body["total_steps"], 2);
+    assert!(body["execution_token"].is_object());
+}
+
+#[tokio::test]
+async fn same_approver_across_steps_returns_forbidden_error() {
+    let state = test_state_multistep_allow_same();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
+
+    {
+        let conn = state.sqlite.lock().await;
+        conn.execute(
+            "UPDATE workflows SET allow_same_approver_across_steps = 0 WHERE environment = 'production'",
+            [],
+        )
+        .unwrap();
+    }
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "production", "detail": "DELETE FROM old"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let request_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body,
+        json!({
+            "error": "you already approved a previous step of this request",
+            "code": "same_approver_across_steps",
+            "hint": null,
+        })
+    );
+}
+
+#[tokio::test]
+async fn allow_same_approver_across_steps_true_allows_second_step() {
+    let state = test_state_multistep_allow_same();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "production", "detail": "DELETE FROM old"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let request_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "pending");
+    assert_eq!(body["current_step"], 1);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "approved");
+    assert_eq!(body["approved_by"], "admin1");
     assert!(body["execution_token"].is_object());
 }
 

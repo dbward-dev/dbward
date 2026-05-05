@@ -8,7 +8,7 @@ pub(crate) mod token_repo;
 use rusqlite::Connection;
 
 /// Latest schema version. Increment when adding migrations.
-pub const LATEST_SCHEMA_VERSION: i64 = 1;
+pub const LATEST_SCHEMA_VERSION: i64 = 2;
 
 /// Initialize SQLite database with WAL mode and versioned schema.
 pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -59,11 +59,29 @@ fn has_user_tables(conn: &Connection) -> Result<bool, rusqlite::Error> {
     )
 }
 
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, rusqlite::Error> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for row in rows {
+        if row? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Apply a single migration step. Add new versions here.
-fn apply_migration(_conn: &Connection, version: i64) -> Result<(), rusqlite::Error> {
+fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Error> {
     match version {
-        // Future migrations:
-        // 2 => conn.execute_batch("ALTER TABLE requests ADD COLUMN foo TEXT"),
+        2 => {
+            if !has_column(conn, "workflows", "allow_same_approver_across_steps")? {
+                conn.execute_batch(
+                    "ALTER TABLE workflows
+                     ADD COLUMN allow_same_approver_across_steps INTEGER NOT NULL DEFAULT 0",
+                )?;
+            }
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -364,5 +382,58 @@ mod tests {
         conn.execute_batch("CREATE TABLE external_data (id TEXT PRIMARY KEY)")
             .unwrap();
         assert!(init(&conn).is_err());
+    }
+
+    #[test]
+    fn init_migrates_workflow_allow_same_approver_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE requests (
+                id TEXT PRIMARY KEY,
+                created_by TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                database_name TEXT NOT NULL DEFAULT 'default',
+                status TEXT NOT NULL DEFAULT 'pending',
+                detail TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE agent_executions (
+                id TEXT PRIMARY KEY,
+                request_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'claimed',
+                execution_token_json TEXT NOT NULL,
+                lease_expires_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE workflows (
+                id TEXT PRIMARY KEY,
+                database_name TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                operations_json TEXT NOT NULL DEFAULT '[]',
+                steps_json TEXT NOT NULL DEFAULT '[]',
+                require_reason INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'api',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(database_name, environment, operations_json)
+            );",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 1).unwrap();
+
+        init(&conn).unwrap();
+
+        assert!(has_column(&conn, "workflows", "allow_same_approver_across_steps").unwrap());
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, LATEST_SCHEMA_VERSION);
     }
 }

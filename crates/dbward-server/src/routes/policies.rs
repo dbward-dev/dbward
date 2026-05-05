@@ -17,7 +17,7 @@ pub(crate) async fn list_workflows(
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
-        .prepare("SELECT id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at FROM workflows ORDER BY database_name, environment")
+        .prepare("SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at FROM workflows ORDER BY database_name, environment")
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
     let rows: Vec<serde_json::Value> = stmt
@@ -33,9 +33,10 @@ pub(crate) async fn list_workflows(
                 "operations": ops,
                 "steps": steps,
                 "require_reason": row.get::<_, bool>(5)?,
-                "source": row.get::<_, String>(6)?,
-                "created_at": row.get::<_, String>(7)?,
-                "updated_at": row.get::<_, String>(8)?,
+                "allow_same_approver_across_steps": row.get::<_, bool>(6)?,
+                "source": row.get::<_, String>(7)?,
+                "created_at": row.get::<_, String>(8)?,
+                "updated_at": row.get::<_, String>(9)?,
             }))
         })
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
@@ -56,7 +57,7 @@ pub(crate) async fn get_workflow(
     let conn = state.sqlite.lock().await;
     let row = conn
         .query_row(
-            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at FROM workflows WHERE id = ?1",
+            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at FROM workflows WHERE id = ?1",
             rusqlite::params![id],
             |row| {
                 let ops: serde_json::Value = serde_json::from_str(row.get::<_, String>(3)?.as_str()).unwrap_or_default();
@@ -68,9 +69,10 @@ pub(crate) async fn get_workflow(
                     "operations": ops,
                     "steps": steps,
                     "require_reason": row.get::<_, bool>(5)?,
-                    "source": row.get::<_, String>(6)?,
-                    "created_at": row.get::<_, String>(7)?,
-                    "updated_at": row.get::<_, String>(8)?,
+                    "allow_same_approver_across_steps": row.get::<_, bool>(6)?,
+                    "source": row.get::<_, String>(7)?,
+                    "created_at": row.get::<_, String>(8)?,
+                    "updated_at": row.get::<_, String>(9)?,
                 }))
             },
         )
@@ -96,6 +98,9 @@ pub(crate) async fn create_workflow(
     let operations = body.get("operations").cloned().unwrap_or(json!([]));
     let steps = body.get("steps").cloned().unwrap_or(json!([]));
     let require_reason = body["require_reason"].as_bool().unwrap_or(false);
+    let allow_same_approver_across_steps = body["allow_same_approver_across_steps"]
+        .as_bool()
+        .unwrap_or(false);
 
     let id = format!("{database}:{environment}");
     let ops_json = operations.to_string();
@@ -108,9 +113,18 @@ pub(crate) async fn create_workflow(
             .transaction()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
-            rusqlite::params![id, database, environment, ops_json, steps_json, require_reason, now],
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'api', ?8, ?8)",
+            rusqlite::params![
+                id,
+                database,
+                environment,
+                ops_json,
+                steps_json,
+                require_reason,
+                allow_same_approver_across_steps,
+                now
+            ],
         )
         .map_err(|e| {
             if e.to_string().contains("UNIQUE") {
@@ -193,6 +207,16 @@ pub(crate) async fn update_workflow(
         if let Some(v) = body.get("require_reason").and_then(|v| v.as_bool()) {
             tx.execute(
                 "UPDATE workflows SET require_reason = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![v, now, id],
+            )
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        }
+        if let Some(v) = body
+            .get("allow_same_approver_across_steps")
+            .and_then(|v| v.as_bool())
+        {
+            tx.execute(
+                "UPDATE workflows SET allow_same_approver_across_steps = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v, now, id],
             )
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;

@@ -170,13 +170,11 @@ pub async fn login_device(
             _ = tokio::time::sleep(std::time::Duration::from_secs(interval)) => {}
         }
 
-        let resp = client
-            .post(&token_endpoint)
-            .form(&[
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-                ("device_code", device_code),
-                ("client_id", client_id),
-            ]);
+        let resp = client.post(&token_endpoint).form(&[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("device_code", device_code),
+            ("client_id", client_id),
+        ]);
         let resp = tokio::select! {
             _ = wait_for_cancel_signal() => {
                 return Err("login cancelled".into());

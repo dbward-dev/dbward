@@ -438,7 +438,8 @@ pub(crate) async fn create_request(
         return Err(crate::api_error::ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
             "server is shutting down",
-        ).with_code("server_shutting_down"));
+        )
+        .with_code("server_shutting_down"));
     }
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::CreateRequest, Resource::Global).await?;
@@ -1093,15 +1094,29 @@ pub(crate) async fn stream_result(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::ReadResult, Resource::Global).await?;
 
-    let (id, requester, database_name, environment, status): (String, String, String, String, String) = {
+    let (id, requester, database_name, environment, status): (
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) = {
         let conn = state.sqlite.lock().await;
         let id = resolve_id(&conn, &id)?;
-        let row = conn.query_row(
-            "SELECT created_by, database_name, environment, status FROM requests WHERE id = ?1",
-            rusqlite::params![id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)),
-        )
-        .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
+        let row = conn
+            .query_row(
+                "SELECT created_by, database_name, environment, status FROM requests WHERE id = ?1",
+                rusqlite::params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
         (id, row.0, row.1, row.2, row.3)
     };
 

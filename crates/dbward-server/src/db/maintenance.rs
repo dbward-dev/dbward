@@ -195,7 +195,9 @@ mod tests {
         assert_eq!(reclaimed, 1);
 
         let request_status: String = conn
-            .query_row("SELECT status FROM requests WHERE id = 'req-1'", [], |r| r.get(0))
+            .query_row("SELECT status FROM requests WHERE id = 'req-1'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(request_status, "execution_lost");
 
@@ -240,14 +242,18 @@ mod tests {
         assert_eq!(req_deleted, 1);
 
         let request_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM requests WHERE id = 'old-lost'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM requests WHERE id = 'old-lost'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let approval_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM approvals WHERE request_id = 'old-lost'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM approvals WHERE request_id = 'old-lost'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         let execution_count: i64 = conn
             .query_row(

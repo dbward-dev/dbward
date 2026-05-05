@@ -55,13 +55,23 @@ pub(crate) async fn approve_request_inner(
 
     let ctx = crate::db::request_repo::get_request_context(&conn, id)
         .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
-    let (req_user, status, operation, environment, database_name, detail, workflow_snapshot_json) = (
+    let (
+        req_user,
+        status,
+        operation,
+        environment,
+        database_name,
+        detail,
+        workflow_id,
+        workflow_snapshot_json,
+    ) = (
         ctx.created_by,
         ctx.status,
         ctx.operation,
         ctx.environment,
         ctx.database_name,
         ctx.detail,
+        ctx.workflow_id,
         ctx.workflow_snapshot_json,
     );
 
@@ -146,21 +156,27 @@ pub(crate) async fn approve_request_inner(
     };
 
     // Check cross-step distinct approver constraint
-    let allow_same = conn.query_row(
-        "SELECT allow_same_approver_across_steps FROM workflows WHERE database_name IN (?1, '*') AND environment IN (?2, '*') ORDER BY CASE WHEN database_name = '*' THEN 1 ELSE 0 END, CASE WHEN environment = '*' THEN 1 ELSE 0 END LIMIT 1",
-        rusqlite::params![&database_name, &environment],
-        |row| row.get::<_, bool>(0),
-    ).unwrap_or(false);
+    let allow_same = workflow_id
+        .as_deref()
+        .and_then(|workflow_id| {
+            conn.query_row(
+                "SELECT allow_same_approver_across_steps FROM workflows WHERE id = ?1",
+                rusqlite::params![workflow_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .ok()
+        })
+        .unwrap_or(false);
 
     if !allow_same
-        && existing_approvals.iter().any(|(_, aid, _)| aid == &approver.user)
+        && existing_approvals
+            .iter()
+            .any(|(_, aid, _)| aid == &approver.user)
     {
-        return Err(
-            crate::api_error::ApiError::forbidden(
-                "you already approved a previous step of this request",
-            )
-            .with_code("same_approver_across_steps"),
-        );
+        return Err(crate::api_error::ApiError::forbidden(
+            "you already approved a previous step of this request",
+        )
+        .with_code("same_approver_across_steps"));
     }
 
     // Calculate current step index (first unsatisfied step)
@@ -234,11 +250,11 @@ pub(crate) async fn approve_request_inner(
             None
         });
         found.ok_or_else(|| {
-                crate::api_error::ApiError::forbidden(
-                    "you do not have a matching role or group for this step",
-                )
-                .with_code("no_matching_approver_role")
-            })?
+            crate::api_error::ApiError::forbidden(
+                "you do not have a matching role or group for this step",
+            )
+            .with_code("no_matching_approver_role")
+        })?
     };
 
     if step.require_distinct_actors {
@@ -439,7 +455,8 @@ mod tests {
             result_channels: Arc::new(ResultChannels::new()),
             retention: Default::default(),
             request_notifier: Arc::new(crate::state::RequestNotifier::new()),
-            result_store: None, draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            result_store: None,
+            draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -476,8 +493,30 @@ mod tests {
         .unwrap();
     }
 
+    async fn insert_workflow(
+        state: &AppState,
+        id: &str,
+        allow_same_approver_across_steps: bool,
+        database: &str,
+        environment: &str,
+    ) {
+        let conn = state.sqlite.lock().await;
+        conn.execute(
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, '[]', '[]', 0, ?4, 'api', 't1', 't1')",
+            rusqlite::params![
+                id,
+                database,
+                environment,
+                allow_same_approver_across_steps
+            ],
+        )
+        .unwrap();
+    }
+
     #[tokio::test]
     async fn group_approval_records_group_selector() {
+        crate::authz::warmup().await.unwrap();
         let state = test_state();
         let request_id = "8c5e16c4-4f9d-4d8f-b983-d4cd6dfd4411";
         insert_pending_request(
@@ -537,5 +576,86 @@ mod tests {
             ],
             0,
         ));
+    }
+
+    #[tokio::test]
+    async fn same_approver_across_steps_returns_specific_error() {
+        crate::authz::warmup().await.unwrap();
+        let state = test_state();
+        let request_id = "7416f20b-ecdc-4efb-8c84-a14ca553a4e5";
+        insert_workflow(&state, "wf", false, "app", "production").await;
+        insert_pending_request(
+            &state,
+            request_id,
+            r#"[{"type":"approval","mode":"all","approvers":[{"role":"team-lead","min":1}],"require_distinct_actors":true},{"type":"approval","mode":"all","approvers":[{"role":"dba","min":1}],"require_distinct_actors":true}]"#,
+        )
+        .await;
+
+        approve_request_inner(
+            &state.sqlite,
+            state.token_signer.as_ref(),
+            request_id,
+            &approver("bob", &["team-lead", "dba"], &[]),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+
+        let err = match approve_request_inner(
+            &state.sqlite,
+            state.token_signer.as_ref(),
+            request_id,
+            &approver("bob", &["team-lead", "dba"], &[]),
+            &json!({}),
+        )
+        .await
+        {
+            Ok(_) => panic!("expected same approver to be rejected on second step"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.status, axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(err.code.as_deref(), Some("same_approver_across_steps"));
+        assert_eq!(
+            err.error,
+            "you already approved a previous step of this request"
+        );
+    }
+
+    #[tokio::test]
+    async fn allow_same_approver_uses_request_workflow_id_not_wildcard_lookup() {
+        crate::authz::warmup().await.unwrap();
+        let state = test_state();
+        let request_id = "a4f7053f-b867-4d4d-9c4a-f65c4ba0acd7";
+        insert_workflow(&state, "wf", true, "app", "production").await;
+        insert_workflow(&state, "conflicting", false, "app", "*").await;
+        insert_pending_request(
+            &state,
+            request_id,
+            r#"[{"type":"approval","mode":"all","approvers":[{"role":"admin","min":1}],"require_distinct_actors":true},{"type":"approval","mode":"all","approvers":[{"role":"admin","min":1}],"require_distinct_actors":true}]"#,
+        )
+        .await;
+
+        let first = approve_request_inner(
+            &state.sqlite,
+            state.token_signer.as_ref(),
+            request_id,
+            &approver("admin-1", &["admin"], &[]),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.response["status"], "pending");
+
+        let second = approve_request_inner(
+            &state.sqlite,
+            state.token_signer.as_ref(),
+            request_id,
+            &approver("admin-1", &["admin"], &[]),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.response["status"], "approved");
     }
 }
