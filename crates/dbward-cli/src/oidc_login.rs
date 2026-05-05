@@ -154,17 +154,14 @@ pub async fn login_device(
     let device_code = resp["device_code"].as_str().ok_or("missing device_code")?;
     let interval = resp["interval"].as_u64().unwrap_or(5);
 
-    let display_uri = match browser_url {
-        Some(base) => verification_uri.replace(issuer, base),
-        None => verification_uri.to_string(),
-    };
+    let display_uri = display_verification_uri(verification_uri, issuer, browser_url);
     eprintln!("Visit: {display_uri}");
     eprintln!("Enter code: {user_code}");
 
     // Poll for token
     loop {
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
+            _ = wait_for_cancel_signal() => {
                 return Err("login cancelled".into());
             }
             _ = tokio::time::sleep(std::time::Duration::from_secs(interval)) => {}
@@ -176,15 +173,20 @@ pub async fn login_device(
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
                 ("device_code", device_code),
                 ("client_id", client_id),
-            ])
-            .send()
-            .await
-            .map_err(|e| format!("poll failed: {e}"))?;
+            ]);
+        let resp = tokio::select! {
+            _ = wait_for_cancel_signal() => {
+                return Err("login cancelled".into());
+            }
+            resp = resp.send() => resp.map_err(|e| format!("poll failed: {e}"))?
+        };
 
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("invalid poll response: {e}"))?;
+        let body: serde_json::Value = tokio::select! {
+            _ = wait_for_cancel_signal() => {
+                return Err("login cancelled".into());
+            }
+            body = resp.json() => body.map_err(|e| format!("invalid poll response: {e}"))?
+        };
 
         if let Some(error) = body["error"].as_str() {
             match error {
@@ -473,4 +475,83 @@ fn urlencoded(s: &str) -> String {
         .replace('=', "%3D")
         .replace('+', "%2B")
         .replace(' ', "+")
+}
+
+fn display_verification_uri(
+    verification_uri: &str,
+    issuer: &str,
+    browser_url: Option<&str>,
+) -> String {
+    let Some(browser_url) = browser_url else {
+        return verification_uri.to_string();
+    };
+    rewrite_url_base(verification_uri, issuer, browser_url)
+}
+
+fn rewrite_url_base(source_url: &str, from_base: &str, to_base: &str) -> String {
+    let from_base = from_base.trim_end_matches('/');
+    let to_base = to_base.trim_end_matches('/');
+    match source_url.strip_prefix(from_base) {
+        Some(rest) => format!("{to_base}{rest}"),
+        None => source_url.to_string(),
+    }
+}
+
+#[cfg(unix)]
+async fn wait_for_cancel_signal() {
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("failed to register SIGTERM handler");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = sigterm.recv() => {}
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_cancel_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_verification_uri, rewrite_url_base};
+
+    #[test]
+    fn rewrites_matching_url_base() {
+        let rewritten = rewrite_url_base(
+            "http://keycloak:8080/realms/dbward/device?user_code=abc",
+            "http://keycloak:8080/realms/dbward",
+            "http://localhost:8080/realms/dbward",
+        );
+        assert_eq!(
+            rewritten,
+            "http://localhost:8080/realms/dbward/device?user_code=abc"
+        );
+    }
+
+    #[test]
+    fn does_not_rewrite_non_matching_url_base() {
+        let rewritten = rewrite_url_base(
+            "http://localhost:8080/realms/dbward/device?user_code=abc",
+            "http://keycloak:8080/realms/dbward",
+            "http://localhost:8080/realms/dbward",
+        );
+        assert_eq!(
+            rewritten,
+            "http://localhost:8080/realms/dbward/device?user_code=abc"
+        );
+    }
+
+    #[test]
+    fn returns_original_verification_uri_without_browser_url() {
+        let displayed = display_verification_uri(
+            "http://keycloak:8080/realms/dbward/device?user_code=abc",
+            "http://keycloak:8080/realms/dbward",
+            None,
+        );
+        assert_eq!(
+            displayed,
+            "http://keycloak:8080/realms/dbward/device?user_code=abc"
+        );
+    }
 }
