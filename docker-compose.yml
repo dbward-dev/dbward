@@ -160,7 +160,7 @@ services:
     volumes:
       - ./:/workspace
       - ./dev/dbward-cli-oidc.toml:/config/dbward-cli-oidc.toml:ro
-      - oidc-credentials:/root/.dbward
+      - alice-credentials:/root/.dbward
     depends_on:
       - keycloak
       - dbward-server
@@ -177,7 +177,7 @@ services:
     volumes:
       - ./:/workspace
       - ./dev/dbward-cli-oidc.toml:/config/dbward-cli-oidc.toml:ro
-      - oidc-credentials:/root/.dbward
+      - bob-credentials:/root/.dbward
     depends_on:
       - keycloak
       - dbward-server
@@ -202,4 +202,5 @@ volumes:
   pgdata:
   server-data:
   dev-tokens:
-  oidc-credentials:
+  alice-credentials:
+  bob-credentials:
