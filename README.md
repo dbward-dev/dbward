@@ -71,12 +71,12 @@ docker compose run --rm \
 # If approval is required, approve (as alice)
 docker compose run --rm \
   -e DBWARD_SERVER_TOKEN=<alice-token> \
-  alice approve <request-id>
+  alice request approve <request-id>
 
 # Get result (as bob)
 docker compose run --rm \
   -e DBWARD_SERVER_TOKEN=<bob-token> \
-  alice resume <request-id>
+  alice request resume <request-id>
 
 # Tear down
 docker compose down -v
@@ -97,10 +97,10 @@ dbward execute "DELETE FROM old_data" --database primary
 # → "Request abc123 requires approval."
 
 # 4. Approver
-dbward approve abc123
+dbward request approve abc123
 
 # 5. Developer gets result
-dbward resume abc123
+dbward request resume abc123
 ```
 
 ### MCP Mode (AI agents)
@@ -141,7 +141,7 @@ dbward uses **on-demand execution**: the agent does not execute on approval. Ins
 ```
 1. Client creates request → server evaluates policy → pending / auto_approved
 2. (If pending) Human approves via CLI
-3. Client dispatches (dbward resume <id>) → server marks as "dispatched"
+3. Client dispatches (`dbward request resume <id>`) → server marks as "dispatched"
 4. Agent polls, claims, executes on DB → returns result to server
 5. Server relays result in-memory to waiting client (long poll)
 6. Client receives result and saves locally (~/.dbward/results/<id>.json)

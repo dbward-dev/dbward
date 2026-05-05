@@ -419,7 +419,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 }
                 "pending" => {
                     eprintln!("Request {id} requires approval.");
-                    eprintln!("Run: dbward resume {id}");
+                    eprintln!("Run: dbward request resume {id}");
                 }
                 _ => {
                     return Err(dbward_core::Error::Server(format!(
@@ -462,7 +462,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 }
                 "pending" => {
                     eprintln!("Request {id} requires approval.");
-                    eprintln!("Run: dbward resume {id}");
+                    eprintln!("Run: dbward request resume {id}");
                 }
                 _ => {
                     return Err(dbward_core::Error::Server(format!(

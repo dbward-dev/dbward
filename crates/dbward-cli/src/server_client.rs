@@ -274,12 +274,12 @@ impl ServerClient {
             if e.status == 409 {
                 if body_lower.contains("wrong status") || body_lower.contains("pending") {
                     return Err(Error::Server(format!(
-                        "Request is still pending approval. Ask an approver to run: dbward approve {request_id}"
+                        "Request is still pending approval. Ask an approver to run: dbward request approve {request_id}"
                     )));
                 }
                 if body_lower.contains("already dispatched") || body_lower.contains("dispatched") {
                     return Err(Error::Server(format!(
-                        "Request is already dispatched. Run: dbward resume {request_id}"
+                        "Request is already dispatched. Run: dbward request resume {request_id}"
                     )));
                 }
             }
@@ -299,7 +299,7 @@ impl ServerClient {
             },
             _ = tokio::signal::ctrl_c() => {
                 eprintln!("\nInterrupted. Request {request_id} is dispatched.");
-                eprintln!("Run: dbward resume {request_id}");
+                eprintln!("Run: dbward request resume {request_id}");
                 Err(Error::Server("interrupted".into()))
             }
         }
@@ -312,7 +312,7 @@ impl ServerClient {
             Ok(req)
         } else {
             Err(Error::Server(format!(
-                "Result relay expired. Request status: {status}. Try: dbward resume {request_id}"
+                "Result relay expired. Request status: {status}. Try: dbward request resume {request_id}"
             )))
         }
     }
@@ -446,7 +446,7 @@ mod tests {
     fn parses_structured_server_error_fields() {
         let err = ServerError::from_response(
             409,
-            r#"{"error":"request is already approved","code":"already_approved","hint":"Run dbward resume"}"#.into(),
+            r#"{"error":"request is already approved","code":"already_approved","hint":"Run dbward request resume"}"#.into(),
         );
 
         assert_eq!(
@@ -454,7 +454,7 @@ mod tests {
             Some("request is already approved")
         );
         assert_eq!(err.code.as_deref(), Some("already_approved"));
-        assert_eq!(err.hint.as_deref(), Some("Run dbward resume"));
+        assert_eq!(err.hint.as_deref(), Some("Run dbward request resume"));
     }
 
     #[test]

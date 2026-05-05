@@ -580,7 +580,7 @@ pub(crate) async fn create_request(
                 database: database_name.into(),
                 reason: reason.clone(),
                 next_step: None,
-                cli_command: Some(format!("dbward resume {id}")),
+                cli_command: Some(format!("dbward request resume {id}")),
             },
         );
         Ok((
@@ -611,7 +611,7 @@ pub(crate) async fn create_request(
                 database: database_name.into(),
                 reason: None,
                 next_step,
-                cli_command: Some(format!("dbward approve {id}")),
+                cli_command: Some(format!("dbward request approve {id}")),
             },
         );
         Ok((
@@ -1153,7 +1153,7 @@ pub(crate) async fn stream_result(
             "server is shutting down",
         )
         .with_code("server_shutting_down")
-        .with_hint(format!("dbward resume {id}")));
+        .with_hint(format!("dbward request resume {id}")));
     }
 
     // Wait up to 5 minutes for agent to deliver result
@@ -1175,7 +1175,7 @@ pub(crate) async fn stream_result(
             "server is shutting down",
         )
         .with_code("server_shutting_down")
-        .with_hint(format!("dbward resume {id}")));
+        .with_hint(format!("dbward request resume {id}")));
     }
     if wait.is_err() {
         return Err(crate::api_error::ApiError::new(

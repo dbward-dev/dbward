@@ -252,7 +252,7 @@ async fn stream_result_returns_503_while_draining() {
     let body = body_json(resp).await;
     assert_eq!(body["error"], "server is shutting down");
     assert_eq!(body["code"], "server_shutting_down");
-    assert_eq!(body["hint"], format!("dbward resume {request_id}"));
+    assert_eq!(body["hint"], format!("dbward request resume {request_id}"));
 }
 
 #[tokio::test]
@@ -318,7 +318,7 @@ async fn drain_notifies_waiting_stream_result() {
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
     let body = body_json(resp).await;
     assert_eq!(body["code"], "server_shutting_down");
-    assert_eq!(body["hint"], format!("dbward resume {request_id}"));
+    assert_eq!(body["hint"], format!("dbward request resume {request_id}"));
 }
 
 #[tokio::test]

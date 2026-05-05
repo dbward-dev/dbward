@@ -127,7 +127,7 @@ pub(crate) async fn approve_request_inner(
                 database: database_name,
                 reason: None,
                 next_step: None,
-                cli_command: Some(format!("dbward resume {}", id)),
+                cli_command: Some(format!("dbward request resume {}", id)),
             }),
         });
     }
@@ -309,7 +309,7 @@ pub(crate) async fn approve_request_inner(
                 database: database_name,
                 reason: None,
                 next_step: None,
-                cli_command: Some(format!("dbward resume {}", id)),
+                cli_command: Some(format!("dbward request resume {}", id)),
             }),
         })
     } else {
@@ -353,7 +353,7 @@ pub(crate) async fn approve_request_inner(
                 database: database_name.clone(),
                 reason: None,
                 next_step,
-                cli_command: Some(format!("dbward approve {}", id)),
+                cli_command: Some(format!("dbward request approve {}", id)),
             })
         } else {
             None
