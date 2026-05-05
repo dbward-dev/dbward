@@ -29,7 +29,7 @@ type RequestRow = (
 );
 
 /// Resolve a short or full request ID, returning appropriate error.
-fn resolve_id(
+pub(crate) fn resolve_id(
     conn: &rusqlite::Connection,
     input: &str,
 ) -> Result<String, crate::api_error::ApiError> {
