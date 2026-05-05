@@ -7,10 +7,60 @@ pub(crate) mod token_repo;
 
 use rusqlite::Connection;
 
-/// Initialize SQLite database with WAL mode and schema.
+/// Latest schema version. Increment when adding migrations.
+pub const LATEST_SCHEMA_VERSION: i64 = 1;
+
+/// Initialize SQLite database with WAL mode and versioned schema.
 pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
 
+    let current_version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+
+    if current_version > LATEST_SCHEMA_VERSION {
+        return Err(rusqlite::Error::QueryReturnedNoRows); // caller should map to a clear message
+    }
+
+    if current_version == 0 {
+        // Check if tables already exist (unsupported legacy DB)
+        let has_tables: bool = conn.query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='requests'",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_tables {
+            return Err(rusqlite::Error::QueryReturnedNoRows); // unversioned DB with existing tables
+        }
+
+        // Fresh DB: create base schema then apply all migrations
+        create_schema_v1(conn)?;
+        for v in 2..=LATEST_SCHEMA_VERSION {
+            apply_migration(conn, v)?;
+        }
+        conn.pragma_update(None, "user_version", LATEST_SCHEMA_VERSION)?;
+    } else if current_version < LATEST_SCHEMA_VERSION {
+        // Apply migrations sequentially
+        for v in (current_version + 1)..=LATEST_SCHEMA_VERSION {
+            apply_migration(conn, v)?;
+        }
+        conn.pragma_update(None, "user_version", LATEST_SCHEMA_VERSION)?;
+    }
+
+    maintenance::recover_in_flight_requests(conn)?;
+
+    Ok(())
+}
+
+/// Apply a single migration step. Add new versions here.
+fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Error> {
+    match version {
+        // Future migrations:
+        // 2 => conn.execute_batch("ALTER TABLE requests ADD COLUMN foo TEXT"),
+        _ => Ok(()),
+    }
+}
+
+/// Create the full v1 schema (used for fresh installs).
+fn create_schema_v1(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS tokens (
             id TEXT PRIMARY KEY,
@@ -186,19 +236,7 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_result_access_lookup
             ON result_access(selector_type, selector_value);
         ",
-    )?;
-
-    for sql in [
-        "ALTER TABLE requests ADD COLUMN cancelled_by TEXT",
-        "ALTER TABLE requests ADD COLUMN cancelled_at TEXT",
-        "ALTER TABLE requests ADD COLUMN cancel_reason TEXT",
-    ] {
-        let _ = conn.execute(sql, []);
-    }
-
-    maintenance::recover_in_flight_requests(conn)?;
-
-    Ok(())
+    )
 }
 
 #[cfg(test)]
@@ -224,6 +262,10 @@ mod tests {
         assert!(tables.contains(&"agents".to_string()));
         assert!(tables.contains(&"agent_executions".to_string()));
         assert!(tables.contains(&"audit_log".to_string()));
+
+        // Verify version is set
+        let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+        assert_eq!(version, LATEST_SCHEMA_VERSION);
     }
 
     #[test]
@@ -285,5 +327,20 @@ mod tests {
         assert_eq!(req2, "approved");
         assert_eq!(exec1.0, "failed");
         assert!(exec1.1.unwrap().contains("server restarted"));
+    }
+
+    #[test]
+    fn init_fails_on_newer_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "user_version", LATEST_SCHEMA_VERSION + 1).unwrap();
+        assert!(init(&conn).is_err());
+    }
+
+    #[test]
+    fn init_fails_on_unversioned_existing_db() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Create a table without setting user_version
+        conn.execute_batch("CREATE TABLE requests (id TEXT PRIMARY KEY)").unwrap();
+        assert!(init(&conn).is_err());
     }
 }
