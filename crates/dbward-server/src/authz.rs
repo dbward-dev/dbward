@@ -281,9 +281,8 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
             if principal.user == *requester_id {
                 return false;
             }
-            if is_admin(principal) {
-                return true;
-            }
+            // Admin does NOT bypass step-level group/role checks.
+            // Approval must come from someone matching the step's approvers.
             allowed_roles
                 .iter()
                 .any(|role| principal.roles.iter().any(|own| own == role))

@@ -215,15 +215,7 @@ pub(crate) async fn approve_request_inner(
             }
             None
         });
-        found
-            .or_else(|| {
-                if approver.effective_permission() == "admin" {
-                    step.approvers.first().and_then(approver_key)
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| {
+        found.ok_or_else(|| {
                 crate::api_error::ApiError::forbidden(
                     "you do not have a matching role or group for this step",
                 )
