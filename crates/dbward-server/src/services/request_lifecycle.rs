@@ -150,7 +150,7 @@ pub(crate) async fn approve_request_inner(
             allowed_roles: step
                 .approvers
                 .iter()
-                .map(|group| group.role.clone())
+                .filter_map(|group| group.role.clone())
                 .collect(), allowed_groups: vec![], },
     )?;
 
@@ -166,7 +166,7 @@ pub(crate) async fn approve_request_inner(
             ))
             .with_code("as_role_not_held"));
         }
-        if !step.approvers.iter().any(|g| g.role == *role) {
+        if !step.approvers.iter().any(|g| g.role.as_deref() == Some(role)) {
             return Err(crate::api_error::ApiError::forbidden(format!(
                 "role '{role}' is not an approver for current step"
             ))
@@ -175,16 +175,22 @@ pub(crate) async fn approve_request_inner(
         role.clone()
     } else {
         let found = step.approvers.iter().find_map(|g| {
-            if approver.has_role(&g.role) {
-                Some(g.role.clone())
-            } else {
-                None
+            if let Some(ref r) = g.role {
+                if approver.has_role(r) {
+                    return Some(r.clone());
+                }
             }
+            if let Some(ref grp) = g.group {
+                if approver.groups.contains(grp) {
+                    return Some(grp.clone());
+                }
+            }
+            None
         });
         found
             .or_else(|| {
                 if approver.effective_permission() == "admin" {
-                    step.approvers.first().map(|g| g.role.clone())
+                    step.approvers.first().and_then(|g| g.role.clone())
                 } else {
                     None
                 }
@@ -352,16 +358,18 @@ pub(crate) fn is_step_satisfied(
 
     match step.mode.as_str() {
         "any" => step.approvers.iter().any(|g| {
+            let key = g.role.as_deref().or(g.group.as_deref()).unwrap_or("");
             step_approvals
                 .iter()
-                .filter(|(_, _, role)| role == &g.role)
+                .filter(|(_, _, role)| role == key)
                 .count()
                 >= g.min as usize
         }),
         _ => step.approvers.iter().all(|g| {
+            let key = g.role.as_deref().or(g.group.as_deref()).unwrap_or("");
             step_approvals
                 .iter()
-                .filter(|(_, _, role)| role == &g.role)
+                .filter(|(_, _, role)| role == key)
                 .count()
                 >= g.min as usize
         }),

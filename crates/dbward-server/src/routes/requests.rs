@@ -305,7 +305,7 @@ fn request_is_approvable_by_user(
 
     let allowed_roles: Vec<String> = current_step_idx
         .and_then(|i| steps.get(i))
-        .map(|step| step.approvers.iter().map(|g| g.role.clone()).collect())
+        .map(|step| step.approvers.iter().filter_map(|g| g.role.clone()).collect())
         .unwrap_or_default();
 
     let approval_resource = authz::Resource::ApprovalStep {
@@ -374,7 +374,7 @@ pub(crate) fn current_approval_resource(
         .map(|step| {
             step.approvers
                 .iter()
-                .map(|group| group.role.clone())
+                .filter_map(|group| group.role.clone())
                 .collect()
         })
         .unwrap_or_default();
@@ -776,7 +776,7 @@ pub(crate) async fn get_request(
                             "index": i,
                             "mode": step.mode,
                             "satisfied": crate::services::request_lifecycle::is_step_satisfied(step, &simple_approvals, i as i64),
-                            "approvers_required": step.approvers.iter().map(|g| json!({"role": g.role, "min": g.min})).collect::<Vec<_>>(),
+                            "approvers_required": step.approvers.iter().map(|g| json!({"role": g.role, "group": g.group, "min": g.min})).collect::<Vec<_>>(),
                             "approvals": step_apprs,
                         })
                     }).collect();

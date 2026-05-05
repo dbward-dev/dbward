@@ -29,7 +29,10 @@ pub struct WorkflowStep {
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct ApproverGroup {
-    pub role: String,
+    #[serde(default)]
+    pub role: Option<String>,
+    #[serde(default)]
+    pub group: Option<String>,
     #[serde(default = "default_one")]
     pub min: u32,
 }
