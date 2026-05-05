@@ -450,6 +450,9 @@ pub(crate) async fn create_request(
     let database_name = body["database"].as_str().unwrap_or("default");
     let emergency = body["emergency"].as_bool().unwrap_or(false);
     let reason = body["reason"].as_str().map(|s| s.to_string());
+    let share_with_json: Option<String> = body["share_with"]
+        .as_array()
+        .map(|arr| serde_json::to_string(arr).unwrap_or_default());
 
     authz::authorize(
         &user,
@@ -532,6 +535,7 @@ pub(crate) async fn create_request(
             reason: reason.as_deref(),
             workflow_id: decision.workflow_id.as_deref(),
             workflow_snapshot_json: decision.workflow_snapshot_json.as_deref(),
+            share_with_json: share_with_json.as_deref(),
         },
         &now,
     )
