@@ -266,12 +266,16 @@ async fn authenticate(config: &ClientConfig) -> Result<(String, String), dbward_
     if let Some(ref oc) = config.server.oidc {
         match oidc_login::load_token(&oc.issuer, &oc.client_id).await {
             Ok(token) => return Ok((server_url, token)),
-            Err(_) => {}
+            Err(e) => {
+                return Err(dbward_core::Error::Auth(
+                    format!("{e}")
+                ));
+            }
         }
     }
 
     Err(dbward_core::Error::Auth(
-        "not logged in. Run: dbward login".into(),
+        "no authentication configured: set [server.oidc] or server.token in dbward.toml".into(),
     ))
 }
 
