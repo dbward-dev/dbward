@@ -42,7 +42,7 @@ min = 1
 role = "dba"
 min = 1
 
-# Production: team-lead first, then dba (sequential)
+# Production: backend-team first, then dba-team (sequential, group-based)
 [[workflows]]
 database = "*"
 environment = "production"
@@ -52,14 +52,14 @@ require_reason = true
 type = "approval"
 
 [[workflows.steps.approvers]]
-role = "team-lead"
+group = "backend-team"
 min = 1
 
 [[workflows.steps]]
 type = "approval"
 
 [[workflows.steps.approvers]]
-role = "dba"
+group = "dba-team"
 min = 1
 
 # Global webhooks (all events, all environments)
