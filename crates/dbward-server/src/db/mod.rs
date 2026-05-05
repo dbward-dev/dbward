@@ -177,6 +177,7 @@ fn create_schema_v1(conn: &Connection) -> Result<(), rusqlite::Error> {
             operations_json TEXT NOT NULL DEFAULT '[]',
             steps_json TEXT NOT NULL DEFAULT '[]',
             require_reason INTEGER NOT NULL DEFAULT 0,
+            allow_same_approver_across_steps INTEGER NOT NULL DEFAULT 0,
             source TEXT NOT NULL DEFAULT 'api',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,

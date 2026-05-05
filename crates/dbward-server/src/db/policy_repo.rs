@@ -135,12 +135,12 @@ pub fn sync_workflows(
         let id = format!("{}:{}:{}", w.database, w.environment, ops_tag);
         let steps_json = serde_json::to_string(&w.steps).unwrap_or_else(|_| "[]".into());
         conn.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'toml', ?7, ?7)
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'toml', ?8, ?8)
              ON CONFLICT(database_name, environment, operations_json) DO UPDATE SET
-               id = ?1, steps_json = ?5, require_reason = ?6, updated_at = ?7
+               id = ?1, steps_json = ?5, require_reason = ?6, allow_same_approver_across_steps = ?7, updated_at = ?8
              WHERE source = 'toml'",
-            rusqlite::params![id, w.database, w.environment, ops_json, steps_json, w.require_reason, now],
+            rusqlite::params![id, w.database, w.environment, ops_json, steps_json, w.require_reason, w.allow_same_approver_across_steps, now],
         )?;
         toml_ids.push(id);
     }

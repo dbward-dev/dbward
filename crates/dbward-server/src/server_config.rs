@@ -14,6 +14,8 @@ pub struct WorkflowDef {
     pub steps: Vec<WorkflowStep>,
     #[serde(default)]
     pub require_reason: bool,
+    #[serde(default)]
+    pub allow_same_approver_across_steps: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]

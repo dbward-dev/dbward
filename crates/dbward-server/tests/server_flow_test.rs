@@ -21,14 +21,14 @@ fn test_state() -> AppState {
             environment: "development".into(),
             operations: vec![],
             steps: vec![],
-            require_reason: false,
+            require_reason: false, allow_same_approver_across_steps: false,
         },
         dbward_server::server_config::WorkflowDef {
             database: "*".into(),
             environment: "staging".into(),
             operations: vec![],
             steps: vec![],
-            require_reason: false,
+            require_reason: false, allow_same_approver_across_steps: false,
         },
         dbward_server::server_config::WorkflowDef {
             database: "*".into(),
@@ -44,7 +44,7 @@ fn test_state() -> AppState {
                 }],
                 require_distinct_actors: true,
             }],
-            require_reason: false,
+            require_reason: false, allow_same_approver_across_steps: false,
         },
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
@@ -82,7 +82,7 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
             environment: "development".into(),
             operations: vec![],
             steps: vec![],
-            require_reason: false,
+            require_reason: false, allow_same_approver_across_steps: false,
         },
         dbward_server::server_config::WorkflowDef {
             database: "*".into(),
@@ -98,7 +98,7 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
                 }],
                 require_distinct_actors: true,
             }],
-            require_reason: false,
+            require_reason: false, allow_same_approver_across_steps: false,
         },
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
@@ -3284,7 +3284,7 @@ fn test_state_multistep() -> AppState {
             environment: "development".into(),
             operations: vec![],
             steps: vec![],
-            require_reason: false,
+            require_reason: false, allow_same_approver_across_steps: false,
         },
         // 2-step: team-lead then dba
         dbward_server::server_config::WorkflowDef {
@@ -3313,7 +3313,7 @@ fn test_state_multistep() -> AppState {
                     require_distinct_actors: true,
                 },
             ],
-            require_reason: false,
+            require_reason: false, allow_same_approver_across_steps: false,
         },
         // mode=any: either team-lead or dba
         dbward_server::server_config::WorkflowDef {
@@ -3337,7 +3337,7 @@ fn test_state_multistep() -> AppState {
                 ],
                 require_distinct_actors: true,
             }],
-            require_reason: false,
+            require_reason: false, allow_same_approver_across_steps: false,
         },
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();

@@ -145,6 +145,24 @@ pub(crate) async fn approve_request_inner(
         .collect()
     };
 
+    // Check cross-step distinct approver constraint
+    let allow_same = conn.query_row(
+        "SELECT allow_same_approver_across_steps FROM workflows WHERE database_name IN (?1, '*') AND environment IN (?2, '*') ORDER BY CASE WHEN database_name = '*' THEN 1 ELSE 0 END, CASE WHEN environment = '*' THEN 1 ELSE 0 END LIMIT 1",
+        rusqlite::params![&database_name, &environment],
+        |row| row.get::<_, bool>(0),
+    ).unwrap_or(false);
+
+    if !allow_same
+        && existing_approvals.iter().any(|(_, aid, _)| aid == &approver.user)
+    {
+        return Err(
+            crate::api_error::ApiError::forbidden(
+                "you already approved a previous step of this request",
+            )
+            .with_code("same_approver_across_steps"),
+        );
+    }
+
     // Calculate current step index (first unsatisfied step)
     let current_step = steps
         .iter()

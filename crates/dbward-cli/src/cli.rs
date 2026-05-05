@@ -1106,6 +1106,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         operations: vec![],
         steps: vec![],
         require_reason: false,
+        allow_same_approver_across_steps: false,
     }];
     dbward_server::db::policy_repo::sync_workflows(&conn, &workflows)
         .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
