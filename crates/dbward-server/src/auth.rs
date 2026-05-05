@@ -97,7 +97,7 @@ pub async fn authenticate(
             StatusCode::INTERNAL_SERVER_ERROR,
             "OIDC verifier not initialized".into(),
         ))?;
-        let (identity, roles) = oidc
+        let (identity, roles, groups) = oidc
             .verify(raw_token)
             .await
             .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
@@ -105,6 +105,7 @@ pub async fn authenticate(
             token_id: format!("oidc:{identity}"),
             user: identity,
             roles,
+            groups,
             subject_type: "user".into(),
         })
     } else {
@@ -133,6 +134,7 @@ async fn authenticate_api_token(
             token_id: row.id,
             user: row.subject_id,
             roles: vec![row.role],
+            groups: vec![],
             subject_type: row.subject_type,
         }),
         Ok(None) => Err((StatusCode::UNAUTHORIZED, "invalid token".into())),

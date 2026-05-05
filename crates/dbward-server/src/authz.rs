@@ -131,6 +131,7 @@ pub enum Resource {
 struct Principal {
     user: String,
     roles: Vec<String>,
+    groups: Vec<String>,
     permission: String,
     subject_type: String,
 }
@@ -140,6 +141,7 @@ impl From<&AuthUser> for Principal {
         Self {
             user: value.user.clone(),
             roles: value.roles.clone(),
+            groups: value.groups.clone(),
             permission: value.effective_permission().to_string(),
             subject_type: value.subject_type.clone(),
         }
@@ -382,6 +384,7 @@ mod tests {
             token_id: "t".into(),
             user: name.into(),
             roles: roles.iter().map(|role| (*role).to_string()).collect(),
+            groups: vec![],
             subject_type: subject_type.into(),
         }
     }

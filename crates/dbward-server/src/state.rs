@@ -116,6 +116,7 @@ pub struct AuthUser {
     pub token_id: String,
     pub user: String,
     pub roles: Vec<String>,
+    pub groups: Vec<String>,
     pub subject_type: String,
 }
 

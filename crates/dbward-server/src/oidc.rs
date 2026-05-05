@@ -69,7 +69,7 @@ impl OidcVerifier {
     }
 
     /// Verify a JWT and return (subject, roles).
-    pub async fn verify(&self, token: &str) -> Result<(String, Vec<String>), String> {
+    pub async fn verify(&self, token: &str) -> Result<(String, Vec<String>, Vec<String>), String> {
         let header = decode_header(token).map_err(|e| format!("invalid JWT header: {e}"))?;
         let kid = header.kid.as_deref().unwrap_or("");
 
@@ -88,8 +88,9 @@ impl OidcVerifier {
 
         let identity = claims.email.clone().unwrap_or(claims.sub.clone());
         let roles = self.resolve_roles(&claims);
+        let groups = claims.groups.clone().unwrap_or_default();
 
-        Ok((identity, roles))
+        Ok((identity, roles, groups))
     }
 
     fn resolve_roles(&self, claims: &Claims) -> Vec<String> {
