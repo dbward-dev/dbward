@@ -125,6 +125,22 @@ async fn execute_job(
         other => dbward_core::Environment::Custom(other.to_string()),
     };
 
+    // Heartbeat task: extend lease while executing
+    let heartbeat_interval =
+        std::time::Duration::from_secs(config.lease_duration_secs / 3);
+    let hb_client = client.clone();
+    let hb_exec_id = exec_id.to_string();
+    let hb_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(heartbeat_interval);
+        interval.tick().await; // skip immediate first tick
+        loop {
+            interval.tick().await;
+            if let Err(e) = hb_client.heartbeat(&hb_exec_id).await {
+                eprintln!("heartbeat failed: {e}");
+            }
+        }
+    });
+
     let (result_value, success) = match execute_operation(&resolved, env, operation, detail).await {
         Ok(text) => {
             let val: serde_json::Value =
@@ -134,11 +150,13 @@ async fn execute_job(
         Err(e) => {
             let msg = e.to_string();
             eprintln!("job {request_id} execution failed: {msg}");
+            hb_handle.abort();
             send_result_with_retry(client, exec_id, false, None, Some(&msg)).await;
             return Ok(());
         }
     };
 
+    hb_handle.abort();
     eprintln!("job {request_id} execution completed");
     send_result_with_retry(client, exec_id, success, result_value, None).await;
     Ok(())

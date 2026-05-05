@@ -1,6 +1,6 @@
 use axum::Json;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use serde_json::json;
 use sha2::Digest;
@@ -206,6 +206,32 @@ pub(crate) async fn agent_claim(
         "detail": detail,
         "execution_token": token,
     })))
+}
+
+/// Agent heartbeat: extend lease while executing.
+pub(crate) async fn agent_heartbeat(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
+    let user = auth::authenticate(&headers, &state).await?;
+    authz::authorize(&user, Action::AgentPoll, Resource::Global).await?;
+
+    let conn = state.sqlite.lock().await;
+    let new_expires = chrono::Utc::now() + chrono::Duration::seconds(300);
+    let updated = conn.execute(
+        "UPDATE agent_executions SET lease_expires_at = ?1, updated_at = ?1
+         WHERE id = ?2 AND status = 'claimed'",
+        rusqlite::params![new_expires.to_rfc3339(), id],
+    ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+
+    if updated == 0 {
+        return Err(crate::api_error::ApiError::new(
+            StatusCode::NOT_FOUND,
+            "execution not found or not claimed",
+        ));
+    }
+    Ok(StatusCode::OK)
 }
 
 /// Agent sends execution result. Server relays to waiting CLI via channel.

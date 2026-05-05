@@ -48,6 +48,10 @@ pub fn router(state: AppState) -> Router {
             axum::routing::post(agent::agent_claim),
         )
         .route(
+            "/api/agent/jobs/{id}/heartbeat",
+            axum::routing::post(agent::agent_heartbeat),
+        )
+        .route(
             "/api/agent/jobs/{id}/result",
             axum::routing::post(agent::agent_result),
         )

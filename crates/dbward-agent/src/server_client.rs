@@ -2,6 +2,7 @@ use dbward_core::Error;
 use reqwest::Client;
 use serde_json::Value;
 
+#[derive(Clone)]
 pub struct AgentClient {
     base_url: String,
     agent_token: String,
@@ -108,6 +109,25 @@ impl AgentClient {
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
             return Err(Error::Server(format!("send result failed: {text}")));
+        }
+        Ok(())
+    }
+
+    pub async fn heartbeat(&self, execution_id: &str) -> Result<(), Error> {
+        let resp = self
+            .client
+            .post(format!(
+                "{}/api/agent/jobs/{}/heartbeat",
+                self.base_url, execution_id
+            ))
+            .bearer_auth(&self.agent_token)
+            .send()
+            .await
+            .map_err(|e| Error::Server(format!("heartbeat failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(Error::Server(format!("heartbeat failed: {text}")));
         }
         Ok(())
     }
