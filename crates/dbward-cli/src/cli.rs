@@ -669,7 +669,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     if json_output {
                         println!("{}", serde_json::to_string_pretty(&resp)?);
                     } else {
-                        print_execution_result(&resp);
+                        // Storage returns raw result data, wrap for display
+                        let wrapped = serde_json::json!({"success": true, "result": resp});
+                        print_execution_result(&wrapped);
                     }
                 }
             }
