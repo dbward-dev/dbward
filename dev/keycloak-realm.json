@@ -85,7 +85,8 @@
         }
       ],
       "groups": [
-        "dbward-admins"
+        "dbward-admins",
+        "backend-team"
       ]
     },
     {
