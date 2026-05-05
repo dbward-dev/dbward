@@ -201,3 +201,20 @@ pub async fn list_results(
 
     Ok(Json(json!({ "results": results })))
 }
+
+/// GET /api/storage-config — get current result storage configuration (admin only)
+pub async fn get_storage_config(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = authenticate(&headers, &state).await?;
+    if user.effective_permission() != "admin" {
+        return Err(ApiError::forbidden("admin only").with_code("admin_required"));
+    }
+    let config = if state.result_store.is_some() {
+        json!({"configured": true, "backend": "active"})
+    } else {
+        json!({"configured": false})
+    };
+    Ok(Json(config))
+}

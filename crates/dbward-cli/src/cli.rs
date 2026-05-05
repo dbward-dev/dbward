@@ -900,7 +900,23 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                 retention: server_cfg.retention,
                 request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                result_store: None,
+                result_store: {
+                    let store = match &server_cfg.result_storage {
+                        dbward_server::server_config::ResultStorageConfig::Local { root_dir } => {
+                            dbward_server::result_storage::ResultStore::new_local(root_dir)
+                        }
+                        dbward_server::server_config::ResultStorageConfig::S3 { bucket, region, endpoint } => {
+                            dbward_server::result_storage::ResultStore::new_s3(bucket, region, endpoint.as_deref())
+                        }
+                    };
+                    match store {
+                        Ok(s) => Some(std::sync::Arc::new(s)),
+                        Err(e) => {
+                            eprintln!("Warning: result storage init failed: {e}");
+                            None
+                        }
+                    }
+                },
             };
             let addr: std::net::SocketAddr = listen
                 .parse()
