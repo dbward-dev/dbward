@@ -1146,6 +1146,14 @@ pub(crate) async fn stream_result(
         let _ = state.result_channels.remove(&id).await;
         return Ok(Json(payload));
     }
+    if state.draining.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(crate::api_error::ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "server is shutting down",
+        )
+        .with_code("server_shutting_down")
+        .with_hint(format!("dbward resume {id}")));
+    }
 
     // Wait up to 5 minutes for agent to deliver result
     let wait = tokio::time::timeout(std::time::Duration::from_secs(300), async {
@@ -1166,7 +1174,7 @@ pub(crate) async fn stream_result(
             "server is shutting down",
         )
         .with_code("server_shutting_down")
-        .with_hint(&format!("dbward resume {id}")));
+        .with_hint(format!("dbward resume {id}")));
     }
     if wait.is_err() {
         return Err(crate::api_error::ApiError::new(

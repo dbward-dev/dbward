@@ -155,6 +155,173 @@ async fn ready_check() {
 }
 
 #[tokio::test]
+async fn ready_returns_503_while_draining() {
+    let state = test_state();
+    state
+        .draining
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let app = routes::router(state);
+
+    let resp = app
+        .oneshot(Request::get("/ready").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn create_request_returns_503_while_draining() {
+    let state = test_state();
+    let (_, token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    state
+        .draining
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let app = routes::router(state);
+
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "staging", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = body_json(resp).await;
+    assert_eq!(body["error"], "server is shutting down");
+    assert_eq!(body["code"], "server_shutting_down");
+}
+
+#[tokio::test]
+async fn stream_result_returns_503_while_draining() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let app = routes::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "staging", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let request_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{request_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    state
+        .draining
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let resp = app
+        .oneshot(
+            Request::get(format!("/api/requests/{request_id}/result/stream"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = body_json(resp).await;
+    assert_eq!(body["error"], "server is shutting down");
+    assert_eq!(body["code"], "server_shutting_down");
+    assert_eq!(body["hint"], format!("dbward resume {request_id}"));
+}
+
+#[tokio::test]
+async fn drain_notifies_waiting_stream_result() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let app = routes::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "staging", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let request_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{request_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let wait_app = app.clone();
+    let wait_token = alice_token.clone();
+    let wait_id = request_id.clone();
+    let waiter = tokio::spawn(async move {
+        wait_app
+            .oneshot(
+                Request::get(format!("/api/requests/{wait_id}/result/stream"))
+                    .header("authorization", auth_header(&wait_token))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    state
+        .draining
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    state.result_channels.notify_all().await;
+
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+        .await
+        .expect("waiting result stream should be notified during drain")
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = body_json(resp).await;
+    assert_eq!(body["code"], "server_shutting_down");
+    assert_eq!(body["hint"], format!("dbward resume {request_id}"));
+}
+
+#[tokio::test]
 async fn auto_approve_non_production() {
     let state = test_state();
     let (_, token) = auth::create_token(&state, "alice", "developer")

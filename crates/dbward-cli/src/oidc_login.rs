@@ -358,8 +358,8 @@ async fn discover_with_override(
     // Rewrite endpoints for backchannel access
     if let Some(base) = backchannel_url {
         let rewrite = |u: &str| -> String {
-            if u.starts_with(issuer) {
-                format!("{}{}", base, &u[issuer.len()..])
+            if let Some(stripped) = u.strip_prefix(issuer) {
+                format!("{base}{stripped}")
             } else {
                 u.to_string()
             }

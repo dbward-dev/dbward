@@ -169,4 +169,95 @@ mod tests {
             .unwrap();
         assert_eq!(aud_count, 1);
     }
+
+    #[test]
+    fn reclaim_expired_leases_marks_execution_lost() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let expired = (chrono::Utc::now() - chrono::Duration::minutes(10)).to_rfc3339();
+
+        conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at)
+             VALUES ('req-1', 'alice', 'execute_query', 'development', 'app', 'running', 'SELECT 1', ?1, ?1)",
+            rusqlite::params![now],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_executions (id, request_id, agent_id, status, execution_token_json, lease_expires_at, started_at, created_at)
+             VALUES ('exec-1', 'req-1', 'agent-1', 'claimed', '{}', ?1, ?2, ?2)",
+            rusqlite::params![expired, now],
+        )
+        .unwrap();
+
+        let reclaimed = reclaim_expired_leases(&conn).unwrap();
+        assert_eq!(reclaimed, 1);
+
+        let request_status: String = conn
+            .query_row("SELECT status FROM requests WHERE id = 'req-1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(request_status, "execution_lost");
+
+        let (exec_status, error_message): (String, String) = conn
+            .query_row(
+                "SELECT status, error_message FROM agent_executions WHERE id = 'exec-1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(exec_status, "lost");
+        assert_eq!(error_message, "lease expired, execution outcome unknown");
+    }
+
+    #[test]
+    fn purge_old_records_deletes_execution_lost_requests() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+
+        let old = "2020-01-01T00:00:00+00:00";
+
+        conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at)
+             VALUES ('old-lost', 'alice', 'execute_query', 'development', 'app', 'execution_lost', 'SELECT 1', ?1, ?1)",
+            rusqlite::params![old],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO approvals (id, request_id, action, actor_id, created_at)
+             VALUES ('apr-lost', 'old-lost', 'approve', 'bob', ?1)",
+            rusqlite::params![old],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_executions (id, request_id, agent_id, status, execution_token_json, lease_expires_at, started_at, created_at)
+             VALUES ('exec-lost', 'old-lost', 'agent-1', 'lost', '{}', ?1, ?1, ?1)",
+            rusqlite::params![old],
+        )
+        .unwrap();
+
+        let (req_deleted, _) = purge_old_records(&conn, 90, 365).unwrap();
+        assert_eq!(req_deleted, 1);
+
+        let request_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM requests WHERE id = 'old-lost'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let approval_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM approvals WHERE request_id = 'old-lost'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let execution_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_executions WHERE request_id = 'old-lost'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(request_count, 0);
+        assert_eq!(approval_count, 0);
+        assert_eq!(execution_count, 0);
+    }
 }

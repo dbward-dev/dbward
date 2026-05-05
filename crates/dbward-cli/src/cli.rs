@@ -268,7 +268,7 @@ async fn authenticate(config: &ClientConfig) -> Result<(String, String), dbward_
             Ok(token) => return Ok((server_url, token)),
             Err(e) => {
                 return Err(dbward_core::Error::Auth(
-                    format!("{e}")
+                    e.to_string(),
                 ));
             }
         }

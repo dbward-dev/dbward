@@ -51,6 +51,13 @@ impl ResultChannels {
         self.slots.lock().await.remove(request_id)
     }
 
+    pub async fn notify_all(&self) {
+        let slots = self.slots.lock().await;
+        for slot in slots.values() {
+            slot.notify.notify_waiters();
+        }
+    }
+
     async fn cleanup_expired(&self) {
         let now = Instant::now();
         self.slots
@@ -97,11 +104,10 @@ impl RequestNotifier {
         self.notifiers.lock().await.remove(request_id);
     }
 
-    pub fn notify_all(&self) {
-        if let Ok(map) = self.notifiers.try_lock() {
-            for n in map.values() {
-                n.notify_waiters();
-            }
+    pub async fn notify_all(&self) {
+        let map = self.notifiers.lock().await;
+        for n in map.values() {
+            n.notify_waiters();
         }
     }
 }

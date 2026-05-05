@@ -87,10 +87,10 @@ async fn shutdown_signal(state: AppState) {
 
     // Phase 1: Drain — notify waiting clients, reject new requests
     state.draining.store(true, std::sync::atomic::Ordering::SeqCst);
-    state.request_notifier.notify_all();
+    state.request_notifier.notify_all().await;
+    state.result_channels.notify_all().await;
 
     // Give time for agent result submits to arrive
-    let drain_secs = state.retention.request_ttl_days.min(20) as u64;
-    tokio::time::sleep(std::time::Duration::from_secs(drain_secs.max(20))).await;
+    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
     eprintln!("Drain complete, shutting down listener...");
 }
