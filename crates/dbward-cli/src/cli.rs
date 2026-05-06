@@ -204,6 +204,9 @@ enum TokenAction {
         /// Create an agent token instead of a user token
         #[arg(long)]
         agent: bool,
+        /// Comma-separated groups for this token
+        #[arg(long, value_delimiter = ',')]
+        groups: Vec<String>,
         #[arg(long, default_value = "dbward.db")]
         data: String,
     },
@@ -1016,6 +1019,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 user,
                 role,
                 agent,
+                groups,
                 data,
             } => {
                 let conn = rusqlite::Connection::open(data)
@@ -1043,11 +1047,16 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
                 };
-                let subject_type = if *agent { "agent" } else { "user" };
-                let (token_id, raw_token) =
-                    dbward_server::auth::create_token_with_type(&state, user, role, subject_type)
+                let group_refs: Vec<&str> = groups.iter().map(|s| s.as_str()).collect();
+                let (token_id, raw_token) = if *agent {
+                    dbward_server::auth::create_token_with_type(&state, user, role, "agent")
                         .await
-                        .map_err(dbward_core::Error::Server)?;
+                        .map_err(dbward_core::Error::Server)?
+                } else {
+                    dbward_server::auth::create_token_with_groups(&state, user, role, &group_refs)
+                        .await
+                        .map_err(dbward_core::Error::Server)?
+                };
                 let type_label = if *agent { "agent" } else { "user" };
                 println!("Token created:");
                 println!("  ID:    {token_id}");
@@ -1055,6 +1064,9 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 println!("  User:  {user}");
                 println!("  Role:  {role}");
                 println!("  Type:  {type_label}");
+                if !groups.is_empty() {
+                    println!("  Groups: {}", groups.join(", "));
+                }
                 println!("\nSave this token — it cannot be retrieved later.");
                 Ok(())
             }
