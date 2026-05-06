@@ -572,6 +572,8 @@ fn format_result(resp: &Value) -> Result<String, String> {
     } else if let Some(text) = result.as_str() {
         Ok(text.to_string())
     } else {
+        // For structured results, include truncation info as part of the JSON
+        // so AI consumers can parse it programmatically
         Ok(serde_json::to_string_pretty(result).unwrap_or_default())
     }
 }

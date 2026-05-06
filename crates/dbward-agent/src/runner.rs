@@ -287,11 +287,20 @@ async fn execute_operation(
         "execute_query" => {
             let mut engine = Engine::new(resolved, env).await?;
             let result = engine.execute_query("agent", "developer", detail).await?;
-            if result.rows.is_empty() {
-                Ok(format!("Rows affected: {}", result.rows_affected))
+            let mut output = if result.rows.is_empty() {
+                serde_json::json!({"rows_affected": result.rows_affected, "truncated": false})
             } else {
-                serde_json::to_string_pretty(&result.rows).map_err(|e| Error::Server(e.to_string()))
+                serde_json::json!({
+                    "rows": result.rows,
+                    "row_count": result.rows.len(),
+                    "truncated": result.truncated,
+                    "truncation_reason": result.truncation_reason,
+                })
+            };
+            if result.truncated {
+                // Keep truncated/truncation_reason already set above
             }
+            serde_json::to_string_pretty(&output).map_err(|e| Error::Server(e.to_string()))
         }
         "migrate_up" => {
             let engine = Engine::new(resolved, env).await?;

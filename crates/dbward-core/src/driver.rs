@@ -6,12 +6,19 @@ use crate::Error;
 pub const DEFAULT_MAX_RESULT_ROWS: usize = 10_000;
 pub const DEFAULT_MAX_RESULT_BYTES: usize = 50 * 1024 * 1024; // 50 MB
 
+/// Result of a query execution, including truncation metadata.
+pub struct QueryOutput {
+    pub rows: Vec<serde_json::Value>,
+    pub truncated: bool,
+    pub truncation_reason: Option<String>,
+}
+
 /// Abstraction over database backends. Implementations handle connection pooling,
 /// query execution, and migration bookkeeping for a specific database engine.
 #[async_trait::async_trait]
 pub trait DatabaseDriver: Send + Sync {
     /// Execute a read query, returning rows as JSON objects.
-    async fn query(&self, sql: &str) -> Result<Vec<serde_json::Value>, Error>;
+    async fn query(&self, sql: &str) -> Result<QueryOutput, Error>;
 
     /// Execute a write statement, returning rows affected.
     async fn execute(&self, sql: &str) -> Result<u64, Error>;
@@ -56,11 +63,13 @@ pub struct PostgresDriver {
 
 #[async_trait::async_trait]
 impl DatabaseDriver for PostgresDriver {
-    async fn query(&self, sql: &str) -> Result<Vec<serde_json::Value>, Error> {
+    async fn query(&self, sql: &str) -> Result<QueryOutput, Error> {
         use futures::TryStreamExt;
         let mut stream = sqlx::query(sql).fetch(&self.pool);
         let mut rows = Vec::new();
         let mut total_bytes: usize = 0;
+        let mut truncated = false;
+        let mut truncation_reason = None;
         while let Some(row) = stream
             .try_next()
             .await
@@ -69,11 +78,18 @@ impl DatabaseDriver for PostgresDriver {
             let json = pg_row_to_json(&row);
             total_bytes += serde_json::to_string(&json).unwrap_or_default().len();
             rows.push(json);
-            if rows.len() >= DEFAULT_MAX_RESULT_ROWS || total_bytes >= DEFAULT_MAX_RESULT_BYTES {
+            if rows.len() >= DEFAULT_MAX_RESULT_ROWS {
+                truncated = true;
+                truncation_reason = Some(format!("row limit reached ({DEFAULT_MAX_RESULT_ROWS})"));
+                break;
+            }
+            if total_bytes >= DEFAULT_MAX_RESULT_BYTES {
+                truncated = true;
+                truncation_reason = Some(format!("size limit reached ({} MB)", DEFAULT_MAX_RESULT_BYTES / 1024 / 1024));
                 break;
             }
         }
-        Ok(rows)
+        Ok(QueryOutput { rows, truncated, truncation_reason })
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
@@ -195,11 +211,13 @@ pub struct MysqlDriver {
 
 #[async_trait::async_trait]
 impl DatabaseDriver for MysqlDriver {
-    async fn query(&self, sql: &str) -> Result<Vec<serde_json::Value>, Error> {
+    async fn query(&self, sql: &str) -> Result<QueryOutput, Error> {
         use futures::TryStreamExt;
         let mut stream = sqlx::query(sql).fetch(&self.pool);
         let mut rows = Vec::new();
         let mut total_bytes: usize = 0;
+        let mut truncated = false;
+        let mut truncation_reason = None;
         while let Some(row) = stream
             .try_next()
             .await
@@ -208,11 +226,18 @@ impl DatabaseDriver for MysqlDriver {
             let json = mysql_row_to_json(&row);
             total_bytes += serde_json::to_string(&json).unwrap_or_default().len();
             rows.push(json);
-            if rows.len() >= DEFAULT_MAX_RESULT_ROWS || total_bytes >= DEFAULT_MAX_RESULT_BYTES {
+            if rows.len() >= DEFAULT_MAX_RESULT_ROWS {
+                truncated = true;
+                truncation_reason = Some(format!("row limit reached ({DEFAULT_MAX_RESULT_ROWS})"));
+                break;
+            }
+            if total_bytes >= DEFAULT_MAX_RESULT_BYTES {
+                truncated = true;
+                truncation_reason = Some(format!("size limit reached ({} MB)", DEFAULT_MAX_RESULT_BYTES / 1024 / 1024));
                 break;
             }
         }
-        Ok(rows)
+        Ok(QueryOutput { rows, truncated, truncation_reason })
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {

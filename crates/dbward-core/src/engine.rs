@@ -69,11 +69,13 @@ impl Engine {
 
         let result = match query_type {
             QueryType::Select => {
-                let rows = self.driver.query(sql).await?;
+                let output = self.driver.query(sql).await?;
                 QueryResult {
                     query_type: QueryType::Select,
-                    rows,
+                    rows: output.rows,
                     rows_affected: 0,
+                    truncated: output.truncated,
+                    truncation_reason: output.truncation_reason,
                 }
             }
             _ => {
@@ -82,6 +84,8 @@ impl Engine {
                     query_type,
                     rows: vec![],
                     rows_affected: affected,
+                    truncated: false,
+                    truncation_reason: None,
                 }
             }
         };

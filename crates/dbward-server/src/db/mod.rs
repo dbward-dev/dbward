@@ -1,7 +1,7 @@
 pub(crate) mod agent_repo;
 pub(crate) mod audit_event_repo;
 pub(crate) mod audit_repo;
-pub(crate) mod maintenance;
+pub mod maintenance;
 pub mod policy_repo;
 pub(crate) mod request_repo;
 pub(crate) mod token_repo;
@@ -43,6 +43,30 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
     }
 
     maintenance::recover_in_flight_requests(conn)?;
+
+    Ok(())
+}
+
+/// Initialize schema only (without recovering in-flight requests).
+/// Use this for CLI tools that open the DB file directly (e.g. token create).
+pub fn init_schema_only(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let current_version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+
+    if current_version == 0 {
+        if has_user_tables(conn)? {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        create_schema_v1(conn)?;
+        for v in 2..=LATEST_SCHEMA_VERSION {
+            apply_migration(conn, v)?;
+        }
+        conn.pragma_update(None, "user_version", LATEST_SCHEMA_VERSION)?;
+    } else if current_version < LATEST_SCHEMA_VERSION {
+        for v in (current_version + 1)..=LATEST_SCHEMA_VERSION {
+            apply_migration(conn, v)?;
+        }
+        conn.pragma_update(None, "user_version", LATEST_SCHEMA_VERSION)?;
+    }
 
     Ok(())
 }
@@ -392,6 +416,7 @@ mod tests {
         )
         .unwrap();
 
+        // Second init should NOT change request/execution statuses (no-op recovery)
         init(&conn).unwrap();
 
         let req1: String = conn
@@ -408,18 +433,18 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        let exec1: (String, Option<String>) = conn
+        let exec1: String = conn
             .query_row(
-                "SELECT status, error_message FROM agent_executions WHERE id = 'exec-1'",
+                "SELECT status FROM agent_executions WHERE id = 'exec-1'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| row.get(0),
             )
             .unwrap();
 
-        assert_eq!(req1, "approved");
-        assert_eq!(req2, "approved");
-        assert_eq!(exec1.0, "failed");
-        assert!(exec1.1.unwrap().contains("server restarted"));
+        // States are preserved — lease reclaim handles recovery, not init
+        assert_eq!(req1, "dispatched");
+        assert_eq!(req2, "running");
+        assert_eq!(exec1, "claimed");
     }
 
     #[test]
