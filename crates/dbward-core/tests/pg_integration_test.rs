@@ -25,21 +25,23 @@ async fn setup() -> (
 #[ignore]
 async fn result_rows_capped_at_max() {
     let (_c, drv) = setup().await;
-    let rows = drv
+    let output = drv
         .query(&format!(
             "SELECT generate_series(1, {}) AS n",
             DEFAULT_MAX_RESULT_ROWS + 5000
         ))
         .await
         .unwrap();
-    assert_eq!(rows.len(), DEFAULT_MAX_RESULT_ROWS);
+    assert_eq!(output.rows.len(), DEFAULT_MAX_RESULT_ROWS);
+    assert!(output.truncated);
+    assert!(output.truncation_reason.unwrap().contains("row limit"));
 }
 
 #[tokio::test]
 #[ignore]
 async fn empty_result_returns_empty_array() {
     let (_c, drv) = setup().await;
-    let rows = drv.query("SELECT 1 WHERE false").await.unwrap();
+    let rows = drv.query("SELECT 1 WHERE false").await.unwrap().rows;
     assert!(rows.is_empty());
 }
 
@@ -52,7 +54,7 @@ async fn pg_null_values() {
     let rows = drv
         .query("SELECT NULL::int AS n, NULL::text AS t")
         .await
-        .unwrap();
+        .unwrap().rows;
     assert!(rows[0]["n"].is_null());
     assert!(rows[0]["t"].is_null());
 }
@@ -61,7 +63,7 @@ async fn pg_null_values() {
 #[ignore]
 async fn pg_array_type_as_string() {
     let (_c, drv) = setup().await;
-    let rows = drv.query("SELECT ARRAY[1,2,3]::int[] AS arr").await.unwrap();
+    let rows = drv.query("SELECT ARRAY[1,2,3]::int[] AS arr").await.unwrap().rows;
     // Arrays fall through to String fallback
     assert!(rows[0]["arr"].is_string());
 }
@@ -70,7 +72,7 @@ async fn pg_array_type_as_string() {
 #[ignore]
 async fn pg_boolean_type() {
     let (_c, drv) = setup().await;
-    let rows = drv.query("SELECT true AS t, false AS f").await.unwrap();
+    let rows = drv.query("SELECT true AS t, false AS f").await.unwrap().rows;
     assert_eq!(rows[0]["t"], true);
     assert_eq!(rows[0]["f"], false);
 }
@@ -82,7 +84,7 @@ async fn pg_inet_type_as_string() {
     let rows = drv
         .query("SELECT '192.168.1.1'::inet AS ip")
         .await
-        .unwrap();
+        .unwrap().rows;
     assert!(rows[0]["ip"].is_string());
     assert!(rows[0]["ip"].as_str().unwrap().contains("192.168.1.1"));
 }
@@ -113,7 +115,7 @@ async fn unicode_data_roundtrip() {
     let (_c, drv) = setup().await;
     drv.execute("CREATE TABLE unicode_test (val TEXT)").await.unwrap();
     drv.execute("INSERT INTO unicode_test VALUES ('日本語テスト 🎉')").await.unwrap();
-    let rows = drv.query("SELECT val FROM unicode_test").await.unwrap();
+    let rows = drv.query("SELECT val FROM unicode_test").await.unwrap().rows;
     assert_eq!(rows[0]["val"].as_str().unwrap(), "日本語テスト 🎉");
 }
 
@@ -130,6 +132,6 @@ async fn multi_statement_execute() {
         .unwrap();
     // rows_affected may be 1 (last statement) or 2 depending on driver behavior
     assert!(affected >= 1);
-    let rows = drv.query("SELECT COUNT(*)::int AS cnt FROM multi_test").await.unwrap();
+    let rows = drv.query("SELECT COUNT(*)::int AS cnt FROM multi_test").await.unwrap().rows;
     assert_eq!(rows[0]["cnt"], 2);
 }

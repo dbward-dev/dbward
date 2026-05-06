@@ -43,7 +43,7 @@ async fn migrate_up_and_status() {
     let rows = drv
         .query("SELECT COUNT(*)::int AS cnt FROM users")
         .await
-        .unwrap();
+        .unwrap().rows;
     assert_eq!(rows[0]["cnt"], 0);
 }
 
