@@ -1,9 +1,46 @@
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
+use std::time::Duration;
 
 use serde_json::{Value, json};
+use tokio::sync::{mpsc, oneshot};
 
 use dbward_core::ClientConfig;
+
+/// Elicitation result from client
+enum ElicitResult {
+    Accept { content: Value },
+    Decline,
+    Cancel,
+}
+
+/// Channel for workers to request elicitation
+struct ElicitHandle {
+    tx: mpsc::Sender<ElicitMsg>,
+    id_counter: Arc<AtomicU64>,
+}
+
+struct ElicitMsg {
+    id: u64,
+    message: String,
+    schema: Value,
+    response_tx: oneshot::Sender<ElicitResult>,
+}
+
+impl ElicitHandle {
+    async fn ask(&self, message: &str, schema: Value) -> Result<ElicitResult, String> {
+        let id = self.id_counter.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(ElicitMsg { id, message: message.to_string(), schema, response_tx: tx })
+            .await
+            .map_err(|_| "elicitation channel closed".to_string())?;
+        rx.await.map_err(|_| "elicitation response dropped".to_string())
+    }
+}
 
 pub async fn run_stdio(
     config: ClientConfig,
@@ -12,82 +49,140 @@ pub async fn run_stdio(
 ) -> Result<(), dbward_core::Error> {
     let db_name = config.resolve_database_name(database)?;
     let migrations_dir = config.migrations_dir_for(&db_name);
+    let client = Arc::new(client);
 
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
+    let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<Value>(64);
+    let (incoming_tx, mut incoming_rx) = mpsc::channel::<Value>(64);
+    let (elicit_tx, mut elicit_rx) = mpsc::channel::<ElicitMsg>(8);
+    let elicit_id_counter = Arc::new(AtomicU64::new(1));
 
-    for line in stdin.lock().lines() {
-        let line = line.map_err(dbward_core::Error::Io)?;
-        if line.trim().is_empty() {
-            continue;
+    let mut client_supports_elicitation = false;
+    let mut pending_elicitations: HashMap<u64, oneshot::Sender<ElicitResult>> = HashMap::new();
+
+    // Reader task (blocking stdin in spawn_blocking)
+    let in_tx = incoming_tx.clone();
+    tokio::task::spawn_blocking(move || {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            let Ok(line) = line else { break };
+            if line.trim().is_empty() { continue; }
+            let Ok(val) = serde_json::from_str::<Value>(&line) else { continue; };
+            if in_tx.blocking_send(val).is_err() { break; }
         }
+    });
 
-        let request: Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(e) => {
-                let err_resp = json!({
+    // Writer task
+    let out_tx_clone = outgoing_tx.clone();
+    tokio::spawn(async move {
+        let mut stdout = io::stdout();
+        while let Some(msg) = outgoing_rx.recv().await {
+            let _ = writeln!(stdout, "{msg}");
+            let _ = stdout.flush();
+        }
+    });
+
+    // Connection actor loop
+    loop {
+        tokio::select! {
+            msg = incoming_rx.recv() => {
+                let Some(request) = msg else { break; };
+
+                let id = request.get("id").cloned();
+                let method = request["method"].as_str().unwrap_or("").to_string();
+
+                // Check if this is a response (to our elicitation request)
+                if id.is_some() && request.get("result").is_some() && request.get("method").is_none() {
+                    let resp_id = id.as_ref().and_then(|v| v.as_u64()).unwrap_or(0);
+                    if let Some(tx) = pending_elicitations.remove(&resp_id) {
+                        let result = &request["result"];
+                        let action = result["action"].as_str().unwrap_or("cancel");
+                        let elicit_result = match action {
+                            "accept" => ElicitResult::Accept { content: result["content"].clone() },
+                            "decline" => ElicitResult::Decline,
+                            _ => ElicitResult::Cancel,
+                        };
+                        let _ = tx.send(elicit_result);
+                    }
+                    continue;
+                }
+
+                // Notifications from client
+                if id.is_none() || method == "notifications/initialized" || method == "notifications/cancelled" {
+                    continue;
+                }
+
+                // Check initialize for elicitation support
+                if method == "initialize" {
+                    let caps = &request["params"]["capabilities"];
+                    client_supports_elicitation = caps.get("elicitation").is_some();
+                    let _ = outgoing_tx.send(handle_initialize(id)).await;
+                    continue;
+                }
+
+                // Sync handlers (no spawn needed)
+                match method.as_str() {
+                    "tools/list" => {
+                        let _ = outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {"tools": tools_definitions()}})).await;
+                    }
+                    "resources/list" => {
+                        let _ = outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {"resources": resources_definitions()}})).await;
+                    }
+                    "resources/templates/list" => {
+                        let _ = outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {"resourceTemplates": resource_templates_definitions()}})).await;
+                    }
+                    "prompts/list" => {
+                        let _ = outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {"prompts": prompts_definitions()}})).await;
+                    }
+                    "prompts/get" => {
+                        let resp = handle_prompts_get(id.clone(), &request["params"], &migrations_dir);
+                        let _ = outgoing_tx.send(resp).await;
+                    }
+                    "resources/subscribe" => {
+                        let _ = outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {}})).await;
+                    }
+                    // Async handlers (spawn worker)
+                    "tools/call" | "resources/read" => {
+                        let out = outgoing_tx.clone();
+                        let c = client.clone();
+                        let db = db_name.clone();
+                        let mdir = migrations_dir.clone();
+                        let params = request["params"].clone();
+                        let elicit = ElicitHandle {
+                            tx: elicit_tx.clone(),
+                            id_counter: elicit_id_counter.clone(),
+                        };
+                        let supports_elicit = client_supports_elicitation;
+                        tokio::spawn(async move {
+                            let resp = if method == "tools/call" {
+                                handle_tools_call(id.clone(), &params, &c, &db, &mdir, &elicit, supports_elicit).await
+                            } else {
+                                handle_resources_read(id.clone(), &params, &c, &db).await
+                            };
+                            let _ = out.send(resp).await;
+                        });
+                    }
+                    _ => {
+                        let _ = outgoing_tx.send(json!({
+                            "jsonrpc": "2.0", "id": id,
+                            "error": {"code": -32601, "message": format!("Method not found: {method}")}
+                        })).await;
+                    }
+                }
+            }
+            // Elicitation requests from workers
+            Some(elicit_msg) = elicit_rx.recv() => {
+                pending_elicitations.insert(elicit_msg.id, elicit_msg.response_tx);
+                let _ = outgoing_tx.send(json!({
                     "jsonrpc": "2.0",
-                    "id": null,
-                    "error": {"code": -32700, "message": format!("Parse error: {e}")}
-                });
-                writeln!(stdout, "{err_resp}").map_err(dbward_core::Error::Io)?;
-                stdout.flush().map_err(dbward_core::Error::Io)?;
-                continue;
+                    "id": elicit_msg.id,
+                    "method": "elicitation/create",
+                    "params": {
+                        "message": elicit_msg.message,
+                        "requestedSchema": elicit_msg.schema
+                    }
+                })).await;
             }
-        };
-
-        let id = request.get("id").cloned();
-        let method = request["method"].as_str().unwrap_or("");
-
-        if method == "notifications/initialized" {
-            continue;
         }
-
-        let response = match method {
-            "initialize" => handle_initialize(id.clone()),
-            "tools/list" => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {"tools": tools_definitions()}
-            }),
-            "tools/call" => {
-                handle_tools_call(
-                    id.clone(),
-                    &request["params"],
-                    &client,
-                    &db_name,
-                    &migrations_dir,
-                )
-                .await
-            }
-            "resources/list" => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {"resources": resources_definitions()}
-            }),
-            "resources/templates/list" => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {"resourceTemplates": resource_templates_definitions()}
-            }),
-            "resources/read" => {
-                handle_resources_read(id.clone(), &request["params"], &client, &db_name).await
-            }
-            "prompts/list" => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "result": {"prompts": prompts_definitions()}
-            }),
-            "prompts/get" => handle_prompts_get(id.clone(), &request["params"], &migrations_dir),
-            _ => json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": {"code": -32601, "message": format!("Method not found: {method}")}
-            }),
-        };
-
-        writeln!(stdout, "{response}").map_err(dbward_core::Error::Io)?;
-        stdout.flush().map_err(dbward_core::Error::Io)?;
     }
 
     Ok(())
@@ -126,6 +221,8 @@ async fn handle_tools_call(
     client: &crate::server_client::ServerClient,
     db_name: &str,
     migrations_dir: &std::path::Path,
+    elicit: &ElicitHandle,
+    client_supports_elicitation: bool,
 ) -> Value {
     let tool_name = params["name"].as_str().unwrap_or("");
     let args = &params["arguments"];
@@ -135,11 +232,38 @@ async fn handle_tools_call(
         "dbward_execute_query" => {
             let sql = args["sql"].as_str().unwrap_or("");
             let db = args["database"].as_str().unwrap_or(db_name);
-            let reason = args["reason"].as_str();
+            let mut reason = args["reason"].as_str().map(|s| s.to_string());
+
             if sql.is_empty() {
                 Err("sql parameter is required".to_string())
             } else {
-                submit_and_wait(client, "execute_query", env, db, sql, reason).await
+                // Elicitation: ask for reason on production if not provided
+                if env == "production" && reason.is_none() && client_supports_elicitation {
+                    match elicit.ask(
+                        "Production execution requires a reason.",
+                        json!({
+                            "type": "object",
+                            "properties": {
+                                "reason": {"type": "string", "description": "Why is this execution needed?"},
+                                "ticket": {"type": "string", "description": "Related ticket (optional)"}
+                            },
+                            "required": ["reason"]
+                        }),
+                    ).await {
+                        Ok(ElicitResult::Accept { content }) => {
+                            reason = content["reason"].as_str().map(|s| s.to_string());
+                        }
+                        Ok(ElicitResult::Decline) => return json!({
+                            "jsonrpc": "2.0", "id": id,
+                            "result": {"content": [{"type": "text", "text": "User declined to provide reason."}], "isError": true}
+                        }),
+                        Ok(ElicitResult::Cancel) | Err(_) => return json!({
+                            "jsonrpc": "2.0", "id": id,
+                            "result": {"content": [{"type": "text", "text": "Cancelled."}], "isError": true}
+                        }),
+                    }
+                }
+                submit_and_wait(client, "execute_query", env, db, sql, reason.as_deref()).await
             }
         }
         "dbward_migrate_status" => {
