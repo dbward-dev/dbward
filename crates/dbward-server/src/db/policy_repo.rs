@@ -11,14 +11,12 @@ pub struct ApprovalDecision {
 }
 
 /// Single entry point for approval policy evaluation.
-/// Checks workflows table first, falls back to static PolicyConfig.
+/// Checks workflows table; if no workflow matches, auto-approves.
 pub fn evaluate_approval_policy(
     conn: &Connection,
-    policy: &crate::policy::PolicyConfig,
     database: &str,
     environment: &str,
     operation: &str,
-    role: &str,
 ) -> ApprovalDecision {
     match evaluate_workflow(conn, database, environment, operation) {
         Ok(Some((wf_id, steps, require_reason))) => {
@@ -31,28 +29,23 @@ pub fn evaluate_approval_policy(
                 require_reason,
             }
         }
-        Ok(None) => fallback_approval_decision(policy, environment, operation, role),
+        Ok(None) => ApprovalDecision {
+            needs_approval: false,
+            workflow_id: None,
+            workflow_snapshot_json: None,
+            require_reason: false,
+        },
         Err(err) => {
             eprintln!(
-                "warning: failed to evaluate workflow policy, falling back to static policy: {err}"
+                "warning: failed to evaluate workflow policy, defaulting to auto_approve: {err}"
             );
-            fallback_approval_decision(policy, environment, operation, role)
+            ApprovalDecision {
+                needs_approval: false,
+                workflow_id: None,
+                workflow_snapshot_json: None,
+                require_reason: false,
+            }
         }
-    }
-}
-
-fn fallback_approval_decision(
-    policy: &crate::policy::PolicyConfig,
-    environment: &str,
-    operation: &str,
-    role: &str,
-) -> ApprovalDecision {
-    let action = policy.evaluate(environment, operation, role);
-    ApprovalDecision {
-        needs_approval: action == "require_approval",
-        workflow_id: None,
-        workflow_snapshot_json: None,
-        require_reason: false,
     }
 }
 
@@ -371,20 +364,18 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_approval_policy_falls_back_to_static_policy_without_workflow() {
+    fn evaluate_approval_policy_auto_approves_without_workflow() {
         let conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
 
         let decision = evaluate_approval_policy(
             &conn,
-            &crate::policy::PolicyConfig::default(),
             "app",
             "production",
             "execute_query",
-            "developer",
         );
 
-        assert!(decision.needs_approval);
+        assert!(!decision.needs_approval);
         assert!(decision.workflow_id.is_none());
         assert!(decision.workflow_snapshot_json.is_none());
         assert!(!decision.require_reason);

@@ -6,7 +6,6 @@ use tokio::sync::Mutex;
 
 use crate::Metrics;
 use crate::oidc::OidcVerifier;
-use crate::policy::PolicyConfig;
 use crate::server_config::RetentionConfig;
 use crate::token::TokenSigner;
 use crate::webhook::WebhookDispatcher;
@@ -121,7 +120,6 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     pub oidc: Option<Arc<OidcVerifier>>,
     pub auth_mode: String,
-    pub policy: Arc<PolicyConfig>,
     pub result_channels: Arc<ResultChannels>,
     pub retention: RetentionConfig,
     pub request_notifier: Arc<RequestNotifier>,

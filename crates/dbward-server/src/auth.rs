@@ -203,7 +203,6 @@ mod tests {
             metrics: Arc::new(crate::Metrics::new()),
             oidc: None,
             auth_mode: "token".to_string(),
-            policy: Arc::new(Default::default()),
             result_channels: Arc::new(crate::state::ResultChannels::new()),
             retention: Default::default(),
             request_notifier: Arc::new(crate::state::RequestNotifier::new()),

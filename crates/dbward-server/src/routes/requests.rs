@@ -615,15 +615,13 @@ pub(crate) async fn create_request(
         .with_code("approver_cannot_create_request"));
     }
 
-    // Unified policy evaluation: workflows first, static policy fallback
+    // Evaluate workflow policy
     let conn = state.sqlite.lock().await;
     let decision = crate::db::policy_repo::evaluate_approval_policy(
         &conn,
-        &state.policy,
         database_name,
         environment,
         operation,
-        user.effective_permission(),
     );
 
     if !emergency && decision.require_reason && reason.as_ref().is_none_or(|r| r.is_empty()) {

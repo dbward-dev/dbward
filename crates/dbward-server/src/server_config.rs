@@ -1,6 +1,5 @@
 use serde::Deserialize;
 
-use crate::policy::PolicyConfig;
 use crate::webhook::WebhookConfig;
 
 /// Workflow definition from TOML config.
@@ -82,8 +81,6 @@ pub struct ServerConfig {
     #[serde(default)]
     pub webhooks: Vec<WebhookConfig>,
     pub auth: Option<AuthConfig>,
-    #[serde(default)]
-    pub policy: PolicyConfig,
     #[serde(default)]
     pub retention: RetentionConfig,
     #[serde(default)]

@@ -5,7 +5,6 @@ pub(crate) mod constants;
 pub mod db;
 pub mod metrics;
 pub mod oidc;
-pub(crate) mod policy;
 pub mod result_storage;
 pub mod routes;
 pub mod server_config;
