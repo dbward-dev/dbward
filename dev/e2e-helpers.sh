@@ -30,6 +30,9 @@ show_output() {
 SERVER_URL="${SERVER_URL:-http://localhost:13000}"
 LAST_RESPONSE_BODY=""
 
+# Ensure summary is printed even on set -e failure
+trap 'echo ""; echo "=== Results: $PASS passed, $FAIL failed (interrupted) ==="; [ $FAIL -gt 0 ] && show_server_logs 20' EXIT
+
 # API call helper — stores response body for failure reporting
 api() {
   local method=$1 path=$2 token=$3
@@ -114,8 +117,9 @@ show_server_logs() {
   echo -e "${NC}"
 }
 
-# Print summary and exit
+# Print summary and exit (disables trap to avoid double-print)
 summary() {
+  trap - EXIT
   echo ""
   echo "=== Results: $PASS passed, $FAIL failed ==="
   if [ $FAIL -gt 0 ]; then

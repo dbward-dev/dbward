@@ -51,11 +51,11 @@ echo "--- Execution Policy effect ---"
 
 # Create execution policy: max_executions=1
 api POST /api/execution-policies "$ADMIN_TOKEN" \
-  -d '{"database":"default","environment":"development","max_executions":1,"retry_on_failure":false}' >/dev/null
+  -d '{"database":"app","environment":"development","max_executions":1,"retry_on_failure":false}' >/dev/null
 
 # Create and execute a request
 REQ=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT 1"}')
+  -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1"}')
 REQ_ID=$(echo "$REQ" | json_field id)
 sleep 4
 

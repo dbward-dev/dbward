@@ -11,18 +11,14 @@ echo ""
 echo "=== E2E Security Tests ==="
 echo ""
 
-# Read tokens created by dev-init
-ADMIN_TOKEN=$(cat dev/tokens/alice 2>/dev/null || echo "")
-DEV_TOKEN=$(cat dev/tokens/bob 2>/dev/null || echo "")
+# Create tokens via docker compose exec (tokens live in Docker volume, not host filesystem)
+ADMIN_TOKEN=$(docker compose exec -T dbward-server /app/dbward server token create --user alice --role admin --data /data 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+DEV_TOKEN=$(docker compose exec -T dbward-server /app/dbward server token create --user bob --role developer --data /data 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+READONLY_TOKEN=$(docker compose exec -T dbward-server /app/dbward server token create --user carol --role readonly --data /data 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+AGENT_TOKEN=$(docker compose exec -T dbward-server /app/dbward server token create --user agent1 --role admin --agent --data /data 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
 
-if [ -z "$ADMIN_TOKEN" ] || [ -z "$DEV_TOKEN" ]; then
-  echo "Tokens not found. Creating via API..."
-  # Use docker exec to create tokens
-  ADMIN_TOKEN=$(docker compose exec -T dbward-server /app/dbward server token create --user alice --role admin --data /data 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-  DEV_TOKEN=$(docker compose exec -T dbward-server /app/dbward server token create --user bob --role developer --data /data 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-  READONLY_TOKEN=$(docker compose exec -T dbward-server /app/dbward server token create --user carol --role readonly --data /data 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-  AGENT_TOKEN=$(docker compose exec -T dbward-server /app/dbward server token create --user agent1 --role admin --agent --data /data 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-fi
+[ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
+[ -z "$DEV_TOKEN" ] && { echo "Failed to create dev token"; exit 1; }
 
 # --- 1. No auth → 401 ---
 echo "--- Authentication tests ---"

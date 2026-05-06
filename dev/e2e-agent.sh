@@ -18,7 +18,7 @@ DEV_TOKEN=$(docker compose exec -T dbward-server /app/dbward server token create
 echo "--- Normal agent execution ---"
 
 REQ=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT 42 AS answer"}')
+  -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 42 AS answer"}')
 REQ_ID=$(echo "$REQ" | json_field id)
 STATUS=$(echo "$REQ" | json_field status)
 
@@ -39,7 +39,7 @@ docker compose stop dbward-agent 2>/dev/null
 sleep 1
 
 REQ2=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT 1"}')
+  -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1"}')
 REQ2_ID=$(echo "$REQ2" | json_field id)
 
 sleep 2
@@ -61,7 +61,7 @@ echo ""
 echo "--- Result retrieval ---"
 
 REQ3=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT 123 AS val"}')
+  -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 123 AS val"}')
 REQ3_ID=$(echo "$REQ3" | json_field id)
 sleep 4
 

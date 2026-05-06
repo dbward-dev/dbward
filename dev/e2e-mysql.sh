@@ -11,6 +11,9 @@ echo ""
 echo "=== E2E MySQL Tests ==="
 echo ""
 
+# Ensure MySQL profile services are running
+docker compose --profile mysql up -d mysql dbward-agent-mysql 2>&1 | tail -2
+
 # Check MySQL is available
 echo "Waiting for MySQL..."
 for i in $(seq 1 30); do
@@ -52,6 +55,9 @@ fi
 # --- 2. MySQL DML ---
 echo ""
 echo "--- MySQL DML ---"
+
+# Cleanup from previous runs
+docker compose exec -T mysql mysql -udbward -pdbward dbward_dev -e "DROP TABLE IF EXISTS e2e_test" 2>/dev/null
 
 # Create table first
 REQ=$(api POST /api/requests "$DEV_TOKEN" \

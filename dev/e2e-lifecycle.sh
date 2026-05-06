@@ -22,7 +22,7 @@ DEV_TOKEN=$(docker compose exec -T dbward-server /app/dbward server token create
 echo "--- Full approval flow ---"
 
 REQ=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"production","database":"default","detail":"SELECT 1","reason":"e2e test"}')
+  -d '{"operation":"execute_query","environment":"production","database":"app","detail":"SELECT 1","reason":"e2e test"}')
 REQ_ID=$(echo "$REQ" | json_field id)
 REQ_STATUS=$(echo "$REQ" | json_field status)
 
@@ -55,7 +55,7 @@ echo ""
 echo "--- Auto-approve flow ---"
 
 REQ=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT version()"}')
+  -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT version()"}')
 STATUS=$(echo "$REQ" | json_field status)
 REQ_ID=$(echo "$REQ" | json_field id)
 
@@ -74,7 +74,7 @@ echo ""
 echo "--- Reject flow ---"
 
 REQ_ID=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"production","database":"default","detail":"DROP TABLE x","reason":"reject test"}' | json_field id)
+  -d '{"operation":"execute_query","environment":"production","database":"app","detail":"DROP TABLE x","reason":"reject test"}' | json_field id)
 RESULT=$(api POST "/api/requests/$REQ_ID/reject" "$ADMIN_TOKEN" -d '{"comment":"too dangerous"}')
 STATUS=$(echo "$RESULT" | json_field status)
 [ "$STATUS" = "rejected" ] && pass "Request rejected" || fail "Reject" "status=$STATUS"
@@ -84,7 +84,7 @@ echo ""
 echo "--- Cancel flow ---"
 
 REQ_ID=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"production","database":"default","detail":"SELECT 1","reason":"cancel test"}' | json_field id)
+  -d '{"operation":"execute_query","environment":"production","database":"app","detail":"SELECT 1","reason":"cancel test"}' | json_field id)
 RESULT=$(api POST "/api/requests/$REQ_ID/cancel" "$DEV_TOKEN" -d '{"reason":"changed my mind"}')
 STATUS=$(echo "$RESULT" | json_field status)
 [ "$STATUS" = "cancelled" ] && pass "Request cancelled" || fail "Cancel" "status=$STATUS"
@@ -94,7 +94,7 @@ echo ""
 echo "--- Break-glass ---"
 
 REQ=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"production","database":"default","detail":"SELECT 1","emergency":true,"reason":"incident #123"}')
+  -d '{"operation":"execute_query","environment":"production","database":"app","detail":"SELECT 1","emergency":true,"reason":"incident #123"}')
 STATUS=$(echo "$REQ" | json_field status)
 [ "$STATUS" = "break_glass" ] && pass "Break-glass request created" || fail "Break-glass" "status=$STATUS"
 
@@ -110,9 +110,9 @@ ID1=$(echo "$REQ1" | json_field id)
 REQ2=$(api POST /api/requests "$DEV_TOKEN" \
   -d "{\"operation\":\"execute_query\",\"environment\":\"development\",\"database\":\"default\",\"detail\":\"SELECT 2\",\"idempotency_key\":\"$IDEM_KEY\"}")
 ID2=$(echo "$REQ2" | json_field id)
-IDEM=$(echo "$REQ2" | python3 -c "import sys,json; print(json.load(sys.stdin).get('idempotent',''))")
+IDEM=$(echo "$REQ2" | python3 -c "import sys,json; v=json.load(sys.stdin).get('idempotent',''); print('true' if v else 'false')")
 
-if [ "$ID1" = "$ID2" ] && [ "$IDEM" = "True" ]; then
+if [ "$ID1" = "$ID2" ] && [ "$IDEM" = "true" ]; then
   pass "Idempotency key returns existing request"
 else
   fail "Idempotency" "id1=$ID1 id2=$ID2 idempotent=$IDEM"
@@ -123,7 +123,7 @@ echo ""
 echo "--- Unicode ---"
 
 REQ=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"development","database":"default","detail":"SELECT '\''日本語テスト 🎉'\'' AS msg"}')
+  -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT '\''日本語テスト 🎉'\'' AS msg"}')
 REQ_ID=$(echo "$REQ" | json_field id)
 sleep 3
 DETAIL=$(api GET "/api/requests/$REQ_ID" "$DEV_TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin).get('detail',''))")
