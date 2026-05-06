@@ -169,6 +169,9 @@ impl ServerClient {
         &self,
         limit: Option<u32>,
         status: Option<&str>,
+        database: Option<&str>,
+        environment: Option<&str>,
+        user: Option<&str>,
     ) -> Result<Value, Error> {
         let mut url = format!("{}/api/requests", self.base_url);
         let mut query_parts: Vec<String> = Vec::new();
@@ -177,6 +180,15 @@ impl ServerClient {
         }
         if let Some(s) = status {
             query_parts.push(format!("status={s}"));
+        }
+        if let Some(database) = database {
+            query_parts.push(format!("database={database}"));
+        }
+        if let Some(environment) = environment {
+            query_parts.push(format!("environment={environment}"));
+        }
+        if let Some(user) = user {
+            query_parts.push(format!("user={user}"));
         }
         if !query_parts.is_empty() {
             url = format!("{url}?{}", query_parts.join("&"));
@@ -298,14 +310,22 @@ impl ServerClient {
     }
 
     /// Approve a request.
-    pub async fn approve(&self, request_id: &str) -> Result<Value, ServerError> {
-        let resp = self
+    pub async fn approve(
+        &self,
+        request_id: &str,
+        comment: Option<&str>,
+    ) -> Result<Value, ServerError> {
+        let mut req = self
             .client
             .post(format!(
                 "{}/api/requests/{}/approve",
                 self.base_url, request_id
             ))
-            .bearer_auth(&self.api_token)
+            .bearer_auth(&self.api_token);
+        if let Some(comment) = comment {
+            req = req.json(&serde_json::json!({ "comment": comment }));
+        }
+        let resp = req
             .send()
             .await
             .map_err(|e| ServerError::from_response(0, format!("approve failed: {e}")))?;
@@ -314,14 +334,22 @@ impl ServerClient {
     }
 
     /// Reject a request.
-    pub async fn reject(&self, request_id: &str) -> Result<Value, ServerError> {
-        let resp = self
+    pub async fn reject(
+        &self,
+        request_id: &str,
+        comment: Option<&str>,
+    ) -> Result<Value, ServerError> {
+        let mut req = self
             .client
             .post(format!(
                 "{}/api/requests/{}/reject",
                 self.base_url, request_id
             ))
-            .bearer_auth(&self.api_token)
+            .bearer_auth(&self.api_token);
+        if let Some(comment) = comment {
+            req = req.json(&serde_json::json!({ "comment": comment }));
+        }
+        let resp = req
             .send()
             .await
             .map_err(|e| ServerError::from_response(0, format!("reject failed: {e}")))?;

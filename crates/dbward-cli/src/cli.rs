@@ -144,13 +144,24 @@ enum RequestAction {
         /// Show only pending requests you can approve
         #[arg(long)]
         pending_for_me: bool,
+        /// Filter by requesting user
+        #[arg(long)]
+        user: Option<String>,
     },
     /// Show request details
     Show { id: String },
     /// Approve a pending request
-    Approve { id: String },
+    Approve {
+        id: String,
+        #[arg(long)]
+        comment: Option<String>,
+    },
     /// Reject a pending request
-    Reject { id: String },
+    Reject {
+        id: String,
+        #[arg(long)]
+        comment: Option<String>,
+    },
     /// Cancel a request
     Cancel {
         id: String,
@@ -532,8 +543,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             Ok(())
         }
         Command::Request { action } => match action {
-            RequestAction::Approve { id } => {
-                match sc.approve(&id).await {
+            RequestAction::Approve { id, comment } => {
+                match sc.approve(&id, comment.as_deref()).await {
                     Ok(body) => {
                         if json_output {
                             println!("{}", serde_json::to_string_pretty(&body)?);
@@ -564,8 +575,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 }
                 Ok(())
             }
-            RequestAction::Reject { id } => {
-                match sc.reject(&id).await {
+            RequestAction::Reject { id, comment } => {
+                match sc.reject(&id, comment.as_deref()).await {
                     Ok(body) => {
                         if json_output {
                             println!("{}", serde_json::to_string_pretty(&body)?);
@@ -614,11 +625,19 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 limit,
                 status,
                 pending_for_me,
+                user,
             } => {
                 let body = if pending_for_me {
                     sc.list_pending_for_me(limit).await?
                 } else {
-                    sc.list_requests(limit, status.as_deref()).await?
+                    sc.list_requests(
+                        limit,
+                        status.as_deref(),
+                        cli.database.as_deref(),
+                        cli.environment.as_deref(),
+                        user.as_deref(),
+                    )
+                    .await?
                 };
                 if json_output {
                     println!("{}", serde_json::to_string_pretty(&body)?);
@@ -985,8 +1004,18 @@ fn print_request_detail(body: &serde_json::Value) {
                     for a in approvals {
                         let who = a["user"].as_str().unwrap_or("?");
                         let at = a["at"].as_str().unwrap_or("");
+                        let action = a["action"].as_str().unwrap_or("approve");
+                        let verb = if action == "reject" {
+                            "rejected by"
+                        } else {
+                            "approved by"
+                        };
                         let short_time = if at.len() >= 16 { &at[11..16] } else { at };
-                        println!("           approved by {who} ({short_time})");
+                        if let Some(comment) = a["comment"].as_str().filter(|c| !c.is_empty()) {
+                            println!("           {verb} {who} ({short_time}) - {comment}");
+                        } else {
+                            println!("           {verb} {who} ({short_time})");
+                        }
                     }
                 }
             }
@@ -1672,5 +1701,50 @@ mod tests {
             Err(err) => err.to_string(),
         };
         assert!(err.contains("possible values"));
+    }
+
+    #[test]
+    fn request_approve_comment_option_parses() {
+        let cli = Cli::try_parse_from([
+            "dbward",
+            "request",
+            "approve",
+            "abc12345",
+            "--comment",
+            "LGTM",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Command::Request {
+                action: RequestAction::Approve { comment, .. },
+            } => assert_eq!(comment.as_deref(), Some("LGTM")),
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn request_list_user_option_parses() {
+        let cli = Cli::try_parse_from([
+            "dbward",
+            "--database",
+            "primary",
+            "--environment",
+            "production",
+            "request",
+            "list",
+            "--user",
+            "alice",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.database.as_deref(), Some("primary"));
+        assert_eq!(cli.environment.as_deref(), Some("production"));
+        match cli.command {
+            Command::Request {
+                action: RequestAction::List { user, .. },
+            } => assert_eq!(user.as_deref(), Some("alice")),
+            _ => panic!("unexpected command"),
+        }
     }
 }

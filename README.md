@@ -1,22 +1,38 @@
 # dbward
 
-DB operations workflow + approval engine. Safe database operations for teams and AI agents.
+**Approval workflows and audit logs for your production database.**
 
+Stop accidents before they hit production. Add approval gates, audit trails, and AI agent guardrails to every database operation — in a single binary with zero external dependencies.
+
+```bash
+$ dbward execute "UPDATE users SET active = false WHERE last_login < '2025-01-01'"
+⚠ Request req_7f3a created (production × execute_query)
+  Requires 1 approval.
+
+$ dbward approve req_7f3a --reason "Confirmed with product team"
+✓ Approved. Executing on agent-prod-01...
+✓ 3 rows affected (12ms)
 ```
-dbward execute "SELECT * FROM users"              # Agent executes, result streamed back
-dbward execute "DELETE FROM old" --database prod   # Production requires approval
-dbward mcp                                         # MCP server for AI agents
-```
 
-## Why dbward?
+## Highlights
 
-Tools like dbmate and golang-migrate handle migrations but lack **approval workflows, audit logging, and access control**. Enterprise tools like Bytebase require heavy infrastructure. dbward fills the gap:
+- 🔐 **Approval workflows** — multi-step, conditional auto-approve, TOML policy engine
+- 📋 **Audit logs** — every operation recorded (who, what, when, which DB)
+- 🤖 **MCP-native** — AI agents operate safely; no execution without approval
+- ⚡ **Single binary** — Rust + embedded SQLite. No Docker, no external DB
+- 🔒 **Agent isolation** — DB credentials never leave the agent. CLI/AI never touch your database directly
+- 🆓 **Free** — all features included, up to 3 workflow rules. [Apache-2.0 / MIT](LICENSE-APACHE)
 
-- **Zero DB credentials on developer machines** — only the agent touches your database
-- **Approval flow built-in** — production changes require human approval
-- **MCP-first** — AI agents operate under the same controls as humans
-- **Cryptographic enforcement** — Ed25519 signed execution tokens bind approval to exact SQL + database
-- **Policy engine** — workflows, execution limits, result access, and notification routing per database × environment
+## How it compares
+
+| | dbward | Bytebase | dbmate |
+|---|---|---|---|
+| Approval workflows | ✅ Free | Enterprise only | — |
+| Audit logs | ✅ Free | Pro (limited) | — |
+| MCP / AI agents | ✅ Native | Add-on | — |
+| SSO (OIDC) | ✅ Free | Enterprise | — |
+| Deploy | Single binary | Docker + PostgreSQL | Single binary |
+| Price | Free (3 rules) | $20/user/mo+ | Free |
 
 ## Architecture
 
@@ -49,7 +65,20 @@ Tools like dbmate and golang-migrate handle migrations but lack **approval workf
 
 ## Quick Start
 
-### Docker Compose (recommended)
+```bash
+# Install
+curl -fsSL https://dbward.dev/install.sh | sh
+
+# Initialize config
+dbward init
+
+# Start local server + agent (development mode)
+dbward dev up
+```
+
+That's it. You now have approval workflows and audit logs for your local database.
+
+### Docker Compose (team setup)
 
 Starts PostgreSQL, dbward-server, and dbward-agent:
 

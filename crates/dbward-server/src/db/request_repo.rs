@@ -137,6 +137,7 @@ pub fn insert_approval<C>(
     actor_id: &str,
     step_index: i64,
     actor_role: &str,
+    comment: Option<&str>,
     now: &str,
 ) -> Result<(), rusqlite::Error>
 where
@@ -144,8 +145,10 @@ where
 {
     let id = uuid::Uuid::new_v4().to_string();
     conn.execute(
-        "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
-        rusqlite::params![id, request_id, action, actor_id, step_index, actor_role, now],
+        "INSERT INTO approvals (id, request_id, action, actor_id, step_index, actor_role, comment, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![
+            id, request_id, action, actor_id, step_index, actor_role, comment, now
+        ],
     )?;
     Ok(())
 }

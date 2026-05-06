@@ -26,6 +26,7 @@ p, user, approver, Global, ListRequests
 p, user, approver, Request, ListRequests
 p, user, approver, Global, GetRequest
 p, user, approver, Request, GetRequest
+p, user, approver, ApprovalStep, GetRequest
 p, user, developer, Global, CreateRequest
 p, user, developer, Request, CreateRequest
 p, user, approver, Global, ApproveRequest
@@ -276,6 +277,18 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
             is_admin(principal) || principal.user == *requester_id
         }
         (
+            "GetRequest",
+            Resource::ApprovalStep {
+                requester_id,
+                allowed_roles,
+                allowed_groups,
+            },
+        ) => {
+            is_admin(principal)
+                || principal.user == *requester_id
+                || principal_matches_approver(principal, allowed_roles, allowed_groups)
+        }
+        (
             "ApproveRequest",
             Resource::ApprovalStep {
                 requester_id,
@@ -288,12 +301,7 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
             }
             // Admin does NOT bypass step-level group/role checks.
             // Approval must come from someone matching the step's approvers.
-            allowed_roles
-                .iter()
-                .any(|role| principal.roles.iter().any(|own| own == role))
-                || allowed_groups
-                    .iter()
-                    .any(|g| principal.groups.iter().any(|own| own == g))
+            principal_matches_approver(principal, allowed_roles, allowed_groups)
         }
         (
             "RejectRequest",
@@ -305,12 +313,7 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
         ) => {
             is_admin(principal)
                 || principal.user == *requester_id
-                || allowed_roles
-                    .iter()
-                    .any(|role| principal.roles.iter().any(|own| own == role))
-                || allowed_groups
-                    .iter()
-                    .any(|g| principal.groups.iter().any(|own| own == g))
+                || principal_matches_approver(principal, allowed_roles, allowed_groups)
         }
         ("DispatchRequest", Resource::Request { requester_id, .. }) => {
             is_admin(principal) || principal.user == *requester_id
@@ -353,6 +356,19 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
         | ("DeletePolicy", Resource::PolicyObject) => true,
         _ => false,
     }
+}
+
+fn principal_matches_approver(
+    principal: &Principal,
+    allowed_roles: &[String],
+    allowed_groups: &[String],
+) -> bool {
+    allowed_roles
+        .iter()
+        .any(|role| principal.roles.iter().any(|own| own == role))
+        || allowed_groups
+            .iter()
+            .any(|group| principal.groups.iter().any(|own| own == group))
 }
 
 fn role_allows(actual: &str, required: &str) -> bool {
@@ -539,6 +555,22 @@ mod tests {
 
         assert!(
             authorize(&principal, Action::ApproveRequest, resource)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn current_step_approver_can_get_request() {
+        let principal = user("bob", &["ops"], "user");
+        let resource = Resource::ApprovalStep {
+            requester_id: "alice".into(),
+            allowed_roles: vec!["ops".into()],
+            allowed_groups: vec![],
+        };
+
+        assert!(
+            authorize(&principal, Action::GetRequest, resource)
                 .await
                 .is_ok()
         );

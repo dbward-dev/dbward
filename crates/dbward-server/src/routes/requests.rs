@@ -151,6 +151,7 @@ pub(crate) async fn list_requests(
     let status_filter = params.get("status").filter(|s| !s.is_empty());
     let database_filter = params.get("database").filter(|s| !s.is_empty());
     let environment_filter = params.get("environment").filter(|s| !s.is_empty());
+    let user_filter = params.get("user").filter(|s| !s.is_empty());
     let pending_for_me = params
         .get("pending_for_me")
         .map(|v| v == "true")
@@ -175,6 +176,10 @@ pub(crate) async fn list_requests(
     if let Some(e) = environment_filter {
         bind_values.push(e.clone());
         where_clauses.push(format!("environment = ?{}", bind_values.len()));
+    }
+    if let Some(u) = user_filter {
+        bind_values.push(u.clone());
+        where_clauses.push(format!("created_by = ?{}", bind_values.len()));
     }
 
     let where_sql = if where_clauses.is_empty() {
@@ -719,9 +724,15 @@ pub(crate) async fn reject_request(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
+    body_str: String,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::RejectRequest, Resource::Global).await?;
+    let body_val: serde_json::Value = serde_json::from_str(&body_str).unwrap_or(json!({}));
+    let comment = body_val
+        .get("comment")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty());
 
     {
         let mut conn = state.sqlite.lock().await;
@@ -770,8 +781,9 @@ pub(crate) async fn reject_request(
             &id,
             "reject",
             &user.user,
-            0,
+            step_idx as i64,
             user.effective_permission(),
+            comment,
             &now,
         )
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
@@ -956,11 +968,18 @@ pub(crate) async fn get_request(
                 serde_json::from_str::<Vec<crate::server_config::WorkflowStep>>(snapshot)
             && !steps.is_empty()
         {
-            let approvals: Vec<(i64, String, String, String)> = conn
-                .prepare("SELECT step_index, actor_id, actor_role, created_at FROM approvals WHERE request_id = ?1 AND action = 'approve'")
+            let approvals: Vec<(i64, String, String, String, Option<String>, String)> = conn
+                .prepare("SELECT step_index, actor_id, actor_role, created_at, comment, action FROM approvals WHERE request_id = ?1")
                 .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
                 .query_map(rusqlite::params![id], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
                 })
                 .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
                 .collect::<Result<Vec<_>, _>>()
@@ -968,11 +987,12 @@ pub(crate) async fn get_request(
 
             let step_views: Vec<serde_json::Value> = steps.iter().enumerate().map(|(i, step)| {
                         let step_apprs: Vec<serde_json::Value> = approvals.iter()
-                            .filter(|(si, _, _, _)| *si == i as i64)
-                            .map(|(_, user, role, at)| json!({"user": user, "role": role, "at": at}))
+                            .filter(|(si, _, _, _, _, _)| *si == i as i64)
+                            .map(|(_, user, role, at, comment, action)| json!({"user": user, "role": role, "at": at, "comment": comment, "action": action}))
                             .collect();
                         let simple_approvals: Vec<(i64, String, String)> = approvals.iter()
-                            .map(|(si, uid, role, _)| (*si, uid.clone(), role.clone()))
+                            .filter(|(_, _, _, _, _, action)| action == "approve")
+                            .map(|(si, uid, role, _, _, _)| (*si, uid.clone(), role.clone()))
                             .collect();
                         json!({
                             "index": i,
@@ -989,7 +1009,8 @@ pub(crate) async fn get_request(
                 .find_map(|(i, step)| {
                     let simple: Vec<(i64, String, String)> = approvals
                         .iter()
-                        .map(|(si, uid, role, _)| (*si, uid.clone(), role.clone()))
+                        .filter(|(_, _, _, _, _, action)| action == "approve")
+                        .map(|(si, uid, role, _, _, _)| (*si, uid.clone(), role.clone()))
                         .collect();
                     if !crate::services::request_lifecycle::is_step_satisfied(
                         step, &simple, i as i64,
@@ -1015,16 +1036,23 @@ pub(crate) async fn get_request(
     let (resp, status) = {
         let conn = state.sqlite.lock().await;
         let resp = build_response(&conn, &id, &state)?;
-        authz::authorize_sync(
-            &user,
-            Action::GetRequest,
-            request_resource(
-                resp["created_by"].as_str().unwrap_or("").to_string(),
-                resp["status"].as_str().unwrap_or("").to_string(),
-                resp["database_name"].as_str().unwrap_or("").to_string(),
-                resp["environment"].as_str().unwrap_or("").to_string(),
-            ),
-        )?;
+        let request_resource = request_resource(
+            resp["created_by"].as_str().unwrap_or("").to_string(),
+            resp["status"].as_str().unwrap_or("").to_string(),
+            resp["database_name"].as_str().unwrap_or("").to_string(),
+            resp["environment"].as_str().unwrap_or("").to_string(),
+        );
+        if authz::authorize_sync(&user, Action::GetRequest, request_resource).is_err() {
+            let ctx = crate::db::request_repo::get_request_context(&conn, &id)
+                .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
+            let (approval_resource, _, _, _) = current_approval_resource(
+                &conn,
+                &id,
+                ctx.created_by,
+                ctx.workflow_snapshot_json.as_deref(),
+            )?;
+            authz::authorize_sync(&user, Action::GetRequest, approval_resource)?;
+        }
         let status = resp["status"].as_str().unwrap_or("").to_string();
         (resp, status)
     };

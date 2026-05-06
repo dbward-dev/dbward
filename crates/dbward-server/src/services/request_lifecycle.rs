@@ -52,6 +52,10 @@ pub(crate) async fn approve_request_inner(
     body_val: &serde_json::Value,
 ) -> Result<ApproveResult, crate::api_error::ApiError> {
     let mut conn = sqlite.lock().await;
+    let comment = body_val
+        .get("comment")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty());
 
     let ctx = crate::db::request_repo::get_request_context(&conn, id)
         .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
@@ -117,6 +121,7 @@ pub(crate) async fn approve_request_inner(
             &approver.user,
             0,
             approver.effective_permission(),
+            comment,
             &now,
         )
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
@@ -297,6 +302,7 @@ pub(crate) async fn approve_request_inner(
         &approver.user,
         current_step as i64,
         &actor_role,
+        comment,
         &now,
     )
     .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;

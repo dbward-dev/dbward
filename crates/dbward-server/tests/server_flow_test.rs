@@ -1180,6 +1180,135 @@ async fn non_admin_cannot_read_other_users_request() {
 }
 
 #[tokio::test]
+async fn current_step_approver_can_read_request_and_see_approval_comment() {
+    let state = test_state_multistep();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead")
+        .await
+        .unwrap();
+    let app = routes::router(state);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "production",
+                        "detail": "SELECT 1",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let request_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/requests/{request_id}"))
+                .header("authorization", auth_header(&lead_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{request_id}/approve"))
+                .header("authorization", auth_header(&lead_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "comment": "LGTM" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["status"], "pending");
+
+    let resp = app
+        .oneshot(
+            Request::get(format!("/api/requests/{request_id}"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(
+        body["approval_progress"]["steps"][0]["approvals"][0]["comment"],
+        "LGTM"
+    );
+}
+
+#[tokio::test]
+async fn reject_comment_is_saved() {
+    let state = test_state_multistep();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, lead_token) = auth::create_token(&state, "lead1", "team-lead")
+        .await
+        .unwrap();
+    let app = routes::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "production",
+                        "detail": "SELECT 1",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let request_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .oneshot(
+            Request::post(format!("/api/requests/{request_id}/reject"))
+                .header("authorization", auth_header(&lead_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({ "comment": "Denied" }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let conn = state.sqlite.lock().await;
+    let stored: Option<String> = conn
+        .query_row(
+            "SELECT comment FROM approvals WHERE request_id = ?1 AND action = 'reject'",
+            rusqlite::params![request_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored.as_deref(), Some("Denied"));
+}
+
+#[tokio::test]
 async fn public_key_endpoint() {
     let state = test_state();
     let app = routes::router(state);
