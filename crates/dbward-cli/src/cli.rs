@@ -973,6 +973,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                 token_signer: std::sync::Arc::new(token_signer),
                 webhooks: std::sync::Arc::new(webhooks),
+                metrics: std::sync::Arc::new(dbward_server::Metrics::new()),
                 oidc,
                 auth_mode,
                 policy: std::sync::Arc::new(server_cfg.policy),
@@ -1037,6 +1038,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     webhooks: std::sync::Arc::new(
                         dbward_server::webhook::WebhookDispatcher::empty(),
                     ),
+                    metrics: std::sync::Arc::new(dbward_server::Metrics::new()),
                     oidc: None,
                     auth_mode: "token".to_string(),
                     policy: std::sync::Arc::new(Default::default()),
@@ -1084,6 +1086,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     webhooks: std::sync::Arc::new(
                         dbward_server::webhook::WebhookDispatcher::empty(),
                     ),
+                    metrics: std::sync::Arc::new(dbward_server::Metrics::new()),
                     oidc: None,
                     auth_mode: "token".to_string(),
                     policy: std::sync::Arc::new(Default::default()),
@@ -1150,6 +1153,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
         token_signer: std::sync::Arc::new(token_signer),
         webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        metrics: std::sync::Arc::new(dbward_server::Metrics::new()),
         oidc: None,
         auth_mode: "token".into(),
         policy: std::sync::Arc::new(Default::default()),

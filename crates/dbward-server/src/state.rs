@@ -9,6 +9,7 @@ use crate::policy::PolicyConfig;
 use crate::server_config::RetentionConfig;
 use crate::token::TokenSigner;
 use crate::webhook::WebhookDispatcher;
+use crate::Metrics;
 
 /// Holds a pending result slot: agent writes, CLI reads.
 pub struct ResultSlot {
@@ -117,6 +118,7 @@ pub struct AppState {
     pub sqlite: Arc<Mutex<Connection>>,
     pub token_signer: Arc<TokenSigner>,
     pub webhooks: Arc<WebhookDispatcher>,
+    pub metrics: Arc<Metrics>,
     pub oidc: Option<Arc<OidcVerifier>>,
     pub auth_mode: String,
     pub policy: Arc<PolicyConfig>,

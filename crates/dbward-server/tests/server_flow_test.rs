@@ -9,7 +9,7 @@ use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tower::ServiceExt;
 
-use dbward_server::{AppState, ResultChannels, auth, db, routes, token::TokenSigner};
+use dbward_server::{AppState, Metrics, ResultChannels, auth, db, routes, token::TokenSigner};
 
 fn test_state() -> AppState {
     let conn = Connection::open_in_memory().unwrap();
@@ -55,6 +55,7 @@ fn test_state() -> AppState {
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        metrics: Arc::new(Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),
         policy: Arc::new(Default::default()),
@@ -121,6 +122,7 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        metrics: Arc::new(Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),
         policy: Arc::new(Default::default()),
@@ -161,6 +163,27 @@ async fn ready_check() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
+}
+
+#[tokio::test]
+async fn metrics_endpoint_returns_prometheus_text() {
+    let app = routes::router(test_state());
+    let resp = app
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("text/plain; version=0.0.4; charset=utf-8")
+    );
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains("# HELP dbward_http_requests_total"));
+    assert!(text.contains("# TYPE dbward_http_request_duration_seconds histogram"));
+    assert!(text.contains("dbward_break_glass_total 0"));
 }
 
 #[tokio::test]
@@ -1632,6 +1655,7 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        metrics: Arc::new(Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),
         policy: Arc::new(Default::default()),
@@ -3425,6 +3449,7 @@ fn test_state_multistep() -> AppState {
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        metrics: Arc::new(Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),
         policy: Arc::new(Default::default()),
@@ -3484,6 +3509,7 @@ fn test_state_multistep_allow_same() -> AppState {
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        metrics: Arc::new(Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),
         policy: Arc::new(Default::default()),

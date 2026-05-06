@@ -86,3 +86,19 @@ pub(crate) fn lookup_active_token(
         Err(e) => Err(e),
     }
 }
+
+pub(crate) fn lookup_token_status(
+    conn: &Connection,
+    prefix: &str,
+    hash: &str,
+) -> Result<Option<String>, rusqlite::Error> {
+    match conn.query_row(
+        "SELECT status FROM tokens WHERE token_prefix = ?1 AND token_hash = ?2",
+        rusqlite::params![prefix, hash],
+        |row| row.get::<_, String>(0),
+    ) {
+        Ok(status) => Ok(Some(status)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}

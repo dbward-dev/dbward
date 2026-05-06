@@ -85,6 +85,23 @@ pub(crate) async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     }
 }
 
+pub(crate) async fn metrics(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
+    let body = state
+        .metrics
+        .render(&state.sqlite)
+        .await
+        .map_err(crate::api_error::ApiError::internal)?;
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    ))
+}
+
 pub(crate) async fn get_public_key(State(state): State<AppState>) -> impl IntoResponse {
     let bytes = state.token_signer.verifying_key().to_bytes();
     (
@@ -556,8 +573,12 @@ pub(crate) async fn create_request(
         &now,
     )
     .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+    state
+        .metrics
+        .record_request_created(status, environment, database_name);
 
     if emergency {
+        state.metrics.record_break_glass();
         let token = state
             .token_signer
             .issue(&id, operation, environment, database_name, detail);
@@ -581,6 +602,7 @@ pub(crate) async fn create_request(
                 next_step: None,
                 cli_command: Some(format!("dbward request resume {id}")),
             },
+            state.metrics.clone(),
         );
         Ok((
             StatusCode::CREATED,
@@ -612,6 +634,7 @@ pub(crate) async fn create_request(
                 next_step,
                 cli_command: Some(format!("dbward request approve {id}")),
             },
+            state.metrics.clone(),
         );
         Ok((
             StatusCode::CREATED,
@@ -651,12 +674,13 @@ pub(crate) async fn approve_request(
         &body_val,
     )
     .await?;
+    state.metrics.record_approval("approve");
 
     // Post-transaction async work
     if let Some(event) = result.webhook_event {
         state
             .webhooks
-            .dispatch_with_policy(result.notif_hooks, event);
+            .dispatch_with_policy(result.notif_hooks, event, state.metrics.clone());
     }
     state.request_notifier.notify(&id).await;
 
@@ -725,6 +749,7 @@ pub(crate) async fn reject_request(
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        state.metrics.record_approval("reject");
 
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
@@ -746,6 +771,7 @@ pub(crate) async fn reject_request(
                 next_step: None,
                 cli_command: None,
             },
+            state.metrics.clone(),
         );
     }
 
@@ -844,6 +870,7 @@ pub(crate) async fn cancel_request(
             next_step: None,
             cli_command: None,
         },
+        state.metrics.clone(),
     );
 
     Ok(Json(json!({"id": id, "status": "cancelled"})))

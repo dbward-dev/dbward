@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::Arc;
+
+use crate::Metrics;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WebhookConfig {
@@ -73,18 +76,28 @@ impl WebhookDispatcher {
     /// Fire-and-forget: spawn a task for each matching webhook.
     /// Uses global hooks (legacy) — prefer dispatch_with_policy for DB×env routing.
     pub fn dispatch(&self, event: WebhookEvent) {
-        self.dispatch_hooks(&self.hooks, &event);
+        self.dispatch_hooks(&self.hooks, &event, None);
     }
 
     /// Fire-and-forget using notification policy webhooks.
-    pub fn dispatch_with_policy(&self, hooks: Vec<WebhookConfig>, event: WebhookEvent) {
+    pub fn dispatch_with_policy(
+        &self,
+        hooks: Vec<WebhookConfig>,
+        event: WebhookEvent,
+        metrics: Arc<Metrics>,
+    ) {
         // Merge global hooks + policy hooks
         let mut all = self.hooks.clone();
         all.extend(hooks);
-        self.dispatch_hooks(&all, &event);
+        self.dispatch_hooks(&all, &event, Some(metrics));
     }
 
-    fn dispatch_hooks(&self, hooks: &[WebhookConfig], event: &WebhookEvent) {
+    fn dispatch_hooks(
+        &self,
+        hooks: &[WebhookConfig],
+        event: &WebhookEvent,
+        metrics: Option<Arc<Metrics>>,
+    ) {
         for hook in hooks {
             if !hook.events.iter().any(|e| e == &event.event) {
                 continue;
@@ -92,8 +105,12 @@ impl WebhookDispatcher {
             let hook = hook.clone();
             let event = event.clone();
             let client = self.client.clone();
+            let metrics = metrics.clone();
             tokio::spawn(async move {
-                let _ = send_with_retry(&client, &hook, &event).await;
+                let delivered = send_with_retry(&client, &hook, &event).await.is_ok();
+                if let Some(metrics) = metrics {
+                    metrics.record_webhook_delivery(delivered);
+                }
             });
         }
     }

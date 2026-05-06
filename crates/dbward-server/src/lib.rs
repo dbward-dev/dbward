@@ -3,6 +3,7 @@ pub mod auth;
 pub(crate) mod authz;
 pub(crate) mod constants;
 pub mod db;
+pub mod metrics;
 pub mod oidc;
 pub(crate) mod policy;
 pub mod result_storage;
@@ -13,6 +14,7 @@ mod state;
 pub mod token;
 pub mod webhook;
 
+pub use metrics::Metrics;
 pub use state::{AppState, RequestNotifier, ResultChannels};
 
 use std::net::SocketAddr;
@@ -24,6 +26,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
 
     // Background task: reclaim expired agent leases every 60s
     let sqlite = state.sqlite.clone();
+    let metrics = state.metrics.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(
             constants::LEASE_RECLAIM_INTERVAL_SECS,
@@ -32,7 +35,10 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
             interval.tick().await;
             let conn = sqlite.lock().await;
             match db::maintenance::reclaim_expired_leases(&conn) {
-                Ok(n) if n > 0 => eprintln!("reclaimed {n} expired lease(s)"),
+                Ok(n) if n > 0 => {
+                    metrics.record_agent_lease_expirations(n as u64);
+                    eprintln!("reclaimed {n} expired lease(s)");
+                }
                 Ok(_) => {}
                 Err(err) => eprintln!("failed to reclaim expired leases: {err}"),
             }

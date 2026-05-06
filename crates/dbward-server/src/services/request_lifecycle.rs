@@ -449,6 +449,7 @@ mod tests {
             sqlite: Arc::new(tokio::sync::Mutex::new(conn)),
             token_signer: Arc::new(TokenSigner::generate()),
             webhooks: Arc::new(crate::webhook::WebhookDispatcher::empty()),
+            metrics: Arc::new(crate::Metrics::new()),
             oidc: None,
             auth_mode: "token".to_string(),
             policy: Arc::new(Default::default()),

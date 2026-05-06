@@ -484,3 +484,19 @@ cargo build --release
 ## License
 
 Apache-2.0 / MIT (dual-licensed)
+## Metrics
+
+`GET /metrics` exposes Prometheus text format for external scraping.
+
+- Deploy behind an internal network boundary. The endpoint is unauthenticated.
+- Recommended scrape interval: `15s` to `60s`
+
+Recommended alerts:
+
+- `dbward_agents_active == 0`: critical
+- `dbward_requests_oldest_pending_seconds > 3600`: warning
+- `rate(dbward_agent_lease_expirations_total[5m]) > 0`: warning
+- Increase in `dbward_break_glass_total`: info
+- `rate(dbward_auth_failures_total[5m]) > 10`: warning
+- `histogram_quantile(0.99, sum(rate(dbward_http_request_duration_seconds_bucket[5m])) by (le, route, method)) > 5`: warning
+- `rate(dbward_webhook_deliveries_total{status="failed"}[5m]) > 0`: warning

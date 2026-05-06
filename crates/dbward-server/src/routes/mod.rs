@@ -5,7 +5,12 @@ pub(crate) mod requests;
 pub(crate) mod results;
 
 use axum::Router;
+use axum::extract::MatchedPath;
+use axum::http::Request;
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::routing::get;
+use std::time::Instant;
 
 use crate::state::AppState;
 use requests::{
@@ -17,6 +22,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
+        .route("/metrics", get(requests::metrics))
         .route("/api/requests", get(list_requests).post(create_request))
         .route("/api/requests/{id}", get(get_request))
         .route(
@@ -97,5 +103,31 @@ pub fn router(state: AppState) -> Router {
                 .put(policies::update_notification_policy)
                 .delete(policies::delete_notification_policy),
         )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            http_metrics_middleware,
+        ))
         .with_state(state)
+}
+
+async fn http_metrics_middleware(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    req: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let method = req.method().to_string();
+    let route = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|matched| matched.as_str().to_string())
+        .unwrap_or_else(|| req.uri().path().to_string());
+    let started = Instant::now();
+    let response = next.run(req).await;
+    state.metrics.record_http_request(
+        &method,
+        &route,
+        response.status().as_u16(),
+        started.elapsed().as_secs_f64(),
+    );
+    response
 }

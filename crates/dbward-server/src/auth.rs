@@ -101,15 +101,21 @@ pub async fn authenticate(
     let header = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
-        .ok_or((
+        .ok_or_else(|| {
+            state.metrics.record_auth_failure("invalid");
+            (
             StatusCode::UNAUTHORIZED,
             "missing Authorization header".into(),
-        ))?;
+            )
+        })?;
 
-    let raw_token = header.strip_prefix("Bearer ").ok_or((
+    let raw_token = header.strip_prefix("Bearer ").ok_or_else(|| {
+        state.metrics.record_auth_failure("invalid");
+        (
         StatusCode::UNAUTHORIZED,
         "invalid Authorization format".into(),
-    ))?;
+        )
+    })?;
 
     // Route by token prefix
     if raw_token.starts_with("eyJ") {
@@ -124,7 +130,15 @@ pub async fn authenticate(
         let (identity, roles, groups) = oidc
             .verify(raw_token)
             .await
-            .map_err(|e| (StatusCode::UNAUTHORIZED, e))?;
+            .map_err(|e| {
+                let reason = if e.to_ascii_lowercase().contains("expired") {
+                    "expired"
+                } else {
+                    "invalid"
+                };
+                state.metrics.record_auth_failure(reason);
+                (StatusCode::UNAUTHORIZED, e)
+            })?;
         Ok(AuthUser {
             token_id: format!("oidc:{identity}"),
             user: identity,
@@ -161,7 +175,17 @@ async fn authenticate_api_token(
             groups: row.groups,
             subject_type: row.subject_type,
         }),
-        Ok(None) => Err((StatusCode::UNAUTHORIZED, "invalid token".into())),
+        Ok(None) => {
+            let reason =
+                match crate::db::token_repo::lookup_token_status(&conn, &prefix, &hash) {
+                    Ok(Some(status)) if status == "revoked" => "revoked",
+                    Ok(Some(_)) => "invalid",
+                    Ok(None) => "invalid",
+                    Err(_) => "invalid",
+                };
+            state.metrics.record_auth_failure(reason);
+            Err((StatusCode::UNAUTHORIZED, "invalid token".into()))
+        }
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     }
 }
@@ -180,6 +204,7 @@ mod tests {
             sqlite: Arc::new(tokio::sync::Mutex::new(conn)),
             token_signer: Arc::new(crate::token::TokenSigner::generate()),
             webhooks: Arc::new(crate::webhook::WebhookDispatcher::empty()),
+            metrics: Arc::new(crate::Metrics::new()),
             oidc: None,
             auth_mode: "token".to_string(),
             policy: Arc::new(Default::default()),
