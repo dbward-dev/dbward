@@ -286,3 +286,132 @@ mod tests {
         assert_eq!(broken.as_deref(), Some(id.as_str()));
     }
 }
+
+/// Redact SQL literals: replace string/number literals with '?'
+pub fn redact_literals(sql: &str) -> String {
+    let mut result = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                result.push('?');
+                // Skip until closing quote (handle escaped quotes)
+                loop {
+                    match chars.next() {
+                        Some('\'') => {
+                            if chars.peek() == Some(&'\'') {
+                                chars.next(); // escaped quote
+                            } else {
+                                break;
+                            }
+                        }
+                        None => break,
+                        _ => {}
+                    }
+                }
+            }
+            '0'..='9' if !result.ends_with(|c: char| c.is_alphanumeric() || c == '_') => {
+                result.push('?');
+                while chars.peek().is_some_and(|c| c.is_ascii_digit() || *c == '.') {
+                    chars.next();
+                }
+            }
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
+/// Resolve client IP from headers and peer address.
+pub struct ResolvedIp {
+    pub peer_ip: Option<String>,
+    pub client_ip: Option<String>,
+    pub client_ip_source: Option<String>,
+}
+
+pub fn resolve_client_ip(
+    headers: &axum::http::HeaderMap,
+    peer_ip: Option<&str>,
+    trusted_proxies: &[String],
+) -> ResolvedIp {
+    let peer = peer_ip.map(|s| s.to_string());
+
+    if trusted_proxies.is_empty() {
+        return ResolvedIp {
+            client_ip: peer.clone(),
+            peer_ip: peer,
+            client_ip_source: Some("peer".into()),
+        };
+    }
+
+    // Check if peer is a trusted proxy
+    let peer_is_trusted = peer.as_deref().is_some_and(|p| {
+        trusted_proxies.iter().any(|tp| tp == p || cidr_contains(tp, p))
+    });
+
+    if peer_is_trusted {
+        // Trust X-Forwarded-For rightmost entry
+        let xff = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.rsplit(',').next())
+            .map(|s| s.trim().to_string());
+        ResolvedIp {
+            peer_ip: peer,
+            client_ip: xff,
+            client_ip_source: Some("trusted_proxy".into()),
+        }
+    } else {
+        ResolvedIp {
+            client_ip: peer.clone(),
+            peer_ip: peer,
+            client_ip_source: Some("peer".into()),
+        }
+    }
+}
+
+fn cidr_contains(cidr: &str, ip: &str) -> bool {
+    // Simple prefix match for common CIDRs (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+    if let Some(prefix) = cidr.split('/').next() {
+        ip.starts_with(prefix.trim_end_matches('0').trim_end_matches('.'))
+    } else {
+        cidr == ip
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    #[test]
+    fn redact_string_literals() {
+        assert_eq!(
+            redact_literals("SELECT * FROM users WHERE email = 'alice@example.com'"),
+            "SELECT * FROM users WHERE email = ?"
+        );
+    }
+
+    #[test]
+    fn redact_numeric_literals() {
+        assert_eq!(
+            redact_literals("SELECT * FROM users WHERE id = 42"),
+            "SELECT * FROM users WHERE id = ?"
+        );
+    }
+
+    #[test]
+    fn redact_mixed() {
+        assert_eq!(
+            redact_literals("UPDATE users SET name = 'Bob' WHERE id = 123"),
+            "UPDATE users SET name = ? WHERE id = ?"
+        );
+    }
+
+    #[test]
+    fn preserve_identifiers() {
+        assert_eq!(
+            redact_literals("SELECT col1 FROM table2"),
+            "SELECT col1 FROM table2"
+        );
+    }
+}

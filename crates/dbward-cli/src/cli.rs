@@ -1401,6 +1401,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     .as_ref()
                     .map(|a| a.break_glass_roles.clone())
                     .unwrap_or_else(dbward_server::server_config::default_break_glass_roles),
+                audit_config: server_cfg.audit.clone(),
+                trusted_proxies: server_cfg.trusted_proxies.clone(),
             };
             let addr: std::net::SocketAddr = listen
                 .parse()
@@ -1439,6 +1441,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     result_store: None,
                     draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
+                    audit_config: Default::default(),
+                    trusted_proxies: vec![],
                 };
                 let group_refs: Vec<&str> = groups.iter().map(|s| s.as_str()).collect();
                 let (token_id, raw_token) = if *agent {
@@ -1486,6 +1490,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     result_store: None,
                     draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
+                    audit_config: Default::default(),
+                    trusted_proxies: vec![],
                 };
                 dbward_server::auth::revoke_token(&state, id)
                     .await
@@ -1552,6 +1558,8 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         result_store: None,
         draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
+                    audit_config: Default::default(),
+                    trusted_proxies: vec![],
     };
 
     // Create tokens

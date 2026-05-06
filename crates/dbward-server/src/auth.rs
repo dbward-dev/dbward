@@ -355,6 +355,8 @@ mod tests {
             result_store: None,
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             break_glass_roles: crate::server_config::default_break_glass_roles(),
+            audit_config: Default::default(),
+            trusted_proxies: vec![],
         }
     }
 

@@ -93,6 +93,38 @@ pub struct ServerConfig {
     pub notification_policies: Vec<NotificationPolicyDef>,
     #[serde(default)]
     pub result_storage: ResultStorageConfig,
+    #[serde(default)]
+    pub audit: AuditConfig,
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
+}
+
+/// Audit log configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuditConfig {
+    #[serde(default = "default_redaction")]
+    pub redaction: String,
+    #[serde(default = "default_true")]
+    pub record_ip: bool,
+    #[serde(default = "default_audit_retention_days")]
+    pub retention_days: u32,
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            redaction: "literals".into(),
+            record_ip: true,
+            retention_days: 365,
+        }
+    }
+}
+
+fn default_redaction() -> String {
+    "literals".into()
+}
+fn default_audit_retention_days() -> u32 {
+    365
 }
 
 /// Result storage backend configuration.

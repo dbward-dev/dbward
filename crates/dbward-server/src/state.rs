@@ -126,6 +126,8 @@ pub struct AppState {
     pub result_store: Option<Arc<crate::result_storage::ResultStore>>,
     pub draining: Arc<std::sync::atomic::AtomicBool>,
     pub break_glass_roles: Vec<String>,
+    pub audit_config: crate::server_config::AuditConfig,
+    pub trusted_proxies: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
