@@ -205,20 +205,24 @@ async fn handle_tools_call(
             let req_id = args["request_id"].as_str().unwrap_or("");
             get_result(client, req_id).await
         }
-        "dbward_list_pending" => {
-            client.get_json("/api/requests?status=pending&limit=20").await
-                .map(|v| serde_json::to_string_pretty(&v["requests"]).unwrap_or_default())
-                .map_err(|e| e.to_string())
-        }
+        "dbward_list_pending" => client
+            .list_pending_for_me(Some(20))
+            .await
+            .map(|v| serde_json::to_string_pretty(&v["requests"]).unwrap_or_default())
+            .map_err(|e| e.to_string()),
         "dbward_who_can_approve" => {
-            let req_id = args["request_id"].as_str().unwrap_or("");
-            client.get_request(req_id).await
+            let req_id = match required_arg(args, "request_id") {
+                Ok(value) => value,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
+            client
+                .get_request(req_id)
+                .await
                 .map(|v| {
-                    let snapshot = &v["workflow_snapshot"];
-                    if snapshot.is_null() {
-                        "No workflow assigned (auto-approved)".to_string()
+                    if let Some(progress) = v.get("approval_progress") {
+                        format_approval_progress(req_id, &v["status"], progress)
                     } else {
-                        format!("Approval path:\n{}", serde_json::to_string_pretty(snapshot).unwrap_or_default())
+                        "No workflow assigned (auto-approved)".to_string()
                     }
                 })
                 .map_err(|e| e.to_string())
@@ -226,18 +230,38 @@ async fn handle_tools_call(
         "dbward_find_similar_requests" => {
             let sql = args["sql"].as_str().unwrap_or("");
             let op = args["operation"].as_str().unwrap_or("execute_query");
-            let limit = args["limit"].as_u64().unwrap_or(5);
+            let limit = args["limit"].as_u64().unwrap_or(5).clamp(1, 20);
             client.get_json(&format!("/api/audit/events?event_category=execution&event_type=execution_completed&limit={limit}")).await
                 .map(|v| {
                     let events = v["audit_events"].as_array();
                     match events {
                         Some(arr) if !arr.is_empty() => {
-                            let mut out = format!("Recent {} executions:\n", op);
-                            for e in arr {
-                                out.push_str(&format!("  {} | {} | {}\n",
+                            let sql_terms = normalized_similarity_terms(sql);
+                            let matches: Vec<&Value> = arr
+                                .iter()
+                                .filter(|e| {
+                                    e["operation"].as_str().unwrap_or(op) == op
+                                        && matches_similarity_terms(
+                                            e["detail_fingerprint"].as_str().unwrap_or(""),
+                                            &sql_terms,
+                                        )
+                                })
+                                .take(limit as usize)
+                                .collect();
+                            if matches.is_empty() {
+                                return format!("No similar requests found for: {sql}");
+                            }
+                            let mut out = format!(
+                                "Recent {op} executions visible to the current token:\n"
+                            );
+                            for e in matches {
+                                out.push_str(&format!(
+                                    "  {} | request={} | {}\n",
                                     e["created_at"].as_str().unwrap_or("?"),
-                                    e["actor_id"].as_str().unwrap_or("?"),
-                                    e["detail_fingerprint"].as_str().unwrap_or(e["operation"].as_str().unwrap_or("?"))
+                                    e["request_id"].as_str().unwrap_or("?"),
+                                    e["detail_fingerprint"]
+                                        .as_str()
+                                        .unwrap_or(e["operation"].as_str().unwrap_or("?"))
                                 ));
                             }
                             out
@@ -248,9 +272,16 @@ async fn handle_tools_call(
                 .map_err(|e| e.to_string())
         }
         "dbward_preview_impact" => {
-            let sql = args["sql"].as_str().unwrap_or("");
+            let sql = match required_arg(args, "sql") {
+                Ok(value) => value,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
             let db = args["database"].as_str().unwrap_or(db_name);
-            let explain_sql = format!("EXPLAIN {sql}");
+            let preview_sql = match normalize_preview_sql(sql) {
+                Ok(sql) => sql,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
+            let explain_sql = format!("EXPLAIN {preview_sql}");
             submit_and_wait(client, "execute_query", env, db, &explain_sql, None).await
         }
         "dbward_explain_policy_failure" => {
@@ -267,16 +298,22 @@ async fn handle_tools_call(
                      Use 'dbward_who_can_approve' with a request_id for specific approval path."
                 ))
             } else {
-                client.get_request(req_id).await
+                client
+                    .get_request(req_id)
+                    .await
                     .map(|v| {
                         let status = v["status"].as_str().unwrap_or("unknown");
-                        let workflow = &v["workflow_snapshot"];
+                        let workflow = v
+                            .get("approval_progress")
+                            .map(|progress| {
+                                format_approval_progress(req_id, &v["status"], progress)
+                            })
+                            .unwrap_or_else(|| "none (auto-approved)".to_string());
                         format!(
                             "Request {req_id} status: {status}\n\
                              Workflow: {}\n\
                              To approve: dbward request approve {req_id}",
-                            if workflow.is_null() { "none (auto-approved)".to_string() }
-                            else { serde_json::to_string_pretty(workflow).unwrap_or_default() }
+                            workflow
                         )
                     })
                     .map_err(|e| e.to_string())
@@ -288,34 +325,53 @@ async fn handle_tools_call(
             submit_and_wait(client, "execute_query", env, db, sql, None).await
         }
         "dbward_describe_table" => {
-            let table = args["table"].as_str().unwrap_or("");
+            let table = match required_arg(args, "table") {
+                Ok(value) => value,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
             let db = args["database"].as_str().unwrap_or(db_name);
-            let sql = format!(
-                "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_name = '{table}' ORDER BY ordinal_position"
-            );
+            let table_ref = match parse_table_reference(table) {
+                Ok(table_ref) => table_ref,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
+            let mut sql = "SELECT table_schema, table_name, column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE ".to_string();
+            if let Some(schema) = table_ref.schema {
+                sql.push_str(&format!(
+                    "table_schema = {} AND ",
+                    sql_string_literal(&schema)
+                ));
+            }
+            sql.push_str(&format!(
+                "table_name = {} ORDER BY table_schema, table_name, ordinal_position",
+                sql_string_literal(&table_ref.table)
+            ));
             submit_and_wait(client, "execute_query", env, db, &sql, None).await
         }
         "dbward_compare_schema" => {
             // Local: show pending migration files content
-            let db = args["database"].as_str().unwrap_or(db_name);
             let dir = migrations_dir;
             match std::fs::read_dir(dir) {
                 Ok(entries) => {
-                    let mut files: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+                    let mut files: Vec<_> = entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                        .collect();
                     files.sort_by_key(|e| e.file_name());
                     let mut out = format!("Pending migrations in {}:\n", dir.display());
                     for f in files.iter().rev().take(5) {
                         let name = f.file_name();
                         out.push_str(&format!("\n--- {} ---\n", name.to_string_lossy()));
-                        if let Ok(content) = std::fs::read_to_string(f.path()) {
+                        if let Ok(content) = read_migration_file(dir, &name.to_string_lossy()) {
                             out.push_str(&content[..content.len().min(500)]);
-                            if content.len() > 500 { out.push_str("\n...truncated"); }
+                            if content.len() > 500 {
+                                out.push_str("\n...truncated");
+                            }
                         }
                         out.push('\n');
                     }
                     Ok(out)
                 }
-                Err(e) => Err(format!("Cannot read migrations dir: {e}"))
+                Err(e) => Err(format!("Cannot read migrations dir: {e}")),
             }
         }
         _ => Err(format!("Unknown tool: {tool_name}")),
@@ -825,6 +881,127 @@ fn required_arg<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {
     value.ok_or_else(|| format!("Missing required argument: {name}"))
 }
 
+#[derive(Debug)]
+struct TableReference {
+    schema: Option<String>,
+    table: String,
+}
+
+fn parse_table_reference(input: &str) -> Result<TableReference, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("Missing required argument: table".to_string());
+    }
+    let parts: Vec<&str> = trimmed.split('.').collect();
+    match parts.as_slice() {
+        [table] => Ok(TableReference {
+            schema: None,
+            table: validate_sql_identifier(table, "table")?.to_string(),
+        }),
+        [schema, table] => Ok(TableReference {
+            schema: Some(validate_sql_identifier(schema, "schema")?.to_string()),
+            table: validate_sql_identifier(table, "table")?.to_string(),
+        }),
+        _ => Err("table must be in the form 'table' or 'schema.table'".to_string()),
+    }
+}
+
+fn validate_sql_identifier<'a>(value: &'a str, kind: &str) -> Result<&'a str, String> {
+    if value.is_empty() {
+        return Err(format!("{kind} must not be empty"));
+    }
+    let mut chars = value.chars();
+    let first = chars.next().unwrap();
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return Err(format!("{kind} must start with a letter or underscore"));
+    }
+    if chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        Ok(value)
+    } else {
+        Err(format!(
+            "{kind} may only contain ASCII letters, digits, and underscores"
+        ))
+    }
+}
+
+fn sql_string_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn normalize_preview_sql(sql: &str) -> Result<String, String> {
+    let trimmed = sql.trim();
+    if trimmed.is_empty() {
+        return Err("Missing required argument: sql".to_string());
+    }
+    let statement = trimmed.strip_suffix(';').unwrap_or(trimmed).trim_end();
+    if statement.is_empty() {
+        return Err("sql must not be empty".to_string());
+    }
+    if statement.contains(';') {
+        return Err("preview_impact only accepts a single SQL statement".to_string());
+    }
+    Ok(statement.to_string())
+}
+
+fn normalized_similarity_terms(sql: &str) -> Vec<String> {
+    sql.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .filter(|term| term.len() >= 3)
+        .map(|term| term.to_ascii_lowercase())
+        .collect()
+}
+
+fn matches_similarity_terms(candidate: &str, terms: &[String]) -> bool {
+    if terms.is_empty() {
+        return true;
+    }
+    let haystack = candidate.to_ascii_lowercase();
+    terms.iter().all(|term| haystack.contains(term))
+}
+
+fn format_approval_progress(request_id: &str, status: &Value, progress: &Value) -> String {
+    let current = progress["current_step"].as_u64().unwrap_or(0);
+    let total = progress["total_steps"].as_u64().unwrap_or(0);
+    let mut out = format!(
+        "Request {request_id} status: {}\nApproval path ({current}/{total} complete):\n",
+        status.as_str().unwrap_or("unknown")
+    );
+    if let Some(steps) = progress["steps"].as_array() {
+        for step in steps {
+            let idx = step["index"].as_u64().unwrap_or(0) + 1;
+            let mode = step["mode"].as_str().unwrap_or("all");
+            let satisfied = step["satisfied"].as_bool().unwrap_or(false);
+            let marker = if satisfied { "[ok]" } else { "[wait]" };
+            let desc = step["approvers_required"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|a| {
+                            let target = a["group"]
+                                .as_str()
+                                .map(|g| format!("group:{g}"))
+                                .or_else(|| a["role"].as_str().map(|r| format!("role:{r}")))?;
+                            let min = a["min"].as_u64().unwrap_or(1);
+                            Some(if min > 1 {
+                                format!("{target} x{min}")
+                            } else {
+                                target
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let joiner = if mode == "any" { " | " } else { " + " };
+            let summary = if desc.is_empty() {
+                "(no approvers configured)".to_string()
+            } else {
+                desc.join(joiner)
+            };
+            out.push_str(&format!("  {marker} Step {idx} [{mode}]: {summary}\n"));
+        }
+    }
+    out
+}
+
 fn read_migration_file(migrations_dir: &Path, requested_path: &str) -> Result<String, String> {
     let full_path = resolve_migration_path(migrations_dir, requested_path)?;
     std::fs::read_to_string(&full_path)
@@ -916,5 +1093,53 @@ mod tests {
         assert_eq!(err, "Migration file path escapes the migrations directory");
 
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn parse_table_reference_rejects_invalid_identifier() {
+        let err = parse_table_reference("users;DROP TABLE users").unwrap_err();
+        assert_eq!(
+            err,
+            "table may only contain ASCII letters, digits, and underscores"
+        );
+    }
+
+    #[test]
+    fn parse_table_reference_accepts_schema_qualified_name() {
+        let parsed = parse_table_reference("public.users").unwrap();
+        assert_eq!(parsed.schema.as_deref(), Some("public"));
+        assert_eq!(parsed.table, "users");
+    }
+
+    #[test]
+    fn normalize_preview_sql_rejects_multi_statement_input() {
+        let err = normalize_preview_sql("SELECT 1; DROP TABLE users").unwrap_err();
+        assert_eq!(err, "preview_impact only accepts a single SQL statement");
+    }
+
+    #[test]
+    fn normalize_preview_sql_trims_single_trailing_semicolon() {
+        let sql = normalize_preview_sql(" SELECT 1; ").unwrap();
+        assert_eq!(sql, "SELECT 1");
+    }
+
+    #[test]
+    fn format_approval_progress_uses_summary_not_raw_snapshot() {
+        let text = format_approval_progress(
+            "req_123",
+            &json!("pending"),
+            &json!({
+                "current_step": 0,
+                "total_steps": 1,
+                "steps": [{
+                    "index": 0,
+                    "mode": "all",
+                    "satisfied": false,
+                    "approvers_required": [{"role": "admin", "min": 1}]
+                }]
+            }),
+        );
+        assert!(text.contains("Request req_123 status: pending"));
+        assert!(text.contains("Step 1 [all]: role:admin"));
     }
 }
