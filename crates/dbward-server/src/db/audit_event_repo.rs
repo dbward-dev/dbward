@@ -312,7 +312,10 @@ pub fn redact_literals(sql: &str) -> String {
             }
             '0'..='9' if !result.ends_with(|c: char| c.is_alphanumeric() || c == '_') => {
                 result.push('?');
-                while chars.peek().is_some_and(|c| c.is_ascii_digit() || *c == '.') {
+                while chars
+                    .peek()
+                    .is_some_and(|c| c.is_ascii_digit() || *c == '.')
+                {
                     chars.next();
                 }
             }
@@ -346,7 +349,9 @@ pub fn resolve_client_ip(
 
     // Check if peer is a trusted proxy
     let peer_is_trusted = peer.as_deref().is_some_and(|p| {
-        trusted_proxies.iter().any(|tp| tp == p || cidr_contains(tp, p))
+        trusted_proxies
+            .iter()
+            .any(|tp| tp == p || cidr_contains(tp, p))
     });
 
     if peer_is_trusted {

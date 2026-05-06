@@ -243,7 +243,14 @@ pub(crate) async fn verify_audit_chain(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ListAudit, Resource::AuditQuery { requested_user: None }).await?;
+    authz::authorize(
+        &user,
+        Action::ListAudit,
+        Resource::AuditQuery {
+            requested_user: None,
+        },
+    )
+    .await?;
 
     let conn = state.sqlite.lock().await;
     let (count, broken) = crate::db::audit_event_repo::verify_hash_chain(&conn)

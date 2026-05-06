@@ -1,4 +1,5 @@
 use std::io::{self, BufRead, Write};
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -64,21 +65,20 @@ pub async fn run_stdio(
                 "id": id,
                 "result": {"resources": resources_definitions()}
             }),
+            "resources/templates/list" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {"resourceTemplates": resource_templates_definitions()}
+            }),
             "resources/read" => {
                 handle_resources_read(id.clone(), &request["params"], &client, &db_name).await
-            }
-            "resources/subscribe" => {
-                // Accept subscription (notifications sent via background polling)
-                json!({"jsonrpc": "2.0", "id": id, "result": {}})
             }
             "prompts/list" => json!({
                 "jsonrpc": "2.0",
                 "id": id,
                 "result": {"prompts": prompts_definitions()}
             }),
-            "prompts/get" => {
-                handle_prompts_get(id.clone(), &request["params"], &migrations_dir)
-            }
+            "prompts/get" => handle_prompts_get(id.clone(), &request["params"], &migrations_dir),
             _ => json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -102,9 +102,20 @@ fn handle_initialize(id: Option<Value>) -> Value {
             "serverInfo": {"name": "dbward", "version": env!("CARGO_PKG_VERSION")},
             "capabilities": {
                 "tools": {},
-                "resources": {"subscribe": true},
+                "resources": {},
                 "prompts": {}
             }
+        }
+    })
+}
+
+fn jsonrpc_error(id: Option<Value>, code: i64, message: impl Into<String>) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": code,
+            "message": message.into()
         }
     })
 }
@@ -436,6 +447,17 @@ fn resources_definitions() -> Value {
     ])
 }
 
+fn resource_templates_definitions() -> Value {
+    json!([
+        {
+            "uriTemplate": "dbward://requests/{request_id}",
+            "name": "Request Details",
+            "description": "Details for a specific request",
+            "mimeType": "application/json"
+        }
+    ])
+}
+
 async fn handle_resources_read(
     id: Option<Value>,
     params: &Value,
@@ -443,37 +465,14 @@ async fn handle_resources_read(
     _db_name: &str,
 ) -> Value {
     let uri = params["uri"].as_str().unwrap_or("");
-    let content = match uri {
-        "dbward://migrations/status" => {
-            client.get_json("/api/requests?operation=migrate_status&limit=1").await
-                .map(|v| v.to_string())
-                .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}" ))
-        }
-        "dbward://requests/pending" => {
-            client.get_json("/api/requests?status=pending&limit=20").await
-                .map(|v| v.to_string())
-                .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}" ))
-        }
-        "dbward://audit/recent" => {
-            client.get_json("/api/audit/events?limit=10").await
-                .map(|v| v.to_string())
-                .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}" ))
-        }
-        _ if uri.starts_with("dbward://requests/") => {
-            let req_id = uri.strip_prefix("dbward://requests/").unwrap_or("");
-            let (req_id, suffix) = req_id.split_once('/').unwrap_or((req_id, ""));
-            match suffix {
-                "" => client.get_request(req_id).await
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}")),
-                "impact" | "approval-path" => {
-                    // Requires server-side support (future)
-                    format!("{{\"request_id\": \"{req_id}\", \"note\": \"not yet available\"}}")
-                }
-                _ => format!("{{\"error\": \"unknown resource suffix: {suffix}\"}}")
-            }
-        }
-        _ => format!("{{\"error\": \"unknown resource: {uri}\"}}")
+    if uri.is_empty() {
+        return jsonrpc_error(id, -32602, "Missing required parameter: uri");
+    }
+
+    let content = match read_resource(uri, client).await {
+        Ok(content) => content,
+        Err(ResourceReadError::NotFound(message)) => return jsonrpc_error(id, -32002, message),
+        Err(ResourceReadError::Internal(message)) => return jsonrpc_error(id, -32603, message),
     };
 
     json!({
@@ -483,6 +482,63 @@ async fn handle_resources_read(
             "contents": [{"uri": uri, "mimeType": "application/json", "text": content}]
         }
     })
+}
+
+enum ResourceReadError {
+    NotFound(String),
+    Internal(String),
+}
+
+async fn read_resource(
+    uri: &str,
+    client: &crate::server_client::ServerClient,
+) -> Result<String, ResourceReadError> {
+    let value = match uri {
+        "dbward://migrations/status" => client
+            .get_json("/api/requests?operation=migrate_status&limit=1")
+            .await
+            .map_err(|e| {
+                ResourceReadError::Internal(format!("Failed to read resource {uri}: {e}"))
+            })?,
+        "dbward://requests/pending" => client
+            .get_json("/api/requests?status=pending&limit=20")
+            .await
+            .map_err(|e| {
+                ResourceReadError::Internal(format!("Failed to read resource {uri}: {e}"))
+            })?,
+        "dbward://audit/recent" => client
+            .get_json("/api/audit/events?limit=10")
+            .await
+            .map_err(|e| {
+                ResourceReadError::Internal(format!("Failed to read resource {uri}: {e}"))
+            })?,
+        _ if uri.starts_with("dbward://requests/") => {
+            let req_id = uri.strip_prefix("dbward://requests/").unwrap_or("");
+            let (req_id, suffix) = req_id.split_once('/').unwrap_or((req_id, ""));
+            if req_id.is_empty() {
+                return Err(ResourceReadError::NotFound(format!(
+                    "Resource not found: {uri}"
+                )));
+            }
+            match suffix {
+                "" => client.get_request(req_id).await.map_err(|e| {
+                    ResourceReadError::Internal(format!("Failed to read resource {uri}: {e}"))
+                })?,
+                _ => {
+                    return Err(ResourceReadError::NotFound(format!(
+                        "Resource not found: {uri}"
+                    )));
+                }
+            }
+        }
+        _ => {
+            return Err(ResourceReadError::NotFound(format!(
+                "Resource not found: {uri}"
+            )));
+        }
+    };
+
+    Ok(value.to_string())
 }
 
 fn prompts_definitions() -> Value {
@@ -496,65 +552,164 @@ fn prompts_definitions() -> Value {
     ])
 }
 
-fn handle_prompts_get(id: Option<Value>, params: &Value, migrations_dir: &std::path::Path) -> Value {
+fn handle_prompts_get(
+    id: Option<Value>,
+    params: &Value,
+    migrations_dir: &std::path::Path,
+) -> Value {
     let name = params["name"].as_str().unwrap_or("");
     let args = &params["arguments"];
 
-    let messages = match name {
+    if name.is_empty() {
+        return jsonrpc_error(id, -32602, "Missing required parameter: name");
+    }
+
+    let (description, messages) = match name {
         "review_migration" => {
-            let file_path = args["file_path"].as_str().unwrap_or("");
-            let full_path = migrations_dir.join(file_path);
-            let content = std::fs::read_to_string(&full_path)
-                .unwrap_or_else(|_| format!("(could not read file: {})", full_path.display()));
-            vec![json!({"role": "user", "content": {"type": "text", "text": format!(
-                "Review this migration SQL for safety issues (locking, data loss, backwards compatibility):\n\n```sql\n{content}\n```\n\nCheck for:\n1. Long-running locks (ALTER TABLE on large tables)\n2. Data loss (DROP COLUMN without backup)\n3. Backwards incompatibility (NOT NULL without default)\n4. Missing indexes for new foreign keys\n5. Transaction safety"
-            )}})]
+            let file_path = match required_arg(args, "file_path") {
+                Ok(value) => value,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
+            let content = match read_migration_file(migrations_dir, file_path) {
+                Ok(content) => content,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
+            (
+                "Review a migration SQL file for safety issues",
+                vec![
+                    json!({"role": "user", "content": {"type": "text", "text": format!(
+                        "Review this migration SQL for safety issues (locking, data loss, backwards compatibility):\n\n```sql\n{content}\n```\n\nCheck for:\n1. Long-running locks (ALTER TABLE on large tables)\n2. Data loss (DROP COLUMN without backup)\n3. Backwards incompatibility (NOT NULL without default)\n4. Missing indexes for new foreign keys\n5. Transaction safety"
+                    )}}),
+                ],
+            )
         }
         "explain_request" => {
-            let request_id = args["request_id"].as_str().unwrap_or("unknown");
-            vec![json!({"role": "user", "content": {"type": "text", "text": format!(
-                "Explain what request {request_id} will do. Read the request details from dbward://requests/{request_id} and describe:\n1. What SQL will be executed\n2. Which database and environment\n3. Potential impact\n4. Who needs to approve it"
-            )}})]
+            let request_id = match required_arg(args, "request_id") {
+                Ok(value) => value,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
+            (
+                "Explain what a request will do and its impact",
+                vec![
+                    json!({"role": "user", "content": {"type": "text", "text": format!(
+                        "Explain what request {request_id} will do. Read the request details from dbward://requests/{request_id} and describe:\n1. What SQL will be executed\n2. Which database and environment\n3. Potential impact\n4. Who needs to approve it"
+                    )}}),
+                ],
+            )
         }
         "draft_migration" => {
-            let description = args["description"].as_str().unwrap_or("");
-            vec![json!({"role": "user", "content": {"type": "text", "text": format!(
-                "Generate a migration SQL file for the following change:\n\n{description}\n\nProvide both up and down sections in dbmate format:\n```sql\n-- migrate:up\n<SQL>\n\n-- migrate:down\n<SQL>\n```\n\nConsider: backwards compatibility, index needs, NOT NULL defaults, large table locking."
-            )}})]
+            let description = match required_arg(args, "description") {
+                Ok(value) => value,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
+            (
+                "Generate migration SQL from a description",
+                vec![
+                    json!({"role": "user", "content": {"type": "text", "text": format!(
+                        "Generate a migration SQL file for the following change:\n\n{description}\n\nProvide both up and down sections in dbmate format:\n```sql\n-- migrate:up\n<SQL>\n\n-- migrate:down\n<SQL>\n```\n\nConsider: backwards compatibility, index needs, NOT NULL defaults, large table locking."
+                    )}}),
+                ],
+            )
         }
         "draft_rollback" => {
-            let file_path = args["migration_file"].as_str().unwrap_or("");
-            let full_path = migrations_dir.join(file_path);
-            let content = std::fs::read_to_string(&full_path).unwrap_or_default();
-            vec![json!({"role": "user", "content": {"type": "text", "text": format!(
-                "Generate a safe rollback plan for this migration:\n\n```sql\n{content}\n```\n\nConsider data preservation and application compatibility."
-            )}})]
+            let file_path = match required_arg(args, "migration_file") {
+                Ok(value) => value,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
+            let content = match read_migration_file(migrations_dir, file_path) {
+                Ok(content) => content,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
+            (
+                "Generate rollback SQL for a migration",
+                vec![
+                    json!({"role": "user", "content": {"type": "text", "text": format!(
+                        "Generate a safe rollback plan for this migration:\n\n```sql\n{content}\n```\n\nConsider data preservation and application compatibility."
+                    )}}),
+                ],
+            )
         }
-        "summarize_audit_trail" => {
+        "summarize_audit_trail" => (
+            "Summarize recent audit events",
             vec![json!({"role": "user", "content": {"type": "text", "text":
                 "Summarize the recent audit events from dbward://audit/recent. Group by actor and operation type. Highlight any failures or unusual patterns."
-            }})]
-        }
+            }})],
+        ),
         "prepare_approval_comment" => {
-            let request_id = args["request_id"].as_str().unwrap_or("unknown");
-            vec![json!({"role": "user", "content": {"type": "text", "text": format!(
-                "Review request {request_id} (read from dbward://requests/{request_id}) and draft an approval comment. Include:\n1. What was reviewed\n2. Risk assessment (low/medium/high)\n3. Any conditions or follow-up actions"
-            )}})]
+            let request_id = match required_arg(args, "request_id") {
+                Ok(value) => value,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
+            (
+                "Draft an approval comment for a request",
+                vec![
+                    json!({"role": "user", "content": {"type": "text", "text": format!(
+                        "Review request {request_id} (read from dbward://requests/{request_id}) and draft an approval comment. Include:\n1. What was reviewed\n2. Risk assessment (low/medium/high)\n3. Any conditions or follow-up actions"
+                    )}}),
+                ],
+            )
         }
         _ => {
-            return json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": {"code": -32602, "message": format!("Unknown prompt: {name}")}
-            });
+            return jsonrpc_error(id, -32602, format!("Unknown prompt: {name}"));
         }
     };
 
     json!({
         "jsonrpc": "2.0",
         "id": id,
-        "result": {"messages": messages}
+        "result": {
+            "description": description,
+            "messages": messages
+        }
     })
+}
+
+fn required_arg<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {
+    let value = args[name]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    value.ok_or_else(|| format!("Missing required argument: {name}"))
+}
+
+fn read_migration_file(migrations_dir: &Path, requested_path: &str) -> Result<String, String> {
+    let full_path = resolve_migration_path(migrations_dir, requested_path)?;
+    std::fs::read_to_string(&full_path)
+        .map_err(|_| format!("Could not read migration file: {}", full_path.display()))
+}
+
+fn resolve_migration_path(migrations_dir: &Path, requested_path: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(requested_path);
+    if relative.is_absolute() {
+        return Err("Absolute paths are not allowed".to_string());
+    }
+    if relative.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err("Migration file path escapes the migrations directory".to_string());
+    }
+
+    let base = migrations_dir.canonicalize().map_err(|_| {
+        format!(
+            "Could not resolve migrations directory: {}",
+            migrations_dir.display()
+        )
+    })?;
+    let candidate = base.join(relative);
+    let resolved = candidate
+        .canonicalize()
+        .map_err(|_| format!("Could not resolve migration file: {}", candidate.display()))?;
+
+    if !resolved.starts_with(&base) {
+        return Err("Migration file path escapes the migrations directory".to_string());
+    }
+
+    Ok(resolved)
 }
 
 #[cfg(test)]
@@ -564,8 +719,9 @@ mod tests {
     #[test]
     fn initialize_response_has_protocol_version() {
         let resp = handle_initialize(Some(json!(1)));
-        assert_eq!(resp["result"]["protocolVersion"], "2024-11-05");
+        assert_eq!(resp["result"]["protocolVersion"], "2025-11-05");
         assert_eq!(resp["result"]["serverInfo"]["name"], "dbward");
+        assert_eq!(resp["result"]["capabilities"]["resources"], json!({}));
     }
 
     #[test]
@@ -581,5 +737,31 @@ mod tests {
         assert!(names.contains(&"dbward_migrate_create"));
         assert!(names.contains(&"dbward_check_request"));
         assert!(names.contains(&"dbward_get_result"));
+    }
+
+    #[test]
+    fn prompts_get_rejects_missing_required_argument() {
+        let resp = handle_prompts_get(
+            Some(json!(1)),
+            &json!({"name": "draft_migration", "arguments": {}}),
+            Path::new("/tmp"),
+        );
+
+        assert_eq!(resp["error"]["code"], -32602);
+        assert_eq!(
+            resp["error"]["message"],
+            "Missing required argument: description"
+        );
+    }
+
+    #[test]
+    fn resolve_migration_path_rejects_path_traversal() {
+        let base = std::env::temp_dir().join(format!("dbward-mcp-test-{}", std::process::id()));
+        std::fs::create_dir_all(base.join("migrations")).unwrap();
+
+        let err = resolve_migration_path(&base.join("migrations"), "../secret.sql").unwrap_err();
+        assert_eq!(err, "Migration file path escapes the migrations directory");
+
+        let _ = std::fs::remove_dir_all(base);
     }
 }

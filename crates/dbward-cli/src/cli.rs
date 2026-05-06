@@ -849,7 +849,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                         println!("✓ Hash chain intact ({count} events verified)");
                     } else {
                         let broken = resp["first_broken_id"].as_str().unwrap_or("unknown");
-                        eprintln!("✗ Hash chain BROKEN at event {broken} ({count} events verified before break)");
+                        eprintln!(
+                            "✗ Hash chain BROKEN at event {broken} ({count} events verified before break)"
+                        );
                         std::process::exit(1);
                     }
                 }
@@ -1600,8 +1602,8 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         result_store: None,
         draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
-                    audit_config: Default::default(),
-                    trusted_proxies: vec![],
+        audit_config: Default::default(),
+        trusted_proxies: vec![],
     };
 
     // Create tokens
