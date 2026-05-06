@@ -64,6 +64,8 @@ fn test_state() -> AppState {
         result_store: None,
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
+        audit_config: Default::default(),
+        trusted_proxies: vec![],
     }
 }
 
@@ -130,6 +132,8 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
         result_store: Some(result_store),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
+        audit_config: Default::default(),
+        trusted_proxies: vec![],
     };
     (state, dir)
 }
@@ -1878,6 +1882,8 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         result_store: None,
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
+        audit_config: Default::default(),
+        trusted_proxies: vec![],
     };
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
@@ -3775,6 +3781,8 @@ fn test_state_multistep() -> AppState {
         result_store: None,
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
+        audit_config: Default::default(),
+        trusted_proxies: vec![],
     }
 }
 
@@ -3834,6 +3842,8 @@ fn test_state_multistep_allow_same() -> AppState {
         result_store: None,
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
+        audit_config: Default::default(),
+        trusted_proxies: vec![],
     }
 }
 
