@@ -59,6 +59,26 @@ pub async fn run_stdio(
                 )
                 .await
             }
+            "resources/list" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {"resources": resources_definitions()}
+            }),
+            "resources/read" => {
+                handle_resources_read(id.clone(), &request["params"], &client, &db_name).await
+            }
+            "resources/subscribe" => {
+                // Accept subscription (notifications sent via background polling)
+                json!({"jsonrpc": "2.0", "id": id, "result": {}})
+            }
+            "prompts/list" => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {"prompts": prompts_definitions()}
+            }),
+            "prompts/get" => {
+                handle_prompts_get(id.clone(), &request["params"], &migrations_dir)
+            }
             _ => json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -78,9 +98,13 @@ fn handle_initialize(id: Option<Value>) -> Value {
         "jsonrpc": "2.0",
         "id": id,
         "result": {
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": "2025-11-05",
             "serverInfo": {"name": "dbward", "version": env!("CARGO_PKG_VERSION")},
-            "capabilities": {"tools": {}}
+            "capabilities": {
+                "tools": {},
+                "resources": {"subscribe": true},
+                "prompts": {}
+            }
         }
     })
 }
@@ -402,6 +426,135 @@ fn tools_definitions() -> Value {
             }
         }
     ])
+}
+
+fn resources_definitions() -> Value {
+    json!([
+        {"uri": "dbward://migrations/status", "name": "Migration Status", "description": "Applied and pending migrations", "mimeType": "application/json"},
+        {"uri": "dbward://requests/pending", "name": "Pending Requests", "description": "Requests awaiting approval", "mimeType": "application/json"},
+        {"uri": "dbward://audit/recent", "name": "Recent Audit Events", "description": "Last 10 audit events", "mimeType": "application/json"}
+    ])
+}
+
+async fn handle_resources_read(
+    id: Option<Value>,
+    params: &Value,
+    client: &crate::server_client::ServerClient,
+    _db_name: &str,
+) -> Value {
+    let uri = params["uri"].as_str().unwrap_or("");
+    let content = match uri {
+        "dbward://migrations/status" => {
+            client.get_json("/api/requests?operation=migrate_status&limit=1").await
+                .map(|v| v.to_string())
+                .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}" ))
+        }
+        "dbward://requests/pending" => {
+            client.get_json("/api/requests?status=pending&limit=20").await
+                .map(|v| v.to_string())
+                .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}" ))
+        }
+        "dbward://audit/recent" => {
+            client.get_json("/api/audit/events?limit=10").await
+                .map(|v| v.to_string())
+                .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}" ))
+        }
+        _ if uri.starts_with("dbward://requests/") => {
+            let req_id = uri.strip_prefix("dbward://requests/").unwrap_or("");
+            let (req_id, suffix) = req_id.split_once('/').unwrap_or((req_id, ""));
+            match suffix {
+                "" => client.get_request(req_id).await
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|e| format!("{{\"error\": \"{e}\"}}")),
+                "impact" | "approval-path" => {
+                    // Requires server-side support (future)
+                    format!("{{\"request_id\": \"{req_id}\", \"note\": \"not yet available\"}}")
+                }
+                _ => format!("{{\"error\": \"unknown resource suffix: {suffix}\"}}")
+            }
+        }
+        _ => format!("{{\"error\": \"unknown resource: {uri}\"}}")
+    };
+
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "contents": [{"uri": uri, "mimeType": "application/json", "text": content}]
+        }
+    })
+}
+
+fn prompts_definitions() -> Value {
+    json!([
+        {"name": "review_migration", "description": "Review a migration SQL file for safety issues", "arguments": [{"name": "file_path", "description": "Path to migration file", "required": true}]},
+        {"name": "explain_request", "description": "Explain what a request will do and its impact", "arguments": [{"name": "request_id", "description": "Request ID", "required": true}]},
+        {"name": "draft_migration", "description": "Generate migration SQL from a description", "arguments": [{"name": "description", "description": "What the migration should do", "required": true}]},
+        {"name": "draft_rollback", "description": "Generate rollback SQL for a migration", "arguments": [{"name": "migration_file", "description": "Path to migration file to rollback", "required": true}]},
+        {"name": "summarize_audit_trail", "description": "Summarize recent audit events", "arguments": [{"name": "since", "description": "Start date (ISO 8601)", "required": false}, {"name": "database", "description": "Filter by database", "required": false}]},
+        {"name": "prepare_approval_comment", "description": "Draft an approval comment for a request", "arguments": [{"name": "request_id", "description": "Request ID to review", "required": true}]}
+    ])
+}
+
+fn handle_prompts_get(id: Option<Value>, params: &Value, migrations_dir: &std::path::Path) -> Value {
+    let name = params["name"].as_str().unwrap_or("");
+    let args = &params["arguments"];
+
+    let messages = match name {
+        "review_migration" => {
+            let file_path = args["file_path"].as_str().unwrap_or("");
+            let full_path = migrations_dir.join(file_path);
+            let content = std::fs::read_to_string(&full_path)
+                .unwrap_or_else(|_| format!("(could not read file: {})", full_path.display()));
+            vec![json!({"role": "user", "content": {"type": "text", "text": format!(
+                "Review this migration SQL for safety issues (locking, data loss, backwards compatibility):\n\n```sql\n{content}\n```\n\nCheck for:\n1. Long-running locks (ALTER TABLE on large tables)\n2. Data loss (DROP COLUMN without backup)\n3. Backwards incompatibility (NOT NULL without default)\n4. Missing indexes for new foreign keys\n5. Transaction safety"
+            )}})]
+        }
+        "explain_request" => {
+            let request_id = args["request_id"].as_str().unwrap_or("unknown");
+            vec![json!({"role": "user", "content": {"type": "text", "text": format!(
+                "Explain what request {request_id} will do. Read the request details from dbward://requests/{request_id} and describe:\n1. What SQL will be executed\n2. Which database and environment\n3. Potential impact\n4. Who needs to approve it"
+            )}})]
+        }
+        "draft_migration" => {
+            let description = args["description"].as_str().unwrap_or("");
+            vec![json!({"role": "user", "content": {"type": "text", "text": format!(
+                "Generate a migration SQL file for the following change:\n\n{description}\n\nProvide both up and down sections in dbmate format:\n```sql\n-- migrate:up\n<SQL>\n\n-- migrate:down\n<SQL>\n```\n\nConsider: backwards compatibility, index needs, NOT NULL defaults, large table locking."
+            )}})]
+        }
+        "draft_rollback" => {
+            let file_path = args["migration_file"].as_str().unwrap_or("");
+            let full_path = migrations_dir.join(file_path);
+            let content = std::fs::read_to_string(&full_path).unwrap_or_default();
+            vec![json!({"role": "user", "content": {"type": "text", "text": format!(
+                "Generate a safe rollback plan for this migration:\n\n```sql\n{content}\n```\n\nConsider data preservation and application compatibility."
+            )}})]
+        }
+        "summarize_audit_trail" => {
+            vec![json!({"role": "user", "content": {"type": "text", "text":
+                "Summarize the recent audit events from dbward://audit/recent. Group by actor and operation type. Highlight any failures or unusual patterns."
+            }})]
+        }
+        "prepare_approval_comment" => {
+            let request_id = args["request_id"].as_str().unwrap_or("unknown");
+            vec![json!({"role": "user", "content": {"type": "text", "text": format!(
+                "Review request {request_id} (read from dbward://requests/{request_id}) and draft an approval comment. Include:\n1. What was reviewed\n2. Risk assessment (low/medium/high)\n3. Any conditions or follow-up actions"
+            )}})]
+        }
+        _ => {
+            return json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {"code": -32602, "message": format!("Unknown prompt: {name}")}
+            });
+        }
+    };
+
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {"messages": messages}
+    })
 }
 
 #[cfg(test)]
