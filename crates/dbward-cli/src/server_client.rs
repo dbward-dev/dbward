@@ -400,10 +400,16 @@ impl ServerClient {
             "failed" => serde_json::json!({
                 "success": false,
                 "error": format!(
-                    "Request {request_id} already failed and no stored error payload is available."
+                    "Request {request_id} failed. Result not available (relay expired, no storage configured)."
                 )
             }),
-            _ => serde_json::json!({"success": true, "result": Value::Null}),
+            _ => serde_json::json!({
+                "success": true,
+                "error": format!(
+                    "Request {request_id} executed successfully but result is no longer available (relay expired, no storage configured). Re-run the query to get results."
+                ),
+                "result": Value::Null
+            }),
         }
     }
 
