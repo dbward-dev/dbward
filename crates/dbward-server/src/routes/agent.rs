@@ -359,22 +359,32 @@ pub(crate) async fn agent_result(
                     };
 
                     if db_write_result.is_err() {
-                        let _ = store.delete(&request_id).await;
-                        let conn = state.sqlite.lock().await;
-                        let _ = conn.execute(
-                                "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, ?2, ?3, 0, '', ?4, 'storage_failed', ?5, ?5)",
-                                rusqlite::params![request_id, backend, storage_key, retention_days, now],
+                        if let Err(err) = store.delete(&request_id).await {
+                            eprintln!(
+                                "failed to delete partially stored result {request_id}: {err}"
                             );
+                        }
+                        let conn = state.sqlite.lock().await;
+                        if let Err(err) = conn.execute(
+                            "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, ?2, ?3, 0, '', ?4, 'storage_failed', ?5, ?5)",
+                            rusqlite::params![request_id, backend, storage_key, retention_days, now],
+                        ) {
+                            eprintln!(
+                                "failed to mark result storage failure for {request_id}: {err}"
+                            );
+                        }
                     }
                 }
                 Err(_) => {
                     // Storage failed — record but don't fail the request
                     let conn = state.sqlite.lock().await;
                     let now = chrono::Utc::now().to_rfc3339();
-                    let _ = conn.execute(
-                            "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, 'unknown', '', 0, '', 30, 'storage_failed', ?2, ?2)",
-                            rusqlite::params![request_id, now],
-                        );
+                    if let Err(err) = conn.execute(
+                        "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, 'unknown', '', 0, '', 30, 'storage_failed', ?2, ?2)",
+                        rusqlite::params![request_id, now],
+                    ) {
+                        eprintln!("failed to persist storage failure for {request_id}: {err}");
+                    }
                 }
             }
         }

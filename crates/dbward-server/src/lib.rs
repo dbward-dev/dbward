@@ -24,10 +24,10 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
         loop {
             interval.tick().await;
             let conn = sqlite.lock().await;
-            if let Ok(n) = db::maintenance::reclaim_expired_leases(&conn)
-                && n > 0
-            {
-                eprintln!("reclaimed {n} expired lease(s)");
+            match db::maintenance::reclaim_expired_leases(&conn) {
+                Ok(n) if n > 0 => eprintln!("reclaimed {n} expired lease(s)"),
+                Ok(_) => {}
+                Err(err) => eprintln!("failed to reclaim expired leases: {err}"),
             }
         }
     });
@@ -40,13 +40,16 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
         loop {
             interval.tick().await;
             let conn = sqlite2.lock().await;
-            if let Ok((r, a)) = db::maintenance::purge_old_records(
+            match db::maintenance::purge_old_records(
                 &conn,
                 retention.request_ttl_days,
                 retention.audit_ttl_days,
-            ) && (r > 0 || a > 0)
-            {
-                eprintln!("purged {r} old request(s), {a} old audit log(s)");
+            ) {
+                Ok((r, a)) if r > 0 || a > 0 => {
+                    eprintln!("purged {r} old request(s), {a} old audit log(s)");
+                }
+                Ok(_) => {}
+                Err(err) => eprintln!("failed to purge old records: {err}"),
             }
         }
     });
@@ -72,17 +75,29 @@ async fn shutdown_signal(state: AppState) {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
     {
-        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to register SIGTERM handler");
-        tokio::select! {
-            _ = ctrl_c => eprintln!("\nReceived SIGINT, draining..."),
-            _ = sigterm.recv() => eprintln!("\nReceived SIGTERM, draining..."),
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                tokio::select! {
+                    _ = ctrl_c => eprintln!("\nReceived SIGINT, draining..."),
+                    _ = sigterm.recv() => eprintln!("\nReceived SIGTERM, draining..."),
+                }
+            }
+            Err(err) => {
+                eprintln!("failed to register SIGTERM handler: {err}");
+                if let Err(ctrl_c_err) = ctrl_c.await {
+                    eprintln!("failed while waiting for Ctrl-C: {ctrl_c_err}");
+                } else {
+                    eprintln!("\nReceived SIGINT, draining...");
+                }
+            }
         }
     }
     #[cfg(not(unix))]
     {
-        ctrl_c.await.ok();
-        eprintln!("\nReceived SIGINT, draining...");
+        match ctrl_c.await {
+            Ok(()) => eprintln!("\nReceived SIGINT, draining..."),
+            Err(err) => eprintln!("failed while waiting for Ctrl-C: {err}"),
+        }
     }
 
     // Phase 1: Drain — notify waiting clients, reject new requests

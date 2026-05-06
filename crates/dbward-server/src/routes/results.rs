@@ -67,8 +67,8 @@ pub async fn get_result_content(
             .map_err(|e| ApiError::internal(e.to_string()))?;
         stmt.query_map([&request_id], |row| Ok((row.get(0)?, row.get(1)?)))
             .map_err(|e| ApiError::internal(e.to_string()))?
-            .filter_map(|r| r.ok())
-            .collect()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| ApiError::internal(e.to_string()))?
     };
 
     let allowed = selectors
@@ -196,8 +196,8 @@ pub async fn list_results(
             }))
         })
         .map_err(|e| ApiError::internal(e.to_string()))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| ApiError::internal(e.to_string()))?;
 
     Ok(Json(json!({ "results": results })))
 }

@@ -83,11 +83,8 @@ pub fn collect_expired_results(
     let mut stmt = conn.prepare(
         "SELECT request_id, storage_key FROM request_results WHERE expires_at < ?1 AND status = 'stored'",
     )?;
-    let rows: Vec<(String, String)> = stmt
-        .query_map(rusqlite::params![now], |row| Ok((row.get(0)?, row.get(1)?)))?
-        .filter_map(|r| r.ok())
-        .collect();
-    Ok(rows)
+    stmt.query_map(rusqlite::params![now], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect()
 }
 
 /// Remove DB records for expired results (call after storage deletion).

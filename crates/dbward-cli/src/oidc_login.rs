@@ -75,7 +75,9 @@ pub async fn login(
 
     eprintln!("Opening browser for authentication...");
     eprintln!("If the browser doesn't open, visit:\n{auth_url}");
-    let _ = open::that(&auth_url);
+    if let Err(err) = open::that(&auth_url) {
+        eprintln!("Warning: failed to open browser automatically: {err}");
+    }
 
     // Wait for callback
     let code = wait_for_callback(port, &state).await?;
@@ -235,14 +237,17 @@ pub async fn logout() -> Result<(), String> {
         if let Some(disc) = discovery
             && let Some(ref revoke_url) = disc.revocation_endpoint
         {
-            let _ = reqwest::Client::new()
+            if let Err(err) = reqwest::Client::new()
                 .post(revoke_url)
                 .form(&[
                     ("token", refresh.as_str()),
                     ("client_id", creds.client_id.as_str()),
                 ])
                 .send()
-                .await;
+                .await
+            {
+                eprintln!("Warning: token revocation request failed: {err}");
+            }
         }
     }
 
@@ -322,7 +327,9 @@ pub async fn load_token(issuer: &str, client_id: &str) -> Result<String, String>
                 creds.refresh_token = Some(rt);
             }
             creds.expires_at = new_expires.to_rfc3339();
-            let _ = save_credentials(&creds);
+            if let Err(err) = save_credentials(&creds) {
+                eprintln!("Warning: failed to persist refreshed credentials: {err}");
+            }
         } else if now > expires {
             return Err("token expired. Run: dbward login".into());
         }
@@ -517,17 +524,27 @@ fn rewrite_url_base(source_url: &str, from_base: &str, to_base: &str) -> String 
 
 #[cfg(unix)]
 async fn wait_for_cancel_signal() {
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .expect("failed to register SIGTERM handler");
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => {}
-        _ = sigterm.recv() => {}
+    match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        Ok(mut sigterm) => {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = sigterm.recv() => {}
+            }
+        }
+        Err(err) => {
+            eprintln!("Warning: failed to register SIGTERM handler: {err}");
+            if let Err(ctrl_c_err) = tokio::signal::ctrl_c().await {
+                eprintln!("Warning: failed while waiting for Ctrl-C: {ctrl_c_err}");
+            }
+        }
     }
 }
 
 #[cfg(not(unix))]
 async fn wait_for_cancel_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+    if let Err(err) = tokio::signal::ctrl_c().await {
+        eprintln!("Warning: failed while waiting for Ctrl-C: {err}");
+    }
 }
 
 #[cfg(test)]

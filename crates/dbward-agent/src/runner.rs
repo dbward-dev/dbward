@@ -33,7 +33,9 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
         if draining.load(Ordering::SeqCst) {
             if drain_started_at.is_none() {
                 drain_started_at = Some(tokio::time::Instant::now());
-                let _ = remove_probe(READY_PROBE_PATH);
+                if let Err(err) = remove_probe(READY_PROBE_PATH) {
+                    eprintln!("failed to remove readiness probe: {err}");
+                }
                 eprintln!("agent draining");
             }
             if should_exit_drain(&draining, &in_flight) {
@@ -194,7 +196,9 @@ fn install_shutdown_task(draining: std::sync::Arc<AtomicBool>) {
     tokio::spawn(async move {
         wait_for_shutdown_signal().await;
         draining.store(true, Ordering::SeqCst);
-        let _ = remove_probe(READY_PROBE_PATH);
+        if let Err(err) = remove_probe(READY_PROBE_PATH) {
+            eprintln!("failed to remove readiness probe: {err}");
+        }
     });
 }
 
@@ -202,16 +206,26 @@ async fn wait_for_shutdown_signal() {
     #[cfg(unix)]
     {
         let ctrl_c = tokio::signal::ctrl_c();
-        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to register SIGTERM handler");
-        tokio::select! {
-            _ = ctrl_c => {}
-            _ = sigterm.recv() => {}
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                tokio::select! {
+                    _ = ctrl_c => {}
+                    _ = sigterm.recv() => {}
+                }
+            }
+            Err(err) => {
+                eprintln!("failed to register SIGTERM handler: {err}");
+                if let Err(ctrl_c_err) = ctrl_c.await {
+                    eprintln!("failed while waiting for Ctrl-C: {ctrl_c_err}");
+                }
+            }
         }
     }
     #[cfg(not(unix))]
     {
-        let _ = tokio::signal::ctrl_c().await;
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            eprintln!("failed while waiting for Ctrl-C: {err}");
+        }
     }
 }
 
@@ -239,8 +253,12 @@ struct ProbeGuard;
 
 impl Drop for ProbeGuard {
     fn drop(&mut self) {
-        let _ = remove_probe(ALIVE_PROBE_PATH);
-        let _ = remove_probe(READY_PROBE_PATH);
+        if let Err(err) = remove_probe(ALIVE_PROBE_PATH) {
+            eprintln!("failed to remove liveness probe: {err}");
+        }
+        if let Err(err) = remove_probe(READY_PROBE_PATH) {
+            eprintln!("failed to remove readiness probe: {err}");
+        }
     }
 }
 

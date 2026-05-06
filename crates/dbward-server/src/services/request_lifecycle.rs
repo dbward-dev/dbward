@@ -151,8 +151,8 @@ pub(crate) async fn approve_request_inner(
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
-        .filter_map(|r| r.ok())
-        .collect()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
     };
 
     // Check cross-step distinct approver constraint

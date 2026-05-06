@@ -856,7 +856,14 @@ fn save_result(
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+                if let Err(err) =
+                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                {
+                    eprintln!(
+                        "Warning: failed to secure results directory {}: {err}",
+                        dir.display()
+                    );
+                }
             }
             dir.join(format!("{request_id}.json"))
         }
@@ -1098,7 +1105,13 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dev_dir, std::fs::Permissions::from_mode(0o700));
+        if let Err(err) = std::fs::set_permissions(&dev_dir, std::fs::Permissions::from_mode(0o700))
+        {
+            eprintln!(
+                "Warning: failed to secure dev directory {}: {err}",
+                dev_dir.display()
+            );
+        }
     }
 
     let db_path = dev_dir.join("dbward.db");
@@ -1161,7 +1174,8 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         server_url, dev_token
     );
     let config_path = dev_dir.join("client.toml");
-    let _ = std::fs::write(&config_path, &client_config);
+    std::fs::write(&config_path, &client_config)
+        .map_err(|e| dbward_core::Error::Server(format!("write {}: {e}", config_path.display())))?;
 
     eprintln!("dbward dev server starting...");
     eprintln!("  Server:    {server_url}");

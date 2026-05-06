@@ -902,12 +902,14 @@ pub(crate) async fn get_request(
             && !steps.is_empty()
         {
             let approvals: Vec<(i64, String, String, String)> = conn
-                        .prepare("SELECT step_index, actor_id, actor_role, created_at FROM approvals WHERE request_id = ?1 AND action = 'approve'")
-                        .and_then(|mut stmt| {
-                            stmt.query_map(rusqlite::params![id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
-                                .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                        })
-                        .unwrap_or_default();
+                .prepare("SELECT step_index, actor_id, actor_role, created_at FROM approvals WHERE request_id = ?1 AND action = 'approve'")
+                .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+                .query_map(rusqlite::params![id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
+                .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
             let step_views: Vec<serde_json::Value> = steps.iter().enumerate().map(|(i, step)| {
                         let step_apprs: Vec<serde_json::Value> = approvals.iter()
@@ -1157,7 +1159,7 @@ pub(crate) async fn stream_result(
     };
 
     if let Some(payload) = slot.result.lock().await.clone() {
-        let _ = state.result_channels.remove(&id).await;
+        drop(state.result_channels.remove(&id).await);
         return Ok(Json(payload));
     }
     if state.draining.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1199,7 +1201,7 @@ pub(crate) async fn stream_result(
     }
 
     let result = slot.result.lock().await.clone();
-    let _ = state.result_channels.remove(&id).await;
+    drop(state.result_channels.remove(&id).await);
 
     match result {
         Some(payload) => Ok(Json(payload)),

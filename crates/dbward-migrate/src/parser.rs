@@ -23,7 +23,9 @@ pub fn parse_migrations_dir(dir: &Path) -> Result<Vec<Migration>, dbward_core::E
 
     let mut entries: Vec<_> = std::fs::read_dir(dir)
         .map_err(dbward_core::Error::Io)?
-        .filter_map(|e| e.ok())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(dbward_core::Error::Io)?
+        .into_iter()
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "sql"))
         .collect();
 
