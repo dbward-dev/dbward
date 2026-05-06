@@ -62,6 +62,8 @@ pub fn router(state: AppState) -> Router {
             axum::routing::post(agent::agent_result),
         )
         .route("/api/audit", get(audit::list_audit))
+        .route("/api/audit/events", get(audit::list_audit_events))
+        .route("/api/audit/verify", get(audit::verify_audit_chain))
         .route("/api/public-key", get(get_public_key))
         .route(
             "/api/workflows",

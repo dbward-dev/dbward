@@ -521,6 +521,71 @@ impl ServerClient {
         self.parse_response(resp, "list audit").await
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_audit_events(
+        &self,
+        limit: Option<u32>,
+        user: Option<&str>,
+        _operation: Option<&str>,
+        _status: Option<&str>,
+        event_type: Option<&str>,
+        category: Option<&str>,
+        outcome: Option<&str>,
+        environment: Option<&str>,
+        since: Option<&str>,
+        until: Option<&str>,
+    ) -> Result<Value, Error> {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(l) = limit {
+            parts.push(format!("limit={l}"));
+        }
+        if let Some(u) = user {
+            parts.push(format!("actor_id={u}"));
+        }
+        if let Some(v) = event_type {
+            parts.push(format!("event_type={v}"));
+        }
+        if let Some(v) = category {
+            parts.push(format!("event_category={v}"));
+        }
+        if let Some(v) = outcome {
+            parts.push(format!("outcome={v}"));
+        }
+        if let Some(v) = environment {
+            parts.push(format!("environment={v}"));
+        }
+        if let Some(v) = since {
+            parts.push(format!("since={v}"));
+        }
+        if let Some(v) = until {
+            parts.push(format!("until={v}"));
+        }
+        let url = if parts.is_empty() {
+            format!("{}/api/audit/events", self.base_url)
+        } else {
+            format!("{}/api/audit/events?{}", self.base_url, parts.join("&"))
+        };
+        let resp = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| Error::Server(format!("list audit events: {e}")))?;
+        self.parse_response(resp, "list audit events").await
+    }
+
+    pub async fn get_json(&self, path: &str) -> Result<Value, Error> {
+        let resp = self
+            .client
+            .get(format!("{}{}", self.base_url, path))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| Error::Server(format!("get {path}: {e}")))?;
+        self.parse_response(resp, path).await
+    }
+
     pub async fn get_result_content(
         &self,
         request_id: &str,

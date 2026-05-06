@@ -107,6 +107,19 @@ enum Command {
         operation: Option<String>,
         #[arg(long)]
         status: Option<String>,
+        #[arg(long)]
+        event_type: Option<String>,
+        #[arg(long)]
+        category: Option<String>,
+        #[arg(long)]
+        outcome: Option<String>,
+        #[arg(long)]
+        since: Option<String>,
+        #[arg(long)]
+        until: Option<String>,
+        /// Verify hash chain integrity
+        #[arg(long)]
+        verify: bool,
     },
     /// Start MCP stdio server
     Mcp,
@@ -818,13 +831,42 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             ref user,
             ref operation,
             ref status,
+            ref event_type,
+            ref category,
+            ref outcome,
+            ref since,
+            ref until,
+            verify,
         } => {
+            if verify {
+                let resp = sc.get_json("/api/audit/verify").await?;
+                if json_output {
+                    println!("{}", serde_json::to_string_pretty(&resp)?);
+                } else {
+                    let count = resp["verified_events"].as_u64().unwrap_or(0);
+                    let intact = resp["chain_intact"].as_bool().unwrap_or(false);
+                    if intact {
+                        println!("✓ Hash chain intact ({count} events verified)");
+                    } else {
+                        let broken = resp["first_broken_id"].as_str().unwrap_or("unknown");
+                        eprintln!("✗ Hash chain BROKEN at event {broken} ({count} events verified before break)");
+                        std::process::exit(1);
+                    }
+                }
+                return Ok(());
+            }
             let body = sc
-                .list_audit(
+                .list_audit_events(
                     *limit,
                     user.as_deref(),
                     operation.as_deref(),
                     status.as_deref(),
+                    event_type.as_deref(),
+                    category.as_deref(),
+                    outcome.as_deref(),
+                    cli.environment.as_deref(),
+                    since.as_deref(),
+                    until.as_deref(),
                 )
                 .await?;
             if json_output {
@@ -832,13 +874,13 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 return Ok(());
             }
             let empty = vec![];
-            let entries = body["audit_log"].as_array().unwrap_or(&empty);
+            let entries = body["audit_events"].as_array().unwrap_or(&empty);
             if entries.is_empty() {
-                println!("No audit log entries.");
+                println!("No audit events.");
             } else {
                 println!(
                     "{:<10} {:<22} {:<10} {:<14} {:<10} {:<10} {:<12} DETAIL",
-                    "ID", "TIMESTAMP", "USER", "OPERATION", "ENV", "DATABASE", "STATUS"
+                    "ID", "TIMESTAMP", "USER", "EVENT", "ENV", "DATABASE", "OUTCOME"
                 );
                 for e in entries {
                     let id = e["id"].as_str().unwrap_or("?");
@@ -846,11 +888,11 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     let ts = e["created_at"].as_str().unwrap_or("?");
                     let ts_short = &ts[..ts.len().min(19)];
                     let actor = e["actor_id"].as_str().unwrap_or("?");
-                    let op = e["operation"].as_str().unwrap_or("?");
-                    let env = e["environment"].as_str().unwrap_or("?");
-                    let db = e["database_name"].as_str().unwrap_or("?");
-                    let st = e["status"].as_str().unwrap_or("?");
-                    let detail = e["detail"].as_str().unwrap_or("");
+                    let event_type = e["event_type"].as_str().unwrap_or("?");
+                    let env = e["environment"].as_str().unwrap_or("-");
+                    let db = e["database_name"].as_str().unwrap_or("-");
+                    let outcome_val = e["outcome"].as_str().unwrap_or("?");
+                    let detail = e["detail_fingerprint"].as_str().unwrap_or("");
                     let short_detail = if detail.len() > 40 {
                         format!("{}...", &detail[..37])
                     } else {
@@ -858,7 +900,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     };
                     println!(
                         "{:<10} {:<22} {:<10} {:<14} {:<10} {:<10} {:<12} {}",
-                        short_id, ts_short, actor, op, env, db, st, short_detail
+                        short_id, ts_short, actor, event_type, env, db, outcome_val, short_detail
                     );
                 }
             }
