@@ -108,7 +108,7 @@ async fn create_dispatched(app: &axum::Router, token: &str) -> String {
 
 // ─── Concurrent approve ───
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_approve_one_succeeds_one_conflicts() {
     let state = test_state();
     let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
@@ -144,7 +144,7 @@ async fn concurrent_approve_one_succeeds_one_conflicts() {
 
 // ─── Concurrent agent claim ───
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_claim_one_succeeds_one_conflicts() {
     let state = test_state();
     let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
@@ -182,7 +182,7 @@ async fn concurrent_claim_one_succeeds_one_conflicts() {
 
 // ─── Concurrent idempotency key ───
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_same_idempotency_key_one_creates_one_returns_existing() {
     let state = test_state();
     let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
@@ -233,7 +233,7 @@ async fn concurrent_same_idempotency_key_one_creates_one_returns_existing() {
 
 // ─── Concurrent creations + audit hash chain integrity ───
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_creations_preserve_audit_hash_chain() {
     let state = test_state();
     let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();

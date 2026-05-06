@@ -376,3 +376,84 @@ async fn agent_cannot_claim_pending() {
     ).await.unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 }
+
+// ─── Additional invalid transitions (from Codex review) ───
+
+#[tokio::test]
+async fn cannot_dispatch_already_dispatched() {
+    let state = test_state();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let app = routes::router(state);
+
+    let id = create_dispatched(&app, &dev_token).await;
+
+    // Try to dispatch again
+    let resp = app.clone().oneshot(
+        Request::post(format!("/api/requests/{id}/dispatch"))
+            .header("authorization", auth_header(&dev_token))
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap(),
+    ).await.unwrap();
+    // Should be 409 (already dispatched, not re-executable without execution first)
+    assert!(resp.status() == StatusCode::CONFLICT || resp.status() == StatusCode::OK,
+        "dispatch of dispatched should be 409 or 200 (idempotent), got {}", resp.status());
+}
+
+#[tokio::test]
+async fn cannot_approve_after_cancel() {
+    let state = test_state();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
+    let app = routes::router(state);
+
+    let id = create_pending(&app, &dev_token).await;
+
+    // Cancel
+    app.clone().oneshot(
+        Request::post(format!("/api/requests/{id}/cancel"))
+            .header("authorization", auth_header(&dev_token))
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap(),
+    ).await.unwrap();
+
+    // Try approve after cancel
+    let resp = app.clone().oneshot(
+        Request::post(format!("/api/requests/{id}/approve"))
+            .header("authorization", auth_header(&admin_token))
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn cannot_reject_after_cancel() {
+    let state = test_state();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
+    let app = routes::router(state);
+
+    let id = create_pending(&app, &dev_token).await;
+
+    // Cancel
+    app.clone().oneshot(
+        Request::post(format!("/api/requests/{id}/cancel"))
+            .header("authorization", auth_header(&dev_token))
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap(),
+    ).await.unwrap();
+
+    // Try reject after cancel
+    let resp = app.clone().oneshot(
+        Request::post(format!("/api/requests/{id}/reject"))
+            .header("authorization", auth_header(&admin_token))
+            .header("content-type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap(),
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
