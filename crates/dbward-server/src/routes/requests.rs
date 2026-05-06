@@ -26,7 +26,12 @@ type RequestRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    String,
+    Option<String>,
 );
+
+const MAX_METADATA_JSON_BYTES: usize = 8 * 1024;
+const MAX_IDEMPOTENCY_KEY_BYTES: usize = 255;
 
 /// Resolve a short or full request ID, returning appropriate error.
 pub(crate) fn resolve_id(
@@ -68,6 +73,74 @@ pub(crate) fn request_resource(
 
 pub(crate) fn should_filter_capability(values: &[String]) -> bool {
     !values.is_empty() && !values.iter().any(|v| v == "*")
+}
+
+fn validate_metadata(
+    metadata: Option<&serde_json::Value>,
+) -> Result<String, crate::api_error::ApiError> {
+    let Some(metadata) = metadata else {
+        return Ok("{}".into());
+    };
+
+    if !metadata.is_object() {
+        return Err(crate::api_error::ApiError::bad_request(
+            "metadata must be a JSON object",
+        )
+        .with_code("invalid_metadata"));
+    }
+
+    let metadata_json = serde_json::to_string(metadata)
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+    if metadata_json.len() > MAX_METADATA_JSON_BYTES {
+        return Err(crate::api_error::ApiError::bad_request(format!(
+            "metadata must be at most {MAX_METADATA_JSON_BYTES} bytes"
+        ))
+        .with_code("metadata_too_large"));
+    }
+
+    Ok(metadata_json)
+}
+
+fn validate_idempotency_key(
+    raw: Option<&serde_json::Value>,
+) -> Result<Option<String>, crate::api_error::ApiError> {
+    let Some(value) = raw else {
+        return Ok(None);
+    };
+
+    let key = value
+        .as_str()
+        .ok_or_else(|| {
+            crate::api_error::ApiError::bad_request("idempotency_key must be a string")
+                .with_code("invalid_idempotency_key")
+        })?
+        .trim();
+
+    if key.is_empty() {
+        return Err(crate::api_error::ApiError::bad_request(
+            "idempotency_key must not be empty",
+        )
+        .with_code("invalid_idempotency_key"));
+    }
+    if key.len() > MAX_IDEMPOTENCY_KEY_BYTES {
+        return Err(crate::api_error::ApiError::bad_request(format!(
+            "idempotency_key must be at most {MAX_IDEMPOTENCY_KEY_BYTES} bytes"
+        ))
+        .with_code("idempotency_key_too_large"));
+    }
+
+    Ok(Some(key.to_string()))
+}
+
+fn is_unique_idempotency_key_violation(err: &rusqlite::Error) -> bool {
+    match err {
+        rusqlite::Error::SqliteFailure(inner, _)
+            if inner.code == rusqlite::ErrorCode::ConstraintViolation =>
+        {
+            inner.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+        }
+        _ => false,
+    }
 }
 
 pub(crate) async fn ensure_result_slot(state: &AppState, request_id: &str) {
@@ -509,10 +582,8 @@ pub(crate) async fn create_request(
     let share_with_json: Option<String> = body["share_with"]
         .as_array()
         .map(|arr| serde_json::to_string(arr).unwrap_or_default());
-    let metadata_json = body.get("metadata")
-        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".into()))
-        .unwrap_or_else(|| "{}".into());
-    let idempotency_key = body["idempotency_key"].as_str().map(|s| s.to_string());
+    let metadata_json = validate_metadata(body.get("metadata"))?;
+    let idempotency_key = validate_idempotency_key(body.get("idempotency_key"))?;
 
     authz::authorize(
         &user,
@@ -595,7 +666,7 @@ pub(crate) async fn create_request(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    crate::db::request_repo::insert_request(
+    match crate::db::request_repo::insert_request(
         &conn,
         &crate::db::request_repo::NewRequest {
             id: &id,
@@ -615,7 +686,29 @@ pub(crate) async fn create_request(
         },
         &now,
     )
-    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+    {
+        Ok(()) => {}
+        Err(err) if is_unique_idempotency_key_violation(&err) => {
+            if let Some(ref key) = idempotency_key
+                && let Some(existing) = crate::db::request_repo::find_by_idempotency_key(&conn, key)
+                    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+            {
+                return Ok((
+                    StatusCode::OK,
+                    axum::Json(serde_json::json!({
+                        "id": existing.id,
+                        "status": existing.status,
+                        "idempotent": true,
+                    })),
+                ));
+            }
+            return Err(crate::api_error::ApiError::conflict(
+                "idempotency key already exists",
+            )
+            .with_code("duplicate_idempotency_key"));
+        }
+        Err(err) => return Err(crate::api_error::ApiError::internal(err.to_string())),
+    }
 
     if status == "auto_approved" {
         crate::db::request_repo::mark_dispatched(&conn, &id, &now)
@@ -960,19 +1053,24 @@ pub(crate) async fn get_request(
                           id: &str,
                           state: &AppState|
      -> Result<serde_json::Value, crate::api_error::ApiError> {
-        let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason): RequestRow = conn
+        let (id_val, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason, metadata_json, idempotency_key): RequestRow = conn
             .query_row(
-                "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason FROM requests WHERE id = ?1",
+                "SELECT id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, resolved_at, workflow_snapshot_json, reason, metadata_json, idempotency_key FROM requests WHERE id = ?1",
                 rusqlite::params![id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?)),
             )
             .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
+
+        let metadata = serde_json::from_str::<serde_json::Value>(&metadata_json)
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
         let mut resp = json!({
             "id": id_val, "created_by": created_by, "operation": operation,
             "environment": environment, "database_name": database_name, "detail": detail, "status": status,
             "created_at": created_at, "updated_at": updated_at, "resolved_at": resolved_at,
             "reason": reason,
+            "metadata": metadata,
+            "idempotency_key": idempotency_key,
         });
 
         if status == "approved" || status == "auto_approved" || status == "break_glass" {

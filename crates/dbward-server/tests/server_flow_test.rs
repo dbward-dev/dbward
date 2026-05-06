@@ -1557,6 +1557,93 @@ async fn stream_result_after_agent_posts_still_succeeds() {
 }
 
 #[tokio::test]
+async fn agent_result_recreates_missing_result_slot() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
+        .await
+        .unwrap();
+
+    let app = routes::router(state.clone());
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation": "execute_query", "environment": "development", "database": "app", "detail": "SELECT 1"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let request_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{request_id}/dispatch"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    drop(state.result_channels.remove(&request_id).await);
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{request_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"agent_id": "agent-1"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let exec_id = body_json(resp).await["execution_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{exec_id}/result"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"success": true, "result": {"recovered": true}}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app
+        .oneshot(
+            Request::get(format!("/api/requests/{request_id}/result/stream"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["success"], true);
+    assert_eq!(body["result"], json!({"recovered": true}));
+}
+
+#[tokio::test]
 async fn agent_poll_empty_when_no_approved() {
     let state = test_state();
     let (_, agent_token) = auth::create_token_with_type(&state, "agent-1", "admin", "agent")
@@ -3282,6 +3369,107 @@ async fn get_request_and_pending_for_me_include_reason() {
     assert_eq!(requests[0]["id"], request_id);
     assert_eq!(requests[0]["reason"], reason);
     assert!(requests[0].get("workflow_snapshot_json").is_none());
+}
+
+#[tokio::test]
+async fn get_request_includes_metadata_and_idempotency_key() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let app = routes::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "development",
+                        "detail": "SELECT 1",
+                        "metadata": {"ticket": "ABC-123", "repo": "dbward"},
+                        "idempotency_key": "idem-123",
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let request_id = body_json(resp).await["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .oneshot(
+            Request::get(format!("/api/requests/{request_id}"))
+                .header("authorization", auth_header(&alice_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["metadata"], json!({"ticket": "ABC-123", "repo": "dbward"}));
+    assert_eq!(body["idempotency_key"], "idem-123");
+}
+
+#[tokio::test]
+async fn create_request_rejects_invalid_or_oversized_metadata() {
+    let state = test_state();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let app = routes::router(state.clone());
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "development",
+                        "detail": "SELECT 1",
+                        "metadata": ["not", "an", "object"],
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp).await;
+    assert_eq!(body["code"], "invalid_metadata");
+
+    let oversized = "x".repeat(8 * 1024);
+    let resp = app
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&alice_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "operation": "execute_query",
+                        "environment": "development",
+                        "detail": "SELECT 1",
+                        "metadata": {"blob": oversized},
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp).await;
+    assert_eq!(body["code"], "metadata_too_large");
 }
 
 #[tokio::test]

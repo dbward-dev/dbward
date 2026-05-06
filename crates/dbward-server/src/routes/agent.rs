@@ -405,11 +405,20 @@ pub(crate) async fn agent_result(
         "request_id": request_id,
     });
 
-    if let Some(slot) = state.result_channels.get(&request_id).await {
-        let mut r = slot.result.lock().await;
-        *r = Some(payload);
-        slot.notify.notify_waiters();
-    }
+    let slot = match state.result_channels.get(&request_id).await {
+        Some(slot) => slot,
+        None => {
+            crate::routes::requests::ensure_result_slot(&state, &request_id).await;
+            state
+                .result_channels
+                .get(&request_id)
+                .await
+                .ok_or_else(|| crate::api_error::ApiError::internal("failed to create result relay slot"))?
+        }
+    };
+    let mut r = slot.result.lock().await;
+    *r = Some(payload);
+    slot.notify.notify_waiters();
 
     state.request_notifier.notify(&request_id).await;
 
