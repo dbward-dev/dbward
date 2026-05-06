@@ -36,8 +36,8 @@ pub struct Cli {
     #[arg(long, env = "DBWARD_ENV", global = true)]
     environment: Option<String>,
 
-    /// Output format: table (default) or json
-    #[arg(long, default_value = "table")]
+    /// Output format: human (default) or json
+    #[arg(long, default_value = "human", global = true)]
     format: String,
 
     #[command(subcommand)]
@@ -489,7 +489,13 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         Command::Request { action } => match action {
             RequestAction::Approve { id } => {
                 match sc.approve(&id).await {
-                    Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
+                    Ok(body) => {
+                        if json_output {
+                            println!("{}", serde_json::to_string_pretty(&body)?);
+                        } else {
+                            print_approve_result(&body, &id);
+                        }
+                    }
                     Err(e) => {
                         if e.status == 404 {
                             return Err(dbward_core::Error::Server(format!(
@@ -511,7 +517,13 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             }
             RequestAction::Reject { id } => {
                 match sc.reject(&id).await {
-                    Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
+                    Ok(body) => {
+                        if json_output {
+                            println!("{}", serde_json::to_string_pretty(&body)?);
+                        } else {
+                            println!("Rejected: {id}");
+                        }
+                    }
                     Err(e) => {
                         if e.status == 404 {
                             return Err(dbward_core::Error::Server(format!(
@@ -528,7 +540,13 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             }
             RequestAction::Cancel { id, reason } => {
                 match sc.cancel_request(&id, reason.as_deref()).await {
-                    Ok(body) => println!("{}", serde_json::to_string_pretty(&body)?),
+                    Ok(body) => {
+                        if json_output {
+                            println!("{}", serde_json::to_string_pretty(&body)?);
+                        } else {
+                            println!("Cancelled: {id}");
+                        }
+                    }
                     Err(e) => {
                         if e.status == 404 {
                             return Err(dbward_core::Error::Server(format!(
@@ -571,7 +589,11 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             }
             RequestAction::Show { id } => {
                 let body = sc.get_request(&id).await?;
-                println!("{}", serde_json::to_string_pretty(&body)?);
+                if json_output {
+                    println!("{}", serde_json::to_string_pretty(&body)?);
+                } else {
+                    print_request_detail(&body);
+                }
                 Ok(())
             }
             RequestAction::Resume {
@@ -825,6 +847,8 @@ fn print_execution_result(resp: &serde_json::Value) {
             eprintln!("Executed successfully.");
         } else if let Some(text) = result.as_str() {
             println!("{text}");
+        } else if let Some(rows) = result.as_array() {
+            print_result_table(rows);
         } else {
             println!(
                 "{}",
@@ -834,6 +858,152 @@ fn print_execution_result(resp: &serde_json::Value) {
     } else {
         eprintln!("Executed successfully.");
     }
+}
+
+
+fn print_request_detail(body: &serde_json::Value) {
+    let id = body["id"].as_str().unwrap_or("?");
+    let status = body["status"].as_str().unwrap_or("?");
+    let op = body["operation"].as_str().unwrap_or("?");
+    let detail = body["detail"].as_str().unwrap_or("");
+    let env = body["environment"].as_str().unwrap_or("?");
+    let db = body["database_name"].as_str().unwrap_or("?");
+    let user = body["created_by"].as_str().unwrap_or("?");
+    let created = body["created_at"].as_str().unwrap_or("?");
+    let reason = body["reason"].as_str();
+
+    println!("Request {id}");
+    println!("  Status:      {status}");
+    println!("  Operation:   {op}");
+    println!("  SQL:         {detail}");
+    println!("  Environment: {env}");
+    println!("  Database:    {db}");
+    if let Some(r) = reason {
+        println!("  Reason:      {r}");
+    }
+    println!("  Created by:  {user}");
+    println!("  Created at:  {created}");
+    if let Some(resolved) = body["resolved_at"].as_str() {
+        println!("  Resolved at: {resolved}");
+    }
+
+    // Approval progress
+    if let Some(progress) = body.get("approval_progress") {
+        let current = progress["current_step"].as_u64().unwrap_or(0);
+        let total = progress["total_steps"].as_u64().unwrap_or(0);
+        println!();
+        println!("  Approval ({current}/{total} complete):");
+        if let Some(steps) = progress["steps"].as_array() {
+            for step in steps {
+                let idx = step["index"].as_u64().unwrap_or(0);
+                let satisfied = step["satisfied"].as_bool().unwrap_or(false);
+                let marker = if satisfied { "[ok]  " } else { "[wait]" };
+                // Collect approver group names
+                let approvers_desc: Vec<String> = step["approvers_required"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|a| {
+                                a["group"].as_str().map(|g| g.to_string())
+                                    .or_else(|| a["role"].as_str().map(|r| r.to_string()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let desc = approvers_desc.join(" + ");
+                println!("    {marker} Step {}: {desc}", idx + 1);
+                if let Some(approvals) = step["approvals"].as_array() {
+                    for a in approvals {
+                        let who = a["user"].as_str().unwrap_or("?");
+                        let at = a["at"].as_str().unwrap_or("");
+                        let short_time = if at.len() >= 16 { &at[11..16] } else { at };
+                        println!("           approved by {who} ({short_time})");
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn print_approve_result(body: &serde_json::Value, id: &str) {
+    let step = body["step_completed"].as_u64().unwrap_or(0) + 1;
+    let total = body["total_steps"].as_u64().unwrap_or(0);
+    let status = body["status"].as_str().unwrap_or("pending");
+    let short_id = if id.len() > 8 { &id[..8] } else { id };
+
+    println!("Approved step {step}/{total}");
+    println!("Request: {short_id}");
+    if status == "approved" {
+        println!("All steps complete. Run: dbward request resume {short_id}");
+    } else {
+        println!("Waiting for further approvals.");
+    }
+}
+
+fn print_result_table(rows: &[serde_json::Value]) {
+    if rows.is_empty() {
+        println!("(0 rows)");
+        return;
+    }
+    // Collect column names from first row
+    let columns: Vec<&str> = match rows[0].as_object() {
+        Some(obj) => obj.keys().map(|k| k.as_str()).collect(),
+        None => {
+            println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
+            return;
+        }
+    };
+    // Compute column widths
+    let mut widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
+    let cell_values: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            columns
+                .iter()
+                .enumerate()
+                .map(|(i, col)| {
+                    let val = &row[*col];
+                    let s = if val.is_null() {
+                        "NULL".to_string()
+                    } else if let Some(s) = val.as_str() {
+                        s.to_string()
+                    } else {
+                        val.to_string()
+                    };
+                    if s.len() > widths[i] {
+                        widths[i] = s.len();
+                    }
+                    s
+                })
+                .collect()
+        })
+        .collect();
+    // Print header
+    let header: String = columns
+        .iter()
+        .enumerate()
+        .map(|(i, c)| format!(" {:width$} ", c, width = widths[i]))
+        .collect::<Vec<_>>()
+        .join("|");
+    println!("{header}");
+    // Print separator
+    let sep: String = widths
+        .iter()
+        .map(|w| "-".repeat(w + 2))
+        .collect::<Vec<_>>()
+        .join("+");
+    println!("{sep}");
+    // Print rows
+    for cells in &cell_values {
+        let line: String = cells
+            .iter()
+            .enumerate()
+            .map(|(i, v)| format!(" {:width$} ", v, width = widths[i]))
+            .collect::<Vec<_>>()
+            .join("|");
+        println!("{line}");
+    }
+    println!("({} {})", rows.len(), if rows.len() == 1 { "row" } else { "rows" });
 }
 
 /// Save result locally. Returns the path where it was saved.
