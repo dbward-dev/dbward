@@ -29,3 +29,5 @@ async-trait = "0.1"
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true }
 rand = "0.8"
+dbward-migrate = { path = "../dbward-migrate" }
+tempfile = "3"
