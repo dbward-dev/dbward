@@ -60,7 +60,7 @@ async fn create_token_with_type_and_groups(
     let hash = hash_token(&raw_token);
     let prefix = token_prefix(&raw_token);
 
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
     crate::db::token_repo::insert_token(
         &conn,
         &token_id,
@@ -78,17 +78,67 @@ async fn create_token_with_type_and_groups(
             .map_err(|e| e.to_string())?;
     }
 
+    // Audit: token_created
+    let meta = serde_json::json!({"subject_user": user, "role": role, "subject_type": subject_type}).to_string();
+    let _ = crate::db::audit_event_repo::insert_audit_event(
+        &mut conn,
+        &crate::db::audit_event_repo::AuditEvent {
+            event_type: "token_created",
+            event_category: "token",
+            outcome: "success",
+            actor_id: "system",
+            actor_type: "system",
+            resource_type: Some("token"),
+            resource_id: Some(&token_id),
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
+            metadata_json: &meta,
+        },
+    );
+
     Ok((token_id, raw_token))
 }
 
 /// Revoke a token by ID.
 pub async fn revoke_token(state: &AppState, token_id: &str) -> Result<(), String> {
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
     let found = crate::db::token_repo::revoke_token(&conn, token_id, &Utc::now().to_rfc3339())
         .map_err(|e| e.to_string())?;
     if !found {
         return Err("token not found".to_string());
     }
+    // Audit: token_revoked
+    let _ = crate::db::audit_event_repo::insert_audit_event(
+        &mut conn,
+        &crate::db::audit_event_repo::AuditEvent {
+            event_type: "token_revoked",
+            event_category: "token",
+            outcome: "success",
+            actor_id: "system",
+            actor_type: "system",
+            resource_type: Some("token"),
+            resource_id: Some(token_id),
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
+            metadata_json: "{}",
+        },
+    );
     Ok(())
 }
 
