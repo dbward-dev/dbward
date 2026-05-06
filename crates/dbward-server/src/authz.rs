@@ -187,6 +187,45 @@ pub fn authorize_sync(
     }
 }
 
+/// Authorize and record denial to audit log if forbidden.
+pub fn authorize_with_audit(
+    principal: &AuthUser,
+    action: Action,
+    resource: Resource,
+    conn: &mut rusqlite::Connection,
+) -> std::result::Result<(), (StatusCode, String)> {
+    let result = authorize_sync(principal, action, resource);
+    if let Err(ref _e) = result {
+        let meta =
+            serde_json::json!({"action": action.as_str(), "role": principal.effective_permission()})
+                .to_string();
+        let _ = crate::db::audit_event_repo::insert_audit_event(
+            conn,
+            &crate::db::audit_event_repo::AuditEvent {
+                event_type: "authz_denied",
+                event_category: "auth",
+                outcome: "denied",
+                actor_id: &principal.user,
+                actor_type: "user",
+                resource_type: None,
+                resource_id: None,
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: None,
+                operation: None,
+                environment: None,
+                database_name: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: None,
+                metadata_json: &meta,
+            },
+        );
+    }
+    result
+}
+
 pub async fn warmup() -> std::result::Result<(), (StatusCode, String)> {
     enforcer().await?;
     Ok(())
