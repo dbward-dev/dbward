@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
 /// Parameters for inserting an audit event.
@@ -23,31 +23,74 @@ pub struct AuditEvent<'a> {
     pub metadata_json: &'a str,
 }
 
+fn hash_field(hasher: &mut Sha256, name: &str, value: Option<&str>) {
+    hasher.update(name.as_bytes());
+    hasher.update([0x1f]);
+    match value {
+        Some(value) => {
+            hasher.update([0x01]);
+            hasher.update(value.len().to_string().as_bytes());
+            hasher.update([0x1e]);
+            hasher.update(value.as_bytes());
+        }
+        None => hasher.update([0x00]),
+    }
+    hasher.update([0x1d]);
+}
+
+fn compute_event_hash(
+    prev_hash: Option<&str>,
+    id: &str,
+    created_at: &str,
+    event: &AuditEvent<'_>,
+) -> String {
+    let mut hasher = Sha256::new();
+    hash_field(&mut hasher, "prev_hash", prev_hash);
+    hash_field(&mut hasher, "id", Some(id));
+    hash_field(&mut hasher, "event_type", Some(event.event_type));
+    hash_field(&mut hasher, "event_category", Some(event.event_category));
+    hash_field(&mut hasher, "event_version", Some("1"));
+    hash_field(&mut hasher, "outcome", Some(event.outcome));
+    hash_field(&mut hasher, "actor_id", Some(event.actor_id));
+    hash_field(&mut hasher, "actor_type", Some(event.actor_type));
+    hash_field(&mut hasher, "resource_type", event.resource_type);
+    hash_field(&mut hasher, "resource_id", event.resource_id);
+    hash_field(&mut hasher, "peer_ip", event.peer_ip);
+    hash_field(&mut hasher, "client_ip", event.client_ip);
+    hash_field(&mut hasher, "client_ip_source", event.client_ip_source);
+    hash_field(&mut hasher, "request_id", event.request_id);
+    hash_field(&mut hasher, "operation", event.operation);
+    hash_field(&mut hasher, "environment", event.environment);
+    hash_field(&mut hasher, "database_name", event.database_name);
+    hash_field(&mut hasher, "detail_fingerprint", event.detail_fingerprint);
+    hash_field(&mut hasher, "detail_raw", event.detail_raw);
+    hash_field(&mut hasher, "reason", event.reason);
+    hash_field(&mut hasher, "metadata_json", Some(event.metadata_json));
+    hash_field(&mut hasher, "created_at", Some(created_at));
+    hex::encode(hasher.finalize())
+}
+
 /// Insert an audit event with hash chain.
-pub fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> Result<String, rusqlite::Error> {
+pub fn insert_audit_event(
+    conn: &mut Connection,
+    event: &AuditEvent,
+) -> Result<String, rusqlite::Error> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-    // Get previous hash for chain
-    let prev_hash: Option<String> = conn
+    // Read the current chain head while holding the write lock so another writer
+    // cannot insert between the head read and this append.
+    let prev_hash: Option<String> = tx
         .query_row(
             "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
             [],
             |row| row.get(0),
         )
-        .ok();
+        .optional()?;
+    let event_hash = compute_event_hash(prev_hash.as_deref(), &id, &now, event);
 
-    // Compute event hash: SHA-256(prev_hash || event_type || actor_id || created_at || detail_fingerprint || outcome)
-    let mut hasher = Sha256::new();
-    hasher.update(prev_hash.as_deref().unwrap_or("genesis"));
-    hasher.update(event.event_type);
-    hasher.update(event.actor_id);
-    hasher.update(&now);
-    hasher.update(event.detail_fingerprint.unwrap_or(""));
-    hasher.update(event.outcome);
-    let event_hash = hex::encode(hasher.finalize());
-
-    conn.execute(
+    tx.execute(
         "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, environment, database_name, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at)
          VALUES (?1, ?2, ?3, 1, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
         rusqlite::params![
@@ -75,6 +118,7 @@ pub fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> Result<Strin
             now,
         ],
     )?;
+    tx.commit()?;
 
     Ok(id)
 }
@@ -82,7 +126,9 @@ pub fn insert_audit_event(conn: &Connection, event: &AuditEvent) -> Result<Strin
 /// Verify the hash chain integrity. Returns (total_events, first_broken_id).
 pub fn verify_hash_chain(conn: &Connection) -> Result<(u64, Option<String>), rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT id, event_type, actor_id, created_at, detail_fingerprint, outcome, prev_hash, event_hash FROM audit_events ORDER BY rowid ASC",
+        "SELECT id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, environment, database_name, detail_fingerprint, detail_raw, reason, metadata_json, created_at, prev_hash, event_hash
+         FROM audit_events
+         ORDER BY rowid ASC",
     )?;
 
     let mut rows = stmt.query([])?;
@@ -92,27 +138,59 @@ pub fn verify_hash_chain(conn: &Connection) -> Result<(u64, Option<String>), rus
     while let Some(row) = rows.next()? {
         let id: String = row.get(0)?;
         let event_type: String = row.get(1)?;
-        let actor_id: String = row.get(2)?;
-        let created_at: String = row.get(3)?;
-        let detail_fp: Option<String> = row.get(4)?;
-        let outcome: String = row.get(5)?;
-        let stored_prev: Option<String> = row.get(6)?;
-        let stored_hash: String = row.get(7)?;
+        let event_category: String = row.get(2)?;
+        let event_version: i64 = row.get(3)?;
+        let outcome: String = row.get(4)?;
+        let actor_id: String = row.get(5)?;
+        let actor_type: String = row.get(6)?;
+        let resource_type: Option<String> = row.get(7)?;
+        let resource_id: Option<String> = row.get(8)?;
+        let peer_ip: Option<String> = row.get(9)?;
+        let client_ip: Option<String> = row.get(10)?;
+        let client_ip_source: Option<String> = row.get(11)?;
+        let request_id: Option<String> = row.get(12)?;
+        let operation: Option<String> = row.get(13)?;
+        let environment: Option<String> = row.get(14)?;
+        let database_name: Option<String> = row.get(15)?;
+        let detail_fp: Option<String> = row.get(16)?;
+        let detail_raw: Option<String> = row.get(17)?;
+        let reason: Option<String> = row.get(18)?;
+        let metadata_json: String = row.get(19)?;
+        let created_at: String = row.get(20)?;
+        let stored_prev: Option<String> = row.get(21)?;
+        let stored_hash: String = row.get(22)?;
 
         // Verify prev_hash matches last computed hash
         if stored_prev != last_hash {
             return Ok((count, Some(id)));
         }
 
-        // Recompute hash
-        let mut hasher = Sha256::new();
-        hasher.update(stored_prev.as_deref().unwrap_or("genesis"));
-        hasher.update(&event_type);
-        hasher.update(&actor_id);
-        hasher.update(&created_at);
-        hasher.update(detail_fp.as_deref().unwrap_or(""));
-        hasher.update(&outcome);
-        let computed = hex::encode(hasher.finalize());
+        let event = AuditEvent {
+            event_type: &event_type,
+            event_category: &event_category,
+            outcome: &outcome,
+            actor_id: &actor_id,
+            actor_type: &actor_type,
+            resource_type: resource_type.as_deref(),
+            resource_id: resource_id.as_deref(),
+            peer_ip: peer_ip.as_deref(),
+            client_ip: client_ip.as_deref(),
+            client_ip_source: client_ip_source.as_deref(),
+            request_id: request_id.as_deref(),
+            operation: operation.as_deref(),
+            environment: environment.as_deref(),
+            database_name: database_name.as_deref(),
+            detail_fingerprint: detail_fp.as_deref(),
+            detail_raw: detail_raw.as_deref(),
+            reason: reason.as_deref(),
+            metadata_json: &metadata_json,
+        };
+
+        if event_version != 1 {
+            return Ok((count, Some(id)));
+        }
+
+        let computed = compute_event_hash(stored_prev.as_deref(), &id, &created_at, &event);
 
         if computed != stored_hash {
             return Ok((count, Some(id)));
@@ -160,11 +238,11 @@ mod tests {
 
     #[test]
     fn insert_and_verify_chain() {
-        let conn = test_conn();
+        let mut conn = test_conn();
 
-        insert_audit_event(&conn, &minimal_event()).unwrap();
-        insert_audit_event(&conn, &minimal_event()).unwrap();
-        insert_audit_event(&conn, &minimal_event()).unwrap();
+        insert_audit_event(&mut conn, &minimal_event()).unwrap();
+        insert_audit_event(&mut conn, &minimal_event()).unwrap();
+        insert_audit_event(&mut conn, &minimal_event()).unwrap();
 
         let (count, broken) = verify_hash_chain(&conn).unwrap();
         assert_eq!(count, 3);
@@ -173,21 +251,38 @@ mod tests {
 
     #[test]
     fn detect_tampered_hash() {
-        let conn = test_conn();
+        let mut conn = test_conn();
 
-        insert_audit_event(&conn, &minimal_event()).unwrap();
-        let id2 = insert_audit_event(&conn, &minimal_event()).unwrap();
-        insert_audit_event(&conn, &minimal_event()).unwrap();
+        insert_audit_event(&mut conn, &minimal_event()).unwrap();
+        let id2 = insert_audit_event(&mut conn, &minimal_event()).unwrap();
+        insert_audit_event(&mut conn, &minimal_event()).unwrap();
 
         // Tamper with middle event
         conn.execute(
-            "UPDATE audit_events SET event_hash = 'tampered' WHERE id = ?1",
-            [&id2],
+            "UPDATE audit_events SET event_hash = ?2 WHERE id = ?1",
+            rusqlite::params![id2, "0".repeat(64)],
         )
         .unwrap();
 
         let (count, broken) = verify_hash_chain(&conn).unwrap();
         assert_eq!(count, 1); // first event OK
         assert!(broken.is_some()); // second event broken
+    }
+
+    #[test]
+    fn detect_tampered_unhashed_field() {
+        let mut conn = test_conn();
+
+        let id = insert_audit_event(&mut conn, &minimal_event()).unwrap();
+
+        conn.execute(
+            "UPDATE audit_events SET metadata_json = '{\"tampered\":true}' WHERE id = ?1",
+            [&id],
+        )
+        .unwrap();
+
+        let (count, broken) = verify_hash_chain(&conn).unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(broken.as_deref(), Some(id.as_str()));
     }
 }

@@ -368,12 +368,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
 
-        let decision = evaluate_approval_policy(
-            &conn,
-            "app",
-            "production",
-            "execute_query",
-        );
+        let decision = evaluate_approval_policy(&conn, "app", "production", "execute_query");
 
         assert!(!decision.needs_approval);
         assert!(decision.workflow_id.is_none());

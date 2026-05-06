@@ -126,8 +126,8 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Erro
                     detail_raw TEXT,
                     reason TEXT,
                     metadata_json TEXT NOT NULL DEFAULT '{}',
-                    prev_hash TEXT,
-                    event_hash TEXT NOT NULL,
+                    prev_hash TEXT CHECK (prev_hash IS NULL OR length(prev_hash) = 64),
+                    event_hash TEXT NOT NULL CHECK (length(event_hash) = 64),
                     created_at TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_audit_events_type ON audit_events(event_type, created_at DESC);
