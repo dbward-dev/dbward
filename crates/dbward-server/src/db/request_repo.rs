@@ -245,7 +245,7 @@ where
     C: Deref<Target = Connection> + ?Sized,
 {
     let rows = conn.execute(
-        "UPDATE requests SET status = 'dispatched', updated_at = ?1 WHERE id = ?2 AND status IN ('approved', 'auto_approved', 'break_glass', 'executed', 'failed')",
+        "UPDATE requests SET status = 'dispatched', updated_at = ?1 WHERE id = ?2 AND status IN ('approved', 'auto_approved', 'break_glass', 'executed', 'failed', 'execution_lost')",
         rusqlite::params![now, id],
     )?;
     Ok(rows > 0)

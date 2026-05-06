@@ -144,10 +144,6 @@ fn is_unique_idempotency_key_violation(err: &rusqlite::Error) -> bool {
 }
 
 pub(crate) async fn ensure_result_slot(state: &AppState, request_id: &str) {
-    if state.result_channels.get(request_id).await.is_some() {
-        return;
-    }
-
     let slot = Arc::new(crate::state::ResultSlot {
         result: tokio::sync::Mutex::new(None),
         notify: tokio::sync::Notify::new(),
