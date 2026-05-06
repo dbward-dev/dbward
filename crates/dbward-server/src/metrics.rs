@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 
-const HISTOGRAM_BUCKETS: [f64; 11] = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0];
+const HISTOGRAM_BUCKETS: [f64; 11] = [
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+];
 const GAUGE_CACHE_TTL: Duration = Duration::from_secs(1);
 const REQUEST_STATUSES: [&str; 8] = [
     "pending",
@@ -113,7 +115,11 @@ impl Metrics {
     pub fn record_request_created(&self, status: &str, environment: &str, database: &str) {
         increment_map_counter(
             &self.requests_total,
-            (status.to_string(), environment.to_string(), database.to_string()),
+            (
+                status.to_string(),
+                environment.to_string(),
+                database.to_string(),
+            ),
         );
     }
 
@@ -229,7 +235,12 @@ impl Metrics {
             "Approval and rejection actions.",
         );
         for (action, value) in snapshot_map(&self.approvals_total) {
-            write_metric_line(&mut out, "dbward_approvals_total", &[("action", &action)], value);
+            write_metric_line(
+                &mut out,
+                "dbward_approvals_total",
+                &[("action", &action)],
+                value,
+            );
         }
 
         write_help_type(
@@ -304,7 +315,8 @@ impl Metrics {
             "histogram",
             "HTTP request duration in seconds.",
         );
-        for ((method, route), histogram) in snapshot_histograms(&self.http_request_duration_seconds) {
+        for ((method, route), histogram) in snapshot_histograms(&self.http_request_duration_seconds)
+        {
             let mut cumulative = 0u64;
             for (idx, bucket) in HISTOGRAM_BUCKETS.iter().enumerate() {
                 cumulative += histogram.buckets[idx].load(Ordering::Relaxed);
@@ -323,7 +335,11 @@ impl Metrics {
             write_metric_line(
                 &mut out,
                 "dbward_http_request_duration_seconds_bucket",
-                &[("method", method.as_str()), ("route", route.as_str()), ("le", "+Inf")],
+                &[
+                    ("method", method.as_str()),
+                    ("route", route.as_str()),
+                    ("le", "+Inf"),
+                ],
                 count,
             );
             write_metric_line(
@@ -393,10 +409,12 @@ impl Metrics {
             let mut stmt = conn
                 .prepare("SELECT status, COUNT(*) FROM requests GROUP BY status")
                 .map_err(|e| e.to_string())?;
-            stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?)))
-                .map_err(|e| e.to_string())?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?
+            stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
         };
 
         let oldest_pending_seconds = conn
@@ -427,10 +445,7 @@ impl Metrics {
             oldest_pending_seconds,
             agents_active,
         };
-        *self
-            .gauge_cache
-            .lock()
-            .expect("gauge cache mutex poisoned") = Some(snapshot.clone());
+        *self.gauge_cache.lock().expect("gauge cache mutex poisoned") = Some(snapshot.clone());
         Ok(snapshot)
     }
 }

@@ -104,16 +104,16 @@ pub async fn authenticate(
         .ok_or_else(|| {
             state.metrics.record_auth_failure("invalid");
             (
-            StatusCode::UNAUTHORIZED,
-            "missing Authorization header".into(),
+                StatusCode::UNAUTHORIZED,
+                "missing Authorization header".into(),
             )
         })?;
 
     let raw_token = header.strip_prefix("Bearer ").ok_or_else(|| {
         state.metrics.record_auth_failure("invalid");
         (
-        StatusCode::UNAUTHORIZED,
-        "invalid Authorization format".into(),
+            StatusCode::UNAUTHORIZED,
+            "invalid Authorization format".into(),
         )
     })?;
 
@@ -127,18 +127,15 @@ pub async fn authenticate(
             StatusCode::INTERNAL_SERVER_ERROR,
             "OIDC verifier not initialized".into(),
         ))?;
-        let (identity, roles, groups) = oidc
-            .verify(raw_token)
-            .await
-            .map_err(|e| {
-                let reason = if e.to_ascii_lowercase().contains("expired") {
-                    "expired"
-                } else {
-                    "invalid"
-                };
-                state.metrics.record_auth_failure(reason);
-                (StatusCode::UNAUTHORIZED, e)
-            })?;
+        let (identity, roles, groups) = oidc.verify(raw_token).await.map_err(|e| {
+            let reason = if e.to_ascii_lowercase().contains("expired") {
+                "expired"
+            } else {
+                "invalid"
+            };
+            state.metrics.record_auth_failure(reason);
+            (StatusCode::UNAUTHORIZED, e)
+        })?;
         Ok(AuthUser {
             token_id: format!("oidc:{identity}"),
             user: identity,
@@ -176,13 +173,12 @@ async fn authenticate_api_token(
             subject_type: row.subject_type,
         }),
         Ok(None) => {
-            let reason =
-                match crate::db::token_repo::lookup_token_status(&conn, &prefix, &hash) {
-                    Ok(Some(status)) if status == "revoked" => "revoked",
-                    Ok(Some(_)) => "invalid",
-                    Ok(None) => "invalid",
-                    Err(_) => "invalid",
-                };
+            let reason = match crate::db::token_repo::lookup_token_status(&conn, &prefix, &hash) {
+                Ok(Some(status)) if status == "revoked" => "revoked",
+                Ok(Some(_)) => "invalid",
+                Ok(None) => "invalid",
+                Err(_) => "invalid",
+            };
             state.metrics.record_auth_failure(reason);
             Err((StatusCode::UNAUTHORIZED, "invalid token".into()))
         }

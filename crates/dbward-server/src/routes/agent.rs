@@ -287,11 +287,9 @@ pub(crate) async fn agent_result(
             &req_ctx.created_by,
         )
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        state.metrics.record_agent_execution(if success {
-            "succeeded"
-        } else {
-            "failed"
-        });
+        state
+            .metrics
+            .record_agent_execution(if success { "succeeded" } else { "failed" });
 
         (exec_ctx.request_id, req_status)
     };

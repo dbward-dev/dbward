@@ -10,6 +10,7 @@ use crate::oidc_login;
 use crate::server_client;
 
 const LIST_DETAIL_WIDTH: usize = 30;
+const RESULT_CELL_MAX_WIDTH: usize = 60;
 type RequestListRow = (
     String,
     String,
@@ -37,7 +38,7 @@ pub struct Cli {
     environment: Option<String>,
 
     /// Output format: human (default) or json
-    #[arg(long, default_value = "human", global = true)]
+    #[arg(long, default_value = "human", value_parser = ["human", "json"], global = true)]
     format: String,
 
     #[command(subcommand)]
@@ -252,6 +253,40 @@ fn truncate_table_cell(value: &str, max_chars: usize) -> String {
     }
     let prefix: String = value.chars().take(max_chars - 3).collect();
     format!("{prefix}...")
+}
+
+fn display_width(value: &str) -> usize {
+    value.chars().count()
+}
+
+fn pad_table_cell(value: &str, width: usize) -> String {
+    let padding = width.saturating_sub(display_width(value));
+    format!(" {value}{} ", " ".repeat(padding))
+}
+
+fn sanitize_table_cell(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            '\n' | '\r' | '\t' => ' ',
+            _ => ch,
+        })
+        .collect()
+}
+
+fn format_result_cell_value(val: &serde_json::Value) -> String {
+    let raw = if val.is_null() {
+        "NULL".to_string()
+    } else if let Some(s) = val.as_str() {
+        s.to_string()
+    } else {
+        val.to_string()
+    };
+    truncate_table_cell(&sanitize_table_cell(&raw), RESULT_CELL_MAX_WIDTH)
+}
+
+fn short_request_id(id: &str) -> &str {
+    &id[..id.len().min(8)]
 }
 
 fn format_created_time(created_at: &str) -> String {
@@ -860,7 +895,6 @@ fn print_execution_result(resp: &serde_json::Value) {
     }
 }
 
-
 fn print_request_detail(body: &serde_json::Value) {
     let id = body["id"].as_str().unwrap_or("?");
     let status = body["status"].as_str().unwrap_or("?");
@@ -870,12 +904,13 @@ fn print_request_detail(body: &serde_json::Value) {
     let db = body["database_name"].as_str().unwrap_or("?");
     let user = body["created_by"].as_str().unwrap_or("?");
     let created = body["created_at"].as_str().unwrap_or("?");
+    let updated = body["updated_at"].as_str().unwrap_or("?");
     let reason = body["reason"].as_str();
 
     println!("Request {id}");
     println!("  Status:      {status}");
     println!("  Operation:   {op}");
-    println!("  SQL:         {detail}");
+    println!("  Detail:      {detail}");
     println!("  Environment: {env}");
     println!("  Database:    {db}");
     if let Some(r) = reason {
@@ -883,8 +918,15 @@ fn print_request_detail(body: &serde_json::Value) {
     }
     println!("  Created by:  {user}");
     println!("  Created at:  {created}");
+    println!("  Updated at:  {updated}");
     if let Some(resolved) = body["resolved_at"].as_str() {
         println!("  Resolved at: {resolved}");
+    }
+    if body.get("execution_token").is_some() {
+        println!(
+            "  Ready:       dbward request resume {}",
+            short_request_id(id)
+        );
     }
 
     // Approval progress
@@ -896,22 +938,35 @@ fn print_request_detail(body: &serde_json::Value) {
         if let Some(steps) = progress["steps"].as_array() {
             for step in steps {
                 let idx = step["index"].as_u64().unwrap_or(0);
+                let mode = step["mode"].as_str().unwrap_or("all");
                 let satisfied = step["satisfied"].as_bool().unwrap_or(false);
                 let marker = if satisfied { "[ok]  " } else { "[wait]" };
-                // Collect approver group names
                 let approvers_desc: Vec<String> = step["approvers_required"]
                     .as_array()
                     .map(|arr| {
                         arr.iter()
                             .filter_map(|a| {
-                                a["group"].as_str().map(|g| g.to_string())
-                                    .or_else(|| a["role"].as_str().map(|r| r.to_string()))
+                                let target = a["group"]
+                                    .as_str()
+                                    .map(|g| format!("group:{g}"))
+                                    .or_else(|| a["role"].as_str().map(|r| format!("role:{r}")))?;
+                                let min = a["min"].as_u64().unwrap_or(1);
+                                Some(if min > 1 {
+                                    format!("{target} x{min}")
+                                } else {
+                                    target
+                                })
                             })
                             .collect()
                     })
                     .unwrap_or_default();
-                let desc = approvers_desc.join(" + ");
-                println!("    {marker} Step {}: {desc}", idx + 1);
+                let joiner = if mode == "any" { " | " } else { " + " };
+                let desc = if approvers_desc.is_empty() {
+                    "(no approvers configured)".to_string()
+                } else {
+                    approvers_desc.join(joiner)
+                };
+                println!("    {marker} Step {} [{mode}]: {desc}", idx + 1);
                 if let Some(approvals) = step["approvals"].as_array() {
                     for a in approvals {
                         let who = a["user"].as_str().unwrap_or("?");
@@ -926,10 +981,13 @@ fn print_request_detail(body: &serde_json::Value) {
 }
 
 fn print_approve_result(body: &serde_json::Value, id: &str) {
-    let step = body["step_completed"].as_u64().unwrap_or(0) + 1;
+    let step = body["current_step"]
+        .as_u64()
+        .or_else(|| body["step_completed"].as_u64().map(|v| v + 1))
+        .unwrap_or(0);
     let total = body["total_steps"].as_u64().unwrap_or(0);
     let status = body["status"].as_str().unwrap_or("pending");
-    let short_id = if id.len() > 8 { &id[..8] } else { id };
+    let short_id = short_request_id(id);
 
     println!("Approved step {step}/{total}");
     println!("Request: {short_id}");
@@ -941,20 +999,28 @@ fn print_approve_result(body: &serde_json::Value, id: &str) {
 }
 
 fn print_result_table(rows: &[serde_json::Value]) {
-    if rows.is_empty() {
-        println!("(0 rows)");
-        return;
+    for line in render_result_table(rows) {
+        println!("{line}");
     }
-    // Collect column names from first row
-    let columns: Vec<&str> = match rows[0].as_object() {
-        Some(obj) => obj.keys().map(|k| k.as_str()).collect(),
-        None => {
-            println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_default());
-            return;
+}
+
+fn render_result_table(rows: &[serde_json::Value]) -> Vec<String> {
+    if rows.is_empty() {
+        return vec!["(0 rows)".to_string()];
+    }
+    let mut columns: Vec<String> = Vec::new();
+    for row in rows {
+        let Some(obj) = row.as_object() else {
+            return vec![serde_json::to_string_pretty(&rows).unwrap_or_default()];
+        };
+        for key in obj.keys() {
+            if !columns.iter().any(|col| col == key) {
+                columns.push(key.clone());
+            }
         }
-    };
-    // Compute column widths
-    let mut widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
+    }
+
+    let mut widths: Vec<usize> = columns.iter().map(|c| display_width(c)).collect();
     let cell_values: Vec<Vec<String>> = rows
         .iter()
         .map(|row| {
@@ -962,48 +1028,46 @@ fn print_result_table(rows: &[serde_json::Value]) {
                 .iter()
                 .enumerate()
                 .map(|(i, col)| {
-                    let val = &row[*col];
-                    let s = if val.is_null() {
-                        "NULL".to_string()
-                    } else if let Some(s) = val.as_str() {
-                        s.to_string()
-                    } else {
-                        val.to_string()
-                    };
-                    if s.len() > widths[i] {
-                        widths[i] = s.len();
+                    let s = format_result_cell_value(&row[col]);
+                    let width = display_width(&s);
+                    if width > widths[i] {
+                        widths[i] = width;
                     }
                     s
                 })
                 .collect()
         })
         .collect();
-    // Print header
-    let header: String = columns
+
+    let header = columns
         .iter()
         .enumerate()
-        .map(|(i, c)| format!(" {:width$} ", c, width = widths[i]))
+        .map(|(i, c)| pad_table_cell(c, widths[i]))
         .collect::<Vec<_>>()
         .join("|");
-    println!("{header}");
-    // Print separator
-    let sep: String = widths
+    let sep = widths
         .iter()
         .map(|w| "-".repeat(w + 2))
         .collect::<Vec<_>>()
         .join("+");
-    println!("{sep}");
-    // Print rows
+
+    let mut lines = vec![header, sep];
     for cells in &cell_values {
-        let line: String = cells
-            .iter()
-            .enumerate()
-            .map(|(i, v)| format!(" {:width$} ", v, width = widths[i]))
-            .collect::<Vec<_>>()
-            .join("|");
-        println!("{line}");
+        lines.push(
+            cells
+                .iter()
+                .enumerate()
+                .map(|(i, v)| pad_table_cell(v, widths[i]))
+                .collect::<Vec<_>>()
+                .join("|"),
+        );
     }
-    println!("({} {})", rows.len(), if rows.len() == 1 { "row" } else { "rows" });
+    lines.push(format!(
+        "({} {})",
+        rows.len(),
+        if rows.len() == 1 { "row" } else { "rows" }
+    ));
+    lines
 }
 
 /// Save result locally. Returns the path where it was saved.
@@ -1519,6 +1583,29 @@ mod tests {
     }
 
     #[test]
+    fn format_result_cell_value_sanitizes_and_truncates() {
+        let input = serde_json::Value::String(format!("{}\n{}", "あ".repeat(80), "tail"));
+        let formatted = format_result_cell_value(&input);
+        assert!(!formatted.contains('\n'));
+        assert!(formatted.ends_with("..."));
+        assert!(display_width(&formatted) <= RESULT_CELL_MAX_WIDTH);
+    }
+
+    #[test]
+    fn render_result_table_uses_columns_from_all_rows() {
+        let rows = vec![
+            serde_json::json!({"id": 1, "name": "alice"}),
+            serde_json::json!({"id": 2, "status": "ok"}),
+        ];
+        let rendered = render_result_table(&rows);
+        assert!(rendered[0].contains("id"));
+        assert!(rendered[0].contains("name"));
+        assert!(rendered[0].contains("status"));
+        assert!(rendered.iter().any(|line| line.contains("alice")));
+        assert!(rendered.iter().any(|line| line.contains("ok")));
+    }
+
+    #[test]
     fn global_options_parse_before_subcommand() {
         let cli = Cli::try_parse_from([
             "dbward",
@@ -1552,5 +1639,22 @@ mod tests {
         assert_eq!(cli.environment.as_deref(), Some("production"));
         assert_eq!(cli.database.as_deref(), Some("primary"));
         assert!(matches!(cli.command, Command::Execute { .. }));
+    }
+
+    #[test]
+    fn global_format_option_parses_after_subcommand() {
+        let cli = Cli::try_parse_from(["dbward", "request", "list", "--format", "json"]).unwrap();
+
+        assert_eq!(cli.format, "json");
+        assert!(matches!(cli.command, Command::Request { .. }));
+    }
+
+    #[test]
+    fn invalid_format_is_rejected() {
+        let err = match Cli::try_parse_from(["dbward", "--format", "yaml", "request", "list"]) {
+            Ok(_) => panic!("expected invalid format to be rejected"),
+            Err(err) => err.to_string(),
+        };
+        assert!(err.contains("possible values"));
     }
 }

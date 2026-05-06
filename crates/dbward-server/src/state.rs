@@ -4,12 +4,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
+use crate::Metrics;
 use crate::oidc::OidcVerifier;
 use crate::policy::PolicyConfig;
 use crate::server_config::RetentionConfig;
 use crate::token::TokenSigner;
 use crate::webhook::WebhookDispatcher;
-use crate::Metrics;
 
 /// Holds a pending result slot: agent writes, CLI reads.
 pub struct ResultSlot {
