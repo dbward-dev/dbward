@@ -509,6 +509,18 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     }
                     save_result(&id, &resp, output.as_deref(), no_save);
                 }
+                "executed" | "failed" => {
+                    // Idempotent return: request already completed
+                    let resp = sc.get_result_content(&id).await.unwrap_or_default();
+                    if json_output {
+                        println!("{}", serde_json::to_string_pretty(&resp)?);
+                    } else if !resp.is_null() {
+                        let wrapped = serde_json::json!({"success": true, "result": resp});
+                        print_execution_result(&wrapped);
+                    } else {
+                        eprintln!("Request {id} already completed (idempotent).");
+                    }
+                }
                 "pending" => {
                     eprintln!("Request {id} requires approval.");
                     eprintln!("Run: dbward request resume {id}");
@@ -585,6 +597,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 "pending" => {
                     eprintln!("Request {id} requires approval.");
                     eprintln!("Run: dbward request resume {id}");
+                }
+                "executed" | "failed" => {
+                    eprintln!("Request {id} already completed (idempotent).");
                 }
                 _ => {
                     return Err(dbward_core::Error::Server(format!(

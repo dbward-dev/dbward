@@ -308,12 +308,25 @@ impl ServerClient {
     async fn get_request_result_fallback(&self, request_id: &str) -> Result<Value, Error> {
         let req = self.get_request(request_id).await?;
         let status = req["status"].as_str().unwrap_or("");
-        if status == "executed" || status == "failed" {
-            Ok(req)
-        } else {
-            Err(Error::Server(format!(
-                "Result relay expired. Request status: {status}. Try: dbward request resume {request_id}"
-            )))
+        match status {
+            "executed" | "failed" => {
+                // Already done, return result from request
+                if let Some(result) = req.get("execution_result") {
+                    Ok(serde_json::json!({"success": true, "result": result}))
+                } else if let Some(err) = req.get("execution_error") {
+                    Ok(serde_json::json!({"success": false, "error": err}))
+                } else {
+                    Ok(req)
+                }
+            }
+            "dispatched" | "running" => {
+                // Still in progress, try stream again with short delay
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                self.stream_result(request_id).await
+            }
+            _ => Err(Error::Server(format!(
+                "unexpected status: {status}. Try: dbward request resume {request_id}"
+            ))),
         }
     }
 
