@@ -616,7 +616,7 @@ pub(crate) async fn create_request(
     }
 
     // Evaluate workflow policy
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
     let decision = crate::db::policy_repo::evaluate_approval_policy(
         &conn,
         database_name,
@@ -709,6 +709,45 @@ pub(crate) async fn create_request(
     state
         .metrics
         .record_request_created(status, environment, database_name);
+
+    // Audit: request_created + auto_approved/break_glass
+    {
+        let event_type = if emergency {
+            "break_glass_used"
+        } else if !needs_approval {
+            "request_auto_approved"
+        } else {
+            "request_created"
+        };
+        let outcome = if needs_approval { "info" } else { "success" };
+        let meta = serde_json::json!({
+            "emergency": emergency,
+            "workflow_id": decision.workflow_id,
+        });
+        let _ = crate::db::audit_event_repo::insert_audit_event(
+            &mut conn,
+            &crate::db::audit_event_repo::AuditEvent {
+                event_type,
+                event_category: "approval",
+                outcome,
+                actor_id: &user.user,
+                actor_type: "user",
+                resource_type: Some("request"),
+                resource_id: Some(&id),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: Some(&id),
+                operation: Some(operation),
+                environment: Some(environment),
+                database_name: Some(database_name),
+                detail_fingerprint: None,
+                detail_raw: Some(detail),
+                reason: reason.as_deref(),
+                metadata_json: &meta.to_string(),
+            },
+        );
+    }
 
     if emergency {
         state.metrics.record_break_glass();
@@ -812,6 +851,38 @@ pub(crate) async fn approve_request(
     .await?;
     state.metrics.record_approval("approve");
 
+    // Audit: request_approved
+    {
+        let mut conn = state.sqlite.lock().await;
+        let meta = serde_json::json!({
+            "step_completed": result.response["step_completed"],
+            "total_steps": result.response["total_steps"],
+        });
+        let _ = crate::db::audit_event_repo::insert_audit_event(
+            &mut conn,
+            &crate::db::audit_event_repo::AuditEvent {
+                event_type: "request_approved",
+                event_category: "approval",
+                outcome: "success",
+                actor_id: &approver.user,
+                actor_type: "user",
+                resource_type: Some("request"),
+                resource_id: Some(&id),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: Some(&id),
+                operation: None,
+                environment: None,
+                database_name: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: body_val["comment"].as_str(),
+                metadata_json: &meta.to_string(),
+            },
+        );
+    }
+
     // Post-transaction async work
     if result.response["status"].as_str() == Some("dispatched") {
         ensure_result_slot(&state, &id).await;
@@ -897,6 +968,31 @@ pub(crate) async fn reject_request(
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         state.metrics.record_approval("reject");
 
+        // Audit: request_rejected
+        let _ = crate::db::audit_event_repo::insert_audit_event(
+            &mut conn,
+            &crate::db::audit_event_repo::AuditEvent {
+                event_type: "request_rejected",
+                event_category: "approval",
+                outcome: "info",
+                actor_id: &user.user,
+                actor_type: "user",
+                resource_type: Some("request"),
+                resource_id: Some(&id),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: Some(&id),
+                operation: None,
+                environment: Some(&environment),
+                database_name: Some(&database_name),
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: comment,
+                metadata_json: "{}",
+            },
+        );
+
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
         state.webhooks.dispatch_with_policy(
@@ -939,7 +1035,7 @@ pub(crate) async fn cancel_request(
     let cancel_reason = body_val["reason"].as_str().map(str::to_string);
 
     let (id, requester, operation, environment, database_name, detail, notif_hooks) = {
-        let conn = state.sqlite.lock().await;
+        let mut conn = state.sqlite.lock().await;
         let id = resolve_id(&conn, &id)?;
         let ctx = crate::db::request_repo::get_request_context(&conn, &id)
             .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
@@ -979,6 +1075,31 @@ pub(crate) async fn cancel_request(
                 "request cannot be cancelled",
             ));
         }
+
+        // Audit: request_cancelled
+        let _ = crate::db::audit_event_repo::insert_audit_event(
+            &mut conn,
+            &crate::db::audit_event_repo::AuditEvent {
+                event_type: "request_cancelled",
+                event_category: "approval",
+                outcome: "info",
+                actor_id: &user.user,
+                actor_type: "user",
+                resource_type: Some("request"),
+                resource_id: Some(&id),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: Some(&id),
+                operation: Some(&ctx.operation),
+                environment: Some(&ctx.environment),
+                database_name: Some(&ctx.database_name),
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: cancel_reason.as_deref(),
+                metadata_json: "{}",
+            },
+        );
 
         let notif_hooks = crate::db::policy_repo::get_notification_webhooks(
             &conn,
