@@ -422,6 +422,10 @@ token = "dbw_..."
 # migrations_dir = "custom/migrations"  # optional override
 ```
 
+- Relative paths are resolved from the directory containing the config file, not the current working directory.
+- With a single configured database, `migrations_dir = "db/migrations"` points directly to `db/migrations/`.
+- With multiple databases, the default layout becomes `db/migrations/<database>/` unless each database overrides `migrations_dir`.
+
 ### Agent (`dbward-agent.toml`)
 
 ```toml
@@ -445,6 +449,9 @@ url = "postgres://user:pass@db-primary:5432/app"
 [databases.analytics]
 url = "mysql://user:pass@db-analytics:3306/warehouse"
 ```
+
+- Agent `migrations_dir` values follow the same rule: relative to the agent config file.
+- If an agent has one database and no explicit `migrations_dir`, it uses `db/migrations/`. With multiple databases, the default is `db/migrations/<database>/`.
 
 ### Server (`dbward-server.toml`)
 

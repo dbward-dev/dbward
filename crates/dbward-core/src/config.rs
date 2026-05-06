@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +46,15 @@ pub struct ClientOidcConfig {
 }
 
 impl ClientConfig {
+    pub fn resolve_relative_paths(&mut self, base_dir: &Path) {
+        self.migrations_dir = resolve_relative_path(base_dir, &self.migrations_dir);
+        for db in self.databases.values_mut() {
+            if let Some(path) = db.migrations_dir.as_mut() {
+                *path = resolve_relative_path(base_dir, path);
+            }
+        }
+    }
+
     /// Resolve which database name to use (no URL — client doesn't have it).
     pub fn resolve_database_name(&self, selected: Option<&str>) -> Result<String, Error> {
         if let Some(sel) = selected {
@@ -77,7 +86,13 @@ impl ClientConfig {
         self.databases
             .get(db_name)
             .and_then(|d| d.migrations_dir.clone())
-            .unwrap_or_else(|| self.migrations_dir.join(db_name))
+            .unwrap_or_else(|| {
+                if self.databases.len() <= 1 {
+                    self.migrations_dir.clone()
+                } else {
+                    self.migrations_dir.join(db_name)
+                }
+            })
     }
 }
 
@@ -133,6 +148,14 @@ pub struct ResolvedDatabaseConfig {
 }
 
 impl AgentConfig {
+    pub fn resolve_relative_paths(&mut self, base_dir: &Path) {
+        for db in self.databases.values_mut() {
+            if let Some(path) = db.migrations_dir.as_mut() {
+                *path = resolve_relative_path(base_dir, path);
+            }
+        }
+    }
+
     pub fn resolve_database(&self, name: &str) -> Result<ResolvedDatabaseConfig, Error> {
         let db = self
             .databases
@@ -141,7 +164,13 @@ impl AgentConfig {
         let migrations_dir = db
             .migrations_dir
             .clone()
-            .unwrap_or_else(|| PathBuf::from("db/migrations").join(name));
+            .unwrap_or_else(|| {
+                if self.databases.len() <= 1 {
+                    PathBuf::from("db/migrations")
+                } else {
+                    PathBuf::from("db/migrations").join(name)
+                }
+            });
         Ok(ResolvedDatabaseConfig {
             name: name.to_string(),
             url: db.url.clone(),
@@ -168,6 +197,14 @@ fn default_drain_timeout() -> u64 {
 }
 fn default_max_concurrent() -> u32 {
     2
+}
+
+fn resolve_relative_path(base_dir: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base_dir.join(path)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -266,7 +303,47 @@ mod tests {
         );
         assert_eq!(
             config.migrations_dir_for("other"),
-            PathBuf::from("db/migrations/other")
+            PathBuf::from("db/migrations")
+        );
+    }
+
+    #[test]
+    fn client_config_migrations_dir_multiple_databases_uses_database_subdir() {
+        let config: ClientConfig = toml::from_str(
+            r#"
+            [server]
+            url = "http://localhost:3000"
+            [databases.primary]
+            [databases.analytics]
+        "#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.migrations_dir_for("analytics"),
+            PathBuf::from("db/migrations/analytics")
+        );
+    }
+
+    #[test]
+    fn client_config_resolve_relative_paths_from_config_dir() {
+        let mut config: ClientConfig = toml::from_str(
+            r#"
+            migrations_dir = "db/migrations"
+            [server]
+            url = "http://localhost:3000"
+            [databases.app]
+            migrations_dir = "db/custom"
+        "#,
+        )
+        .unwrap();
+        config.resolve_relative_paths(Path::new("/workspace/services/user-service"));
+        assert_eq!(
+            config.migrations_dir,
+            PathBuf::from("/workspace/services/user-service/db/migrations")
+        );
+        assert_eq!(
+            config.migrations_dir_for("app"),
+            PathBuf::from("/workspace/services/user-service/db/custom")
         );
     }
 
@@ -286,6 +363,7 @@ mod tests {
         assert_eq!(config.agent_id, "agent-1");
         let r = config.resolve_database("app").unwrap();
         assert_eq!(r.url, "postgres://localhost/app");
+        assert_eq!(r.migrations_dir, PathBuf::from("db/migrations"));
     }
 
     #[test]
@@ -302,5 +380,47 @@ mod tests {
         )
         .unwrap();
         assert!(config.resolve_database("unknown").is_err());
+    }
+
+    #[test]
+    fn agent_config_multiple_databases_default_to_named_subdir() {
+        let config: AgentConfig = toml::from_str(
+            r#"
+            agent_id = "agent-1"
+            [server]
+            url = "http://localhost:3000"
+            agent_token = "agt_secret"
+            [databases.primary]
+            url = "postgres://localhost/app"
+            [databases.analytics]
+            url = "postgres://localhost/analytics"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.resolve_database("analytics").unwrap().migrations_dir,
+            PathBuf::from("db/migrations/analytics")
+        );
+    }
+
+    #[test]
+    fn agent_config_resolve_relative_paths_from_config_dir() {
+        let mut config: AgentConfig = toml::from_str(
+            r#"
+            agent_id = "agent-1"
+            [server]
+            url = "http://localhost:3000"
+            agent_token = "agt_secret"
+            [databases.app]
+            url = "postgres://localhost/app"
+            migrations_dir = "db/custom"
+        "#,
+        )
+        .unwrap();
+        config.resolve_relative_paths(Path::new("/workspace/infra"));
+        assert_eq!(
+            config.resolve_database("app").unwrap().migrations_dir,
+            PathBuf::from("/workspace/infra/db/custom")
+        );
     }
 }
