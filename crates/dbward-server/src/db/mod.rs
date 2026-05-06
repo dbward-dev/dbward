@@ -1,4 +1,5 @@
 pub(crate) mod agent_repo;
+pub(crate) mod audit_event_repo;
 pub(crate) mod audit_repo;
 pub(crate) mod maintenance;
 pub mod policy_repo;
@@ -8,7 +9,7 @@ pub(crate) mod token_repo;
 use rusqlite::Connection;
 
 /// Latest schema version. Increment when adding migrations.
-pub const LATEST_SCHEMA_VERSION: i64 = 3;
+pub const LATEST_SCHEMA_VERSION: i64 = 4;
 
 /// Initialize SQLite database with WAL mode and versioned schema.
 pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -99,6 +100,43 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Erro
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_idempotency_key
                  ON requests(idempotency_key)
                  WHERE idempotency_key IS NOT NULL",
+            )?;
+            Ok(())
+        }
+        4 => {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS audit_events (
+                    id TEXT PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    event_category TEXT NOT NULL,
+                    event_version INTEGER NOT NULL DEFAULT 1,
+                    outcome TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    actor_type TEXT NOT NULL,
+                    resource_type TEXT,
+                    resource_id TEXT,
+                    peer_ip TEXT,
+                    client_ip TEXT,
+                    client_ip_source TEXT,
+                    request_id TEXT,
+                    operation TEXT,
+                    environment TEXT,
+                    database_name TEXT,
+                    detail_fingerprint TEXT,
+                    detail_raw TEXT,
+                    reason TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    prev_hash TEXT,
+                    event_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_audit_events_type ON audit_events(event_type, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_audit_events_actor ON audit_events(actor_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_audit_events_category ON audit_events(event_category, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_audit_events_request ON audit_events(request_id);
+                CREATE INDEX IF NOT EXISTS idx_audit_events_resource ON audit_events(resource_type, resource_id);
+                CREATE INDEX IF NOT EXISTS idx_audit_events_created ON audit_events(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_audit_events_outcome ON audit_events(outcome, created_at DESC);",
             )?;
             Ok(())
         }
