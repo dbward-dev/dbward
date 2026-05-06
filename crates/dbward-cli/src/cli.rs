@@ -1039,13 +1039,33 @@ fn print_execution_result(resp: &serde_json::Value) {
             eprintln!("Executed successfully.");
         } else if let Some(text) = result.as_str() {
             println!("{text}");
+        } else if let Some(rows) = result.get("rows").and_then(|r| r.as_array()) {
+            print_result_table(rows);
+            if result.get("truncated") == Some(&serde_json::Value::Bool(true)) {
+                let reason = result["truncation_reason"]
+                    .as_str()
+                    .unwrap_or("result limit reached");
+                eprintln!("\n⚠ Result truncated: {reason}");
+                eprintln!("  Showing {} rows. Use a LIMIT clause for precise control.", rows.len());
+            }
         } else if let Some(rows) = result.as_array() {
             print_result_table(rows);
         } else {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(result).unwrap_or_default()
-            );
+            // Structured result with rows_affected or other format
+            if let Some(affected) = result.get("rows_affected") {
+                println!("Rows affected: {}", affected);
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(result).unwrap_or_default()
+                );
+            }
+            if result.get("truncated") == Some(&serde_json::Value::Bool(true)) {
+                let reason = result["truncation_reason"]
+                    .as_str()
+                    .unwrap_or("result limit reached");
+                eprintln!("\n⚠ Result truncated: {reason}");
+            }
         }
     } else {
         eprintln!("Executed successfully.");

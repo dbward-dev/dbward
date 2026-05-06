@@ -244,7 +244,14 @@ fn format_result(resp: &Value) -> Result<String, String> {
     } else if let Some(text) = result.as_str() {
         Ok(text.to_string())
     } else {
-        Ok(serde_json::to_string_pretty(result).unwrap_or_default())
+        let mut output = serde_json::to_string_pretty(result).unwrap_or_default();
+        if result.get("truncated") == Some(&Value::Bool(true)) {
+            let reason = result["truncation_reason"]
+                .as_str()
+                .unwrap_or("result limit reached");
+            output.push_str(&format!("\n\n⚠ WARNING: Result was truncated ({reason}). Use a LIMIT clause for precise control."));
+        }
+        Ok(output)
     }
 }
 
