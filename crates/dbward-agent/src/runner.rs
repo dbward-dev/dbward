@@ -288,13 +288,17 @@ async fn execute_operation(
             let mut engine = Engine::new(resolved, env).await?;
             let result = engine.execute_query("agent", "developer", detail).await?;
             let mut output = if result.rows.is_empty() {
-                serde_json::json!({"rows_affected": result.rows_affected})
+                serde_json::json!({"rows_affected": result.rows_affected, "truncated": false})
             } else {
-                serde_json::json!({"rows": result.rows, "row_count": result.rows.len()})
+                serde_json::json!({
+                    "rows": result.rows,
+                    "row_count": result.rows.len(),
+                    "truncated": result.truncated,
+                    "truncation_reason": result.truncation_reason,
+                })
             };
             if result.truncated {
-                output["truncated"] = serde_json::json!(true);
-                output["truncation_reason"] = serde_json::json!(result.truncation_reason);
+                // Keep truncated/truncation_reason already set above
             }
             serde_json::to_string_pretty(&output).map_err(|e| Error::Server(e.to_string()))
         }

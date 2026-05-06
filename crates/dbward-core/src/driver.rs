@@ -85,7 +85,7 @@ impl DatabaseDriver for PostgresDriver {
             }
             if total_bytes >= DEFAULT_MAX_RESULT_BYTES {
                 truncated = true;
-                truncation_reason = Some(format!("size limit reached ({DEFAULT_MAX_RESULT_BYTES} bytes)"));
+                truncation_reason = Some(format!("size limit reached ({} MB)", DEFAULT_MAX_RESULT_BYTES / 1024 / 1024));
                 break;
             }
         }
@@ -233,7 +233,7 @@ impl DatabaseDriver for MysqlDriver {
             }
             if total_bytes >= DEFAULT_MAX_RESULT_BYTES {
                 truncated = true;
-                truncation_reason = Some(format!("size limit reached ({DEFAULT_MAX_RESULT_BYTES} bytes)"));
+                truncation_reason = Some(format!("size limit reached ({} MB)", DEFAULT_MAX_RESULT_BYTES / 1024 / 1024));
                 break;
             }
         }
