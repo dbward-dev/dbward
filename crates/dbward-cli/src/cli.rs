@@ -481,9 +481,21 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         Command::Migrate { ref action } => {
             let (operation, detail) = match action {
                 MigrateAction::Up { count } => {
-                    ("migrate_up", format!("count:{}", count.unwrap_or(0)))
+                    (
+                        "migrate_up",
+                        dbward_migrate::build_migration_approval_detail(
+                            &config.migrations_dir_for(&db_name),
+                            count.unwrap_or(0),
+                        )?,
+                    )
                 }
-                MigrateAction::Down { count } => ("migrate_down", format!("count:{count}")),
+                MigrateAction::Down { count } => (
+                    "migrate_down",
+                    dbward_migrate::build_migration_approval_detail(
+                        &config.migrations_dir_for(&db_name),
+                        *count,
+                    )?,
+                ),
                 MigrateAction::Status => ("migrate_status", String::new()),
                 MigrateAction::Create { .. } => unreachable!(),
             };

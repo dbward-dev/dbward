@@ -116,10 +116,24 @@ async fn execute_job(
         serde_json::from_value(claim["execution_token"].clone())
             .map_err(|e| Error::Server(format!("invalid execution_token: {e}")))?;
 
-    dbward_core::token::verify_token(&token, public_key, operation, environment, database, detail)?;
-
     // Resolve DB and execute
     let resolved = config.resolve_database(database)?;
+    let expected_detail = match operation {
+        "migrate_up" | "migrate_down" => {
+            dbward_migrate::canonicalize_migration_approval_detail(&resolved.migrations_dir, detail)?
+        }
+        _ => detail.to_string(),
+    };
+
+    dbward_core::token::verify_token(
+        &token,
+        public_key,
+        operation,
+        environment,
+        database,
+        &expected_detail,
+    )?;
+
     let env = match environment {
         "production" => dbward_core::Environment::Production,
         "staging" => dbward_core::Environment::Staging,
@@ -281,7 +295,8 @@ async fn execute_operation(
         "migrate_up" => {
             let engine = Engine::new(resolved, env).await?;
             let migrator = Migrator::new(engine.driver().clone(), resolved.migrations_dir.clone());
-            let count = detail.strip_prefix("count:").and_then(|s| s.parse().ok());
+            let parsed = dbward_migrate::MigrationApprovalDetail::parse(detail)?;
+            let count = Some(parsed.count);
             let count = if count == Some(0) { None } else { count };
             let r = migrator.up(count).await?;
             if r.applied.is_empty() {
@@ -297,7 +312,7 @@ async fn execute_operation(
         "migrate_down" => {
             let engine = Engine::new(resolved, env).await?;
             let migrator = Migrator::new(engine.driver().clone(), resolved.migrations_dir.clone());
-            let count = detail.strip_prefix("count:").and_then(|s| s.parse().ok());
+            let count = Some(dbward_migrate::MigrationApprovalDetail::parse(detail)?.count);
             let r = migrator.down(count).await?;
             if r.rolled_back.is_empty() {
                 Ok("Nothing to rollback.".into())
@@ -329,6 +344,8 @@ async fn execute_operation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dbward_core::token::{ExecutionToken, hash_detail, token_message, verify_token};
+    use ed25519_dalek::{Signer, SigningKey};
 
     #[test]
     fn drain_requires_flag_and_zero_inflight() {
@@ -352,5 +369,59 @@ mod tests {
         assert!(std::path::Path::new(&path).exists());
         remove_probe(&path).unwrap();
         assert!(!std::path::Path::new(&path).exists());
+    }
+
+    #[test]
+    fn migrate_token_rejected_when_migration_files_change() {
+        let dir = std::env::temp_dir().join(format!(
+            "dbward-agent-migrate-detail-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("20260501120000_create_users.sql");
+        std::fs::write(&path, "-- migrate:up\nSELECT 1;\n").unwrap();
+
+        let approved_detail = dbward_migrate::build_migration_approval_detail(&dir, 0).unwrap();
+        let detail_hash = hash_detail(&approved_detail);
+        let expires_at = "2999-01-01T00:00:00+00:00".to_string();
+        let message = token_message(
+            "req-1",
+            "migrate_up",
+            "production",
+            "default",
+            &detail_hash,
+            &expires_at,
+        );
+        let signing_key = SigningKey::from_bytes(&[7; 32]);
+        let signature = signing_key.sign(message.as_bytes());
+        let token = ExecutionToken {
+            request_id: "req-1".into(),
+            operation: "migrate_up".into(),
+            environment: "production".into(),
+            database: "default".into(),
+            detail_hash,
+            issued_at: "2026-01-01T00:00:00+00:00".into(),
+            expires_at,
+            signature: hex::encode(signature.to_bytes()),
+        };
+
+        std::fs::write(&path, "-- migrate:up\nSELECT 2;\n").unwrap();
+        let current_detail =
+            dbward_migrate::canonicalize_migration_approval_detail(&dir, &approved_detail).unwrap();
+        let err = verify_token(
+            &token,
+            &signing_key.verifying_key(),
+            "migrate_up",
+            "production",
+            "default",
+            &current_detail,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("detail_hash mismatch"));
+        std::fs::remove_dir_all(dir).ok();
     }
 }

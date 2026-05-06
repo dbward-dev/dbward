@@ -113,26 +113,20 @@ async fn handle_tools_call(
         "dbward_migrate_up" => {
             let count = args["count"].as_u64().map(|n| n as usize);
             let db = args["database"].as_str().unwrap_or(db_name);
-            submit_and_wait(
-                client,
-                "migrate_up",
-                env,
-                db,
-                &format!("count:{}", count.unwrap_or(0)),
-            )
-            .await
+            match dbward_migrate::build_migration_approval_detail(migrations_dir, count.unwrap_or(0))
+            {
+                Ok(detail) => submit_and_wait(client, "migrate_up", env, db, &detail).await,
+                Err(e) => Err(e.to_string()),
+            }
         }
         "dbward_migrate_down" => {
             let count = args["count"].as_u64().map(|n| n as usize);
             let db = args["database"].as_str().unwrap_or(db_name);
-            submit_and_wait(
-                client,
-                "migrate_down",
-                env,
-                db,
-                &format!("count:{}", count.unwrap_or(1)),
-            )
-            .await
+            match dbward_migrate::build_migration_approval_detail(migrations_dir, count.unwrap_or(1))
+            {
+                Ok(detail) => submit_and_wait(client, "migrate_down", env, db, &detail).await,
+                Err(e) => Err(e.to_string()),
+            }
         }
         "dbward_migrate_create" => {
             let name = args["name"].as_str().unwrap_or("unnamed");

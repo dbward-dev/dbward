@@ -17,3 +17,4 @@ toml.workspace = true
 reqwest = { version = "0.12", features = ["json"] }
 ed25519-dalek = "2"
 tracing = "0.1"
+hex = "0.4"
