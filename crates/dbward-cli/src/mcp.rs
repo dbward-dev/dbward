@@ -100,15 +100,16 @@ async fn handle_tools_call(
         "dbward_execute_query" => {
             let sql = args["sql"].as_str().unwrap_or("");
             let db = args["database"].as_str().unwrap_or(db_name);
+            let reason = args["reason"].as_str();
             if sql.is_empty() {
                 Err("sql parameter is required".to_string())
             } else {
-                submit_and_wait(client, "execute_query", env, db, sql).await
+                submit_and_wait(client, "execute_query", env, db, sql, reason).await
             }
         }
         "dbward_migrate_status" => {
             let db = args["database"].as_str().unwrap_or(db_name);
-            submit_and_wait(client, "migrate_status", env, db, "").await
+            submit_and_wait(client, "migrate_status", env, db, "", None).await
         }
         "dbward_migrate_up" => {
             let count = args["count"].as_u64().map(|n| n as usize);
@@ -117,7 +118,7 @@ async fn handle_tools_call(
                 migrations_dir,
                 count.unwrap_or(0),
             ) {
-                Ok(detail) => submit_and_wait(client, "migrate_up", env, db, &detail).await,
+                Ok(detail) => submit_and_wait(client, "migrate_up", env, db, &detail, args["reason"].as_str()).await,
                 Err(e) => Err(e.to_string()),
             }
         }
@@ -128,7 +129,7 @@ async fn handle_tools_call(
                 migrations_dir,
                 count.unwrap_or(1),
             ) {
-                Ok(detail) => submit_and_wait(client, "migrate_down", env, db, &detail).await,
+                Ok(detail) => submit_and_wait(client, "migrate_down", env, db, &detail, args["reason"].as_str()).await,
                 Err(e) => Err(e.to_string()),
             }
         }
@@ -178,6 +179,7 @@ async fn submit_and_wait(
     environment: &str,
     database: &str,
     detail: &str,
+    reason: Option<&str>,
 ) -> Result<String, String> {
     let (req_id, status, _token) = client
         .create_request(crate::server_client::CreateRequest {
@@ -186,7 +188,7 @@ async fn submit_and_wait(
             database,
             detail,
             emergency: false,
-            reason: None,
+            reason,
             metadata: None,
             idempotency_key: None,
             share_with: None,
@@ -304,7 +306,8 @@ fn tools_definitions() -> Value {
                 "properties": {
                     "sql": {"type": "string", "description": "SQL statement to execute"},
                     "database": {"type": "string", "description": "Target database name"},
-                    "environment": {"type": "string", "description": "Environment (development/staging/production)"}
+                    "environment": {"type": "string", "description": "Environment (development/staging/production)"},
+                    "reason": {"type": "string", "description": "Reason for execution (required by some workflows)"}
                 },
                 "required": ["sql"]
             }
