@@ -127,22 +127,77 @@ pub async fn authenticate(
             StatusCode::INTERNAL_SERVER_ERROR,
             "OIDC verifier not initialized".into(),
         ))?;
-        let (identity, roles, groups) = oidc.verify(raw_token).await.map_err(|e| {
-            let reason = if e.to_ascii_lowercase().contains("expired") {
-                "expired"
-            } else {
-                "invalid"
-            };
-            state.metrics.record_auth_failure(reason);
-            (StatusCode::UNAUTHORIZED, e)
-        })?;
-        Ok(AuthUser {
-            token_id: format!("oidc:{identity}"),
-            user: identity,
-            roles,
-            groups,
-            subject_type: "user".into(),
-        })
+        match oidc.verify(raw_token).await {
+            Ok((identity, roles, groups)) => {
+                // Audit: login_success
+                let mut conn = state.sqlite.lock().await;
+                let _ = crate::db::audit_event_repo::insert_audit_event(
+                    &mut conn,
+                    &crate::db::audit_event_repo::AuditEvent {
+                        event_type: "login_success",
+                        event_category: "auth",
+                        outcome: "success",
+                        actor_id: &identity,
+                        actor_type: "user",
+                        resource_type: None,
+                        resource_id: None,
+                        peer_ip: None,
+                        client_ip: None,
+                        client_ip_source: None,
+                        request_id: None,
+                        operation: None,
+                        environment: None,
+                        database_name: None,
+                        detail_fingerprint: None,
+                        detail_raw: None,
+                        reason: None,
+                        metadata_json: "{\"method\":\"oidc\"}",
+                    },
+                );
+                Ok(AuthUser {
+                    token_id: format!("oidc:{identity}"),
+                    user: identity,
+                    roles,
+                    groups,
+                    subject_type: "user".into(),
+                })
+            }
+            Err(e) => {
+                let reason = if e.to_ascii_lowercase().contains("expired") {
+                    "expired"
+                } else {
+                    "invalid"
+                };
+                state.metrics.record_auth_failure(reason);
+                // Audit: auth_failure
+                let mut conn = state.sqlite.lock().await;
+                let meta = serde_json::json!({"method": "oidc", "error": reason}).to_string();
+                let _ = crate::db::audit_event_repo::insert_audit_event(
+                    &mut conn,
+                    &crate::db::audit_event_repo::AuditEvent {
+                        event_type: "auth_failure",
+                        event_category: "auth",
+                        outcome: "failure",
+                        actor_id: "unknown",
+                        actor_type: "user",
+                        resource_type: None,
+                        resource_id: None,
+                        peer_ip: None,
+                        client_ip: None,
+                        client_ip_source: None,
+                        request_id: None,
+                        operation: None,
+                        environment: None,
+                        database_name: None,
+                        detail_fingerprint: None,
+                        detail_raw: None,
+                        reason: Some(reason),
+                        metadata_json: &meta,
+                    },
+                );
+                Err((StatusCode::UNAUTHORIZED, e))
+            }
+        }
     } else {
         // API token
         if state.auth_mode == "oidc" {
@@ -162,16 +217,18 @@ async fn authenticate_api_token(
     let prefix = token_prefix(raw_token);
     let hash = hash_token(raw_token);
 
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
 
     match crate::db::token_repo::lookup_active_token(&conn, &prefix, &hash) {
-        Ok(Some(row)) => Ok(AuthUser {
-            token_id: row.id,
-            user: row.subject_id,
-            roles: vec![row.role],
-            groups: row.groups,
-            subject_type: row.subject_type,
-        }),
+        Ok(Some(row)) => {
+            Ok(AuthUser {
+                token_id: row.id,
+                user: row.subject_id,
+                roles: vec![row.role],
+                groups: row.groups,
+                subject_type: row.subject_type,
+            })
+        }
         Ok(None) => {
             let reason = match crate::db::token_repo::lookup_token_status(&conn, &prefix, &hash) {
                 Ok(Some(status)) if status == "revoked" => "revoked",
@@ -180,6 +237,31 @@ async fn authenticate_api_token(
                 Err(_) => "invalid",
             };
             state.metrics.record_auth_failure(reason);
+            // Audit: auth_failure
+            let meta = serde_json::json!({"method": "api_token", "error": reason}).to_string();
+            let _ = crate::db::audit_event_repo::insert_audit_event(
+                &mut conn,
+                &crate::db::audit_event_repo::AuditEvent {
+                    event_type: "auth_failure",
+                    event_category: "auth",
+                    outcome: "failure",
+                    actor_id: "unknown",
+                    actor_type: "user",
+                    resource_type: None,
+                    resource_id: None,
+                    peer_ip: None,
+                    client_ip: None,
+                    client_ip_source: None,
+                    request_id: None,
+                    operation: None,
+                    environment: None,
+                    database_name: None,
+                    detail_fingerprint: None,
+                    detail_raw: None,
+                    reason: Some(reason),
+                    metadata_json: &meta,
+                },
+            );
             Err((StatusCode::UNAUTHORIZED, "invalid token".into()))
         }
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
