@@ -13,7 +13,7 @@ pub(crate) async fn list_workflows(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::ListPolicy, Resource::PolicyObject, &state).await?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -52,7 +52,7 @@ pub(crate) async fn get_workflow(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::GetPolicy, Resource::PolicyObject, &state).await?;
 
     let conn = state.sqlite.lock().await;
     let row = conn
@@ -87,7 +87,7 @@ pub(crate) async fn create_workflow(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::CreatePolicy, Resource::PolicyObject, &state).await?;
 
     let database = body["database"]
         .as_str()
@@ -185,7 +185,7 @@ pub(crate) async fn update_workflow(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::UpdatePolicy, Resource::PolicyObject, &state).await?;
 
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
@@ -269,7 +269,7 @@ pub(crate) async fn delete_workflow(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::DeletePolicy, Resource::PolicyObject, &state).await?;
 
     let mut conn = state.sqlite.lock().await;
 
@@ -323,7 +323,7 @@ pub(crate) async fn list_execution_policies(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::ListPolicy, Resource::PolicyObject, &state).await?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -357,7 +357,7 @@ pub(crate) async fn get_execution_policy_handler(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::GetPolicy, Resource::PolicyObject, &state).await?;
 
     let conn = state.sqlite.lock().await;
     let row = conn
@@ -389,7 +389,7 @@ pub(crate) async fn create_execution_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::CreatePolicy, Resource::PolicyObject, &state).await?;
 
     let database = body["database"]
         .as_str()
@@ -447,7 +447,7 @@ pub(crate) async fn update_execution_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::UpdatePolicy, Resource::PolicyObject, &state).await?;
 
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
@@ -503,7 +503,7 @@ pub(crate) async fn delete_execution_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::DeletePolicy, Resource::PolicyObject, &state).await?;
 
     let mut conn = state.sqlite.lock().await;
     {
@@ -547,7 +547,7 @@ pub(crate) async fn list_result_policies(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::ListPolicy, Resource::PolicyObject, &state).await?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -585,7 +585,7 @@ pub(crate) async fn get_result_policy_handler(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::GetPolicy, Resource::PolicyObject, &state).await?;
 
     let conn = state.sqlite.lock().await;
     let row = conn
@@ -619,7 +619,7 @@ pub(crate) async fn create_result_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::CreatePolicy, Resource::PolicyObject, &state).await?;
 
     let database = body["database"]
         .as_str()
@@ -679,7 +679,7 @@ pub(crate) async fn update_result_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::UpdatePolicy, Resource::PolicyObject, &state).await?;
 
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
@@ -735,7 +735,7 @@ pub(crate) async fn delete_result_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::DeletePolicy, Resource::PolicyObject, &state).await?;
 
     let mut conn = state.sqlite.lock().await;
     {
@@ -779,7 +779,7 @@ pub(crate) async fn list_notification_policies(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ListPolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::ListPolicy, Resource::PolicyObject, &state).await?;
 
     let conn = state.sqlite.lock().await;
     let mut stmt = conn
@@ -813,7 +813,7 @@ pub(crate) async fn get_notification_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::GetPolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::GetPolicy, Resource::PolicyObject, &state).await?;
 
     let conn = state.sqlite.lock().await;
     let row = conn
@@ -844,7 +844,7 @@ pub(crate) async fn create_notification_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::CreatePolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::CreatePolicy, Resource::PolicyObject, &state).await?;
 
     let database = body["database"]
         .as_str()
@@ -901,7 +901,7 @@ pub(crate) async fn update_notification_policy(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::UpdatePolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::UpdatePolicy, Resource::PolicyObject, &state).await?;
 
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
@@ -950,7 +950,7 @@ pub(crate) async fn delete_notification_policy(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::DeletePolicy, Resource::PolicyObject).await?;
+    authz::authorize_and_audit(&user, Action::DeletePolicy, Resource::PolicyObject, &state).await?;
 
     let mut conn = state.sqlite.lock().await;
     {

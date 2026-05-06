@@ -118,7 +118,17 @@ async fn handle_tools_call(
                 migrations_dir,
                 count.unwrap_or(0),
             ) {
-                Ok(detail) => submit_and_wait(client, "migrate_up", env, db, &detail, args["reason"].as_str()).await,
+                Ok(detail) => {
+                    submit_and_wait(
+                        client,
+                        "migrate_up",
+                        env,
+                        db,
+                        &detail,
+                        args["reason"].as_str(),
+                    )
+                    .await
+                }
                 Err(e) => Err(e.to_string()),
             }
         }
@@ -129,7 +139,17 @@ async fn handle_tools_call(
                 migrations_dir,
                 count.unwrap_or(1),
             ) {
-                Ok(detail) => submit_and_wait(client, "migrate_down", env, db, &detail, args["reason"].as_str()).await,
+                Ok(detail) => {
+                    submit_and_wait(
+                        client,
+                        "migrate_down",
+                        env,
+                        db,
+                        &detail,
+                        args["reason"].as_str(),
+                    )
+                    .await
+                }
                 Err(e) => Err(e.to_string()),
             }
         }

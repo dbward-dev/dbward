@@ -5,7 +5,7 @@ use casbin::{CoreApi, DefaultModel, Enforcer, StringAdapter};
 use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 
-use crate::state::AuthUser;
+use crate::state::{AppState, AuthUser};
 
 const MODEL: &str = r#"
 [request_definition]
@@ -163,6 +163,51 @@ pub async fn authorize(
     authorize_sync(principal, action, resource)
 }
 
+pub async fn authorize_and_audit(
+    principal: &AuthUser,
+    action: Action,
+    resource: Resource,
+    state: &AppState,
+) -> std::result::Result<(), (StatusCode, String)> {
+    enforcer().await?;
+    let resource_json = serde_json::to_value(&resource).unwrap_or(serde_json::Value::Null);
+    let result = authorize_sync(principal, action, resource);
+    if result.is_err()
+        && let Ok(mut conn) = state.sqlite.try_lock()
+    {
+        let meta = serde_json::json!({
+            "action": action.as_str(),
+            "role": principal.effective_permission(),
+            "resource": resource_json,
+        })
+        .to_string();
+        let _ = crate::db::audit_event_repo::insert_audit_event(
+            &mut conn,
+            &crate::db::audit_event_repo::AuditEvent {
+                event_type: "authz_denied",
+                event_category: "auth",
+                outcome: "denied",
+                actor_id: &principal.user,
+                actor_type: &principal.subject_type,
+                resource_type: None,
+                resource_id: None,
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: None,
+                operation: None,
+                environment: None,
+                database_name: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: None,
+                metadata_json: &meta,
+            },
+        );
+    }
+    result
+}
+
 pub fn authorize_sync(
     principal: &AuthUser,
     action: Action,
@@ -194,11 +239,15 @@ pub fn authorize_with_audit(
     resource: Resource,
     conn: &mut rusqlite::Connection,
 ) -> std::result::Result<(), (StatusCode, String)> {
+    let resource_json = serde_json::to_value(&resource).unwrap_or(serde_json::Value::Null);
     let result = authorize_sync(principal, action, resource);
     if let Err(ref _e) = result {
-        let meta =
-            serde_json::json!({"action": action.as_str(), "role": principal.effective_permission()})
-                .to_string();
+        let meta = serde_json::json!({
+            "action": action.as_str(),
+            "role": principal.effective_permission(),
+            "resource": resource_json,
+        })
+        .to_string();
         let _ = crate::db::audit_event_repo::insert_audit_event(
             conn,
             &crate::db::audit_event_repo::AuditEvent {
@@ -206,7 +255,7 @@ pub fn authorize_with_audit(
                 event_category: "auth",
                 outcome: "denied",
                 actor_id: &principal.user,
-                actor_type: "user",
+                actor_type: &principal.subject_type,
                 resource_type: None,
                 resource_id: None,
                 peer_ip: None,

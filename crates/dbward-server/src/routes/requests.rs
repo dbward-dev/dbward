@@ -215,7 +215,7 @@ pub(crate) async fn list_requests(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ListRequests, Resource::Global).await?;
+    authz::authorize_and_audit(&user, Action::ListRequests, Resource::Global, &state).await?;
     let (limit, offset) = parse_pagination(&params);
     let status_filter = params.get("status").filter(|s| !s.is_empty());
     let database_filter = params.get("database").filter(|s| !s.is_empty());
@@ -549,7 +549,7 @@ pub(crate) async fn create_request(
         .with_code("server_shutting_down"));
     }
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::CreateRequest, Resource::Global).await?;
+    authz::authorize_and_audit(&user, Action::CreateRequest, Resource::Global, &state).await?;
 
     let operation = body["operation"]
         .as_str()
@@ -581,7 +581,7 @@ pub(crate) async fn create_request(
     let metadata_json = validate_metadata(body.get("metadata"))?;
     let idempotency_key = validate_idempotency_key(body.get("idempotency_key"))?;
 
-    authz::authorize(
+    authz::authorize_and_audit(
         &user,
         Action::CreateRequest,
         request_resource(
@@ -590,6 +590,7 @@ pub(crate) async fn create_request(
             database_name.into(),
             environment.into(),
         ),
+        &state,
     )
     .await?;
 
@@ -713,9 +714,9 @@ pub(crate) async fn create_request(
     // Audit: request_created + auto_approved/break_glass
     {
         let event_type = if emergency {
-            "break_glass_used"
+            "break_glass"
         } else if !needs_approval {
-            "request_auto_approved"
+            "auto_approved"
         } else {
             "request_created"
         };
@@ -833,7 +834,7 @@ pub(crate) async fn approve_request(
     body_str: String,
 ) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
     let approver = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&approver, Action::ApproveRequest, Resource::Global).await?;
+    authz::authorize_and_audit(&approver, Action::ApproveRequest, Resource::Global, &state).await?;
     let id = {
         let conn = state.sqlite.lock().await;
         resolve_id(&conn, &id)?
@@ -904,7 +905,7 @@ pub(crate) async fn reject_request(
     body_str: String,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::RejectRequest, Resource::Global).await?;
+    authz::authorize_and_audit(&user, Action::RejectRequest, Resource::Global, &state).await?;
     let body_val: serde_json::Value = serde_json::from_str(&body_str).unwrap_or(json!({}));
     let comment = body_val
         .get("comment")
@@ -936,7 +937,9 @@ pub(crate) async fn reject_request(
             req_user.clone(),
             workflow_snapshot_json.as_deref(),
         )?;
-        if authz::authorize_sync(&user, Action::RejectRequest, approval_resource).is_err() {
+        if authz::authorize_with_audit(&user, Action::RejectRequest, approval_resource, &mut conn)
+            .is_err()
+        {
             let roles_str = step_roles.join(", ");
             return Err(crate::api_error::ApiError::forbidden(format!(
                 "you are not an approver for the current step (step {}/{}: {})",
@@ -974,7 +977,7 @@ pub(crate) async fn reject_request(
             &crate::db::audit_event_repo::AuditEvent {
                 event_type: "request_rejected",
                 event_category: "approval",
-                outcome: "info",
+                outcome: "success",
                 actor_id: &user.user,
                 actor_type: "user",
                 resource_type: Some("request"),
@@ -1029,7 +1032,7 @@ pub(crate) async fn cancel_request(
     body_str: String,
 ) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::CancelRequest, Resource::Global).await?;
+    authz::authorize_and_audit(&user, Action::CancelRequest, Resource::Global, &state).await?;
 
     let body_val: serde_json::Value = serde_json::from_str(&body_str).unwrap_or(json!({}));
     let cancel_reason = body_val["reason"].as_str().map(str::to_string);
@@ -1040,7 +1043,7 @@ pub(crate) async fn cancel_request(
         let ctx = crate::db::request_repo::get_request_context(&conn, &id)
             .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
 
-        authz::authorize_sync(
+        authz::authorize_with_audit(
             &user,
             Action::CancelRequest,
             request_resource(
@@ -1049,6 +1052,7 @@ pub(crate) async fn cancel_request(
                 ctx.database_name.clone(),
                 ctx.environment.clone(),
             ),
+            &mut conn,
         )?;
 
         if matches!(
@@ -1082,7 +1086,7 @@ pub(crate) async fn cancel_request(
             &crate::db::audit_event_repo::AuditEvent {
                 event_type: "request_cancelled",
                 event_category: "approval",
-                outcome: "info",
+                outcome: "success",
                 actor_id: &user.user,
                 actor_type: "user",
                 resource_type: Some("request"),
@@ -1150,7 +1154,7 @@ pub(crate) async fn get_request(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::GetRequest, Resource::Global).await?;
+    authz::authorize_and_audit(&user, Action::GetRequest, Resource::Global, &state).await?;
     let id = {
         let conn = state.sqlite.lock().await;
         resolve_id(&conn, &id)?
@@ -1266,7 +1270,7 @@ pub(crate) async fn get_request(
 
     // First read
     let (resp, status) = {
-        let conn = state.sqlite.lock().await;
+        let mut conn = state.sqlite.lock().await;
         let resp = build_response(&conn, &id, &state)?;
         let request_resource = request_resource(
             resp["created_by"].as_str().unwrap_or("").to_string(),
@@ -1274,7 +1278,9 @@ pub(crate) async fn get_request(
             resp["database_name"].as_str().unwrap_or("").to_string(),
             resp["environment"].as_str().unwrap_or("").to_string(),
         );
-        if authz::authorize_sync(&user, Action::GetRequest, request_resource).is_err() {
+        if authz::authorize_with_audit(&user, Action::GetRequest, request_resource, &mut conn)
+            .is_err()
+        {
             let ctx = crate::db::request_repo::get_request_context(&conn, &id)
                 .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
             let (approval_resource, _, _, _) = current_approval_resource(
@@ -1283,7 +1289,7 @@ pub(crate) async fn get_request(
                 ctx.created_by,
                 ctx.workflow_snapshot_json.as_deref(),
             )?;
-            authz::authorize_sync(&user, Action::GetRequest, approval_resource)?;
+            authz::authorize_with_audit(&user, Action::GetRequest, approval_resource, &mut conn)?;
         }
         let status = resp["status"].as_str().unwrap_or("").to_string();
         (resp, status)
@@ -1311,9 +1317,9 @@ pub(crate) async fn dispatch_request(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::DispatchRequest, Resource::Global).await?;
+    authz::authorize_and_audit(&user, Action::DispatchRequest, Resource::Global, &state).await?;
 
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
     let id = resolve_id(&conn, &id)?;
 
     // Check ownership
@@ -1335,7 +1341,7 @@ pub(crate) async fn dispatch_request(
         )
     };
 
-    authz::authorize_sync(
+    authz::authorize_with_audit(
         &user,
         Action::DispatchRequest,
         request_resource(
@@ -1344,6 +1350,7 @@ pub(crate) async fn dispatch_request(
             database_name.clone(),
             environment.clone(),
         ),
+        &mut conn,
     )?;
 
     // For executed/failed: check re-execution policy before attempting atomic update
@@ -1404,7 +1411,7 @@ pub(crate) async fn stream_result(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ReadResult, Resource::Global).await?;
+    authz::authorize_and_audit(&user, Action::ReadResult, Resource::Global, &state).await?;
 
     let (id, requester, database_name, environment, status): (
         String,
@@ -1439,13 +1446,14 @@ pub(crate) async fn stream_result(
         access_roles
     };
 
-    authz::authorize(
+    authz::authorize_and_audit(
         &user,
         Action::ReadResult,
         Resource::Result {
             requester_id: requester.clone(),
             access_roles,
         },
+        &state,
     )
     .await?;
 

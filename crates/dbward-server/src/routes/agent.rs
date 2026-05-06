@@ -20,7 +20,7 @@ pub(crate) async fn agent_poll(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::AgentPoll, Resource::Global).await?;
+    authz::authorize_and_audit(&user, Action::AgentPoll, Resource::Global, &state).await?;
 
     let databases: Vec<String> = body["databases"]
         .as_array()
@@ -128,7 +128,7 @@ pub(crate) async fn agent_claim(
     Json(_body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::AgentClaim, Resource::Global).await?;
+    authz::authorize_and_audit(&user, Action::AgentClaim, Resource::Global, &state).await?;
     let agent_id = user.user.clone();
 
     let mut conn = state.sqlite.lock().await;
@@ -149,12 +149,13 @@ pub(crate) async fn agent_claim(
         )));
     }
 
-    authz::authorize_sync(
+    authz::authorize_with_audit(
         &user,
         Action::AgentClaim,
         Resource::AgentExecution {
             agent_id: agent_id.clone(),
         },
+        &mut conn,
     )?;
 
     // Verify agent has capability for this job
@@ -203,7 +204,7 @@ pub(crate) async fn agent_claim(
         &crate::db::audit_event_repo::AuditEvent {
             event_type: "execution_started",
             event_category: "execution",
-            outcome: "info",
+            outcome: "success",
             actor_id: &agent_id,
             actor_type: "agent",
             resource_type: Some("request"),
@@ -218,7 +219,10 @@ pub(crate) async fn agent_claim(
             detail_fingerprint: None,
             detail_raw: None,
             reason: None,
-            metadata_json: "{}",
+            metadata_json: &serde_json::json!({
+                "execution_id": exec_id,
+            })
+            .to_string(),
         },
     );
 
@@ -240,7 +244,7 @@ pub(crate) async fn agent_heartbeat(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::AgentPoll, Resource::Global).await?;
+    authz::authorize_and_audit(&user, Action::AgentPoll, Resource::Global, &state).await?;
 
     let conn = state.sqlite.lock().await;
     let new_expires = chrono::Utc::now() + chrono::Duration::seconds(300);
@@ -269,7 +273,7 @@ pub(crate) async fn agent_result(
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::AgentSubmitResult, Resource::Global).await?;
+    authz::authorize_and_audit(&user, Action::AgentSubmitResult, Resource::Global, &state).await?;
 
     let success = body["success"].as_bool().unwrap_or(false);
     let result = body["result"].clone();
@@ -288,12 +292,13 @@ pub(crate) async fn agent_result(
             )));
         }
 
-        authz::authorize_sync(
+        authz::authorize_with_audit(
             &user,
             Action::AgentSubmitResult,
             Resource::AgentExecution {
                 agent_id: exec_ctx.agent_id.clone(),
             },
+            &mut conn,
         )?;
 
         let req_ctx = crate::db::request_repo::get_request_context(&conn, &exec_ctx.request_id)
@@ -320,7 +325,11 @@ pub(crate) async fn agent_result(
         let _ = crate::db::audit_event_repo::insert_audit_event(
             &mut conn,
             &crate::db::audit_event_repo::AuditEvent {
-                event_type: if success { "execution_completed" } else { "execution_failed" },
+                event_type: if success {
+                    "execution_completed"
+                } else {
+                    "execution_failed"
+                },
                 event_category: "execution",
                 outcome: if success { "success" } else { "failure" },
                 actor_id: &exec_ctx.agent_id,
@@ -340,7 +349,8 @@ pub(crate) async fn agent_result(
                 metadata_json: &serde_json::json!({
                     "execution_id": id,
                     "error": error_msg,
-                }).to_string(),
+                })
+                .to_string(),
             },
         );
 
