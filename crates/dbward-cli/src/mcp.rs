@@ -1,12 +1,13 @@
-use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Value, json};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinSet;
 
 use dbward_core::ClientConfig;
 
@@ -38,8 +39,16 @@ impl ElicitHandle {
             .send(ElicitMsg { id, message: message.to_string(), schema, response_tx: tx })
             .await
             .map_err(|_| "elicitation channel closed".to_string())?;
-        rx.await.map_err(|_| "elicitation response dropped".to_string())
+        tokio::time::timeout(Duration::from_secs(300), rx)
+            .await
+            .map_err(|_| "elicitation timed out".to_string())?
+            .map_err(|_| "elicitation response dropped".to_string())
     }
+}
+
+enum IncomingMsg {
+    Request(Value),
+    ParseError(String),
 }
 
 pub async fn run_stdio(
@@ -52,58 +61,102 @@ pub async fn run_stdio(
     let client = Arc::new(client);
 
     let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<Value>(64);
-    let (incoming_tx, mut incoming_rx) = mpsc::channel::<Value>(64);
+    let (incoming_tx, mut incoming_rx) = mpsc::channel::<IncomingMsg>(64);
     let (elicit_tx, mut elicit_rx) = mpsc::channel::<ElicitMsg>(8);
     let elicit_id_counter = Arc::new(AtomicU64::new(1));
 
     let mut client_supports_elicitation = false;
     let mut pending_elicitations: HashMap<u64, oneshot::Sender<ElicitResult>> = HashMap::new();
 
-    // Reader task (blocking stdin in spawn_blocking)
-    let in_tx = incoming_tx.clone();
-    tokio::task::spawn_blocking(move || {
-        let stdin = io::stdin();
-        for line in stdin.lock().lines() {
-            let Ok(line) = line else { break };
-            if line.trim().is_empty() { continue; }
-            let Ok(val) = serde_json::from_str::<Value>(&line) else { continue; };
-            if in_tx.blocking_send(val).is_err() { break; }
+    let reader = tokio::spawn(async move {
+        let stdin = tokio::io::stdin();
+        let mut lines = BufReader::new(stdin).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    let msg = match serde_json::from_str::<Value>(&line) {
+                        Ok(value) => IncomingMsg::Request(value),
+                        Err(err) => IncomingMsg::ParseError(err.to_string()),
+                    };
+                    if incoming_tx.send(msg).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
         }
     });
 
-    // Writer task
-    let out_tx_clone = outgoing_tx.clone();
-    tokio::spawn(async move {
-        let mut stdout = io::stdout();
+    let writer = tokio::spawn(async move {
+        let mut stdout = tokio::io::stdout();
         while let Some(msg) = outgoing_rx.recv().await {
-            let _ = writeln!(stdout, "{msg}");
-            let _ = stdout.flush();
+            stdout.write_all(msg.to_string().as_bytes()).await?;
+            stdout.write_all(b"\n").await?;
+            stdout.flush().await?;
         }
+        Ok::<(), std::io::Error>(())
     });
 
-    // Connection actor loop
+    let mut workers = JoinSet::new();
+    let mut pending_cleanup = tokio::time::interval(Duration::from_secs(30));
+
     loop {
         tokio::select! {
+            Some(joined) = workers.join_next(), if !workers.is_empty() => {
+                match joined {
+                    Ok(response) => {
+                        if outgoing_tx.send(response).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        workers.abort_all();
+                        return Err(dbward_core::Error::Server(format!("MCP worker task failed: {err}")));
+                    }
+                }
+            }
             msg = incoming_rx.recv() => {
-                let Some(request) = msg else { break; };
+                let Some(msg) = msg else { break; };
+
+                let request = match msg {
+                    IncomingMsg::Request(request) => request,
+                    IncomingMsg::ParseError(err) => {
+                        if outgoing_tx.send(json!({
+                            "jsonrpc": "2.0",
+                            "id": null,
+                            "error": {"code": -32700, "message": format!("Parse error: {err}")}
+                        })).await.is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+                };
 
                 let id = request.get("id").cloned();
                 let method = request["method"].as_str().unwrap_or("").to_string();
 
                 // Check if this is a response (to our elicitation request)
-                if id.is_some() && request.get("result").is_some() && request.get("method").is_none() {
+                if id.is_some() && request.get("method").is_none() {
                     let resp_id = id.as_ref().and_then(|v| v.as_u64()).unwrap_or(0);
                     if let Some(tx) = pending_elicitations.remove(&resp_id) {
                         let result = &request["result"];
-                        let action = result["action"].as_str().unwrap_or("cancel");
-                        let elicit_result = match action {
-                            "accept" => ElicitResult::Accept { content: result["content"].clone() },
-                            "decline" => ElicitResult::Decline,
-                            _ => ElicitResult::Cancel,
+                        let elicit_result = if request.get("error").is_some() {
+                            ElicitResult::Cancel
+                        } else {
+                            let action = result["action"].as_str().unwrap_or("cancel");
+                            match action {
+                                "accept" => ElicitResult::Accept { content: result["content"].clone() },
+                                "decline" => ElicitResult::Decline,
+                                _ => ElicitResult::Cancel,
+                            }
                         };
                         let _ = tx.send(elicit_result);
+                        continue;
                     }
-                    continue;
                 }
 
                 // Notifications from client
@@ -142,23 +195,23 @@ pub async fn run_stdio(
                     }
                     // Async handlers (spawn worker)
                     "tools/call" | "resources/read" => {
-                        let out = outgoing_tx.clone();
                         let c = client.clone();
                         let db = db_name.clone();
                         let mdir = migrations_dir.clone();
                         let params = request["params"].clone();
+                        let id = id.clone();
+                        let method = method.clone();
                         let elicit = ElicitHandle {
                             tx: elicit_tx.clone(),
                             id_counter: elicit_id_counter.clone(),
                         };
                         let supports_elicit = client_supports_elicitation;
-                        tokio::spawn(async move {
-                            let resp = if method == "tools/call" {
+                        workers.spawn(async move {
+                            if method == "tools/call" {
                                 handle_tools_call(id.clone(), &params, &c, &db, &mdir, &elicit, supports_elicit).await
                             } else {
                                 handle_resources_read(id.clone(), &params, &c, &db).await
-                            };
-                            let _ = out.send(resp).await;
+                            }
                         });
                     }
                     _ => {
@@ -171,17 +224,48 @@ pub async fn run_stdio(
             }
             // Elicitation requests from workers
             Some(elicit_msg) = elicit_rx.recv() => {
-                pending_elicitations.insert(elicit_msg.id, elicit_msg.response_tx);
-                let _ = outgoing_tx.send(json!({
+                let elicit_id = elicit_msg.id;
+                pending_elicitations.insert(elicit_id, elicit_msg.response_tx);
+                if outgoing_tx.send(json!({
                     "jsonrpc": "2.0",
-                    "id": elicit_msg.id,
+                    "id": elicit_id,
                     "method": "elicitation/create",
                     "params": {
                         "message": elicit_msg.message,
                         "requestedSchema": elicit_msg.schema
                     }
-                })).await;
+                })).await.is_err() {
+                    if let Some(tx) = pending_elicitations.remove(&elicit_id) {
+                        let _ = tx.send(ElicitResult::Cancel);
+                    }
+                    break;
+                }
             }
+            _ = pending_cleanup.tick() => {
+                pending_elicitations.retain(|_, tx| !tx.is_closed());
+            }
+        }
+    }
+
+    workers.abort_all();
+    while workers.join_next().await.is_some() {}
+
+    for (_, tx) in pending_elicitations.drain() {
+        let _ = tx.send(ElicitResult::Cancel);
+    }
+
+    drop(elicit_tx);
+    drop(outgoing_tx);
+    drop(incoming_rx);
+
+    let _ = reader.await;
+    match writer.await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => return Err(dbward_core::Error::Io(err)),
+        Err(err) => {
+            return Err(dbward_core::Error::Server(format!(
+                "MCP writer task failed: {err}"
+            )));
         }
     }
 
