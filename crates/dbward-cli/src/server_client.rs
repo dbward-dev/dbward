@@ -263,28 +263,8 @@ impl ServerClient {
         self.parse_response(resp, "stream result").await
     }
 
-    /// Dispatch and wait for result in one flow.
-    pub async fn dispatch_and_wait(&self, request_id: &str) -> Result<Value, Error> {
-        eprintln!("Dispatching request {request_id}...");
-        if let Err(e) = self.dispatch(request_id).await {
-            let body_lower = e.body.to_lowercase();
-            if e.status == 404 {
-                return Err(Error::Server(format!("Request {request_id} not found")));
-            }
-            if e.status == 409 {
-                if body_lower.contains("wrong status") || body_lower.contains("pending") {
-                    return Err(Error::Server(format!(
-                        "Request is still pending approval. Ask an approver to run: dbward request approve {request_id}"
-                    )));
-                }
-                if body_lower.contains("already dispatched") || body_lower.contains("dispatched") {
-                    return Err(Error::Server(format!(
-                        "Request is already dispatched. Run: dbward request resume {request_id}"
-                    )));
-                }
-            }
-            return Err(e.into_core_error("dispatch"));
-        }
+    /// Wait for execution result via the existing request lifecycle.
+    pub async fn wait_for_result(&self, request_id: &str) -> Result<Value, Error> {
         eprintln!("Waiting for agent to execute...");
 
         tokio::select! {
@@ -298,7 +278,7 @@ impl ServerClient {
                 }
             },
             _ = tokio::signal::ctrl_c() => {
-                eprintln!("\nInterrupted. Request {request_id} is dispatched.");
+                eprintln!("\nInterrupted. Request {request_id} is still in progress.");
                 eprintln!("Run: dbward request resume {request_id}");
                 Err(Error::Server("interrupted".into()))
             }

@@ -376,7 +376,7 @@ async fn auto_approve_non_production() {
 
     assert_eq!(resp.status(), 201);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "auto_approved");
+    assert_eq!(body["status"], "dispatched");
     assert!(body["execution_token"].is_object());
 }
 
@@ -424,7 +424,7 @@ async fn production_requires_approval() {
 
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "approved");
+    assert_eq!(body["status"], "dispatched");
     assert_eq!(body["approved_by"], "bob");
     assert_eq!(body["step_completed"], 0);
     assert_eq!(body["current_step"], 1);
@@ -949,7 +949,7 @@ async fn group_approver_can_execute_and_read_group_shared_result() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "approved");
+    assert_eq!(body["status"], "dispatched");
 
     let resp = app
         .clone()
@@ -1205,7 +1205,7 @@ async fn agent_full_flow() {
         .await
         .unwrap();
 
-    // 1. Alice creates a request (development → auto_approved)
+    // 1. Alice creates a request (development → auto-dispatched)
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
@@ -1222,9 +1222,9 @@ async fn agent_full_flow() {
     assert_eq!(resp.status(), 201);
     let body = body_json(resp).await;
     let request_id = body["id"].as_str().unwrap().to_string();
-    assert_eq!(body["status"], "auto_approved");
+    assert_eq!(body["status"], "dispatched");
 
-    // 2. Agent polls — should be empty (not yet dispatched)
+    // 2. Agent polls — should immediately see the dispatched request
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
@@ -1237,9 +1237,9 @@ async fn agent_full_flow() {
         .await
         .unwrap();
     let body = body_json(resp).await;
-    assert_eq!(body["jobs"].as_array().unwrap().len(), 0);
+    assert_eq!(body["jobs"].as_array().unwrap().len(), 1);
 
-    // 3. Alice dispatches the request
+    // 3. Alice dispatches the request again — still idempotently dispatched
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
@@ -1254,7 +1254,7 @@ async fn agent_full_flow() {
     let body = body_json(resp).await;
     assert_eq!(body["status"], "dispatched");
 
-    // 4. Agent polls — now sees the dispatched request
+    // 4. Agent polls — request remains dispatchable until claimed
     let app = routes::router(state.clone());
     let resp = app
         .oneshot(
@@ -1644,7 +1644,7 @@ async fn workflow_operations_are_respected() {
 
     assert_eq!(resp.status(), 201);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "auto_approved");
+    assert_eq!(body["status"], "dispatched");
 }
 
 #[tokio::test]
@@ -1686,7 +1686,7 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
 
     assert_eq!(resp.status(), 201);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "auto_approved");
+    assert_eq!(body["status"], "dispatched");
 }
 
 #[tokio::test]
@@ -3596,7 +3596,7 @@ async fn multi_step_approval_team_lead_then_dba() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "approved");
+    assert_eq!(body["status"], "dispatched");
     assert_eq!(body["approved_by"], "dba1");
     assert_eq!(body["step_completed"], 1);
     assert_eq!(body["current_step"], 2);
@@ -3728,7 +3728,7 @@ async fn allow_same_approver_across_steps_true_allows_second_step() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "approved");
+    assert_eq!(body["status"], "dispatched");
     assert_eq!(body["approved_by"], "admin1");
     assert!(body["execution_token"].is_object());
 }
@@ -3770,7 +3770,7 @@ async fn mode_any_either_role_can_approve() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "approved");
+    assert_eq!(body["status"], "dispatched");
     assert_eq!(body["approved_by"], "dba1");
     assert_eq!(body["step_completed"], 0);
     assert_eq!(body["current_step"], 1);

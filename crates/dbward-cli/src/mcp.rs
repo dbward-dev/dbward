@@ -113,8 +113,10 @@ async fn handle_tools_call(
         "dbward_migrate_up" => {
             let count = args["count"].as_u64().map(|n| n as usize);
             let db = args["database"].as_str().unwrap_or(db_name);
-            match dbward_migrate::build_migration_approval_detail(migrations_dir, count.unwrap_or(0))
-            {
+            match dbward_migrate::build_migration_approval_detail(
+                migrations_dir,
+                count.unwrap_or(0),
+            ) {
                 Ok(detail) => submit_and_wait(client, "migrate_up", env, db, &detail).await,
                 Err(e) => Err(e.to_string()),
             }
@@ -122,8 +124,10 @@ async fn handle_tools_call(
         "dbward_migrate_down" => {
             let count = args["count"].as_u64().map(|n| n as usize);
             let db = args["database"].as_str().unwrap_or(db_name);
-            match dbward_migrate::build_migration_approval_detail(migrations_dir, count.unwrap_or(1))
-            {
+            match dbward_migrate::build_migration_approval_detail(
+                migrations_dir,
+                count.unwrap_or(1),
+            ) {
                 Ok(detail) => submit_and_wait(client, "migrate_down", env, db, &detail).await,
                 Err(e) => Err(e.to_string()),
             }
@@ -167,7 +171,7 @@ async fn handle_tools_call(
     }
 }
 
-/// Submit request, if auto-approved dispatch and wait for result, if pending return request_id.
+/// Submit request, if dispatched wait for result, if pending return request_id.
 async fn submit_and_wait(
     client: &crate::server_client::ServerClient,
     operation: &str,
@@ -189,9 +193,9 @@ async fn submit_and_wait(
         .map_err(|e| e.to_string())?;
 
     match status.as_str() {
-        "auto_approved" | "break_glass" => {
+        "dispatched" | "break_glass" => {
             let resp = client
-                .dispatch_and_wait(&req_id)
+                .wait_for_result(&req_id)
                 .await
                 .map_err(|e| e.to_string())?;
             format_result(&resp)
@@ -235,7 +239,7 @@ async fn check_request(
     let status = resp["status"].as_str().unwrap_or("unknown");
     match status {
         "pending" => Ok(format!("Request {request_id} is still pending approval.")),
-        "approved" | "auto_approved" => Ok(format!(
+        "approved" | "auto_approved" | "dispatched" => Ok(format!(
             "Request {request_id} is approved. Agent will execute it. \
              Use dbward_get_result to retrieve the result."
         )),
@@ -261,9 +265,9 @@ async fn get_result(
         .map_err(|e| e.to_string())?;
     let status = resp["status"].as_str().unwrap_or("unknown");
     match status {
-        "approved" | "auto_approved" | "break_glass" => {
+        "approved" | "auto_approved" | "dispatched" | "break_glass" => {
             let result = client
-                .dispatch_and_wait(request_id)
+                .wait_for_result(request_id)
                 .await
                 .map_err(|e| e.to_string())?;
             format_result(&result)

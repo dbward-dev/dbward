@@ -119,9 +119,10 @@ async fn execute_job(
     // Resolve DB and execute
     let resolved = config.resolve_database(database)?;
     let expected_detail = match operation {
-        "migrate_up" | "migrate_down" => {
-            dbward_migrate::canonicalize_migration_approval_detail(&resolved.migrations_dir, detail)?
-        }
+        "migrate_up" | "migrate_down" => dbward_migrate::canonicalize_migration_approval_detail(
+            &resolved.migrations_dir,
+            detail,
+        )?,
         _ => detail.to_string(),
     };
 

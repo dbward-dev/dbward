@@ -114,8 +114,11 @@ mod tests {
     #[test]
     fn builds_and_parses_detail() {
         let dir = temp_dir("builds");
-        std::fs::write(dir.join("20260501120000_create_users.sql"), "-- migrate:up\nSELECT 1;\n")
-            .unwrap();
+        std::fs::write(
+            dir.join("20260501120000_create_users.sql"),
+            "-- migrate:up\nSELECT 1;\n",
+        )
+        .unwrap();
 
         let detail = build_migration_approval_detail(&dir, 0).unwrap();
         let parsed = MigrationApprovalDetail::parse(&detail).unwrap();
@@ -144,6 +147,9 @@ mod tests {
     #[test]
     fn parse_rejects_invalid_detail() {
         let err = MigrationApprovalDetail::parse("count:0").unwrap_err();
-        assert!(err.to_string().contains("invalid migration approval detail format"));
+        assert!(
+            err.to_string()
+                .contains("invalid migration approval detail format")
+        );
     }
 }

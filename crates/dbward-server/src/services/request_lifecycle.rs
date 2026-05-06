@@ -102,8 +102,14 @@ pub(crate) async fn approve_request_inner(
         let tx = conn
             .transaction()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
-        crate::db::request_repo::mark_approved(&tx, id, &now)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        if !crate::db::request_repo::mark_approved_dispatched(&tx, id, &now)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        {
+            return Err(crate::api_error::ApiError::conflict(
+                "request state changed during approval",
+            )
+            .with_code("request_approve_wrong_status"));
+        }
         crate::db::request_repo::insert_approval(
             &tx,
             id,
@@ -121,13 +127,13 @@ pub(crate) async fn approve_request_inner(
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
         return Ok(ApproveResult {
-            response: json!({"id": id, "status": "approved", "approved_by": approver.user, "step_completed": 0, "current_step": 0, "total_steps": 0, "message": "Approved.", "execution_token": token}),
+            response: json!({"id": id, "status": "dispatched", "approved_by": approver.user, "step_completed": 0, "current_step": 0, "total_steps": 0, "message": "Approved and dispatched.", "execution_token": token}),
             notif_hooks,
             webhook_event: Some(crate::webhook::WebhookEvent {
                 event: "request_approved".into(),
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 request_id: id.into(),
-                status: "approved".into(),
+                status: "dispatched".into(),
                 requester: req_user,
                 actor: approver.user.clone(),
                 actor_role: Some(approver.effective_permission().into()),
@@ -310,8 +316,14 @@ pub(crate) async fn approve_request_inner(
             .all(|(i, s)| is_step_satisfied(s, &updated_approvals, i as i64));
 
     if all_satisfied {
-        crate::db::request_repo::mark_approved(&tx, id, &now)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        if !crate::db::request_repo::mark_approved_dispatched(&tx, id, &now)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        {
+            return Err(crate::api_error::ApiError::conflict(
+                "request state changed during approval",
+            )
+            .with_code("request_approve_wrong_status"));
+        }
         tx.commit()
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
@@ -319,13 +331,13 @@ pub(crate) async fn approve_request_inner(
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
         Ok(ApproveResult {
-            response: json!({"id": id, "status": "approved", "approved_by": approver.user, "step_completed": current_step, "current_step": steps.len(), "total_steps": steps.len(), "message": format!("Step {}/{} approved. All steps complete.", current_step + 1, steps.len()), "execution_token": token}),
+            response: json!({"id": id, "status": "dispatched", "approved_by": approver.user, "step_completed": current_step, "current_step": steps.len(), "total_steps": steps.len(), "message": format!("Step {}/{} approved. All steps complete; request dispatched.", current_step + 1, steps.len()), "execution_token": token}),
             notif_hooks,
             webhook_event: Some(crate::webhook::WebhookEvent {
                 event: "request_approved".into(),
                 timestamp: chrono::Utc::now().to_rfc3339(),
                 request_id: id.into(),
-                status: "approved".into(),
+                status: "dispatched".into(),
                 requester: req_user,
                 actor: approver.user.clone(),
                 actor_role: Some(actor_role.clone()),
@@ -538,7 +550,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result.response["status"], "approved");
+        assert_eq!(result.response["status"], "dispatched");
 
         let conn = state.sqlite.lock().await;
         let rows = db::request_repo::get_approvals(&conn, request_id).unwrap();
@@ -658,6 +670,6 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(second.response["status"], "approved");
+        assert_eq!(second.response["status"], "dispatched");
     }
 }

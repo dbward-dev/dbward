@@ -70,6 +70,22 @@ pub(crate) fn should_filter_capability(values: &[String]) -> bool {
     !values.is_empty() && !values.iter().any(|v| v == "*")
 }
 
+pub(crate) async fn ensure_result_slot(state: &AppState, request_id: &str) {
+    if state.result_channels.get(request_id).await.is_some() {
+        return;
+    }
+
+    let slot = Arc::new(crate::state::ResultSlot {
+        result: tokio::sync::Mutex::new(None),
+        notify: tokio::sync::Notify::new(),
+        created_at: Instant::now(),
+    });
+    state
+        .result_channels
+        .insert(request_id.to_string(), slot)
+        .await;
+}
+
 pub(crate) async fn health() -> impl IntoResponse {
     Json(json!({"status": "ok"}))
 }
@@ -573,6 +589,12 @@ pub(crate) async fn create_request(
         &now,
     )
     .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+
+    if status == "auto_approved" {
+        crate::db::request_repo::mark_dispatched(&conn, &id, &now)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+    }
+
     state
         .metrics
         .record_request_created(status, environment, database_name);
@@ -644,9 +666,12 @@ pub(crate) async fn create_request(
         let token = state
             .token_signer
             .issue(&id, operation, environment, database_name, detail);
+        drop(conn);
+        ensure_result_slot(&state, &id).await;
+        state.request_notifier.notify(&id).await;
         Ok((
             StatusCode::CREATED,
-            Json(json!({"id": id, "status": "auto_approved", "execution_token": token})),
+            Json(json!({"id": id, "status": "dispatched", "execution_token": token})),
         ))
     }
 }
@@ -677,6 +702,9 @@ pub(crate) async fn approve_request(
     state.metrics.record_approval("approve");
 
     // Post-transaction async work
+    if result.response["status"].as_str() == Some("dispatched") {
+        ensure_result_slot(&state, &id).await;
+    }
     if let Some(event) = result.webhook_event {
         state
             .webhooks
@@ -1091,8 +1119,10 @@ pub(crate) async fn dispatch_request(
         }
     }
 
-    if !crate::db::request_repo::mark_dispatched(&conn, &id)
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+    let now = chrono::Utc::now().to_rfc3339();
+    if status != "dispatched"
+        && !crate::db::request_repo::mark_dispatched(&conn, &id, &now)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
     {
         return Err(crate::api_error::ApiError::conflict(
             "request cannot be dispatched (wrong status)",
@@ -1101,13 +1131,8 @@ pub(crate) async fn dispatch_request(
     }
 
     drop(conn);
-
-    let slot = Arc::new(crate::state::ResultSlot {
-        result: tokio::sync::Mutex::new(None),
-        notify: tokio::sync::Notify::new(),
-        created_at: Instant::now(),
-    });
-    state.result_channels.insert(id.clone(), slot).await;
+    ensure_result_slot(&state, &id).await;
+    state.request_notifier.notify(&id).await;
 
     Ok(Json(json!({"id": id, "status": "dispatched"})))
 }

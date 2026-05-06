@@ -150,16 +150,16 @@ where
     Ok(())
 }
 
-/// Mark request as approved with resolved_at.
-pub fn mark_approved<C>(conn: &C, id: &str, now: &str) -> Result<(), rusqlite::Error>
+/// Mark a pending request as dispatched after approval, recording resolution time.
+pub fn mark_approved_dispatched<C>(conn: &C, id: &str, now: &str) -> Result<bool, rusqlite::Error>
 where
     C: Deref<Target = Connection> + ?Sized,
 {
-    conn.execute(
-        "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3",
+    let rows = conn.execute(
+        "UPDATE requests SET status = 'dispatched', updated_at = ?1, resolved_at = ?2 WHERE id = ?3 AND status = 'pending'",
         rusqlite::params![now, now, id],
     )?;
-    Ok(())
+    Ok(rows > 0)
 }
 
 /// Mark request as rejected with resolved_at.
@@ -210,8 +210,10 @@ where
 }
 
 /// Atomically set status to dispatched. Returns true if updated.
-pub fn mark_dispatched(conn: &Connection, id: &str) -> Result<bool, rusqlite::Error> {
-    let now = chrono::Utc::now().to_rfc3339();
+pub fn mark_dispatched<C>(conn: &C, id: &str, now: &str) -> Result<bool, rusqlite::Error>
+where
+    C: Deref<Target = Connection> + ?Sized,
+{
     let rows = conn.execute(
         "UPDATE requests SET status = 'dispatched', updated_at = ?1 WHERE id = ?2 AND status IN ('approved', 'auto_approved', 'break_glass', 'executed', 'failed')",
         rusqlite::params![now, id],

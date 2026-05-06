@@ -457,8 +457,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 .await?;
 
             match status.as_str() {
-                "auto_approved" | "break_glass" => {
-                    let resp = sc.dispatch_and_wait(&id).await?;
+                "dispatched" | "break_glass" => {
+                    let resp = sc.wait_for_result(&id).await?;
                     if json_output {
                         println!("{}", serde_json::to_string_pretty(&resp)?);
                     } else {
@@ -480,15 +480,13 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         }
         Command::Migrate { ref action } => {
             let (operation, detail) = match action {
-                MigrateAction::Up { count } => {
-                    (
-                        "migrate_up",
-                        dbward_migrate::build_migration_approval_detail(
-                            &config.migrations_dir_for(&db_name),
-                            count.unwrap_or(0),
-                        )?,
-                    )
-                }
+                MigrateAction::Up { count } => (
+                    "migrate_up",
+                    dbward_migrate::build_migration_approval_detail(
+                        &config.migrations_dir_for(&db_name),
+                        count.unwrap_or(0),
+                    )?,
+                ),
                 MigrateAction::Down { count } => (
                     "migrate_down",
                     dbward_migrate::build_migration_approval_detail(
@@ -513,8 +511,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 .await?;
 
             match status.as_str() {
-                "auto_approved" | "break_glass" => {
-                    let resp = sc.dispatch_and_wait(&id).await?;
+                "dispatched" | "break_glass" => {
+                    let resp = sc.wait_for_result(&id).await?;
                     if json_output {
                         println!("{}", serde_json::to_string_pretty(&resp)?);
                     } else {
@@ -549,7 +547,11 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                                 "Request {id} not found"
                             )));
                         }
-                        if e.status == 409 && e.body.to_lowercase().contains("already approved") {
+                        let body_lower = e.body.to_lowercase();
+                        if e.status == 409
+                            && (body_lower.contains("already approved")
+                                || body_lower.contains("already dispatched"))
+                        {
                             return Err(dbward_core::Error::Server(format!(
                                 "Request is already approved. Run: dbward request resume {id}"
                             )));
@@ -648,7 +650,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 output,
                 no_save,
             } => {
-                let resp = sc.dispatch_and_wait(&id).await?;
+                let resp = sc.wait_for_result(&id).await?;
                 if json_output {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
                 } else {
@@ -1003,8 +1005,10 @@ fn print_approve_result(body: &serde_json::Value, id: &str) {
 
     println!("Approved step {step}/{total}");
     println!("Request: {short_id}");
-    if status == "approved" {
-        println!("All steps complete. Run: dbward request resume {short_id}");
+    if status == "approved" || status == "dispatched" {
+        println!(
+            "All steps complete. Agent has been dispatched. Run: dbward request resume {short_id}"
+        );
     } else {
         println!("Waiting for further approvals.");
     }
