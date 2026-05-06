@@ -84,6 +84,15 @@ enum Command {
         /// Do not save result locally
         #[arg(long)]
         no_save: bool,
+        /// Ticket identifier to attach as metadata
+        #[arg(long)]
+        ticket: Option<String>,
+        /// Repository identifier to attach as metadata
+        #[arg(long)]
+        repo: Option<String>,
+        /// Optional idempotency key for deduplicating identical submissions
+        #[arg(long = "idempotency-key")]
+        idempotency_key: Option<String>,
         /// Share result with specified principals (e.g. group:backend-team, user:bob)
         #[arg(long = "share-with")]
         share_with: Vec<String>,
@@ -235,12 +244,40 @@ enum MigrateAction {
     Up {
         #[arg(long)]
         count: Option<usize>,
+        /// Ticket identifier to attach as metadata
+        #[arg(long)]
+        ticket: Option<String>,
+        /// Repository identifier to attach as metadata
+        #[arg(long)]
+        repo: Option<String>,
+        /// Optional idempotency key for deduplicating identical submissions
+        #[arg(long = "idempotency-key")]
+        idempotency_key: Option<String>,
     },
     Down {
         #[arg(long, default_value = "1")]
         count: usize,
+        /// Ticket identifier to attach as metadata
+        #[arg(long)]
+        ticket: Option<String>,
+        /// Repository identifier to attach as metadata
+        #[arg(long)]
+        repo: Option<String>,
+        /// Optional idempotency key for deduplicating identical submissions
+        #[arg(long = "idempotency-key")]
+        idempotency_key: Option<String>,
     },
-    Status,
+    Status {
+        /// Ticket identifier to attach as metadata
+        #[arg(long)]
+        ticket: Option<String>,
+        /// Repository identifier to attach as metadata
+        #[arg(long)]
+        repo: Option<String>,
+        /// Optional idempotency key for deduplicating identical submissions
+        #[arg(long = "idempotency-key")]
+        idempotency_key: Option<String>,
+    },
     Create {
         name: String,
     },
@@ -448,8 +485,12 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             ref reason,
             ref output,
             no_save,
+            ref ticket,
+            ref repo,
+            ref idempotency_key,
             ref share_with,
         } => {
+            let metadata = build_request_metadata(ticket.as_deref(), repo.as_deref());
             let sw = if share_with.is_empty() {
                 None
             } else {
@@ -463,6 +504,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     detail: sql,
                     emergency,
                     reason: reason.as_deref(),
+                    metadata: metadata.as_ref(),
+                    idempotency_key: idempotency_key.as_deref(),
                     share_with: sw,
                 })
                 .await?;
@@ -490,22 +533,40 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             Ok(())
         }
         Command::Migrate { ref action } => {
-            let (operation, detail) = match action {
-                MigrateAction::Up { count } => (
+            let (operation, detail, metadata, idempotency_key) = match action {
+                MigrateAction::Up { count, ticket, repo, idempotency_key } => (
                     "migrate_up",
                     dbward_migrate::build_migration_approval_detail(
                         &config.migrations_dir_for(&db_name),
                         count.unwrap_or(0),
                     )?,
+                    build_request_metadata(ticket.as_deref(), repo.as_deref()),
+                    idempotency_key.as_deref(),
                 ),
-                MigrateAction::Down { count } => (
+                MigrateAction::Down {
+                    count,
+                    ticket,
+                    repo,
+                    idempotency_key,
+                } => (
                     "migrate_down",
                     dbward_migrate::build_migration_approval_detail(
                         &config.migrations_dir_for(&db_name),
                         *count,
                     )?,
+                    build_request_metadata(ticket.as_deref(), repo.as_deref()),
+                    idempotency_key.as_deref(),
                 ),
-                MigrateAction::Status => ("migrate_status", String::new()),
+                MigrateAction::Status {
+                    ticket,
+                    repo,
+                    idempotency_key,
+                } => (
+                    "migrate_status",
+                    String::new(),
+                    build_request_metadata(ticket.as_deref(), repo.as_deref()),
+                    idempotency_key.as_deref(),
+                ),
                 MigrateAction::Create { .. } => unreachable!(),
             };
 
@@ -517,6 +578,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     detail: &detail,
                     emergency: false,
                     reason: None,
+                    metadata: metadata.as_ref(),
+                    idempotency_key,
                     share_with: None,
                 })
                 .await?;
@@ -939,6 +1002,8 @@ fn print_request_detail(body: &serde_json::Value) {
     let created = body["created_at"].as_str().unwrap_or("?");
     let updated = body["updated_at"].as_str().unwrap_or("?");
     let reason = body["reason"].as_str();
+    let metadata = &body["metadata"];
+    let idempotency_key = body["idempotency_key"].as_str();
 
     println!("Request {id}");
     println!("  Status:      {status}");
@@ -948,6 +1013,15 @@ fn print_request_detail(body: &serde_json::Value) {
     println!("  Database:    {db}");
     if let Some(r) = reason {
         println!("  Reason:      {r}");
+    }
+    if let Some(key) = idempotency_key {
+        println!("  Idempotency: {key}");
+    }
+    if !metadata.is_null() {
+        println!(
+            "  Metadata:    {}",
+            serde_json::to_string(metadata).unwrap_or_else(|_| "{}".to_string())
+        );
     }
     println!("  Created by:  {user}");
     println!("  Created at:  {created}");
@@ -1176,6 +1250,21 @@ fn write_secure(path: &Path, content: &[u8]) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn write_secure(path: &Path, content: &[u8]) -> std::io::Result<()> {
     std::fs::write(path, content)
+}
+
+fn build_request_metadata(ticket: Option<&str>, repo: Option<&str>) -> Option<serde_json::Value> {
+    let mut metadata = serde_json::Map::new();
+    if let Some(ticket) = ticket.filter(|value| !value.is_empty()) {
+        metadata.insert("ticket".to_string(), serde_json::Value::String(ticket.to_string()));
+    }
+    if let Some(repo) = repo.filter(|value| !value.is_empty()) {
+        metadata.insert("repo".to_string(), serde_json::Value::String(repo.to_string()));
+    }
+    if metadata.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(metadata))
+    }
 }
 
 /// Load a previously saved result from local storage.

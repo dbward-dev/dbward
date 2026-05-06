@@ -504,6 +504,8 @@ mod tests {
                 status: "pending",
                 emergency: false,
                 reason: None,
+                metadata_json: "{}",
+                idempotency_key: None,
                 workflow_id: Some("wf"),
                 workflow_snapshot_json: Some(workflow_snapshot_json),
                 share_with_json: None,

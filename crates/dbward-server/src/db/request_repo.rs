@@ -11,6 +11,8 @@ pub struct RequestContext {
     pub environment: String,
     pub database_name: String,
     pub detail: String,
+    pub metadata_json: String,
+    pub idempotency_key: Option<String>,
     pub workflow_id: Option<String>,
     pub workflow_snapshot_json: Option<String>,
     pub resolved_at: Option<String>,
@@ -27,6 +29,8 @@ pub struct NewRequest<'a> {
     pub status: &'a str,
     pub emergency: bool,
     pub reason: Option<&'a str>,
+    pub metadata_json: &'a str,
+    pub idempotency_key: Option<&'a str>,
     pub workflow_id: Option<&'a str>,
     pub workflow_snapshot_json: Option<&'a str>,
     pub share_with_json: Option<&'a str>,
@@ -67,12 +71,17 @@ pub enum ResolveError {
     Db(String),
 }
 
+pub struct ExistingRequest {
+    pub id: String,
+    pub status: String,
+}
+
 // --- Reads ---
 
 /// Load request context for approve/reject/dispatch/claim.
 pub fn get_request_context(conn: &Connection, id: &str) -> Result<RequestContext, rusqlite::Error> {
     conn.query_row(
-        "SELECT created_by, status, operation, environment, database_name, detail, workflow_id, workflow_snapshot_json, resolved_at FROM requests WHERE id = ?1",
+        "SELECT created_by, status, operation, environment, database_name, detail, metadata_json, idempotency_key, workflow_id, workflow_snapshot_json, resolved_at FROM requests WHERE id = ?1",
         rusqlite::params![id],
         |row| Ok(RequestContext {
             created_by: row.get(0)?,
@@ -81,11 +90,29 @@ pub fn get_request_context(conn: &Connection, id: &str) -> Result<RequestContext
             environment: row.get(3)?,
             database_name: row.get(4)?,
             detail: row.get(5)?,
-            workflow_id: row.get(6)?,
-            workflow_snapshot_json: row.get(7)?,
-            resolved_at: row.get(8)?,
+            metadata_json: row.get(6)?,
+            idempotency_key: row.get(7)?,
+            workflow_id: row.get(8)?,
+            workflow_snapshot_json: row.get(9)?,
+            resolved_at: row.get(10)?,
         }),
     )
+}
+
+pub fn find_by_idempotency_key(
+    conn: &Connection,
+    idempotency_key: &str,
+) -> Result<Option<ExistingRequest>, rusqlite::Error> {
+    let mut stmt =
+        conn.prepare("SELECT id, status FROM requests WHERE idempotency_key = ?1 LIMIT 1")?;
+    let mut rows = stmt.query(rusqlite::params![idempotency_key])?;
+    match rows.next()? {
+        Some(row) => Ok(Some(ExistingRequest {
+            id: row.get(0)?,
+            status: row.get(1)?,
+        })),
+        None => Ok(None),
+    }
 }
 
 /// Get approvals for a request (step_index, actor_id, actor_role).
@@ -123,8 +150,8 @@ pub fn insert_request(
     now: &str,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "INSERT INTO requests (id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, emergency, reason, workflow_id, workflow_snapshot_json, share_with_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
-        rusqlite::params![req.id, req.created_by, req.operation, req.environment, req.database_name, req.detail, req.status, now, now, req.emergency, req.reason, req.workflow_id, req.workflow_snapshot_json, req.share_with_json],
+        "INSERT INTO requests (id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, emergency, reason, metadata_json, idempotency_key, workflow_id, workflow_snapshot_json, share_with_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        rusqlite::params![req.id, req.created_by, req.operation, req.environment, req.database_name, req.detail, req.status, now, now, req.emergency, req.reason, req.metadata_json, req.idempotency_key, req.workflow_id, req.workflow_snapshot_json, req.share_with_json],
     )?;
     Ok(())
 }

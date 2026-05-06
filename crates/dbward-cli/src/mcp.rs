@@ -187,6 +187,8 @@ async fn submit_and_wait(
             detail,
             emergency: false,
             reason: None,
+            metadata: None,
+            idempotency_key: None,
             share_with: None,
         })
         .await

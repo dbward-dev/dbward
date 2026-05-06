@@ -8,7 +8,7 @@ pub(crate) mod token_repo;
 use rusqlite::Connection;
 
 /// Latest schema version. Increment when adding migrations.
-pub const LATEST_SCHEMA_VERSION: i64 = 2;
+pub const LATEST_SCHEMA_VERSION: i64 = 3;
 
 /// Initialize SQLite database with WAL mode and versioned schema.
 pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -82,6 +82,26 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Erro
             }
             Ok(())
         }
+        3 => {
+            if !has_column(conn, "requests", "idempotency_key")? {
+                conn.execute_batch(
+                    "ALTER TABLE requests
+                     ADD COLUMN idempotency_key TEXT",
+                )?;
+            }
+            if !has_column(conn, "requests", "metadata_json")? {
+                conn.execute_batch(
+                    "ALTER TABLE requests
+                     ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'",
+                )?;
+            }
+            conn.execute_batch(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_idempotency_key
+                 ON requests(idempotency_key)
+                 WHERE idempotency_key IS NOT NULL",
+            )?;
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -118,6 +138,8 @@ fn create_schema_v1(conn: &Connection) -> Result<(), rusqlite::Error> {
             detail TEXT NOT NULL,
             emergency INTEGER NOT NULL DEFAULT 0,
             reason TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            idempotency_key TEXT,
             share_with_json TEXT,
             workflow_id TEXT,
             workflow_snapshot_json TEXT,
@@ -182,6 +204,9 @@ fn create_schema_v1(conn: &Connection) -> Result<(), rusqlite::Error> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status, created_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_idempotency_key
+            ON requests(idempotency_key)
+            WHERE idempotency_key IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_approvals_request ON approvals(request_id);
         CREATE INDEX IF NOT EXISTS idx_approvals_step ON approvals(request_id, step_index, actor_id);
         CREATE INDEX IF NOT EXISTS idx_agent_exec_request ON agent_executions(request_id);
@@ -430,6 +455,93 @@ mod tests {
         init(&conn).unwrap();
 
         assert!(has_column(&conn, "workflows", "allow_same_approver_across_steps").unwrap());
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, LATEST_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn init_migrates_request_metadata_and_idempotency() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE requests (
+                id TEXT PRIMARY KEY,
+                created_by TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                database_name TEXT NOT NULL DEFAULT 'default',
+                status TEXT NOT NULL DEFAULT 'pending',
+                detail TEXT NOT NULL,
+                emergency INTEGER NOT NULL DEFAULT 0,
+                reason TEXT,
+                share_with_json TEXT,
+                workflow_id TEXT,
+                workflow_snapshot_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                resolved_at TEXT,
+                cancelled_by TEXT,
+                cancelled_at TEXT,
+                cancel_reason TEXT
+            );
+            CREATE TABLE agent_executions (
+                id TEXT PRIMARY KEY,
+                request_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'claimed',
+                execution_token_json TEXT NOT NULL,
+                lease_expires_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE workflows (
+                id TEXT PRIMARY KEY,
+                database_name TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                operations_json TEXT NOT NULL DEFAULT '[]',
+                steps_json TEXT NOT NULL DEFAULT '[]',
+                require_reason INTEGER NOT NULL DEFAULT 0,
+                allow_same_approver_across_steps INTEGER NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'api',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(database_name, environment, operations_json)
+            );",
+        )
+        .unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+
+        init(&conn).unwrap();
+
+        assert!(has_column(&conn, "requests", "metadata_json").unwrap());
+        assert!(has_column(&conn, "requests", "idempotency_key").unwrap());
+
+        conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at, metadata_json, idempotency_key)
+             VALUES ('req-1', 'alice', 'execute_query', 'development', 'app', 'pending', 'SELECT 1', 't1', 't1', '{\"ticket\":\"ABC-1\"}', 'idem-1')",
+            [],
+        )
+        .unwrap();
+
+        let metadata_json: String = conn
+            .query_row(
+                "SELECT metadata_json FROM requests WHERE id = 'req-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(metadata_json, "{\"ticket\":\"ABC-1\"}");
+
+        let duplicate = conn.execute(
+            "INSERT INTO requests (id, created_by, operation, environment, database_name, status, detail, created_at, updated_at, metadata_json, idempotency_key)
+             VALUES ('req-2', 'alice', 'execute_query', 'development', 'app', 'pending', 'SELECT 1', 't1', 't1', '{}', 'idem-1')",
+            [],
+        );
+        assert!(duplicate.is_err());
 
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))

@@ -509,6 +509,10 @@ pub(crate) async fn create_request(
     let share_with_json: Option<String> = body["share_with"]
         .as_array()
         .map(|arr| serde_json::to_string(arr).unwrap_or_default());
+    let metadata_json = body.get("metadata")
+        .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".into()))
+        .unwrap_or_else(|| "{}".into());
+    let idempotency_key = body["idempotency_key"].as_str().map(|s| s.to_string());
 
     authz::authorize(
         &user,
@@ -564,6 +568,22 @@ pub(crate) async fn create_request(
 
     let needs_approval = !emergency && decision.needs_approval;
 
+    // Idempotency check
+    if let Some(ref key) = idempotency_key {
+        if let Ok(Some(existing)) =
+            crate::db::request_repo::find_by_idempotency_key(&conn, key)
+        {
+            return Ok((
+                StatusCode::OK,
+                axum::Json(serde_json::json!({
+                    "id": existing.id,
+                    "status": existing.status,
+                    "idempotent": true,
+                })),
+            ));
+        }
+    }
+
     let status = if emergency {
         "break_glass"
     } else if needs_approval {
@@ -587,6 +607,8 @@ pub(crate) async fn create_request(
             status,
             emergency,
             reason: reason.as_deref(),
+            metadata_json: &metadata_json,
+            idempotency_key: idempotency_key.as_deref(),
             workflow_id: decision.workflow_id.as_deref(),
             workflow_snapshot_json: decision.workflow_snapshot_json.as_deref(),
             share_with_json: share_with_json.as_deref(),

@@ -80,6 +80,8 @@ pub struct CreateRequest<'a> {
     pub detail: &'a str,
     pub emergency: bool,
     pub reason: Option<&'a str>,
+    pub metadata: Option<&'a serde_json::Value>,
+    pub idempotency_key: Option<&'a str>,
     pub share_with: Option<&'a [String]>,
 }
 
@@ -89,7 +91,7 @@ impl ServerClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             api_token: api_token.to_string(),
             client: Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
+                .timeout(std::time::Duration::from_secs(600))
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .build()
                 .expect("failed to build HTTP client"),
@@ -139,6 +141,12 @@ impl ServerClient {
         }
         if let Some(r) = req.reason {
             body["reason"] = serde_json::json!(r);
+        }
+        if let Some(metadata) = req.metadata {
+            body["metadata"] = metadata.clone();
+        }
+        if let Some(idempotency_key) = req.idempotency_key {
+            body["idempotency_key"] = serde_json::json!(idempotency_key);
         }
         if let Some(sw) = req.share_with {
             body["share_with"] = serde_json::json!(sw);
