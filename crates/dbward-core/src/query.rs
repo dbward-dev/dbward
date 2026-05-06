@@ -45,6 +45,8 @@ pub fn classify_query(sql: &str) -> Result<QueryType, Error> {
             }
         } else if upper.starts_with("SELECT") {
             QueryType::Select
+        } else if upper.starts_with("EXPLAIN") {
+            QueryType::Select
         } else if upper.starts_with("INSERT") {
             QueryType::Insert
         } else if upper.starts_with("UPDATE") {
