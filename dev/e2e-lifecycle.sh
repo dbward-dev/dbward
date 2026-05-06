@@ -28,8 +28,10 @@ REQ_STATUS=$(echo "$REQ" | json_field status)
 
 if [ "$REQ_STATUS" = "pending" ] && [ -n "$REQ_ID" ]; then
   pass "Create pending request: ${REQ_ID:0:8}"
+  show_output "status=$REQ_STATUS (requires admin approval)"
 else
   fail "Create pending" "status=$REQ_STATUS"
+  show_output "Error: $(json_error)"
 fi
 
 # Approve

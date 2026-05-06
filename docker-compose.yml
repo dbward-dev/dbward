@@ -150,6 +150,42 @@ services:
     ports:
       - "9999:9999"
 
+  # MySQL for multi-DB E2E testing
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: dbward
+      MYSQL_DATABASE: dbward_dev
+      MYSQL_USER: dbward
+      MYSQL_PASSWORD: dbward
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-pdbward"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    profiles:
+      - mysql
+
+  dbward-agent-mysql:
+    build: *dbward-build
+    entrypoint: ["/bin/sh", "/scripts/agent-entrypoint.sh"]
+    volumes:
+      - ./:/workspace
+      - dev-tokens:/tokens:ro
+      - ./dev/dbward-agent-mysql.toml:/config/dbward-agent.toml:ro
+      - ./dev/agent-entrypoint.sh:/scripts/agent-entrypoint.sh:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      dbward-server:
+        condition: service_healthy
+      dev-init:
+        condition: service_completed_successfully
+    profiles:
+      - mysql
+
   # OIDC CLI users (use with: docker compose run --rm alice-oidc login --device)
   alice-oidc:
     build: *dbward-build
