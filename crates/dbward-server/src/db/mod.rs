@@ -47,6 +47,30 @@ pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+/// Initialize schema only (without recovering in-flight requests).
+/// Use this for CLI tools that open the DB file directly (e.g. token create).
+pub fn init_schema_only(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let current_version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+
+    if current_version == 0 {
+        if has_user_tables(conn)? {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        create_schema_v1(conn)?;
+        for v in 2..=LATEST_SCHEMA_VERSION {
+            apply_migration(conn, v)?;
+        }
+        conn.pragma_update(None, "user_version", LATEST_SCHEMA_VERSION)?;
+    } else if current_version < LATEST_SCHEMA_VERSION {
+        for v in (current_version + 1)..=LATEST_SCHEMA_VERSION {
+            apply_migration(conn, v)?;
+        }
+        conn.pragma_update(None, "user_version", LATEST_SCHEMA_VERSION)?;
+    }
+
+    Ok(())
+}
+
 fn has_user_tables(conn: &Connection) -> Result<bool, rusqlite::Error> {
     conn.query_row(
         "SELECT EXISTS(

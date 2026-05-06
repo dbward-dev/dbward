@@ -1461,7 +1461,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
             } => {
                 let conn = rusqlite::Connection::open(data)
                     .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
-                dbward_server::db::init(&conn)
+                dbward_server::db::init_schema_only(&conn)
                     .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
                 let data_path = std::path::Path::new(data)
                     .parent()
