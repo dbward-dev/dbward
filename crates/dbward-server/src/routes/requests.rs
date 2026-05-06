@@ -83,10 +83,10 @@ fn validate_metadata(
     };
 
     if !metadata.is_object() {
-        return Err(crate::api_error::ApiError::bad_request(
-            "metadata must be a JSON object",
-        )
-        .with_code("invalid_metadata"));
+        return Err(
+            crate::api_error::ApiError::bad_request("metadata must be a JSON object")
+                .with_code("invalid_metadata"),
+        );
     }
 
     let metadata_json = serde_json::to_string(metadata)
@@ -117,10 +117,10 @@ fn validate_idempotency_key(
         .trim();
 
     if key.is_empty() {
-        return Err(crate::api_error::ApiError::bad_request(
-            "idempotency_key must not be empty",
-        )
-        .with_code("invalid_idempotency_key"));
+        return Err(
+            crate::api_error::ApiError::bad_request("idempotency_key must not be empty")
+                .with_code("invalid_idempotency_key"),
+        );
     }
     if key.len() > MAX_IDEMPOTENCY_KEY_BYTES {
         return Err(crate::api_error::ApiError::bad_request(format!(
@@ -641,9 +641,7 @@ pub(crate) async fn create_request(
 
     // Idempotency check
     if let Some(ref key) = idempotency_key {
-        if let Ok(Some(existing)) =
-            crate::db::request_repo::find_by_idempotency_key(&conn, key)
-        {
+        if let Ok(Some(existing)) = crate::db::request_repo::find_by_idempotency_key(&conn, key) {
             return Ok((
                 StatusCode::OK,
                 axum::Json(serde_json::json!({
@@ -685,8 +683,7 @@ pub(crate) async fn create_request(
             share_with_json: share_with_json.as_deref(),
         },
         &now,
-    )
-    {
+    ) {
         Ok(()) => {}
         Err(err) if is_unique_idempotency_key_violation(&err) => {
             if let Some(ref key) = idempotency_key
@@ -702,10 +699,10 @@ pub(crate) async fn create_request(
                     })),
                 ));
             }
-            return Err(crate::api_error::ApiError::conflict(
-                "idempotency key already exists",
-            )
-            .with_code("duplicate_idempotency_key"));
+            return Err(
+                crate::api_error::ApiError::conflict("idempotency key already exists")
+                    .with_code("duplicate_idempotency_key"),
+            );
         }
         Err(err) => return Err(crate::api_error::ApiError::internal(err.to_string())),
     }

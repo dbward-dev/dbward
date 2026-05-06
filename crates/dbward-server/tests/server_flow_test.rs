@@ -3413,7 +3413,10 @@ async fn get_request_includes_metadata_and_idempotency_key() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["metadata"], json!({"ticket": "ABC-123", "repo": "dbward"}));
+    assert_eq!(
+        body["metadata"],
+        json!({"ticket": "ABC-123", "repo": "dbward"})
+    );
     assert_eq!(body["idempotency_key"], "idem-123");
 }
 

@@ -4,6 +4,7 @@ use reqwest::Client;
 use serde_json::Value;
 
 const MAX_ERROR_BODY_PREVIEW: usize = 200;
+const REQUEST_STATUS_WAIT_SECS: u64 = 30;
 
 /// Structured HTTP error from the server.
 #[derive(Debug)]
@@ -287,46 +288,122 @@ impl ServerClient {
     pub async fn wait_for_result(&self, request_id: &str) -> Result<Value, Error> {
         eprintln!("Waiting for agent to execute...");
 
-        tokio::select! {
-            result = self.stream_result(request_id) => {
-                match result {
-                    Ok(v) => Ok(v),
-                    Err(_) => {
-                        // Channel may have been consumed (race). Check request status.
-                        self.get_request_result_fallback(request_id).await
+        loop {
+            let result = tokio::select! {
+                result = self.stream_result(request_id) => Some(result),
+                _ = tokio::signal::ctrl_c() => None,
+            };
+
+            match result {
+                Some(Ok(v)) => return Ok(v),
+                Some(Err(_)) => {
+                    // Relay can disappear during fast auto-dispatch / claim. Follow status until terminal.
+                    if let Some(v) = self.get_request_result_fallback(request_id).await? {
+                        return Ok(v);
                     }
                 }
-            },
-            _ = tokio::signal::ctrl_c() => {
-                eprintln!("\nInterrupted. Request {request_id} is still in progress.");
-                eprintln!("Run: dbward request resume {request_id}");
-                Err(Error::Server("interrupted".into()))
+                None => {
+                    eprintln!("\nInterrupted. Request {request_id} is still in progress.");
+                    eprintln!("Run: dbward request resume {request_id}");
+                    return Err(Error::Server("interrupted".into()));
+                }
             }
         }
     }
 
-    async fn get_request_result_fallback(&self, request_id: &str) -> Result<Value, Error> {
+    pub async fn get_terminal_result(&self, request_id: &str) -> Result<Value, Error> {
         let req = self.get_request(request_id).await?;
-        let status = req["status"].as_str().unwrap_or("");
-        match status {
-            "executed" | "failed" => {
-                // Already done, return result from request
-                if let Some(result) = req.get("execution_result") {
-                    Ok(serde_json::json!({"success": true, "result": result}))
-                } else if let Some(err) = req.get("execution_error") {
-                    Ok(serde_json::json!({"success": false, "error": err}))
-                } else {
-                    Ok(req)
+        self.resolve_terminal_result(request_id, &req).await
+    }
+
+    async fn get_request_result_fallback(&self, request_id: &str) -> Result<Option<Value>, Error> {
+        let mut req = self.get_request(request_id).await?;
+
+        loop {
+            let status = req["status"].as_str().unwrap_or("");
+            match status {
+                "executed" | "failed" => {
+                    return self
+                        .resolve_terminal_result(request_id, &req)
+                        .await
+                        .map(Some);
+                }
+                "dispatched" | "running" => {
+                    req = self
+                        .get_request_with_wait(request_id, REQUEST_STATUS_WAIT_SECS)
+                        .await?;
+                }
+                "approved" | "auto_approved" | "break_glass" => {
+                    return Err(Error::Server(format!(
+                        "request {request_id} is approved but not dispatched. Try: dbward request resume {request_id}"
+                    )));
+                }
+                "pending" => {
+                    return Err(Error::Server(format!(
+                        "Request {request_id} requires approval. Try: dbward request resume {request_id}"
+                    )));
+                }
+                _ => {
+                    return Err(Error::Server(format!(
+                        "unexpected status: {status}. Try: dbward request resume {request_id}"
+                    )));
                 }
             }
-            "dispatched" | "running" => {
-                // Still in progress, try stream again with short delay
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                self.stream_result(request_id).await
-            }
+        }
+    }
+
+    async fn resolve_terminal_result(&self, request_id: &str, req: &Value) -> Result<Value, Error> {
+        let status = req["status"].as_str().unwrap_or("");
+        if let Some(payload) = Self::terminal_payload_from_request(req) {
+            return Ok(payload);
+        }
+
+        match status {
+            "executed" | "failed" => match self.get_result_content(request_id).await {
+                Ok(result) => Ok(serde_json::json!({"success": true, "result": result})),
+                Err(err) if Self::is_missing_result_content_error(&err) => {
+                    Ok(Self::synthesized_terminal_payload(status, request_id))
+                }
+                Err(err) => Err(err),
+            },
             _ => Err(Error::Server(format!(
                 "unexpected status: {status}. Try: dbward request resume {request_id}"
             ))),
+        }
+    }
+
+    fn terminal_payload_from_request(req: &Value) -> Option<Value> {
+        let status = req["status"].as_str().unwrap_or("");
+
+        if let Some(err) = req.get("execution_error") {
+            return Some(serde_json::json!({"success": false, "error": err}));
+        }
+        if let Some(result) = req.get("execution_result") {
+            return Some(serde_json::json!({
+                "success": status != "failed",
+                "result": result
+            }));
+        }
+
+        None
+    }
+
+    fn is_missing_result_content_error(err: &Error) -> bool {
+        match err {
+            Error::Server(msg) => msg.contains("result not stored for this request"),
+            _ => false,
+        }
+    }
+
+    fn synthesized_terminal_payload(status: &str, request_id: &str) -> Value {
+        match status {
+            "failed" => serde_json::json!({
+                "success": false,
+                "error": format!(
+                    "Request {request_id} already failed and no stored error payload is available."
+                )
+            }),
+            _ => serde_json::json!({"success": true, "result": Value::Null}),
         }
     }
 
@@ -514,5 +591,39 @@ mod tests {
             }
             other => panic!("unexpected error variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn terminal_payload_prefers_embedded_execution_error() {
+        let req = serde_json::json!({
+            "status": "failed",
+            "execution_error": "boom",
+        });
+
+        let payload = ServerClient::terminal_payload_from_request(&req).unwrap();
+
+        assert_eq!(payload["success"], false);
+        assert_eq!(payload["error"], "boom");
+    }
+
+    #[test]
+    fn synthesized_terminal_payload_marks_failed_requests_unsuccessful() {
+        let payload = ServerClient::synthesized_terminal_payload("failed", "req-123");
+
+        assert_eq!(payload["success"], false);
+        assert!(
+            payload["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("req-123")
+        );
+    }
+
+    #[test]
+    fn synthesized_terminal_payload_marks_executed_requests_successful() {
+        let payload = ServerClient::synthesized_terminal_payload("executed", "req-123");
+
+        assert_eq!(payload["success"], true);
+        assert!(payload["result"].is_null());
     }
 }

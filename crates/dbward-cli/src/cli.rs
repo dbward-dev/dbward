@@ -500,7 +500,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 .await?;
 
             match status.as_str() {
-                "dispatched" | "break_glass" => {
+                "dispatched" | "break_glass" | "running" => {
                     let resp = sc.wait_for_result(&id).await?;
                     if json_output {
                         println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -510,16 +510,17 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     save_result(&id, &resp, output.as_deref(), no_save);
                 }
                 "executed" | "failed" => {
-                    // Idempotent return: request already completed
-                    let resp = sc.get_result_content(&id).await.unwrap_or_default();
+                    let resp = sc.get_terminal_result(&id).await?;
                     if json_output {
                         println!("{}", serde_json::to_string_pretty(&resp)?);
-                    } else if !resp.is_null() {
-                        let wrapped = serde_json::json!({"success": true, "result": resp});
-                        print_execution_result(&wrapped);
                     } else {
-                        eprintln!("Request {id} already completed (idempotent).");
+                        print_execution_result(&resp);
                     }
+                    save_result(&id, &resp, output.as_deref(), no_save);
+                }
+                "approved" | "auto_approved" => {
+                    eprintln!("Request {id} is approved but not yet dispatched.");
+                    eprintln!("Run: dbward request resume {id}");
                 }
                 "pending" => {
                     eprintln!("Request {id} requires approval.");
@@ -535,7 +536,12 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         }
         Command::Migrate { ref action } => {
             let (operation, detail, metadata, idempotency_key) = match action {
-                MigrateAction::Up { count, ticket, repo, idempotency_key } => (
+                MigrateAction::Up {
+                    count,
+                    ticket,
+                    repo,
+                    idempotency_key,
+                } => (
                     "migrate_up",
                     dbward_migrate::build_migration_approval_detail(
                         &config.migrations_dir_for(&db_name),
@@ -586,7 +592,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 .await?;
 
             match status.as_str() {
-                "dispatched" | "break_glass" => {
+                "dispatched" | "break_glass" | "running" => {
                     let resp = sc.wait_for_result(&id).await?;
                     if json_output {
                         println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -598,8 +604,17 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     eprintln!("Request {id} requires approval.");
                     eprintln!("Run: dbward request resume {id}");
                 }
+                "approved" | "auto_approved" => {
+                    eprintln!("Request {id} is approved but not yet dispatched.");
+                    eprintln!("Run: dbward request resume {id}");
+                }
                 "executed" | "failed" => {
-                    eprintln!("Request {id} already completed (idempotent).");
+                    let resp = sc.get_terminal_result(&id).await?;
+                    if json_output {
+                        println!("{}", serde_json::to_string_pretty(&resp)?);
+                    } else {
+                        print_execution_result(&resp);
+                    }
                 }
                 _ => {
                     return Err(dbward_core::Error::Server(format!(
@@ -1259,10 +1274,16 @@ fn write_secure(path: &Path, content: &[u8]) -> std::io::Result<()> {
 fn build_request_metadata(ticket: Option<&str>, repo: Option<&str>) -> Option<serde_json::Value> {
     let mut metadata = serde_json::Map::new();
     if let Some(ticket) = ticket.filter(|value| !value.is_empty()) {
-        metadata.insert("ticket".to_string(), serde_json::Value::String(ticket.to_string()));
+        metadata.insert(
+            "ticket".to_string(),
+            serde_json::Value::String(ticket.to_string()),
+        );
     }
     if let Some(repo) = repo.filter(|value| !value.is_empty()) {
-        metadata.insert("repo".to_string(), serde_json::Value::String(repo.to_string()));
+        metadata.insert(
+            "repo".to_string(),
+            serde_json::Value::String(repo.to_string()),
+        );
     }
     if metadata.is_empty() {
         None

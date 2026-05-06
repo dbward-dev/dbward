@@ -413,7 +413,9 @@ pub(crate) async fn agent_result(
                 .result_channels
                 .get(&request_id)
                 .await
-                .ok_or_else(|| crate::api_error::ApiError::internal("failed to create result relay slot"))?
+                .ok_or_else(|| {
+                    crate::api_error::ApiError::internal("failed to create result relay slot")
+                })?
         }
     };
     let mut r = slot.result.lock().await;

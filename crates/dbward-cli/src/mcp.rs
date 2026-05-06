@@ -267,7 +267,7 @@ async fn get_result(
         .map_err(|e| e.to_string())?;
     let status = resp["status"].as_str().unwrap_or("unknown");
     match status {
-        "approved" | "auto_approved" | "dispatched" | "break_glass" => {
+        "approved" | "auto_approved" | "dispatched" | "break_glass" | "running" => {
             let result = client
                 .wait_for_result(request_id)
                 .await
@@ -275,9 +275,19 @@ async fn get_result(
             format_result(&result)
         }
         "executed" => {
-            Ok("Request already executed. Result was delivered at execution time.".to_string())
+            let result = client
+                .get_terminal_result(request_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            format_result(&result)
         }
-        "failed" => Err("Execution failed.".to_string()),
+        "failed" => {
+            let result = client
+                .get_terminal_result(request_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            format_result(&result)
+        }
         _ => Ok(format!(
             "Request {request_id} is not yet approved (status: {status})."
         )),

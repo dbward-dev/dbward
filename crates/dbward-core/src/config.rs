@@ -161,16 +161,13 @@ impl AgentConfig {
             .databases
             .get(name)
             .ok_or_else(|| Error::Config(format!("database '{name}' not configured in agent")))?;
-        let migrations_dir = db
-            .migrations_dir
-            .clone()
-            .unwrap_or_else(|| {
-                if self.databases.len() <= 1 {
-                    PathBuf::from("db/migrations")
-                } else {
-                    PathBuf::from("db/migrations").join(name)
-                }
-            });
+        let migrations_dir = db.migrations_dir.clone().unwrap_or_else(|| {
+            if self.databases.len() <= 1 {
+                PathBuf::from("db/migrations")
+            } else {
+                PathBuf::from("db/migrations").join(name)
+            }
+        });
         Ok(ResolvedDatabaseConfig {
             name: name.to_string(),
             url: db.url.clone(),
