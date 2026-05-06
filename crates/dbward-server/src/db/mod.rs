@@ -416,6 +416,7 @@ mod tests {
         )
         .unwrap();
 
+        // Second init should NOT change request/execution statuses (no-op recovery)
         init(&conn).unwrap();
 
         let req1: String = conn
@@ -432,18 +433,18 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        let exec1: (String, Option<String>) = conn
+        let exec1: String = conn
             .query_row(
-                "SELECT status, error_message FROM agent_executions WHERE id = 'exec-1'",
+                "SELECT status FROM agent_executions WHERE id = 'exec-1'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| row.get(0),
             )
             .unwrap();
 
-        assert_eq!(req1, "approved");
-        assert_eq!(req2, "approved");
-        assert_eq!(exec1.0, "failed");
-        assert!(exec1.1.unwrap().contains("server restarted"));
+        // States are preserved — lease reclaim handles recovery, not init
+        assert_eq!(req1, "dispatched");
+        assert_eq!(req2, "running");
+        assert_eq!(exec1, "claimed");
     }
 
     #[test]

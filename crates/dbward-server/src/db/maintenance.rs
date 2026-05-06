@@ -1,22 +1,23 @@
 use rusqlite::Connection;
 
-/// Reset dispatched/running requests back to approved on server restart.
+/// Log in-flight request counts on server restart (no state changes).
+/// Recovery is handled by periodic lease reclaim (reclaim_expired_leases).
 pub(super) fn recover_in_flight_requests(conn: &Connection) -> Result<(), rusqlite::Error> {
-    let now = chrono::Utc::now().to_rfc3339();
-    conn.execute_batch("BEGIN")?;
-    conn.execute(
-        "UPDATE requests
-         SET status = 'approved', updated_at = ?1
-         WHERE status IN ('dispatched', 'running')",
-        rusqlite::params![now],
+    let dispatched: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM requests WHERE status = 'dispatched'",
+        [],
+        |row| row.get(0),
     )?;
-    conn.execute(
-        "UPDATE agent_executions
-         SET status = 'failed', finished_at = ?1, error_message = COALESCE(error_message, 'server restarted before result relay completed')
-         WHERE status = 'claimed'",
-        rusqlite::params![now],
+    let running: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM requests WHERE status = 'running'",
+        [],
+        |row| row.get(0),
     )?;
-    conn.execute_batch("COMMIT")?;
+    if dispatched > 0 || running > 0 {
+        eprintln!(
+            "in-flight requests on startup: {dispatched} dispatched, {running} running (will be handled by lease reclaim)"
+        );
+    }
     Ok(())
 }
 
