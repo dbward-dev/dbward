@@ -1,13 +1,14 @@
-pub mod api_error;
+pub(crate) mod api_error;
 pub mod auth;
-pub mod authz;
+pub(crate) mod authz;
+pub(crate) mod constants;
 pub mod db;
 pub mod oidc;
-pub mod policy;
+pub(crate) mod policy;
 pub mod result_storage;
 pub mod routes;
 pub mod server_config;
-pub mod services;
+pub(crate) mod services;
 mod state;
 pub mod token;
 pub mod webhook;
@@ -17,10 +18,16 @@ pub use state::{AppState, RequestNotifier, ResultChannels};
 use std::net::SocketAddr;
 
 pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core::Error> {
+    authz::warmup().await.map_err(|(_, message)| {
+        dbward_core::Error::Server(format!("authorization init failed: {message}"))
+    })?;
+
     // Background task: reclaim expired agent leases every 60s
     let sqlite = state.sqlite.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            constants::LEASE_RECLAIM_INTERVAL_SECS,
+        ));
         loop {
             interval.tick().await;
             let conn = sqlite.lock().await;
@@ -36,7 +43,9 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
     let sqlite2 = state.sqlite.clone();
     let retention = state.retention.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            constants::RECORD_PURGE_INTERVAL_SECS,
+        ));
         loop {
             interval.tick().await;
             let conn = sqlite2.lock().await;
@@ -108,6 +117,9 @@ async fn shutdown_signal(state: AppState) {
     state.result_channels.notify_all().await;
 
     // Give time for agent result submits to arrive
-    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(
+        constants::SHUTDOWN_DRAIN_SECS,
+    ))
+    .await;
     eprintln!("Drain complete, shutting down listener...");
 }

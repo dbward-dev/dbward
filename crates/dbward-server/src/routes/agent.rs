@@ -380,8 +380,12 @@ pub(crate) async fn agent_result(
                     let conn = state.sqlite.lock().await;
                     let now = chrono::Utc::now().to_rfc3339();
                     if let Err(err) = conn.execute(
-                        "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, 'unknown', '', 0, '', 30, 'storage_failed', ?2, ?2)",
-                        rusqlite::params![request_id, now],
+                        "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, 'unknown', '', 0, '', ?3, 'storage_failed', ?2, ?2)",
+                        rusqlite::params![
+                            request_id,
+                            now,
+                            crate::constants::RESULT_STORAGE_FAILURE_RETENTION_DAYS,
+                        ],
                     ) {
                         eprintln!("failed to persist storage failure for {request_id}: {err}");
                     }

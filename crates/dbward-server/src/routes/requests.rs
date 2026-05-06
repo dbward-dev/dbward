@@ -1172,17 +1172,20 @@ pub(crate) async fn stream_result(
     }
 
     // Wait up to 5 minutes for agent to deliver result
-    let wait = tokio::time::timeout(std::time::Duration::from_secs(300), async {
-        loop {
-            slot.notify.notified().await;
-            if state.draining.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(());
+    let wait = tokio::time::timeout(
+        std::time::Duration::from_secs(crate::constants::RESULT_WAIT_TIMEOUT_SECS),
+        async {
+            loop {
+                slot.notify.notified().await;
+                if state.draining.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err(());
+                }
+                if slot.result.lock().await.is_some() {
+                    return Ok(());
+                }
             }
-            if slot.result.lock().await.is_some() {
-                return Ok(());
-            }
-        }
-    })
+        },
+    )
     .await;
     if matches!(wait, Ok(Err(()))) {
         return Err(crate::api_error::ApiError::new(

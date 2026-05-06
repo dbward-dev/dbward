@@ -57,7 +57,7 @@ p, user, admin, Global, DeletePolicy
 p, user, admin, PolicyObject, DeletePolicy
 "#;
 
-static ENFORCER: OnceCell<Enforcer> = OnceCell::const_new();
+static ENFORCER: OnceCell<Result<Enforcer, (StatusCode, String)>> = OnceCell::const_new();
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Action {
@@ -158,7 +158,7 @@ pub async fn authorize(
     action: Action,
     resource: Resource,
 ) -> std::result::Result<(), (StatusCode, String)> {
-    let _ = enforcer().await;
+    enforcer().await?;
     authorize_sync(principal, action, resource)
 }
 
@@ -170,9 +170,12 @@ pub fn authorize_sync(
     let principal = Principal::from(principal);
     let principal_json = serde_json::to_string(&principal).map_err(internal_error)?;
     let resource_json = serde_json::to_string(&resource).map_err(internal_error)?;
-    let allowed = ENFORCER
+    let enforcer = ENFORCER
         .get()
-        .expect("casbin enforcer must be initialized before sync authorization")
+        .ok_or_else(|| internal_error("casbin enforcer is not initialized"))?
+        .as_ref()
+        .map_err(Clone::clone)?;
+    let allowed = enforcer
         .enforce((principal_json, resource_json, action.as_str()))
         .map_err(internal_error)?;
 
@@ -184,24 +187,26 @@ pub fn authorize_sync(
 }
 
 pub async fn warmup() -> std::result::Result<(), (StatusCode, String)> {
-    let _ = enforcer().await;
+    enforcer().await?;
     Ok(())
 }
 
-async fn enforcer() -> &'static Enforcer {
+async fn enforcer() -> std::result::Result<&'static Enforcer, (StatusCode, String)> {
     ENFORCER
         .get_or_init(|| async {
             let model = DefaultModel::from_str(MODEL)
                 .await
-                .expect("casbin model must compile");
+                .map_err(internal_error)?;
             let adapter = StringAdapter::new(POLICY);
             let mut enforcer = Enforcer::new(model, adapter)
                 .await
-                .expect("casbin enforcer must initialize");
+                .map_err(internal_error)?;
             enforcer.add_function("authz_match", OperatorFunction::Arg6(authz_match));
-            enforcer
+            Ok(enforcer)
         })
         .await
+        .as_ref()
+        .map_err(Clone::clone)
 }
 
 fn authz_match(

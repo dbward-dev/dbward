@@ -20,25 +20,39 @@ pub fn evaluate_approval_policy(
     operation: &str,
     role: &str,
 ) -> ApprovalDecision {
-    if let Some((wf_id, steps, require_reason)) =
-        evaluate_workflow(conn, database, environment, operation)
-    {
-        let needs_approval = !steps.is_empty();
-        let snapshot = serde_json::to_string(&steps).unwrap_or_else(|_| "[]".into());
-        ApprovalDecision {
-            needs_approval,
-            workflow_id: Some(wf_id),
-            workflow_snapshot_json: Some(snapshot),
-            require_reason,
+    match evaluate_workflow(conn, database, environment, operation) {
+        Ok(Some((wf_id, steps, require_reason))) => {
+            let needs_approval = !steps.is_empty();
+            let snapshot = serde_json::to_string(&steps).unwrap_or_else(|_| "[]".into());
+            ApprovalDecision {
+                needs_approval,
+                workflow_id: Some(wf_id),
+                workflow_snapshot_json: Some(snapshot),
+                require_reason,
+            }
         }
-    } else {
-        let action = policy.evaluate(environment, operation, role);
-        ApprovalDecision {
-            needs_approval: action == "require_approval",
-            workflow_id: None,
-            workflow_snapshot_json: None,
-            require_reason: false,
+        Ok(None) => fallback_approval_decision(policy, environment, operation, role),
+        Err(err) => {
+            eprintln!(
+                "warning: failed to evaluate workflow policy, falling back to static policy: {err}"
+            );
+            fallback_approval_decision(policy, environment, operation, role)
         }
+    }
+}
+
+fn fallback_approval_decision(
+    policy: &crate::policy::PolicyConfig,
+    environment: &str,
+    operation: &str,
+    role: &str,
+) -> ApprovalDecision {
+    let action = policy.evaluate(environment, operation, role);
+    ApprovalDecision {
+        needs_approval: action == "require_approval",
+        workflow_id: None,
+        workflow_snapshot_json: None,
+        require_reason: false,
     }
 }
 
@@ -48,7 +62,7 @@ pub fn evaluate_workflow(
     database: &str,
     environment: &str,
     operation: &str,
-) -> Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> {
+) -> Result<Option<(String, Vec<crate::server_config::WorkflowStep>, bool)>, rusqlite::Error> {
     let candidates = [
         (database, environment),
         ("*", environment),
@@ -58,15 +72,11 @@ pub fn evaluate_workflow(
 
     for (db_name, env_name) in candidates {
         let mut stmt = conn
-            .prepare("SELECT id, operations_json, steps_json, require_reason FROM workflows WHERE database_name = ?1 AND environment = ?2 ORDER BY id ASC")
-            .ok()?;
-        let rows: Vec<(String, String, String, bool)> = stmt
-            .query_map(rusqlite::params![db_name, env_name], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })
-            .ok()?
-            .filter_map(|r| r.ok())
-            .collect();
+            .prepare("SELECT id, operations_json, steps_json, require_reason FROM workflows WHERE database_name = ?1 AND environment = ?2 ORDER BY id ASC")?;
+        let rows = stmt.query_map(rusqlite::params![db_name, env_name], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?;
+        let rows: Vec<(String, String, String, bool)> = rows.collect::<Result<Vec<_>, _>>()?;
 
         let mut exact_match: Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> = None;
         let mut catchall_match: Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> =
@@ -86,11 +96,11 @@ pub fn evaluate_workflow(
         }
 
         if let Some(m) = exact_match.or(catchall_match) {
-            return Some(m);
+            return Ok(Some(m));
         }
     }
 
-    None
+    Ok(None)
 }
 
 // --- TOML sync ---
@@ -344,10 +354,20 @@ mod tests {
         ).unwrap();
 
         let (workflow_id, steps, require_reason) =
-            evaluate_workflow(&conn, "app", "production", "execute_query").unwrap();
+            evaluate_workflow(&conn, "app", "production", "execute_query")
+                .unwrap()
+                .unwrap();
         assert_eq!(workflow_id, "app:production:*");
         assert!(steps.is_empty());
         assert!(!require_reason);
+    }
+
+    #[test]
+    fn evaluate_workflow_propagates_db_errors() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        let err = evaluate_workflow(&conn, "app", "production", "execute_query").unwrap_err();
+        assert!(matches!(err, rusqlite::Error::SqliteFailure(_, _)));
     }
 
     #[test]

@@ -94,7 +94,9 @@ impl Engine {
             sql,
         );
         entry.success = true;
-        let _ = self.audit.log(&entry);
+        if let Err(err) = self.audit.log(&entry) {
+            eprintln!("warning: failed to write audit log: {err}");
+        }
 
         Ok(result)
     }

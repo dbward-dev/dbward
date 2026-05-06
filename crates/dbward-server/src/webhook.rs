@@ -58,7 +58,9 @@ pub struct WebhookDispatcher {
 impl WebhookDispatcher {
     pub fn new(hooks: Vec<WebhookConfig>) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(
+                crate::constants::WEBHOOK_HTTP_TIMEOUT_SECS,
+            ))
             .build()
             .unwrap_or_default();
         Self { hooks, client }
@@ -104,7 +106,7 @@ async fn send_with_retry(
 ) -> Result<(), ()> {
     let (body, content_type) = format_payload(hook, event);
 
-    for attempt in 0..3u32 {
+    for attempt in 0..crate::constants::WEBHOOK_MAX_RETRIES {
         if attempt > 0 {
             tokio::time::sleep(std::time::Duration::from_secs(1 << (attempt * 2))).await;
         }
@@ -138,7 +140,11 @@ async fn send_with_retry(
             }
         }
     }
-    eprintln!("webhook {} failed after 3 attempts", hook.url);
+    eprintln!(
+        "webhook {} failed after {} attempts",
+        hook.url,
+        crate::constants::WEBHOOK_MAX_RETRIES
+    );
     Err(())
 }
 

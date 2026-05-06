@@ -1,0 +1,10 @@
+pub(crate) const LEASE_RECLAIM_INTERVAL_SECS: u64 = 60;
+pub(crate) const RECORD_PURGE_INTERVAL_SECS: u64 = 3600;
+pub(crate) const SHUTDOWN_DRAIN_SECS: u64 = 20;
+pub(crate) const RESULT_WAIT_TIMEOUT_SECS: u64 = 300;
+pub(crate) const RESULT_STORAGE_FAILURE_RETENTION_DAYS: u32 = 30;
+pub(crate) const WEBHOOK_HTTP_TIMEOUT_SECS: u64 = 5;
+pub(crate) const WEBHOOK_MAX_RETRIES: u32 = 3;
+pub(crate) const OIDC_HTTP_TIMEOUT_SECS: u64 = 10;
+pub(crate) const OIDC_JWKS_CACHE_TTL_SECS: u64 = 3600;
+pub(crate) const OIDC_VALIDATION_LEEWAY_SECS: u64 = 30;

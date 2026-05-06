@@ -62,7 +62,9 @@ impl OidcVerifier {
             jwks: RwLock::new(None),
             jwks_uri: RwLock::new(None),
             client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(
+                    crate::constants::OIDC_HTTP_TIMEOUT_SECS,
+                ))
                 .build()
                 .unwrap_or_default(),
         }
@@ -80,7 +82,7 @@ impl OidcVerifier {
         let mut validation = Validation::new(alg);
         validation.set_audience(&[&self.config.client_id]);
         validation.set_issuer(&[&self.config.issuer]);
-        validation.leeway = 30;
+        validation.leeway = crate::constants::OIDC_VALIDATION_LEEWAY_SECS;
 
         let claims = decode::<Claims>(token, &key, &validation)
             .map_err(|e| format!("JWT verification failed: {e}"))?
@@ -145,7 +147,8 @@ impl OidcVerifier {
         {
             let cache = self.jwks.read().await;
             if let Some(ref cached) = *cache
-                && cached.fetched_at.elapsed() < Duration::from_secs(3600)
+                && cached.fetched_at.elapsed()
+                    < Duration::from_secs(crate::constants::OIDC_JWKS_CACHE_TTL_SECS)
                 && let Some(key) = find_key(&cached.keys, kid)
             {
                 return Ok(key);
