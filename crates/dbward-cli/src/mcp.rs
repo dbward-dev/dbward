@@ -205,6 +205,119 @@ async fn handle_tools_call(
             let req_id = args["request_id"].as_str().unwrap_or("");
             get_result(client, req_id).await
         }
+        "dbward_list_pending" => {
+            client.get_json("/api/requests?status=pending&limit=20").await
+                .map(|v| serde_json::to_string_pretty(&v["requests"]).unwrap_or_default())
+                .map_err(|e| e.to_string())
+        }
+        "dbward_who_can_approve" => {
+            let req_id = args["request_id"].as_str().unwrap_or("");
+            client.get_request(req_id).await
+                .map(|v| {
+                    let snapshot = &v["workflow_snapshot"];
+                    if snapshot.is_null() {
+                        "No workflow assigned (auto-approved)".to_string()
+                    } else {
+                        format!("Approval path:\n{}", serde_json::to_string_pretty(snapshot).unwrap_or_default())
+                    }
+                })
+                .map_err(|e| e.to_string())
+        }
+        "dbward_find_similar_requests" => {
+            let sql = args["sql"].as_str().unwrap_or("");
+            let op = args["operation"].as_str().unwrap_or("execute_query");
+            let limit = args["limit"].as_u64().unwrap_or(5);
+            client.get_json(&format!("/api/audit/events?event_category=execution&event_type=execution_completed&limit={limit}")).await
+                .map(|v| {
+                    let events = v["audit_events"].as_array();
+                    match events {
+                        Some(arr) if !arr.is_empty() => {
+                            let mut out = format!("Recent {} executions:\n", op);
+                            for e in arr {
+                                out.push_str(&format!("  {} | {} | {}\n",
+                                    e["created_at"].as_str().unwrap_or("?"),
+                                    e["actor_id"].as_str().unwrap_or("?"),
+                                    e["detail_fingerprint"].as_str().unwrap_or(e["operation"].as_str().unwrap_or("?"))
+                                ));
+                            }
+                            out
+                        }
+                        _ => format!("No similar requests found for: {sql}")
+                    }
+                })
+                .map_err(|e| e.to_string())
+        }
+        "dbward_preview_impact" => {
+            let sql = args["sql"].as_str().unwrap_or("");
+            let db = args["database"].as_str().unwrap_or(db_name);
+            let explain_sql = format!("EXPLAIN {sql}");
+            submit_and_wait(client, "execute_query", env, db, &explain_sql, None).await
+        }
+        "dbward_explain_policy_failure" => {
+            let req_id = args["request_id"].as_str().unwrap_or("");
+            if req_id.is_empty() {
+                let op = args["operation"].as_str().unwrap_or("execute_query");
+                let env_arg = args["environment"].as_str().unwrap_or(env);
+                let db = args["database"].as_str().unwrap_or(db_name);
+                Ok(format!(
+                    "To execute '{op}' on {db} ({env_arg}):\n\
+                     Check if a workflow exists: [[workflows]] with database=\"{db}\" or \"*\", environment=\"{env_arg}\" or \"*\"\n\
+                     If no workflow matches → auto-approved.\n\
+                     If workflow has steps → approval required from specified roles/groups.\n\
+                     Use 'dbward_who_can_approve' with a request_id for specific approval path."
+                ))
+            } else {
+                client.get_request(req_id).await
+                    .map(|v| {
+                        let status = v["status"].as_str().unwrap_or("unknown");
+                        let workflow = &v["workflow_snapshot"];
+                        format!(
+                            "Request {req_id} status: {status}\n\
+                             Workflow: {}\n\
+                             To approve: dbward request approve {req_id}",
+                            if workflow.is_null() { "none (auto-approved)".to_string() }
+                            else { serde_json::to_string_pretty(workflow).unwrap_or_default() }
+                        )
+                    })
+                    .map_err(|e| e.to_string())
+            }
+        }
+        "dbward_list_schemas" => {
+            let db = args["database"].as_str().unwrap_or(db_name);
+            let sql = "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name";
+            submit_and_wait(client, "execute_query", env, db, sql, None).await
+        }
+        "dbward_describe_table" => {
+            let table = args["table"].as_str().unwrap_or("");
+            let db = args["database"].as_str().unwrap_or(db_name);
+            let sql = format!(
+                "SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_name = '{table}' ORDER BY ordinal_position"
+            );
+            submit_and_wait(client, "execute_query", env, db, &sql, None).await
+        }
+        "dbward_compare_schema" => {
+            // Local: show pending migration files content
+            let db = args["database"].as_str().unwrap_or(db_name);
+            let dir = migrations_dir;
+            match std::fs::read_dir(dir) {
+                Ok(entries) => {
+                    let mut files: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+                    files.sort_by_key(|e| e.file_name());
+                    let mut out = format!("Pending migrations in {}:\n", dir.display());
+                    for f in files.iter().rev().take(5) {
+                        let name = f.file_name();
+                        out.push_str(&format!("\n--- {} ---\n", name.to_string_lossy()));
+                        if let Ok(content) = std::fs::read_to_string(f.path()) {
+                            out.push_str(&content[..content.len().min(500)]);
+                            if content.len() > 500 { out.push_str("\n...truncated"); }
+                        }
+                        out.push('\n');
+                    }
+                    Ok(out)
+                }
+                Err(e) => Err(format!("Cannot read migrations dir: {e}"))
+            }
+        }
         _ => Err(format!("Unknown tool: {tool_name}")),
     };
 
@@ -435,6 +548,46 @@ fn tools_definitions() -> Value {
                 },
                 "required": ["request_id"]
             }
+        },
+        {
+            "name": "dbward_list_pending",
+            "description": "List requests pending approval",
+            "inputSchema": {"type": "object", "properties": {}}
+        },
+        {
+            "name": "dbward_who_can_approve",
+            "description": "Show who can approve a specific request (roles, groups, steps)",
+            "inputSchema": {"type": "object", "properties": {"request_id": {"type": "string"}}, "required": ["request_id"]}
+        },
+        {
+            "name": "dbward_find_similar_requests",
+            "description": "Find past requests similar to the given SQL or operation",
+            "inputSchema": {"type": "object", "properties": {"sql": {"type": "string"}, "operation": {"type": "string"}, "limit": {"type": "integer", "default": 5}}}
+        },
+        {
+            "name": "dbward_preview_impact",
+            "description": "Preview the impact of a SQL statement (EXPLAIN output)",
+            "inputSchema": {"type": "object", "properties": {"sql": {"type": "string"}, "database": {"type": "string"}, "environment": {"type": "string"}}, "required": ["sql"]}
+        },
+        {
+            "name": "dbward_explain_policy_failure",
+            "description": "Explain why a request was blocked or requires approval",
+            "inputSchema": {"type": "object", "properties": {"request_id": {"type": "string"}, "operation": {"type": "string"}, "environment": {"type": "string"}, "database": {"type": "string"}}}
+        },
+        {
+            "name": "dbward_list_schemas",
+            "description": "List tables and schemas in the target database",
+            "inputSchema": {"type": "object", "properties": {"database": {"type": "string"}, "environment": {"type": "string"}}}
+        },
+        {
+            "name": "dbward_describe_table",
+            "description": "Show column definitions for a table",
+            "inputSchema": {"type": "object", "properties": {"table": {"type": "string"}, "database": {"type": "string"}, "environment": {"type": "string"}}, "required": ["table"]}
+        },
+        {
+            "name": "dbward_compare_schema",
+            "description": "Show pending migration files that would change the schema",
+            "inputSchema": {"type": "object", "properties": {"database": {"type": "string"}}}
         }
     ])
 }
