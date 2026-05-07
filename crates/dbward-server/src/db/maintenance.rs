@@ -110,7 +110,6 @@ pub struct ReclaimedRequest {
 
 /// Purge expired results: delete from storage and DB.
 /// Returns list of request_ids whose storage objects should be deleted.
-#[allow(dead_code)]
 pub fn collect_expired_results(
     conn: &Connection,
 ) -> Result<Vec<(String, String)>, rusqlite::Error> {
@@ -123,7 +122,6 @@ pub fn collect_expired_results(
 }
 
 /// Remove DB records for expired results (call after storage deletion).
-#[allow(dead_code)]
 pub fn delete_expired_result_records(
     conn: &Connection,
     request_id: &str,

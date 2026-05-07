@@ -54,6 +54,8 @@ pub struct RetentionConfig {
     pub request_ttl_days: u32,
     #[serde(default = "default_audit_ttl")]
     pub audit_ttl_days: u32,
+    #[serde(default = "default_result_ttl")]
+    pub result_ttl_days: u32,
 }
 
 fn default_request_ttl() -> u32 {
@@ -62,12 +64,16 @@ fn default_request_ttl() -> u32 {
 fn default_audit_ttl() -> u32 {
     365
 }
+fn default_result_ttl() -> u32 {
+    30
+}
 
 impl Default for RetentionConfig {
     fn default() -> Self {
         Self {
             request_ttl_days: default_request_ttl(),
             audit_ttl_days: default_audit_ttl(),
+            result_ttl_days: default_result_ttl(),
         }
     }
 }
@@ -131,6 +137,7 @@ fn default_audit_retention_days() -> u32 {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "backend", rename_all = "snake_case")]
 pub enum ResultStorageConfig {
+    Disabled,
     Local {
         root_dir: String,
     },
@@ -143,9 +150,7 @@ pub enum ResultStorageConfig {
 
 impl Default for ResultStorageConfig {
     fn default() -> Self {
-        Self::Local {
-            root_dir: "data/results".into(),
-        }
+        Self::Disabled
     }
 }
 

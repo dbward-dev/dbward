@@ -14,6 +14,9 @@ pub const LATEST_SCHEMA_VERSION: i64 = 4;
 /// Initialize SQLite database with WAL mode and versioned schema.
 pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "busy_timeout", 5000)?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.pragma_update(None, "wal_autocheckpoint", 0)?;
 
     let current_version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
 

@@ -1,0 +1,9 @@
+dbs:
+  - path: ${DBWARD_DB_PATH:-/data/dbward.db}
+    replica:
+      type: s3
+      bucket: ${LITESTREAM_S3_BUCKET}
+      path: ${LITESTREAM_S3_PATH:-dbward}
+      region: ${AWS_REGION:-ap-northeast-1}
+      retention: 72h
+      snapshot-interval: 1h
