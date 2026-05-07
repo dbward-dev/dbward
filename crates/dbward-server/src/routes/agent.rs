@@ -211,32 +211,32 @@ pub(crate) async fn agent_claim(
     };
 
     // Audit: execution_started
-    let _ = crate::db::audit_event_repo::insert_audit_event(
-        &mut conn,
-        &crate::db::audit_event_repo::AuditEvent {
-            event_type: "execution_started",
-            event_category: "execution",
-            outcome: "success",
-            actor_id: &agent_id,
-            actor_type: "agent",
-            resource_type: Some("request"),
-            resource_id: Some(&id),
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
-            request_id: Some(&id),
-            operation: Some(&operation),
-            environment: Some(&environment),
-            database_name: Some(&database),
-            detail_fingerprint: None,
-            detail_raw: None,
-            reason: None,
-            metadata_json: &serde_json::json!({
-                "execution_id": exec_id,
-            })
-            .to_string(),
-        },
-    );
+    if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
+    &crate::db::audit_event_repo::AuditEvent {
+        event_type: "execution_started",
+        event_category: "execution",
+        outcome: "success",
+        actor_id: &agent_id,
+        actor_type: "agent",
+        resource_type: Some("request"),
+        resource_id: Some(&id),
+        peer_ip: None,
+        client_ip: None,
+        client_ip_source: None,
+        request_id: Some(&id),
+        operation: Some(&operation),
+        environment: Some(&environment),
+        database_name: Some(&database),
+        detail_fingerprint: None,
+        detail_raw: None,
+        reason: None,
+        metadata_json: &serde_json::json!({
+            "execution_id": exec_id,
+        })
+        .to_string(),
+    },) {
+                eprintln!("audit write failed: {e}");
+            }
 
     Ok(Json(json!({
         "execution_id": exec_id,
@@ -334,37 +334,37 @@ pub(crate) async fn agent_result(
             .record_agent_execution(if success { "succeeded" } else { "failed" });
 
         // Audit: execution_completed or execution_failed
-        let _ = crate::db::audit_event_repo::insert_audit_event(
-            &mut conn,
-            &crate::db::audit_event_repo::AuditEvent {
-                event_type: if success {
-                    "execution_completed"
-                } else {
-                    "execution_failed"
-                },
-                event_category: "execution",
-                outcome: if success { "success" } else { "failure" },
-                actor_id: &exec_ctx.agent_id,
-                actor_type: "agent",
-                resource_type: Some("request"),
-                resource_id: Some(&exec_ctx.request_id),
-                peer_ip: None,
-                client_ip: None,
-                client_ip_source: None,
-                request_id: Some(&exec_ctx.request_id),
-                operation: Some(&req_ctx.operation),
-                environment: Some(&req_ctx.environment),
-                database_name: Some(&req_ctx.database_name),
-                detail_fingerprint: None,
-                detail_raw: Some(&req_ctx.detail),
-                reason: None,
-                metadata_json: &serde_json::json!({
-                    "execution_id": id,
-                    "error": error_msg,
-                })
-                .to_string(),
+        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
+        &crate::db::audit_event_repo::AuditEvent {
+            event_type: if success {
+                "execution_completed"
+            } else {
+                "execution_failed"
             },
-        );
+            event_category: "execution",
+            outcome: if success { "success" } else { "failure" },
+            actor_id: &exec_ctx.agent_id,
+            actor_type: "agent",
+            resource_type: Some("request"),
+            resource_id: Some(&exec_ctx.request_id),
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: Some(&exec_ctx.request_id),
+            operation: Some(&req_ctx.operation),
+            environment: Some(&req_ctx.environment),
+            database_name: Some(&req_ctx.database_name),
+            detail_fingerprint: None,
+            detail_raw: Some(&req_ctx.detail),
+            reason: None,
+            metadata_json: &serde_json::json!({
+                "execution_id": id,
+                "error": error_msg,
+            })
+            .to_string(),
+        },) {
+                    eprintln!("audit write failed: {e}");
+                }
 
         (exec_ctx.request_id, req_status)
     };

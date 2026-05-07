@@ -106,7 +106,10 @@ async fn poll_once(
     for job in jobs {
         let request_id = match job["id"].as_str() {
             Some(id) => id.to_string(),
-            None => continue,
+            None => {
+                eprintln!("warning: skipping job with missing id field");
+                continue;
+            }
         };
 
         in_flight.fetch_add(1, Ordering::SeqCst);

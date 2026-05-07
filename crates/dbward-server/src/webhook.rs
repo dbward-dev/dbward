@@ -201,7 +201,13 @@ fn format_payload(hook: &WebhookConfig, event: &WebhookEvent) -> (String, String
             (payload.to_string(), "application/json".into())
         }
         _ => {
-            let payload = serde_json::to_string(event).unwrap();
+            let payload = match serde_json::to_string(event) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("BUG: webhook event serialization failed: {e}");
+                    format!("{{\"error\":\"serialization failed\"}}")
+                }
+            };
             (payload, "application/json".into())
         }
     }

@@ -79,8 +79,8 @@ pub fn reclaim_expired_leases(conn: &Connection) -> Result<Vec<ReclaimedRequest>
         return Ok(reclaimed);
     }
 
-    conn.execute_batch("BEGIN")?;
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "UPDATE requests SET status = 'execution_lost', updated_at = ?1
          WHERE status = 'running' AND id IN (
            SELECT request_id FROM agent_executions
@@ -88,13 +88,13 @@ pub fn reclaim_expired_leases(conn: &Connection) -> Result<Vec<ReclaimedRequest>
          )",
         rusqlite::params![now],
     )?;
-    conn.execute(
+    tx.execute(
         "UPDATE agent_executions SET status = 'lost', finished_at = ?1,
          error_message = 'lease expired, execution outcome unknown'
          WHERE status = 'claimed' AND lease_expires_at < ?1",
         rusqlite::params![now],
     )?;
-    conn.execute_batch("COMMIT")?;
+    tx.commit()?;
     Ok(reclaimed)
 }
 

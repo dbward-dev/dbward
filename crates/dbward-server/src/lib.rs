@@ -95,7 +95,13 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
             if let Some(ref store) = purge_result_store {
                 let expired = {
                     let conn = sqlite2.lock().await;
-                    db::maintenance::collect_expired_results(&conn).unwrap_or_default()
+                    match db::maintenance::collect_expired_results(&conn) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("failed to collect expired results: {e}");
+                            vec![]
+                        }
+                    }
                 };
                 if !expired.is_empty() {
                     for (request_id, _) in &expired {

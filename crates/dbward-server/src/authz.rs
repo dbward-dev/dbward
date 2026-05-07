@@ -181,29 +181,29 @@ pub async fn authorize_and_audit(
             "resource": resource_json,
         })
         .to_string();
-        let _ = crate::db::audit_event_repo::insert_audit_event(
-            &mut conn,
-            &crate::db::audit_event_repo::AuditEvent {
-                event_type: "authz_denied",
-                event_category: "auth",
-                outcome: "denied",
-                actor_id: &principal.user,
-                actor_type: &principal.subject_type,
-                resource_type: None,
-                resource_id: None,
-                peer_ip: None,
-                client_ip: None,
-                client_ip_source: None,
-                request_id: None,
-                operation: None,
-                environment: None,
-                database_name: None,
-                detail_fingerprint: None,
-                detail_raw: None,
-                reason: None,
-                metadata_json: &meta,
-            },
-        );
+        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
+        &crate::db::audit_event_repo::AuditEvent {
+            event_type: "authz_denied",
+            event_category: "auth",
+            outcome: "denied",
+            actor_id: &principal.user,
+            actor_type: &principal.subject_type,
+            resource_type: None,
+            resource_id: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
+            metadata_json: &meta,
+        },) {
+                    eprintln!("audit write failed: {e}");
+                }
     }
     result
 }
@@ -248,29 +248,29 @@ pub fn authorize_with_audit(
             "resource": resource_json,
         })
         .to_string();
-        let _ = crate::db::audit_event_repo::insert_audit_event(
-            conn,
-            &crate::db::audit_event_repo::AuditEvent {
-                event_type: "authz_denied",
-                event_category: "auth",
-                outcome: "denied",
-                actor_id: &principal.user,
-                actor_type: &principal.subject_type,
-                resource_type: None,
-                resource_id: None,
-                peer_ip: None,
-                client_ip: None,
-                client_ip_source: None,
-                request_id: None,
-                operation: None,
-                environment: None,
-                database_name: None,
-                detail_fingerprint: None,
-                detail_raw: None,
-                reason: None,
-                metadata_json: &meta,
-            },
-        );
+        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(conn,
+        &crate::db::audit_event_repo::AuditEvent {
+            event_type: "authz_denied",
+            event_category: "auth",
+            outcome: "denied",
+            actor_id: &principal.user,
+            actor_type: &principal.subject_type,
+            resource_type: None,
+            resource_id: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
+            metadata_json: &meta,
+        },) {
+                    eprintln!("audit write failed: {e}");
+                }
     }
     result
 }

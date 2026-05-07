@@ -756,29 +756,29 @@ pub(crate) async fn create_request(
             "emergency": emergency,
             "workflow_id": decision.workflow_id,
         });
-        let _ = crate::db::audit_event_repo::insert_audit_event(
-            &mut conn,
-            &crate::db::audit_event_repo::AuditEvent {
-                event_type,
-                event_category: "approval",
-                outcome,
-                actor_id: &user.user,
-                actor_type: "user",
-                resource_type: Some("request"),
-                resource_id: Some(&id),
-                peer_ip: None,
-                client_ip: None,
-                client_ip_source: None,
-                request_id: Some(&id),
-                operation: Some(operation),
-                environment: Some(environment),
-                database_name: Some(database_name),
-                detail_fingerprint: None,
-                detail_raw: Some(detail),
-                reason: reason.as_deref(),
-                metadata_json: &meta.to_string(),
-            },
-        );
+        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
+        &crate::db::audit_event_repo::AuditEvent {
+            event_type,
+            event_category: "approval",
+            outcome,
+            actor_id: &user.user,
+            actor_type: "user",
+            resource_type: Some("request"),
+            resource_id: Some(&id),
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: Some(&id),
+            operation: Some(operation),
+            environment: Some(environment),
+            database_name: Some(database_name),
+            detail_fingerprint: None,
+            detail_raw: Some(detail),
+            reason: reason.as_deref(),
+            metadata_json: &meta.to_string(),
+        },) {
+                    eprintln!("audit write failed: {e}");
+                }
     }
 
     if emergency {
@@ -894,29 +894,29 @@ pub(crate) async fn approve_request(
             "step_completed": result.response["step_completed"],
             "total_steps": result.response["total_steps"],
         });
-        let _ = crate::db::audit_event_repo::insert_audit_event(
-            &mut conn,
-            &crate::db::audit_event_repo::AuditEvent {
-                event_type: "request_approved",
-                event_category: "approval",
-                outcome: "success",
-                actor_id: &approver.user,
-                actor_type: "user",
-                resource_type: Some("request"),
-                resource_id: Some(&id),
-                peer_ip: None,
-                client_ip: None,
-                client_ip_source: None,
-                request_id: Some(&id),
-                operation: None,
-                environment: None,
-                database_name: None,
-                detail_fingerprint: None,
-                detail_raw: None,
-                reason: body_val["comment"].as_str(),
-                metadata_json: &meta.to_string(),
-            },
-        );
+        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
+        &crate::db::audit_event_repo::AuditEvent {
+            event_type: "request_approved",
+            event_category: "approval",
+            outcome: "success",
+            actor_id: &approver.user,
+            actor_type: "user",
+            resource_type: Some("request"),
+            resource_id: Some(&id),
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: Some(&id),
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: body_val["comment"].as_str(),
+            metadata_json: &meta.to_string(),
+        },) {
+                    eprintln!("audit write failed: {e}");
+                }
     }
 
     // Post-transaction async work
@@ -1007,29 +1007,29 @@ pub(crate) async fn reject_request(
         state.metrics.record_approval("reject");
 
         // Audit: request_rejected
-        let _ = crate::db::audit_event_repo::insert_audit_event(
-            &mut conn,
-            &crate::db::audit_event_repo::AuditEvent {
-                event_type: "request_rejected",
-                event_category: "approval",
-                outcome: "success",
-                actor_id: &user.user,
-                actor_type: "user",
-                resource_type: Some("request"),
-                resource_id: Some(&id),
-                peer_ip: None,
-                client_ip: None,
-                client_ip_source: None,
-                request_id: Some(&id),
-                operation: None,
-                environment: Some(&environment),
-                database_name: Some(&database_name),
-                detail_fingerprint: None,
-                detail_raw: None,
-                reason: comment,
-                metadata_json: "{}",
-            },
-        );
+        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
+        &crate::db::audit_event_repo::AuditEvent {
+            event_type: "request_rejected",
+            event_category: "approval",
+            outcome: "success",
+            actor_id: &user.user,
+            actor_type: "user",
+            resource_type: Some("request"),
+            resource_id: Some(&id),
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: Some(&id),
+            operation: None,
+            environment: Some(&environment),
+            database_name: Some(&database_name),
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: comment,
+            metadata_json: "{}",
+        },) {
+                    eprintln!("audit write failed: {e}");
+                }
 
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
@@ -1116,29 +1116,29 @@ pub(crate) async fn cancel_request(
         }
 
         // Audit: request_cancelled
-        let _ = crate::db::audit_event_repo::insert_audit_event(
-            &mut conn,
-            &crate::db::audit_event_repo::AuditEvent {
-                event_type: "request_cancelled",
-                event_category: "approval",
-                outcome: "success",
-                actor_id: &user.user,
-                actor_type: "user",
-                resource_type: Some("request"),
-                resource_id: Some(&id),
-                peer_ip: None,
-                client_ip: None,
-                client_ip_source: None,
-                request_id: Some(&id),
-                operation: Some(&ctx.operation),
-                environment: Some(&ctx.environment),
-                database_name: Some(&ctx.database_name),
-                detail_fingerprint: None,
-                detail_raw: None,
-                reason: cancel_reason.as_deref(),
-                metadata_json: "{}",
-            },
-        );
+        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
+        &crate::db::audit_event_repo::AuditEvent {
+            event_type: "request_cancelled",
+            event_category: "approval",
+            outcome: "success",
+            actor_id: &user.user,
+            actor_type: "user",
+            resource_type: Some("request"),
+            resource_id: Some(&id),
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: Some(&id),
+            operation: Some(&ctx.operation),
+            environment: Some(&ctx.environment),
+            database_name: Some(&ctx.database_name),
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: cancel_reason.as_deref(),
+            metadata_json: "{}",
+        },) {
+                    eprintln!("audit write failed: {e}");
+                }
 
         let notif_hooks = crate::db::policy_repo::get_notification_webhooks(
             &conn,

@@ -267,6 +267,21 @@ impl ServerConfig {
             toml::from_str(&content).map_err(|e| format!("{path:?}: {e}"))?;
         dbward_core::env_expand::expand_env_vars(&mut value)
             .map_err(|e| format!("{path:?}: {e}"))?;
-        value.try_into().map_err(|e| format!("{path:?}: {e}"))
+        let config: Self = value.try_into().map_err(|e| format!("{path:?}: {e}"))?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        for (i, wh) in self.webhooks.iter().enumerate() {
+            if let Some(ref secret) = wh.secret {
+                if secret.trim().is_empty() {
+                    return Err(format!(
+                        "webhooks[{i}].secret must not be empty (remove the field to disable HMAC signing)"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }

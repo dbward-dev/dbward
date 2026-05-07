@@ -149,29 +149,29 @@ pub(crate) async fn create_workflow(
 
     // Audit: policy_created
     let meta = serde_json::json!({"policy_type": "workflow", "database": database, "environment": environment}).to_string();
-    let _ = crate::db::audit_event_repo::insert_audit_event(
-        &mut conn,
-        &crate::db::audit_event_repo::AuditEvent {
-            event_type: "policy_created",
-            event_category: "policy",
-            outcome: "success",
-            actor_id: &user.user,
-            actor_type: "user",
-            resource_type: Some("policy"),
-            resource_id: Some(&id),
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
-            request_id: None,
-            operation: None,
-            environment: Some(environment),
-            database_name: Some(database),
-            detail_fingerprint: None,
-            detail_raw: None,
-            reason: None,
-            metadata_json: &meta,
-        },
-    );
+    if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
+    &crate::db::audit_event_repo::AuditEvent {
+        event_type: "policy_created",
+        event_category: "policy",
+        outcome: "success",
+        actor_id: &user.user,
+        actor_type: "user",
+        resource_type: Some("policy"),
+        resource_id: Some(&id),
+        peer_ip: None,
+        client_ip: None,
+        client_ip_source: None,
+        request_id: None,
+        operation: None,
+        environment: Some(environment),
+        database_name: Some(database),
+        detail_fingerprint: None,
+        detail_raw: None,
+        reason: None,
+        metadata_json: &meta,
+    },) {
+                eprintln!("audit write failed: {e}");
+            }
 
     Ok((
         StatusCode::CREATED,

@@ -32,7 +32,9 @@ fn best_effort_insert_audit_event(
     event: &crate::db::audit_event_repo::AuditEvent<'_>,
 ) {
     if let Ok(mut conn) = state.sqlite.try_lock() {
-        let _ = crate::db::audit_event_repo::insert_audit_event(&mut conn, event);
+        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn, event) {
+            eprintln!("audit write failed: {e}");
+        }
     }
 }
 
@@ -146,29 +148,29 @@ async fn create_token_with_type_and_groups(
     let meta =
         serde_json::json!({"subject_user": user, "role": role, "subject_type": subject_type})
             .to_string();
-    let _ = crate::db::audit_event_repo::insert_audit_event(
-        &mut conn,
-        &crate::db::audit_event_repo::AuditEvent {
-            event_type: "token_created",
-            event_category: "token",
-            outcome: "success",
-            actor_id: "system",
-            actor_type: "system",
-            resource_type: Some("token"),
-            resource_id: Some(&token_id),
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
-            request_id: None,
-            operation: None,
-            environment: None,
-            database_name: None,
-            detail_fingerprint: None,
-            detail_raw: None,
-            reason: None,
-            metadata_json: &meta,
-        },
-    );
+    if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
+    &crate::db::audit_event_repo::AuditEvent {
+        event_type: "token_created",
+        event_category: "token",
+        outcome: "success",
+        actor_id: "system",
+        actor_type: "system",
+        resource_type: Some("token"),
+        resource_id: Some(&token_id),
+        peer_ip: None,
+        client_ip: None,
+        client_ip_source: None,
+        request_id: None,
+        operation: None,
+        environment: None,
+        database_name: None,
+        detail_fingerprint: None,
+        detail_raw: None,
+        reason: None,
+        metadata_json: &meta,
+    },) {
+                eprintln!("audit write failed: {e}");
+            }
 
     Ok((token_id, raw_token))
 }
@@ -182,29 +184,29 @@ pub async fn revoke_token(state: &AppState, token_id: &str) -> Result<(), String
         return Err("token not found".to_string());
     }
     // Audit: token_revoked
-    let _ = crate::db::audit_event_repo::insert_audit_event(
-        &mut conn,
-        &crate::db::audit_event_repo::AuditEvent {
-            event_type: "token_revoked",
-            event_category: "token",
-            outcome: "success",
-            actor_id: "system",
-            actor_type: "system",
-            resource_type: Some("token"),
-            resource_id: Some(token_id),
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
-            request_id: None,
-            operation: None,
-            environment: None,
-            database_name: None,
-            detail_fingerprint: None,
-            detail_raw: None,
-            reason: None,
-            metadata_json: "{}",
-        },
-    );
+    if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
+    &crate::db::audit_event_repo::AuditEvent {
+        event_type: "token_revoked",
+        event_category: "token",
+        outcome: "success",
+        actor_id: "system",
+        actor_type: "system",
+        resource_type: Some("token"),
+        resource_id: Some(token_id),
+        peer_ip: None,
+        client_ip: None,
+        client_ip_source: None,
+        request_id: None,
+        operation: None,
+        environment: None,
+        database_name: None,
+        detail_fingerprint: None,
+        detail_raw: None,
+        reason: None,
+        metadata_json: "{}",
+    },) {
+                eprintln!("audit write failed: {e}");
+            }
     Ok(())
 }
 
