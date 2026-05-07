@@ -32,9 +32,17 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
         drop(driver);
     }
 
+    // Verify server connectivity and agent token validity
+    let cap = &config.capabilities;
+    client
+        .poll(&cap.databases, &cap.environments, &cap.operations)
+        .await
+        .map_err(|e| Error::Config(format!("server connection check failed: {e}")))?;
+
     write_probe(ALIVE_PROBE_PATH)?;
     write_probe(READY_PROBE_PATH)?;
     let _probe_guard = ProbeGuard;
+
     eprintln!(
         "agent {} started, polling {}",
         config.agent_id, config.server.url
