@@ -1498,7 +1498,14 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 .unwrap_or(std::path::Path::new("."));
             let token_signer = dbward_server::token::TokenSigner::load_or_generate(data_path)
                 .map_err(dbward_core::Error::Server)?;
-            let webhooks = dbward_server::webhook::WebhookDispatcher::new(server_cfg.webhooks);
+            let webhooks = {
+                // Seed config-file webhooks to DB, then load all active from DB
+                dbward_server::db::webhook_repo::seed_config_webhooks(&conn, &server_cfg.webhooks)
+                    .map_err(|e| dbward_core::Error::Server(format!("webhook seed: {e}")))?;
+                let configs = dbward_server::db::webhook_repo::load_active_webhook_configs(&conn)
+                    .map_err(|e| dbward_core::Error::Server(format!("webhook load: {e}")))?;
+                dbward_server::webhook::WebhookDispatcher::new(configs)
+            };
             let (oidc, auth_mode) = match server_cfg.auth {
                 Some(ref auth) => {
                     let mode = auth.mode.clone();
@@ -1513,7 +1520,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 license: dbward_server::license::License::load(),
                 sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                 token_signer: std::sync::Arc::new(token_signer),
-                webhooks: std::sync::Arc::new(webhooks),
+                webhooks: std::sync::Arc::new(std::sync::RwLock::new(webhooks)),
                 metrics: std::sync::Arc::new(dbward_server::Metrics::new()),
                 oidc,
                 auth_mode,
@@ -1584,9 +1591,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     license: dbward_server::license::License::load(),
                     sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
-                    webhooks: std::sync::Arc::new(
-                        dbward_server::webhook::WebhookDispatcher::empty(),
-                    ),
+                    webhooks: std::sync::Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
                     metrics: std::sync::Arc::new(dbward_server::Metrics::new()),
                     oidc: None,
                     auth_mode: "token".to_string(),
@@ -1650,9 +1655,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     license: dbward_server::license::License::load(),
                     sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
-                    webhooks: std::sync::Arc::new(
-                        dbward_server::webhook::WebhookDispatcher::empty(),
-                    ),
+                    webhooks: std::sync::Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
                     metrics: std::sync::Arc::new(dbward_server::Metrics::new()),
                     oidc: None,
                     auth_mode: "token".to_string(),
@@ -1721,7 +1724,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         license: dbward_server::license::License::load(),
         sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
         token_signer: std::sync::Arc::new(token_signer),
-        webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        webhooks: std::sync::Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
         metrics: std::sync::Arc::new(dbward_server::Metrics::new()),
         oidc: None,
         auth_mode: "token".into(),

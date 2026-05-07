@@ -3,13 +3,15 @@ mod audit;
 mod policies;
 pub(crate) mod requests;
 pub(crate) mod results;
+mod tokens;
+mod webhooks;
 
 use axum::Router;
 use axum::extract::MatchedPath;
 use axum::http::Request;
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::get;
+use axum::routing::{delete, get};
 use std::time::Instant;
 
 use crate::state::AppState;
@@ -104,6 +106,21 @@ pub fn router(state: AppState) -> Router {
             get(policies::get_notification_policy)
                 .put(policies::update_notification_policy)
                 .delete(policies::delete_notification_policy),
+        )
+        .route(
+            "/api/tokens",
+            get(tokens::list_tokens).post(tokens::create_token),
+        )
+        .route("/api/tokens/{id}", delete(tokens::revoke_token))
+        .route(
+            "/api/webhooks",
+            get(webhooks::list_webhooks).post(webhooks::create_webhook),
+        )
+        .route(
+            "/api/webhooks/{id}",
+            get(webhooks::get_webhook)
+                .put(webhooks::update_webhook)
+                .delete(webhooks::delete_webhook),
         )
         .layer(middleware::from_fn_with_state(
             state.clone(),

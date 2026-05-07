@@ -121,6 +121,17 @@ async fn create_token_with_type_and_groups(
     subject_type: &str,
     groups: &[&str],
 ) -> Result<(String, String), String> {
+    create_token_full(state, user, role, subject_type, groups, None).await
+}
+
+pub async fn create_token_full(
+    state: &AppState,
+    user: &str,
+    role: &str,
+    subject_type: &str,
+    groups: &[&str],
+    name: Option<&str>,
+) -> Result<(String, String), String> {
     let token_id = Uuid::new_v4().to_string();
     let raw_token = format!("dbw_{}", Uuid::new_v4().to_string().replace('-', ""));
     let hash = hash_token(&raw_token);
@@ -135,6 +146,7 @@ async fn create_token_with_type_and_groups(
         &hash,
         &prefix,
         role,
+        name,
         &Utc::now().to_rfc3339(),
     )
     .map_err(|e| e.to_string())?;
@@ -348,7 +360,7 @@ mod tests {
             license: crate::license::License { plan: crate::license::Plan::Pro },
             sqlite: Arc::new(tokio::sync::Mutex::new(conn)),
             token_signer: Arc::new(crate::token::TokenSigner::generate()),
-            webhooks: Arc::new(crate::webhook::WebhookDispatcher::empty()),
+            webhooks: Arc::new(std::sync::RwLock::new(crate::webhook::WebhookDispatcher::empty())),
             metrics: Arc::new(crate::Metrics::new()),
             oidc: None,
             auth_mode: "token".to_string(),
@@ -458,6 +470,7 @@ mod tests {
                 "fakehash000",
                 &prefix_a,
                 "admin",
+                None,
                 "2024-01-01T00:00:00Z",
             )
             .unwrap();

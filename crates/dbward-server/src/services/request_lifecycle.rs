@@ -467,7 +467,7 @@ mod tests {
             license: crate::license::License { plan: crate::license::Plan::Pro },
             sqlite: Arc::new(tokio::sync::Mutex::new(conn)),
             token_signer: Arc::new(TokenSigner::generate()),
-            webhooks: Arc::new(crate::webhook::WebhookDispatcher::empty()),
+            webhooks: Arc::new(std::sync::RwLock::new(crate::webhook::WebhookDispatcher::empty())),
             metrics: Arc::new(crate::Metrics::new()),
             oidc: None,
             auth_mode: "token".to_string(),

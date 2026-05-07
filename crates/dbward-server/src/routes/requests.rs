@@ -815,7 +815,7 @@ pub(crate) async fn create_request(
             .issue(&id, operation, environment, database_name, detail);
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
-        state.webhooks.dispatch_with_policy(
+        state.webhooks.read().unwrap().dispatch_with_policy(
             notif_hooks,
             crate::webhook::WebhookEvent {
                 event: "break_glass".into(),
@@ -847,7 +847,7 @@ pub(crate) async fn create_request(
             .and_then(|steps| crate::services::request_lifecycle::compute_next_step(&steps, 0));
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
-        state.webhooks.dispatch_with_policy(
+        state.webhooks.read().unwrap().dispatch_with_policy(
             notif_hooks,
             crate::webhook::WebhookEvent {
                 event: "request_created".into(),
@@ -953,6 +953,8 @@ pub(crate) async fn approve_request(
     if let Some(event) = result.webhook_event {
         state
             .webhooks
+            .read()
+            .unwrap()
             .dispatch_with_policy(result.notif_hooks, event, state.metrics.clone());
     }
     state.request_notifier.notify(&id).await;
@@ -1060,7 +1062,7 @@ pub(crate) async fn reject_request(
 
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
-        state.webhooks.dispatch_with_policy(
+        state.webhooks.read().unwrap().dispatch_with_policy(
             notif_hooks,
             crate::webhook::WebhookEvent {
                 event: "request_rejected".into(),
@@ -1185,7 +1187,7 @@ pub(crate) async fn cancel_request(
 
     state.request_notifier.notify(&id).await;
     let actor_role = user.effective_permission().to_string();
-    state.webhooks.dispatch_with_policy(
+    state.webhooks.read().unwrap().dispatch_with_policy(
         notif_hooks,
         crate::webhook::WebhookEvent {
             event: "request_cancelled".into(),

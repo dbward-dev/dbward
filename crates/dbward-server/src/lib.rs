@@ -42,7 +42,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
                     metrics.record_agent_lease_expirations(n as u64);
                     eprintln!("reclaimed {n} expired lease(s)");
                     for req in &reclaimed {
-                        webhooks.dispatch(webhook::WebhookEvent {
+                        webhooks.read().unwrap().dispatch(webhook::WebhookEvent {
                             event: "request.execution_lost".into(),
                             timestamp: chrono::Utc::now().to_rfc3339(),
                             request_id: req.id.clone(),
