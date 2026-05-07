@@ -25,7 +25,11 @@ async fn setup() -> (
 #[ignore]
 async fn mysql_select() {
     let (_c, drv) = setup().await;
-    let rows = drv.query("SELECT 1 AS num, 'hello' AS msg").await.unwrap().rows;
+    let rows = drv
+        .query("SELECT 1 AS num, 'hello' AS msg")
+        .await
+        .unwrap()
+        .rows;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["num"], 1);
     assert_eq!(rows[0]["msg"], "hello");
@@ -54,7 +58,8 @@ async fn mysql_int_types() {
     let rows = drv
         .query("SELECT CAST(1 AS SIGNED) AS i, CAST(9999999999 AS SIGNED) AS big")
         .await
-        .unwrap().rows;
+        .unwrap()
+        .rows;
     assert!(rows[0]["i"].is_number());
     assert!(rows[0]["big"].is_number());
 }
@@ -66,7 +71,8 @@ async fn mysql_float_types() {
     let rows = drv
         .query("SELECT CAST(3.14 AS DOUBLE) AS d")
         .await
-        .unwrap().rows;
+        .unwrap()
+        .rows;
     assert!(rows[0]["d"].is_number());
 }
 
@@ -74,10 +80,7 @@ async fn mysql_float_types() {
 #[ignore]
 async fn mysql_null_values() {
     let (_c, drv) = setup().await;
-    let rows = drv
-        .query("SELECT NULL AS n")
-        .await
-        .unwrap().rows;
+    let rows = drv.query("SELECT NULL AS n").await.unwrap().rows;
     assert!(rows[0]["n"].is_null());
 }
 
@@ -88,7 +91,8 @@ async fn mysql_datetime_as_string() {
     let rows = drv
         .query("SELECT NOW() AS ts, CURDATE() AS d")
         .await
-        .unwrap().rows;
+        .unwrap()
+        .rows;
     assert!(rows[0]["ts"].is_string());
     assert!(rows[0]["d"].is_string());
 }
@@ -122,6 +126,10 @@ async fn mysql_migrations_up_and_status() {
     assert!(status[0].applied);
 
     // Verify table exists
-    let rows = drv.query("SELECT COUNT(*) AS cnt FROM test_mig").await.unwrap().rows;
+    let rows = drv
+        .query("SELECT COUNT(*) AS cnt FROM test_mig")
+        .await
+        .unwrap()
+        .rows;
     assert_eq!(rows[0]["cnt"], 0);
 }

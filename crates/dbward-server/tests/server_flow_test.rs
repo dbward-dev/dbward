@@ -52,6 +52,9 @@ fn test_state() -> AppState {
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
+        license: dbward_server::license::License {
+            plan: dbward_server::license::Plan::Pro,
+        },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
@@ -120,6 +123,9 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
     );
 
     let state = AppState {
+        license: dbward_server::license::License {
+            plan: dbward_server::license::Plan::Pro,
+        },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
@@ -1870,6 +1876,9 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
     let conn = Connection::open_in_memory().unwrap();
     db::init(&conn).unwrap();
     let state = AppState {
+        license: dbward_server::license::License {
+            plan: dbward_server::license::Plan::Pro,
+        },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
@@ -3769,6 +3778,9 @@ fn test_state_multistep() -> AppState {
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
+        license: dbward_server::license::License {
+            plan: dbward_server::license::Plan::Pro,
+        },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
@@ -3830,6 +3842,9 @@ fn test_state_multistep_allow_same() -> AppState {
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
+        license: dbward_server::license::License {
+            plan: dbward_server::license::Plan::Pro,
+        },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),

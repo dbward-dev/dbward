@@ -25,6 +25,7 @@ fn test_state() -> AppState {
     }];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
+        license: dbward_server::license::License { plan: dbward_server::license::Plan::Pro },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
@@ -64,12 +65,15 @@ async fn tampered_token_one_char_change_rejected() {
     let last = tampered.pop().unwrap();
     tampered.push(if last == 'a' { 'b' } else { 'a' });
 
-    let resp = app.oneshot(
-        Request::get("/api/requests")
-            .header("authorization", auth_header(&tampered))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get("/api/requests")
+                .header("authorization", auth_header(&tampered))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -81,12 +85,15 @@ async fn truncated_token_rejected() {
 
     let truncated = &raw_token[..raw_token.len() / 2];
 
-    let resp = app.oneshot(
-        Request::get("/api/requests")
-            .header("authorization", auth_header(truncated))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get("/api/requests")
+                .header("authorization", auth_header(truncated))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -95,12 +102,15 @@ async fn token_without_dbw_prefix_rejected() {
     let state = test_state();
     let app = routes::router(state);
 
-    let resp = app.oneshot(
-        Request::get("/api/requests")
-            .header("authorization", "Bearer randomstring12345678901234567890")
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get("/api/requests")
+                .header("authorization", "Bearer randomstring12345678901234567890")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -111,12 +121,15 @@ async fn revoked_token_rejected() {
     auth::revoke_token(&state, &token_id).await.unwrap();
     let app = routes::router(state);
 
-    let resp = app.oneshot(
-        Request::get("/api/requests")
-            .header("authorization", auth_header(&raw_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get("/api/requests")
+                .header("authorization", auth_header(&raw_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -140,12 +153,18 @@ async fn jwt_rejected_when_mode_is_token_only() {
     let app = routes::router(state);
 
     // Fake JWT-like token (starts with eyJ)
-    let resp = app.oneshot(
-        Request::get("/api/requests")
-            .header("authorization", "Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.fake")
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get("/api/requests")
+                .header(
+                    "authorization",
+                    "Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.fake",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -156,12 +175,15 @@ async fn api_token_rejected_when_mode_is_oidc_only() {
     let (_, raw_token) = auth::create_token(&state, "alice", "admin").await.unwrap();
     let app = routes::router(state);
 
-    let resp = app.oneshot(
-        Request::get("/api/requests")
-            .header("authorization", auth_header(&raw_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get("/api/requests")
+                .header("authorization", auth_header(&raw_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -186,7 +208,13 @@ async fn execution_token_tampered_signature_rejected() {
     use dbward_core::token::verify_token;
 
     let signer = TokenSigner::generate();
-    let mut token = signer.issue("req-1", "execute_query", "development", "default", "SELECT 1");
+    let mut token = signer.issue(
+        "req-1",
+        "execute_query",
+        "development",
+        "default",
+        "SELECT 1",
+    );
 
     // Tamper signature
     let mut sig_bytes = hex::decode(&token.signature).unwrap();
@@ -194,7 +222,14 @@ async fn execution_token_tampered_signature_rejected() {
     token.signature = hex::encode(&sig_bytes);
 
     let verifying_key = signer.verifying_key();
-    let result = verify_token(&token, &verifying_key, "execute_query", "development", "default", "SELECT 1");
+    let result = verify_token(
+        &token,
+        &verifying_key,
+        "execute_query",
+        "development",
+        "default",
+        "SELECT 1",
+    );
     assert!(result.is_err());
 }
 
@@ -203,11 +238,24 @@ async fn execution_token_wrong_environment_rejected() {
     use dbward_core::token::verify_token;
 
     let signer = TokenSigner::generate();
-    let token = signer.issue("req-1", "execute_query", "development", "default", "SELECT 1");
+    let token = signer.issue(
+        "req-1",
+        "execute_query",
+        "development",
+        "default",
+        "SELECT 1",
+    );
 
     let verifying_key = signer.verifying_key();
     // Verify with wrong environment
-    let result = verify_token(&token, &verifying_key, "execute_query", "production", "default", "SELECT 1");
+    let result = verify_token(
+        &token,
+        &verifying_key,
+        "execute_query",
+        "production",
+        "default",
+        "SELECT 1",
+    );
     assert!(result.is_err());
 }
 
@@ -216,11 +264,24 @@ async fn execution_token_wrong_detail_hash_rejected() {
     use dbward_core::token::verify_token;
 
     let signer = TokenSigner::generate();
-    let token = signer.issue("req-1", "execute_query", "development", "default", "SELECT 1");
+    let token = signer.issue(
+        "req-1",
+        "execute_query",
+        "development",
+        "default",
+        "SELECT 1",
+    );
 
     let verifying_key = signer.verifying_key();
     // Verify with wrong detail
-    let result = verify_token(&token, &verifying_key, "execute_query", "development", "default", "SELECT 2");
+    let result = verify_token(
+        &token,
+        &verifying_key,
+        "execute_query",
+        "development",
+        "default",
+        "SELECT 2",
+    );
     assert!(result.is_err());
 }
 
@@ -229,27 +290,36 @@ async fn execution_token_wrong_detail_hash_rejected() {
 #[tokio::test]
 async fn agent_token_subject_type_enforced() {
     let state = test_state();
-    let (_, agent_token) = auth::create_token_with_type(&state, "agent1", "admin", "agent").await.unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent1", "admin", "agent")
+        .await
+        .unwrap();
     let (_, user_token) = auth::create_token(&state, "user1", "admin").await.unwrap();
     let app = routes::router(state);
 
     // Agent cannot use user endpoints
-    let resp = app.clone().oneshot(
-        Request::get("/api/requests")
-            .header("authorization", auth_header(&agent_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/api/requests")
+                .header("authorization", auth_header(&agent_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // User cannot use agent endpoints
-    let resp = app.oneshot(
-        Request::post("/api/agent/poll")
-            .header("authorization", auth_header(&user_token))
-            .header("content-type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::post("/api/agent/poll")
+                .header("authorization", auth_header(&user_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -259,7 +329,9 @@ async fn agent_token_subject_type_enforced() {
 async fn break_glass_rejected_for_non_permitted_role() {
     let mut state = test_state();
     state.break_glass_roles = vec!["admin".to_string()]; // only admin
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let resp = app.oneshot(

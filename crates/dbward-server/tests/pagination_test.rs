@@ -44,6 +44,7 @@ fn test_state() -> AppState {
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
+        license: dbward_server::license::License { plan: dbward_server::license::Plan::Pro },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
@@ -122,7 +123,9 @@ async fn default_pagination_limit_50_offset_0() {
 #[tokio::test]
 async fn custom_limit_and_offset() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
     let app = routes::router(state);
 
@@ -192,7 +195,9 @@ async fn limit_clamped_to_min_1() {
 #[tokio::test]
 async fn offset_beyond_total_returns_empty() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
     let app = routes::router(state);
 
@@ -220,7 +225,9 @@ async fn offset_beyond_total_returns_empty() {
 #[tokio::test]
 async fn filter_by_status() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
     let app = routes::router(state);
 
@@ -253,7 +260,9 @@ async fn filter_by_status() {
 #[tokio::test]
 async fn filter_by_environment() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
     let app = routes::router(state);
 
@@ -299,7 +308,9 @@ async fn filter_by_environment() {
 #[tokio::test]
 async fn audit_pagination_works() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
     let app = routes::router(state);
 

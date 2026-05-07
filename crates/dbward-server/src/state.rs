@@ -118,6 +118,7 @@ pub struct AppState {
     pub token_signer: Arc<TokenSigner>,
     pub webhooks: Arc<WebhookDispatcher>,
     pub metrics: Arc<Metrics>,
+    pub license: crate::license::License,
     pub oidc: Option<Arc<OidcVerifier>>,
     pub auth_mode: String,
     pub result_channels: Arc<ResultChannels>,

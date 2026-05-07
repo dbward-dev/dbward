@@ -49,6 +49,18 @@ pub(crate) async fn agent_poll(
 
     let conn = state.sqlite.lock().await;
 
+    // Free tier: check agent limit for new agents only
+    let is_existing: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM agents WHERE id = ?1)",
+            rusqlite::params![user.user],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+    if !is_existing {
+        crate::limits::check_can_create(&conn, crate::limits::Resource::Agent, &state.license)?;
+    }
+
     // Record agent capabilities for claim-time verification
     let caps_json = serde_json::to_string(&json!({
         "databases": databases,

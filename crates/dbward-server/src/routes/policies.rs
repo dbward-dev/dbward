@@ -108,6 +108,7 @@ pub(crate) async fn create_workflow(
     let now = chrono::Utc::now().to_rfc3339();
 
     let mut conn = state.sqlite.lock().await;
+    crate::limits::check_can_create(&conn, crate::limits::Resource::Workflow, &state.license)?;
     {
         let tx = conn
             .transaction()
@@ -405,6 +406,11 @@ pub(crate) async fn create_execution_policy(
     let now = chrono::Utc::now().to_rfc3339();
 
     let mut conn = state.sqlite.lock().await;
+    crate::limits::check_can_create(
+        &conn,
+        crate::limits::Resource::ExecutionPolicy,
+        &state.license,
+    )?;
     {
         let tx = conn
             .transaction()
@@ -620,6 +626,7 @@ pub(crate) async fn create_result_policy(
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::CreatePolicy, Resource::PolicyObject, &state).await?;
+    crate::limits::require_pro("Result policies", &state.license)?;
 
     let database = body["database"]
         .as_str()
@@ -680,6 +687,7 @@ pub(crate) async fn update_result_policy(
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::UpdatePolicy, Resource::PolicyObject, &state).await?;
+    crate::limits::require_pro("Result policies", &state.license)?;
 
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();
@@ -845,6 +853,7 @@ pub(crate) async fn create_notification_policy(
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::CreatePolicy, Resource::PolicyObject, &state).await?;
+    crate::limits::require_pro("Notification policies", &state.license)?;
 
     let database = body["database"]
         .as_str()
@@ -902,6 +911,7 @@ pub(crate) async fn update_notification_policy(
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::UpdatePolicy, Resource::PolicyObject, &state).await?;
+    crate::limits::require_pro("Notification policies", &state.license)?;
 
     let mut conn = state.sqlite.lock().await;
     let now = chrono::Utc::now().to_rfc3339();

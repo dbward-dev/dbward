@@ -599,6 +599,9 @@ pub(crate) async fn create_request(
     let share_with_json: Option<String> = body["share_with"]
         .as_array()
         .map(|arr| serde_json::to_string(arr).unwrap_or_default());
+    if share_with_json.is_some() {
+        crate::limits::require_pro("Result sharing (share-with)", &state.license)?;
+    }
     let metadata_json = validate_metadata(body.get("metadata"))?;
     let idempotency_key = validate_idempotency_key(body.get("idempotency_key"))?;
 

@@ -85,11 +85,18 @@ impl DatabaseDriver for PostgresDriver {
             }
             if total_bytes >= DEFAULT_MAX_RESULT_BYTES {
                 truncated = true;
-                truncation_reason = Some(format!("size limit reached ({} MB)", DEFAULT_MAX_RESULT_BYTES / 1024 / 1024));
+                truncation_reason = Some(format!(
+                    "size limit reached ({} MB)",
+                    DEFAULT_MAX_RESULT_BYTES / 1024 / 1024
+                ));
                 break;
             }
         }
-        Ok(QueryOutput { rows, truncated, truncation_reason })
+        Ok(QueryOutput {
+            rows,
+            truncated,
+            truncation_reason,
+        })
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
@@ -236,11 +243,18 @@ impl DatabaseDriver for MysqlDriver {
             }
             if total_bytes >= DEFAULT_MAX_RESULT_BYTES {
                 truncated = true;
-                truncation_reason = Some(format!("size limit reached ({} MB)", DEFAULT_MAX_RESULT_BYTES / 1024 / 1024));
+                truncation_reason = Some(format!(
+                    "size limit reached ({} MB)",
+                    DEFAULT_MAX_RESULT_BYTES / 1024 / 1024
+                ));
                 break;
             }
         }
-        Ok(QueryOutput { rows, truncated, truncation_reason })
+        Ok(QueryOutput {
+            rows,
+            truncated,
+            truncation_reason,
+        })
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
@@ -349,9 +363,7 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
             _ => row
                 .try_get::<String, _>(name)
                 .map(Into::into)
-                .unwrap_or_else(|_| {
-                    serde_json::Value::String("(binary data)".into())
-                }),
+                .unwrap_or_else(|_| serde_json::Value::String("(binary data)".into())),
         };
         map.insert(name.to_string(), val);
     }

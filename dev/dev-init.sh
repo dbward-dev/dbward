@@ -23,9 +23,9 @@ create_token() {
 mkdir -p /tokens
 
 echo "[dev-init] creating API tokens"
-create_token "alice" "developer" "/tokens/alice.token" "--groups backend-team"
-create_token "bob" "admin" "/tokens/bob.token" "--groups backend-team"
-create_token "carol" "developer" "/tokens/carol.token" "--groups dba-team"
-create_token "dave" "developer" "/tokens/dave.token" "--groups dba-team"
+create_token "alice" "developer" "/tokens/alice.token"
+create_token "bob" "admin" "/tokens/bob.token"
+create_token "carol" "developer" "/tokens/carol.token"
+create_token "dave" "developer" "/tokens/dave.token"
 create_token "agent" "admin" "/tokens/agent.token" "--agent"
 echo "[dev-init] done"

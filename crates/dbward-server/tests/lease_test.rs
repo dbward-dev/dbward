@@ -25,6 +25,7 @@ fn test_state() -> AppState {
     }];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
+        license: dbward_server::license::License { plan: dbward_server::license::Plan::Pro },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
@@ -54,9 +55,12 @@ async fn body_json(resp: axum::response::Response) -> Value {
 #[tokio::test]
 async fn expired_lease_reclaimed_to_execution_lost() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
-    let (_, agent_token) =
-        auth::create_token_with_type(&state, "agent1", "admin", "agent").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent1", "admin", "agent")
+        .await
+        .unwrap();
     let app = routes::router(state.clone());
 
     // Create auto-approved request (development)
@@ -71,22 +75,32 @@ async fn expired_lease_reclaimed_to_execution_lost() {
     let req_id = v["id"].as_str().unwrap().to_string();
 
     // Agent polls and claims
-    let resp = app.clone().oneshot(
-        Request::post("/api/agent/poll")
-            .header("authorization", auth_header(&agent_token))
-            .header("content-type", "application/json")
-            .body(Body::from(json!({"databases":["*"],"environments":["*"],"operations":["*"]}).to_string()))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/agent/poll")
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"databases":["*"],"environments":["*"],"operations":["*"]}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let resp = app.clone().oneshot(
-        Request::post(format!("/api/agent/jobs/{req_id}/claim"))
-            .header("authorization", auth_header(&agent_token))
-            .header("content-type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{req_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Manually expire the lease in SQLite
@@ -106,12 +120,16 @@ async fn expired_lease_reclaimed_to_execution_lost() {
     }
 
     // Verify status is execution_lost
-    let resp = app.clone().oneshot(
-        Request::get(format!("/api/requests/{req_id}"))
-            .header("authorization", auth_header(&dev_token))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/requests/{req_id}"))
+                .header("authorization", auth_header(&dev_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let v = body_json(resp).await;
     assert_eq!(v["status"].as_str().unwrap(), "execution_lost");
 }
@@ -119,26 +137,33 @@ async fn expired_lease_reclaimed_to_execution_lost() {
 #[tokio::test]
 async fn heartbeat_on_nonexistent_execution_returns_404() {
     let state = test_state();
-    let (_, agent_token) =
-        auth::create_token_with_type(&state, "agent1", "admin", "agent").await.unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent1", "admin", "agent")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
-    let resp = app.oneshot(
-        Request::post("/api/agent/jobs/nonexistent-id/heartbeat")
-            .header("authorization", auth_header(&agent_token))
-            .header("content-type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::post("/api/agent/jobs/nonexistent-id/heartbeat")
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn agent_result_after_lease_expired_returns_conflict() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
-    let (_, agent_token) =
-        auth::create_token_with_type(&state, "agent1", "admin", "agent").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
+    let (_, agent_token) = auth::create_token_with_type(&state, "agent1", "admin", "agent")
+        .await
+        .unwrap();
     let app = routes::router(state.clone());
 
     // Create + claim
@@ -151,13 +176,17 @@ async fn agent_result_after_lease_expired_returns_conflict() {
     ).await.unwrap();
     let req_id = body_json(resp).await["id"].as_str().unwrap().to_string();
 
-    let resp = app.clone().oneshot(
-        Request::post(format!("/api/agent/jobs/{req_id}/claim"))
-            .header("authorization", auth_header(&agent_token))
-            .header("content-type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{req_id}/claim"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     let claim_body = body_json(resp).await;
     let exec_id = claim_body["execution_id"].as_str().unwrap().to_string();
 
@@ -167,17 +196,23 @@ async fn agent_result_after_lease_expired_returns_conflict() {
         conn.execute(
             "UPDATE agent_executions SET lease_expires_at = '2020-01-01T00:00:00Z' WHERE id = ?1",
             rusqlite::params![exec_id],
-        ).unwrap();
+        )
+        .unwrap();
         db::maintenance::reclaim_expired_leases(&conn).unwrap();
     }
 
     // Agent tries to submit result after reclaim
-    let resp = app.oneshot(
-        Request::post(format!("/api/agent/jobs/{exec_id}/result"))
-            .header("authorization", auth_header(&agent_token))
-            .header("content-type", "application/json")
-            .body(Body::from(json!({"success":true,"result":{"rows":[]}}).to_string()))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::post(format!("/api/agent/jobs/{exec_id}/result"))
+                .header("authorization", auth_header(&agent_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"success":true,"result":{"rows":[]}}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 }

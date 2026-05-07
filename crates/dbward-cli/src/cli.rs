@@ -817,7 +817,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 // Dispatch first (idempotent — safe if already dispatched)
                 if let Err(e) = sc.dispatch(&id).await {
                     if e.status == 409 {
-                        eprintln!("Request {id} cannot be dispatched yet (may still be pending approval).");
+                        eprintln!(
+                            "Request {id} cannot be dispatched yet (may still be pending approval)."
+                        );
                         eprintln!("Check status: dbward request show {id}");
                         return Err(dbward_core::Error::Server(
                             "request not ready for dispatch".into(),
@@ -1109,7 +1111,10 @@ fn print_execution_result(resp: &serde_json::Value) {
                     .as_str()
                     .unwrap_or("result limit reached");
                 eprintln!("\n⚠ Result truncated: {reason}");
-                eprintln!("  Showing {} rows. Use a LIMIT clause for precise control.", rows.len());
+                eprintln!(
+                    "  Showing {} rows. Use a LIMIT clause for precise control.",
+                    rows.len()
+                );
             }
         } else if let Some(rows) = result.as_array() {
             print_result_table(rows);
@@ -1450,6 +1455,23 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
             )
             .map_err(dbward_core::Error::Server)?;
 
+            // Free tier config validation
+            let license = dbward_server::license::License::load();
+            let warnings = dbward_server::limits::validate_config(&server_cfg, &license);
+            for w in &warnings {
+                match w {
+                    dbward_server::limits::ConfigWarning::HardBlock(_) => {
+                        return Err(dbward_core::Error::Server(w.to_string()));
+                    }
+                    _ => eprintln!("Warning: {w}"),
+                }
+            }
+            let server_cfg = if !license.is_pro() {
+                dbward_server::limits::apply_free_limits(server_cfg)
+            } else {
+                server_cfg
+            };
+
             let conn = rusqlite::Connection::open(data)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
             dbward_server::db::init(&conn)
@@ -1488,6 +1510,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 None => (None, "token".to_string()),
             };
             let state = dbward_server::AppState {
+                license: dbward_server::license::License::load(),
                 sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                 token_signer: std::sync::Arc::new(token_signer),
                 webhooks: std::sync::Arc::new(webhooks),
@@ -1552,6 +1575,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 let token_signer = dbward_server::token::TokenSigner::load_or_generate(data_path)
                     .map_err(dbward_core::Error::Server)?;
                 let state = dbward_server::AppState {
+                    license: dbward_server::license::License::load(),
                     sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
                     webhooks: std::sync::Arc::new(
@@ -1570,6 +1594,22 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     trusted_proxies: vec![],
                 };
                 let group_refs: Vec<&str> = groups.iter().map(|s| s.as_str()).collect();
+
+                // Free tier checks
+                {
+                    let conn = state.sqlite.lock().await;
+                    dbward_server::limits::check_can_create(
+                        &conn,
+                        dbward_server::limits::Resource::Token,
+                        &state.license,
+                    )
+                    .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+                }
+                if !groups.is_empty() {
+                    dbward_server::limits::require_pro("Group-based authorization", &state.license)
+                        .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+                }
+
                 let (token_id, raw_token) = if *agent {
                     dbward_server::auth::create_token_with_type(&state, user, role, "agent")
                         .await
@@ -1601,6 +1641,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 let token_signer = dbward_server::token::TokenSigner::load_or_generate(data_path)
                     .map_err(dbward_core::Error::Server)?;
                 let state = dbward_server::AppState {
+                    license: dbward_server::license::License::load(),
                     sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
                     webhooks: std::sync::Arc::new(
@@ -1671,6 +1712,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         .map_err(dbward_core::Error::Server)?;
 
     let state = dbward_server::AppState {
+        license: dbward_server::license::License::load(),
         sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
         token_signer: std::sync::Arc::new(token_signer),
         webhooks: std::sync::Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),

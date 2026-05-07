@@ -44,6 +44,9 @@ fn test_state() -> AppState {
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
+        license: dbward_server::license::License {
+            plan: dbward_server::license::Plan::Pro,
+        },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
@@ -62,7 +65,10 @@ fn test_state() -> AppState {
 }
 
 async fn admin_token(state: &AppState) -> String {
-    auth::create_token(state, "admin1", "admin").await.unwrap().1
+    auth::create_token(state, "admin1", "admin")
+        .await
+        .unwrap()
+        .1
 }
 
 async fn json_body(resp: axum::response::Response) -> Value {
@@ -107,9 +113,7 @@ async fn create_workflow_missing_database() {
             Request::post("/api/workflows")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({"environment":"staging"}).to_string(),
-                ))
+                .body(Body::from(json!({"environment":"staging"}).to_string()))
                 .unwrap(),
         )
         .await
@@ -256,9 +260,7 @@ async fn update_workflow() {
             Request::put("/api/workflows/testdb:staging")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({"require_reason": true}).to_string(),
-                ))
+                .body(Body::from(json!({"require_reason": true}).to_string()))
                 .unwrap(),
         )
         .await
@@ -380,9 +382,7 @@ async fn update_workflow_blocked_by_pending() {
             Request::put("/api/workflows/mydb:production")
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({"require_reason": true}).to_string(),
-                ))
+                .body(Body::from(json!({"require_reason": true}).to_string()))
                 .unwrap(),
         )
         .await
@@ -499,7 +499,8 @@ async fn create_result_policy() {
                 .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    json!({"database":"db1","environment":"prod","delivery_mode":"stream"}).to_string(),
+                    json!({"database":"db1","environment":"prod","delivery_mode":"stream"})
+                        .to_string(),
                 ))
                 .unwrap(),
         )

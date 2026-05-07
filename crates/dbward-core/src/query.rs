@@ -99,9 +99,8 @@ fn classify_query_with_dialect(
         return Err(Error::Config("empty query".into()));
     }
 
-    let statements = Parser::parse_sql(dialect, trimmed).map_err(|e| {
-        Error::UnsupportedStatement(format!("failed to parse SQL: {e}"))
-    })?;
+    let statements = Parser::parse_sql(dialect, trimmed)
+        .map_err(|e| Error::UnsupportedStatement(format!("failed to parse SQL: {e}")))?;
 
     if statements.is_empty() {
         return Err(Error::Config("empty query".into()));
@@ -277,9 +276,7 @@ fn query_has_dangerous_function(query: &Query) -> bool {
     let sql_repr = format!("{query}");
     let lower = sql_repr.to_lowercase();
     // Fast path: if none of the dangerous function names appear in the SQL text, skip AST walk
-    DANGEROUS_FUNCTIONS
-        .iter()
-        .any(|f| lower.contains(f))
+    DANGEROUS_FUNCTIONS.iter().any(|f| lower.contains(f))
 }
 
 /// Classify SET statements: only allow safe variables.
@@ -319,8 +316,17 @@ fn classify_set(set: &sqlparser::ast::Set) -> Classification {
         sqlparser::ast::Set::MultipleAssignments { assignments } => {
             // Check each assignment variable
             for a in assignments {
-                let var_name = a.name.0.iter().map(|i| i.to_string().to_lowercase()).collect::<Vec<_>>().join(".");
-                if !SAFE_SET_VARIABLES.iter().any(|s| s.eq_ignore_ascii_case(&var_name)) {
+                let var_name = a
+                    .name
+                    .0
+                    .iter()
+                    .map(|i| i.to_string().to_lowercase())
+                    .collect::<Vec<_>>()
+                    .join(".");
+                if !SAFE_SET_VARIABLES
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(&var_name))
+                {
                     return Classification::Rejected(format!(
                         "SET {var_name} is not allowed. Allowed: {}",
                         SAFE_SET_VARIABLES.join(", ")
@@ -410,10 +416,7 @@ mod tests {
 
     #[test]
     fn classifies_call() {
-        assert_eq!(
-            classify_query("CALL my_proc()").unwrap(),
-            QueryType::Dml
-        );
+        assert_eq!(classify_query("CALL my_proc()").unwrap(), QueryType::Dml);
     }
 
     #[test]
@@ -462,10 +465,7 @@ mod tests {
 
     #[test]
     fn case_insensitive() {
-        assert_eq!(
-            classify_query("dElEtE fRoM t").unwrap(),
-            QueryType::Delete
-        );
+        assert_eq!(classify_query("dElEtE fRoM t").unwrap(), QueryType::Delete);
     }
 
     #[test]
@@ -510,10 +510,7 @@ mod tests {
 
     #[test]
     fn execute_is_dml() {
-        assert_eq!(
-            classify_query("EXECUTE stmt").unwrap(),
-            QueryType::Dml
-        );
+        assert_eq!(classify_query("EXECUTE stmt").unwrap(), QueryType::Dml);
     }
 
     #[test]

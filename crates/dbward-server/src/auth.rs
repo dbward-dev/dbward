@@ -343,6 +343,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
         AppState {
+            license: crate::license::License { plan: crate::license::Plan::Pro },
             sqlite: Arc::new(tokio::sync::Mutex::new(conn)),
             token_signer: Arc::new(crate::token::TokenSigner::generate()),
             webhooks: Arc::new(crate::webhook::WebhookDispatcher::empty()),

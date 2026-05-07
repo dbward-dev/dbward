@@ -94,18 +94,17 @@ pub fn evaluate_workflow(
             None;
 
         for (id, operations_json, steps_json, require_reason) in &rows {
-            let operations: Vec<String> =
-                serde_json::from_str(operations_json).map_err(|e| {
-                    PolicyEvalError::CorruptedConfig(format!(
-                        "invalid operations_json in workflow '{id}': {e}"
-                    ))
-                })?;
-            let steps: Vec<crate::server_config::WorkflowStep> =
-                serde_json::from_str(steps_json).map_err(|e| {
-                    PolicyEvalError::CorruptedConfig(format!(
-                        "invalid steps_json in workflow '{id}': {e}"
-                    ))
-                })?;
+            let operations: Vec<String> = serde_json::from_str(operations_json).map_err(|e| {
+                PolicyEvalError::CorruptedConfig(format!(
+                    "invalid operations_json in workflow '{id}': {e}"
+                ))
+            })?;
+            let steps: Vec<crate::server_config::WorkflowStep> = serde_json::from_str(steps_json)
+                .map_err(|e| {
+                PolicyEvalError::CorruptedConfig(format!(
+                    "invalid steps_json in workflow '{id}': {e}"
+                ))
+            })?;
             if operations.is_empty() {
                 if catchall_match.is_none() {
                     catchall_match = Some((id.clone(), steps, *require_reason));
@@ -129,9 +128,7 @@ pub fn evaluate_workflow(
 
 /// Validate all workflow JSON integrity on startup. Fails if any are corrupted.
 pub fn validate_workflows(conn: &Connection) -> Result<(), PolicyEvalError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, operations_json, steps_json FROM workflows",
-    )?;
+    let mut stmt = conn.prepare("SELECT id, operations_json, steps_json FROM workflows")?;
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -146,8 +143,8 @@ pub fn validate_workflows(conn: &Connection) -> Result<(), PolicyEvalError> {
                 "invalid operations_json in workflow '{id}': {e}"
             ))
         })?;
-        let _: Vec<crate::server_config::WorkflowStep> =
-            serde_json::from_str(&steps_json).map_err(|e| {
+        let _: Vec<crate::server_config::WorkflowStep> = serde_json::from_str(&steps_json)
+            .map_err(|e| {
                 PolicyEvalError::CorruptedConfig(format!(
                     "invalid steps_json in workflow '{id}': {e}"
                 ))
@@ -187,8 +184,7 @@ pub fn sync_workflows(
     for w in workflows {
         let mut sorted_ops = w.operations.clone();
         sorted_ops.sort();
-        let ops_json = serde_json::to_string(&sorted_ops)
-            .unwrap_or_else(|_| "[]".into());
+        let ops_json = serde_json::to_string(&sorted_ops).unwrap_or_else(|_| "[]".into());
         let ops_tag = if sorted_ops.is_empty() {
             "*".to_string()
         } else {

@@ -44,6 +44,7 @@ fn test_state() -> AppState {
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
+        license: dbward_server::license::License { plan: dbward_server::license::Plan::Pro },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
@@ -111,7 +112,9 @@ async fn create_dispatched(app: &axum::Router, token: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_approve_one_succeeds_one_conflicts() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let (_, admin1_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
     let (_, admin2_token) = auth::create_token(&state, "admin2", "admin").await.unwrap();
     let app = routes::router(state);
@@ -147,11 +150,15 @@ async fn concurrent_approve_one_succeeds_one_conflicts() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_claim_one_succeeds_one_conflicts() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
-    let (_, agent1_token) =
-        auth::create_token_with_type(&state, "agent1", "admin", "agent").await.unwrap();
-    let (_, agent2_token) =
-        auth::create_token_with_type(&state, "agent2", "admin", "agent").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
+    let (_, agent1_token) = auth::create_token_with_type(&state, "agent1", "admin", "agent")
+        .await
+        .unwrap();
+    let (_, agent2_token) = auth::create_token_with_type(&state, "agent2", "admin", "agent")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let id = create_dispatched(&app, &dev_token).await;
@@ -185,7 +192,9 @@ async fn concurrent_claim_one_succeeds_one_conflicts() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_same_idempotency_key_one_creates_one_returns_existing() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let payload = json!({
@@ -236,7 +245,9 @@ async fn concurrent_same_idempotency_key_one_creates_one_returns_existing() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_creations_preserve_audit_hash_chain() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
     let app = routes::router(state);
 

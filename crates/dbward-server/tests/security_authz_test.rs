@@ -34,6 +34,7 @@ fn test_state() -> AppState {
     }];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
+        license: dbward_server::license::License { plan: dbward_server::license::Plan::Pro },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
@@ -95,7 +96,11 @@ async fn no_auth_returns_401_for_protected_endpoints() {
             _ => Request::get(path).body(Body::empty()).unwrap(),
         };
         let resp = app.clone().oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "expected 401 for {method} {path}");
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "expected 401 for {method} {path}"
+        );
     }
 }
 
@@ -114,7 +119,11 @@ async fn malformed_auth_returns_401() {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "expected 401 for auth={header_val}");
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "expected 401 for auth={header_val}"
+        );
     }
 }
 
@@ -124,7 +133,9 @@ async fn malformed_auth_returns_401() {
 async fn admin_can_list_all_requests() {
     let state = test_state();
     let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     // dev creates a request
@@ -155,40 +166,58 @@ async fn admin_can_crud_workflows() {
     let auth = format!("Bearer {token}");
 
     // Create
-    let resp = app.clone().oneshot(
-        Request::post("/api/workflows")
-            .header("authorization", &auth)
-            .header("content-type", "application/json")
-            .body(Body::from(json!({"database":"testdb","environment":"staging"}).to_string()))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/workflows")
+                .header("authorization", &auth)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"database":"testdb","environment":"staging"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     // List
-    let resp = app.clone().oneshot(
-        Request::get("/api/workflows")
-            .header("authorization", &auth)
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/api/workflows")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Get
-    let resp = app.clone().oneshot(
-        Request::get("/api/workflows/testdb:staging")
-            .header("authorization", &auth)
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/api/workflows/testdb:staging")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Delete
-    let resp = app.clone().oneshot(
-        Request::delete("/api/workflows/testdb:staging")
-            .header("authorization", &auth)
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::delete("/api/workflows/testdb:staging")
+                .header("authorization", &auth)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
@@ -198,13 +227,16 @@ async fn admin_user_cannot_use_agent_endpoints() {
     let (_, token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
     let app = routes::router(state);
 
-    let resp = app.oneshot(
-        Request::post("/api/agent/poll")
-            .header("authorization", format!("Bearer {token}"))
-            .header("content-type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::post("/api/agent/poll")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -213,44 +245,60 @@ async fn admin_user_cannot_use_agent_endpoints() {
 #[tokio::test]
 async fn developer_cannot_get_others_request() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
-    let (_, bob_token) = auth::create_token(&state, "bob", "developer").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, bob_token) = auth::create_token(&state, "bob", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let id = create_request(&app, &alice_token, "production").await;
 
-    let resp = app.oneshot(
-        Request::get(format!("/api/requests/{id}"))
-            .header("authorization", format!("Bearer {bob_token}"))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get(format!("/api/requests/{id}"))
+                .header("authorization", format!("Bearer {bob_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
 async fn developer_cannot_approve() {
     let state = test_state();
-    let (_, alice_token) = auth::create_token(&state, "alice", "developer").await.unwrap();
-    let (_, bob_token) = auth::create_token(&state, "bob", "developer").await.unwrap();
+    let (_, alice_token) = auth::create_token(&state, "alice", "developer")
+        .await
+        .unwrap();
+    let (_, bob_token) = auth::create_token(&state, "bob", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let id = create_request(&app, &alice_token, "production").await;
 
-    let resp = app.oneshot(
-        Request::post(format!("/api/requests/{id}/approve"))
-            .header("authorization", format!("Bearer {bob_token}"))
-            .header("content-type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::post(format!("/api/requests/{id}/approve"))
+                .header("authorization", format!("Bearer {bob_token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
 async fn developer_cannot_crud_policies() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
     let auth = format!("Bearer {token}");
 
@@ -269,7 +317,9 @@ async fn developer_cannot_crud_policies() {
             "POST" => Request::post(path)
                 .header("authorization", &auth)
                 .header("content-type", "application/json")
-                .body(Body::from(json!({"database":"x","environment":"y"}).to_string()))
+                .body(Body::from(
+                    json!({"database":"x","environment":"y"}).to_string(),
+                ))
                 .unwrap(),
             _ => Request::get(path)
                 .header("authorization", &auth)
@@ -277,32 +327,45 @@ async fn developer_cannot_crud_policies() {
                 .unwrap(),
         };
         let resp = app.clone().oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN, "expected 403 for developer {method} {path}");
+        assert_eq!(
+            resp.status(),
+            StatusCode::FORBIDDEN,
+            "expected 403 for developer {method} {path}"
+        );
     }
 }
 
 #[tokio::test]
 async fn developer_audit_cannot_query_other_users() {
     let state = test_state();
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     // dev can read own audit
-    let resp = app.clone().oneshot(
-        Request::get("/api/audit")
-            .header("authorization", format!("Bearer {dev_token}"))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/api/audit")
+                .header("authorization", format!("Bearer {dev_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // dev cannot query another user's audit
-    let resp = app.oneshot(
-        Request::get("/api/audit?user=admin1")
-            .header("authorization", format!("Bearer {dev_token}"))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get("/api/audit?user=admin1")
+                .header("authorization", format!("Bearer {dev_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -330,12 +393,15 @@ async fn readonly_cannot_read_audit() {
     let (_, token) = auth::create_token(&state, "ro1", "readonly").await.unwrap();
     let app = routes::router(state);
 
-    let resp = app.oneshot(
-        Request::get("/api/audit")
-            .header("authorization", format!("Bearer {token}"))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get("/api/audit")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -344,23 +410,32 @@ async fn readonly_cannot_read_audit() {
 #[tokio::test]
 async fn agent_can_poll() {
     let state = test_state();
-    let (_, token) = auth::create_token_with_type(&state, "agent1", "admin", "agent").await.unwrap();
+    let (_, token) = auth::create_token_with_type(&state, "agent1", "admin", "agent")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
-    let resp = app.oneshot(
-        Request::post("/api/agent/poll")
-            .header("authorization", format!("Bearer {token}"))
-            .header("content-type", "application/json")
-            .body(Body::from(json!({"databases":["*"],"environments":["*"],"operations":["*"]}).to_string()))
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::post("/api/agent/poll")
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"databases":["*"],"environments":["*"],"operations":["*"]}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]
 async fn agent_cannot_create_request() {
     let state = test_state();
-    let (_, token) = auth::create_token_with_type(&state, "agent1", "admin", "agent").await.unwrap();
+    let (_, token) = auth::create_token_with_type(&state, "agent1", "admin", "agent")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let resp = app.oneshot(
@@ -376,45 +451,60 @@ async fn agent_cannot_create_request() {
 #[tokio::test]
 async fn agent_cannot_list_requests() {
     let state = test_state();
-    let (_, token) = auth::create_token_with_type(&state, "agent1", "admin", "agent").await.unwrap();
+    let (_, token) = auth::create_token_with_type(&state, "agent1", "admin", "agent")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
-    let resp = app.oneshot(
-        Request::get("/api/requests")
-            .header("authorization", format!("Bearer {token}"))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get("/api/requests")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
 async fn agent_cannot_read_audit() {
     let state = test_state();
-    let (_, token) = auth::create_token_with_type(&state, "agent1", "admin", "agent").await.unwrap();
+    let (_, token) = auth::create_token_with_type(&state, "agent1", "admin", "agent")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
-    let resp = app.oneshot(
-        Request::get("/api/audit")
-            .header("authorization", format!("Bearer {token}"))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get("/api/audit")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
 async fn agent_cannot_crud_policies() {
     let state = test_state();
-    let (_, token) = auth::create_token_with_type(&state, "agent1", "admin", "agent").await.unwrap();
+    let (_, token) = auth::create_token_with_type(&state, "agent1", "admin", "agent")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
-    let resp = app.oneshot(
-        Request::get("/api/workflows")
-            .header("authorization", format!("Bearer {token}"))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get("/api/workflows")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -427,20 +517,27 @@ async fn sqli_in_filter_params_is_safe() {
     let app = routes::router(state);
 
     // SQLi in status param (URL-encoded)
-    let resp = app.clone().oneshot(
-        Request::get("/api/requests?status=pending%27%3B%20DROP%20TABLE%20requests%3B%20--")
-            .header("authorization", format!("Bearer {token}"))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/api/requests?status=pending%27%3B%20DROP%20TABLE%20requests%3B%20--")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // SQLi in audit user param (URL-encoded)
-    let resp = app.oneshot(
-        Request::get("/api/audit?user=%27%20OR%20%271%27%3D%271")
-            .header("authorization", format!("Bearer {token}"))
-            .body(Body::empty())
-            .unwrap(),
-    ).await.unwrap();
+    let resp = app
+        .oneshot(
+            Request::get("/api/audit?user=%27%20OR%20%271%27%3D%271")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }

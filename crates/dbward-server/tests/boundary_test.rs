@@ -44,6 +44,7 @@ fn test_state() -> AppState {
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
+        license: dbward_server::license::License { plan: dbward_server::license::Plan::Pro },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
         webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
@@ -75,7 +76,9 @@ async fn body_json(resp: axum::response::Response) -> Value {
 #[tokio::test]
 async fn invalid_operation_rejected() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let resp = app
@@ -84,7 +87,8 @@ async fn invalid_operation_rejected() {
                 .header("authorization", auth_header(&token))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    json!({"operation":"drop_table","environment":"development","detail":"x"}).to_string(),
+                    json!({"operation":"drop_table","environment":"development","detail":"x"})
+                        .to_string(),
                 ))
                 .unwrap(),
         )
@@ -98,10 +102,17 @@ async fn invalid_operation_rejected() {
 #[tokio::test]
 async fn all_valid_operations_accepted() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
-    for op in ["execute_query", "migrate_up", "migrate_down", "migrate_status"] {
+    for op in [
+        "execute_query",
+        "migrate_up",
+        "migrate_down",
+        "migrate_status",
+    ] {
         let resp = app
             .clone()
             .oneshot(
@@ -109,13 +120,18 @@ async fn all_valid_operations_accepted() {
                     .header("authorization", auth_header(&token))
                     .header("content-type", "application/json")
                     .body(Body::from(
-                        json!({"operation": op, "environment":"development","detail":"x"}).to_string(),
+                        json!({"operation": op, "environment":"development","detail":"x"})
+                            .to_string(),
                     ))
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::CREATED, "operation {op} should be accepted");
+        assert_eq!(
+            resp.status(),
+            StatusCode::CREATED,
+            "operation {op} should be accepted"
+        );
     }
 }
 
@@ -124,10 +140,12 @@ async fn all_valid_operations_accepted() {
 #[tokio::test]
 async fn metadata_not_object_rejected() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
-    for invalid in [json!("a string"), json!(["an","array"]), json!(42)] {
+    for invalid in [json!("a string"), json!(["an", "array"]), json!(42)] {
         let resp = app
             .clone()
             .oneshot(
@@ -150,7 +168,9 @@ async fn metadata_not_object_rejected() {
 #[tokio::test]
 async fn metadata_oversized_rejected() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     // Create metadata that serializes to > 8192 bytes
@@ -175,7 +195,9 @@ async fn metadata_oversized_rejected() {
 #[tokio::test]
 async fn metadata_at_exact_limit_accepted() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     // {"k":"..."} → overhead is {"k":""} = 6 bytes + quotes around value = 2 → 8 bytes overhead
@@ -211,7 +233,9 @@ async fn metadata_at_exact_limit_accepted() {
 #[tokio::test]
 async fn idempotency_key_empty_rejected() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let resp = app
@@ -234,7 +258,9 @@ async fn idempotency_key_empty_rejected() {
 #[tokio::test]
 async fn idempotency_key_too_long_rejected() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let long_key = "a".repeat(256);
@@ -258,7 +284,9 @@ async fn idempotency_key_too_long_rejected() {
 #[tokio::test]
 async fn idempotency_key_at_max_length_accepted() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let max_key = "b".repeat(255);
@@ -280,7 +308,9 @@ async fn idempotency_key_at_max_length_accepted() {
 #[tokio::test]
 async fn idempotency_key_duplicate_returns_existing() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let payload = json!({
@@ -326,7 +356,9 @@ async fn idempotency_key_duplicate_returns_existing() {
 #[tokio::test]
 async fn unicode_in_detail_preserved() {
     let state = test_state();
-    let (_, token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let app = routes::router(state);
 
     let detail = "SELECT * FROM users WHERE name = '日本語テスト 🚀'";

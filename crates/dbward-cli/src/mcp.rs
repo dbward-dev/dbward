@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -36,7 +36,12 @@ impl ElicitHandle {
         let id = self.id_counter.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send(ElicitMsg { id, message: message.to_string(), schema, response_tx: tx })
+            .send(ElicitMsg {
+                id,
+                message: message.to_string(),
+                schema,
+                response_tx: tx,
+            })
             .await
             .map_err(|_| "elicitation channel closed".to_string())?;
         tokio::time::timeout(Duration::from_secs(300), rx)

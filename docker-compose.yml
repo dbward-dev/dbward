@@ -186,7 +186,8 @@ services:
     profiles:
       - mysql
 
-  # OIDC CLI users (use with: docker compose run --rm alice-oidc login --device)
+  # OIDC CLI users (use with: docker compose --profile oidc up)
+  # Note: oidc profile uses dbward-server-oidc.toml which requires Pro license
   alice-oidc:
     build: *dbward-build
     entrypoint: ["dbward", "--config", "/config/dbward-cli-oidc.toml"]

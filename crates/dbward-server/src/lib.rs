@@ -3,6 +3,8 @@ pub mod auth;
 pub(crate) mod authz;
 pub(crate) mod constants;
 pub mod db;
+pub mod license;
+pub mod limits;
 pub mod metrics;
 pub mod oidc;
 pub mod result_storage;

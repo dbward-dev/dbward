@@ -22,11 +22,13 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
     // Verify DB connectivity for all configured databases
     for (name, db_config) in &config.databases {
         eprintln!("verifying database connection: {name}");
-        let driver = dbward_core::driver::connect(&db_config.url).await.map_err(|e| {
-            Error::Config(format!(
-                "failed to connect to database '{name}': {e}. Check url in agent config."
-            ))
-        })?;
+        let driver = dbward_core::driver::connect(&db_config.url)
+            .await
+            .map_err(|e| {
+                Error::Config(format!(
+                    "failed to connect to database '{name}': {e}. Check url in agent config."
+                ))
+            })?;
         drop(driver);
     }
 

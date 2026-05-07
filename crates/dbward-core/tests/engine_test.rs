@@ -92,7 +92,8 @@ async fn pg_type_mapping_timestamptz() {
     let rows = drv
         .query("SELECT '2024-01-15 10:30:00+00'::timestamptz AS ts")
         .await
-        .unwrap().rows;
+        .unwrap()
+        .rows;
     assert!(rows[0]["ts"].is_string());
     let ts = rows[0]["ts"].as_str().unwrap();
     assert!(ts.contains("2024-01-15"));
@@ -105,7 +106,8 @@ async fn pg_type_mapping_uuid() {
     let rows = drv
         .query("SELECT 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid AS id")
         .await
-        .unwrap().rows;
+        .unwrap()
+        .rows;
     assert_eq!(
         rows[0]["id"].as_str().unwrap(),
         "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
@@ -119,7 +121,8 @@ async fn pg_type_mapping_jsonb() {
     let rows = drv
         .query(r#"SELECT '{"key": "value"}'::jsonb AS data"#)
         .await
-        .unwrap().rows;
+        .unwrap()
+        .rows;
     assert_eq!(rows[0]["data"]["key"], "value");
 }
 
@@ -127,7 +130,11 @@ async fn pg_type_mapping_jsonb() {
 #[ignore]
 async fn pg_type_mapping_date() {
     let (_container, drv, _) = setup().await;
-    let rows = drv.query("SELECT '2024-06-15'::date AS d").await.unwrap().rows;
+    let rows = drv
+        .query("SELECT '2024-06-15'::date AS d")
+        .await
+        .unwrap()
+        .rows;
     assert!(rows[0]["d"].as_str().unwrap().contains("2024-06-15"));
 }
 
@@ -135,7 +142,11 @@ async fn pg_type_mapping_date() {
 #[ignore]
 async fn pg_type_mapping_numeric_as_string() {
     let (_container, drv, _) = setup().await;
-    let rows = drv.query("SELECT 123.456::numeric AS n").await.unwrap().rows;
+    let rows = drv
+        .query("SELECT 123.456::numeric AS n")
+        .await
+        .unwrap()
+        .rows;
     // NUMERIC falls through to String fallback
     assert!(rows[0]["n"].is_string());
 }
