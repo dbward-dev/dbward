@@ -1,6 +1,5 @@
 pub(crate) mod agent_repo;
 pub(crate) mod audit_event_repo;
-pub(crate) mod audit_repo;
 pub mod maintenance;
 pub mod policy_repo;
 pub(crate) mod request_repo;
