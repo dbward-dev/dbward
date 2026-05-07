@@ -45,10 +45,6 @@ pub fn purge_old_records(
         rusqlite::params![req_cutoff],
     )?;
     let audit_deleted = conn.execute(
-        "DELETE FROM audit_log WHERE created_at < ?1",
-        rusqlite::params![audit_cutoff],
-    )?;
-    conn.execute(
         "DELETE FROM audit_events WHERE created_at < ?1",
         rusqlite::params![audit_cutoff],
     )?;
@@ -176,13 +172,13 @@ mod tests {
             rusqlite::params![old],
         ).unwrap();
         conn.execute(
-            "INSERT INTO audit_log (id, actor_id, operation, environment, database_name, detail, status, created_at)
-             VALUES ('aud-1', 'alice', 'execute_query', 'dev', 'app', 'SELECT 1', 'ok', ?1)",
+            "INSERT INTO audit_events (id, event_type, event_category, outcome, actor_id, actor_type, event_hash, created_at)
+             VALUES ('aud-1', 'request_created', 'request', 'success', 'alice', 'user', '0000000000000000000000000000000000000000000000000000000000000000', ?1)",
             rusqlite::params![old],
         ).unwrap();
         conn.execute(
-            "INSERT INTO audit_log (id, actor_id, operation, environment, database_name, detail, status, created_at)
-             VALUES ('aud-2', 'alice', 'execute_query', 'dev', 'app', 'SELECT 1', 'ok', ?1)",
+            "INSERT INTO audit_events (id, event_type, event_category, outcome, actor_id, actor_type, event_hash, created_at)
+             VALUES ('aud-2', 'request_created', 'request', 'success', 'alice', 'user', '0000000000000000000000000000000000000000000000000000000000000001', ?1)",
             rusqlite::params![recent],
         ).unwrap();
 
@@ -199,7 +195,7 @@ mod tests {
             .unwrap();
         assert_eq!(apr_count, 0);
         let aud_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM audit_events", [], |r| r.get(0))
             .unwrap();
         assert_eq!(aud_count, 1);
     }

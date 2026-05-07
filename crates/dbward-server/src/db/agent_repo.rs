@@ -104,7 +104,6 @@ pub fn finish_execution(
 ) -> Result<String, rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
     let exec_status = if success { "completed" } else { "failed" };
-    let audit_id = uuid::Uuid::new_v4().to_string();
 
     let tx = conn.transaction()?;
     let current_request_status: String = tx.query_row(
@@ -129,10 +128,6 @@ pub fn finish_execution(
             rusqlite::params![req_status, now, request_id],
         )?;
     }
-    tx.execute(
-        "INSERT INTO audit_log (id, request_id, execution_id, actor_id, operation, environment, database_name, detail, status, result_summary, error_message, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11)",
-        rusqlite::params![audit_id, request_id, execution_id, actor, operation, environment, database_name, detail, req_status, error_msg, now],
-    )?;
     tx.commit()?;
     Ok(req_status.to_string())
 }
