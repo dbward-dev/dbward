@@ -4,11 +4,12 @@ pub mod maintenance;
 pub mod policy_repo;
 pub(crate) mod request_repo;
 pub(crate) mod token_repo;
+pub mod webhook_repo;
 
 use rusqlite::Connection;
 
 /// Latest schema version. Increment when adding migrations.
-pub const LATEST_SCHEMA_VERSION: i64 = 4;
+pub const LATEST_SCHEMA_VERSION: i64 = 5;
 
 /// Initialize SQLite database with WAL mode and versioned schema.
 pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -166,6 +167,30 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Erro
             )?;
             Ok(())
         }
+        5 => {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS webhooks (
+                    id TEXT PRIMARY KEY,
+                    url TEXT NOT NULL,
+                    events_json TEXT NOT NULL DEFAULT '[]',
+                    format TEXT NOT NULL DEFAULT 'generic',
+                    secret TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    source TEXT NOT NULL DEFAULT 'api',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );",
+            )?;
+            // Add columns only if tokens table exists and columns are missing
+            // (fresh DBs already have them from v1 schema; partial test DBs may lack tokens table)
+            if has_column(conn, "tokens", "id")? && !has_column(conn, "tokens", "name")? {
+                conn.execute_batch("ALTER TABLE tokens ADD COLUMN name TEXT;")?;
+            }
+            if has_column(conn, "tokens", "id")? && !has_column(conn, "tokens", "expires_at")? {
+                conn.execute_batch("ALTER TABLE tokens ADD COLUMN expires_at TEXT;")?;
+            }
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -181,6 +206,8 @@ fn create_schema_v1(conn: &Connection) -> Result<(), rusqlite::Error> {
             token_prefix TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'developer',
             status TEXT NOT NULL DEFAULT 'active',
+            name TEXT,
+            expires_at TEXT,
             created_at TEXT NOT NULL,
             revoked_at TEXT
         );
@@ -191,6 +218,18 @@ fn create_schema_v1(conn: &Connection) -> Result<(), rusqlite::Error> {
             FOREIGN KEY (token_id) REFERENCES tokens(id)
         );
         CREATE INDEX IF NOT EXISTS idx_token_groups_token ON token_groups(token_id);
+
+        CREATE TABLE IF NOT EXISTS webhooks (
+            id TEXT PRIMARY KEY,
+            url TEXT NOT NULL,
+            events_json TEXT NOT NULL DEFAULT '[]',
+            format TEXT NOT NULL DEFAULT 'generic',
+            secret TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            source TEXT NOT NULL DEFAULT 'api',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
 
         CREATE TABLE IF NOT EXISTS requests (
             id TEXT PRIMARY KEY,

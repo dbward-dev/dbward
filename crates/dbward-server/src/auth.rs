@@ -121,6 +121,17 @@ async fn create_token_with_type_and_groups(
     subject_type: &str,
     groups: &[&str],
 ) -> Result<(String, String), String> {
+    create_token_full(state, user, role, subject_type, groups, None).await
+}
+
+pub async fn create_token_full(
+    state: &AppState,
+    user: &str,
+    role: &str,
+    subject_type: &str,
+    groups: &[&str],
+    name: Option<&str>,
+) -> Result<(String, String), String> {
     let token_id = Uuid::new_v4().to_string();
     let raw_token = format!("dbw_{}", Uuid::new_v4().to_string().replace('-', ""));
     let hash = hash_token(&raw_token);
@@ -135,6 +146,7 @@ async fn create_token_with_type_and_groups(
         &hash,
         &prefix,
         role,
+        name,
         &Utc::now().to_rfc3339(),
     )
     .map_err(|e| e.to_string())?;
@@ -293,12 +305,18 @@ pub async fn authenticate(
     } else {
         // API token
         if state.auth_mode == "oidc" {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                "API tokens disabled, use OIDC".into(),
-            ));
+            // Allow agent tokens even in OIDC mode (agents can't do browser flows)
+            let user = authenticate_api_token(raw_token, state).await?;
+            if user.subject_type != "agent" {
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    "invalid token".into(),
+                ));
+            }
+            Ok(user)
+        } else {
+            authenticate_api_token(raw_token, state).await
         }
-        authenticate_api_token(raw_token, state).await
     }
 }
 
@@ -348,7 +366,7 @@ mod tests {
             license: crate::license::License { plan: crate::license::Plan::Pro },
             sqlite: Arc::new(tokio::sync::Mutex::new(conn)),
             token_signer: Arc::new(crate::token::TokenSigner::generate()),
-            webhooks: Arc::new(crate::webhook::WebhookDispatcher::empty()),
+            webhooks: Arc::new(std::sync::RwLock::new(crate::webhook::WebhookDispatcher::empty())),
             metrics: Arc::new(crate::Metrics::new()),
             oidc: None,
             auth_mode: "token".to_string(),
@@ -458,6 +476,7 @@ mod tests {
                 "fakehash000",
                 &prefix_a,
                 "admin",
+                None,
                 "2024-01-01T00:00:00Z",
             )
             .unwrap();
@@ -471,5 +490,47 @@ mod tests {
         );
         let user = authenticate(&h, &state).await.unwrap();
         assert_eq!(user.user, "alice");
+    }
+
+    #[tokio::test]
+    async fn oidc_mode_allows_agent_token() {
+        let mut state = test_state();
+        state.auth_mode = "oidc".to_string();
+        let (_, token) = create_token_with_type(&state, "my-agent", "admin", "agent")
+            .await
+            .unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        let user = authenticate(&headers, &state).await.unwrap();
+        assert_eq!(user.subject_type, "agent");
+    }
+
+    #[tokio::test]
+    async fn oidc_mode_rejects_user_token() {
+        let mut state = test_state();
+        state.auth_mode = "oidc".to_string();
+        let (_, token) = create_token(&state, "alice", "developer").await.unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        let err = authenticate(&headers, &state).await.unwrap_err();
+        assert_eq!(err.0, StatusCode::UNAUTHORIZED);
+        assert!(err.1.contains("invalid token"));
+    }
+
+    #[tokio::test]
+    async fn oidc_mode_rejects_revoked_agent_token() {
+        let mut state = test_state();
+        state.auth_mode = "oidc".to_string();
+        let (token_id, token) = create_token_with_type(&state, "my-agent", "admin", "agent")
+            .await
+            .unwrap();
+        revoke_token(&state, &token_id).await.unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        let err = authenticate(&headers, &state).await.unwrap_err();
+        assert_eq!(err.0, StatusCode::UNAUTHORIZED);
     }
 }

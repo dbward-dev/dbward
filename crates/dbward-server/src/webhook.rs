@@ -158,6 +158,21 @@ impl WebhookDispatcher {
         }
     }
 
+    /// Replace the webhook list (called after CRUD operations).
+    pub fn reload(&mut self, hooks: Vec<WebhookConfig>) {
+        let valid_hooks: Vec<_> = hooks
+            .into_iter()
+            .filter(|h| match validate_webhook_url(&h.url) {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("WARNING: skipping webhook {}: {e}", h.url);
+                    false
+                }
+            })
+            .collect();
+        self.hooks = valid_hooks;
+    }
+
     /// Create without URL validation (for tests only).
     #[cfg(test)]
     pub fn new_unchecked(hooks: Vec<WebhookConfig>) -> Self {

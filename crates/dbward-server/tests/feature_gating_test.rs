@@ -19,7 +19,7 @@ fn free_state() -> AppState {
         license: License { plan: Plan::Free },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(signer),
-        webhooks: Arc::new(dbward_server::webhook::WebhookDispatcher::empty()),
+        webhooks: Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
         metrics: Arc::new(dbward_server::Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),

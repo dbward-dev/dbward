@@ -124,7 +124,7 @@ impl RequestNotifier {
 pub struct AppState {
     pub sqlite: Arc<Mutex<Connection>>,
     pub token_signer: Arc<TokenSigner>,
-    pub webhooks: Arc<WebhookDispatcher>,
+    pub webhooks: Arc<std::sync::RwLock<WebhookDispatcher>>,
     pub metrics: Arc<Metrics>,
     pub license: crate::license::License,
     pub oidc: Option<Arc<OidcVerifier>>,

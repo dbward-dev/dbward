@@ -56,6 +56,8 @@ p, user, admin, Global, UpdatePolicy
 p, user, admin, PolicyObject, UpdatePolicy
 p, user, admin, Global, DeletePolicy
 p, user, admin, PolicyObject, DeletePolicy
+p, user, admin, Global, ManageToken
+p, user, admin, Global, ManageWebhook
 "#;
 
 static ENFORCER: OnceCell<Result<Enforcer, (StatusCode, String)>> = OnceCell::const_new();
@@ -79,6 +81,8 @@ pub enum Action {
     CreatePolicy,
     UpdatePolicy,
     DeletePolicy,
+    ManageToken,
+    ManageWebhook,
 }
 
 impl Action {
@@ -101,6 +105,8 @@ impl Action {
             Self::CreatePolicy => "CreatePolicy",
             Self::UpdatePolicy => "UpdatePolicy",
             Self::DeletePolicy => "DeletePolicy",
+            Self::ManageToken => "ManageToken",
+            Self::ManageWebhook => "ManageWebhook",
         }
     }
 }
@@ -441,7 +447,9 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
         | ("UpdatePolicy", Resource::Global)
         | ("UpdatePolicy", Resource::PolicyObject)
         | ("DeletePolicy", Resource::Global)
-        | ("DeletePolicy", Resource::PolicyObject) => true,
+        | ("DeletePolicy", Resource::PolicyObject)
+        | ("ManageToken", Resource::Global)
+        | ("ManageWebhook", Resource::Global) => true,
         _ => false,
     }
 }
@@ -506,7 +514,9 @@ fn deny_message(action: Action) -> String {
         | Action::GetPolicy
         | Action::CreatePolicy
         | Action::UpdatePolicy
-        | Action::DeletePolicy => "admin only".into(),
+        | Action::DeletePolicy
+        | Action::ManageToken
+        | Action::ManageWebhook => "admin only".into(),
         Action::ListRequests => "request list access denied".into(),
     }
 }
