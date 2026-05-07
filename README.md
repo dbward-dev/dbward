@@ -483,6 +483,105 @@ Key alerts:
 - `dbward_requests_oldest_pending_seconds > 3600` → stuck request
 - `rate(dbward_break_glass_total[5m]) > 0` → emergency bypass used
 
+## Self-Hosted Deployment
+
+### Minimum Requirements
+
+- Linux VM (EC2, GCE, DigitalOcean, etc.)
+- Docker + Docker Compose
+- S3 bucket (for backup and result storage)
+
+### Quick Deploy
+
+```bash
+git clone https://github.com/metapox/dbward.git && cd dbward
+
+# Configure
+cp docker-compose.prod.yml docker-compose.yml
+cat > .env << 'EOF'
+DATABASE_URL=postgres://user:pass@your-rds:5432/mydb
+DBWARD_AGENT_TOKEN=<generate after first start>
+LITESTREAM_S3_BUCKET=my-dbward-backups
+AWS_REGION=ap-northeast-1
+EOF
+chmod 600 .env
+
+# Create server.toml (minimal)
+cat > server.toml << 'EOF'
+[auth]
+mode = "token"
+
+[result_storage]
+backend = "s3"
+bucket = "my-dbward-results"
+region = "ap-northeast-1"
+
+[retention]
+result_ttl_days = 90
+
+[[workflows]]
+database = "*"
+environment = "production"
+require_reason = true
+
+[[workflows.steps]]
+type = "approval"
+
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
+EOF
+
+# Start
+docker compose up -d
+
+# Generate tokens
+docker compose exec dbward-server dbward server token create --user admin --role admin --data /data/dbward.db
+docker compose exec dbward-server dbward server token create --user agent --role agent --data /data/dbward.db
+# → Set DBWARD_AGENT_TOKEN in .env, then: docker compose restart dbward-agent
+```
+
+### Backup & Recovery
+
+SQLite state is replicated to S3 in real-time via [Litestream](https://litestream.io/) (~1 second RPO).
+
+**Disaster recovery** (EC2 dies):
+```bash
+# Just start on a new instance — auto-restores from S3
+docker compose up -d
+```
+
+**Point-in-time restore** (data corruption):
+```bash
+docker compose down
+docker run --rm -v dbward_server-data:/data \
+  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_REGION \
+  litestream/litestream:0.5 \
+  restore -o /data/dbward.db -timestamp "2026-05-07T10:00:00Z" \
+  s3://my-dbward-backups/dbward/prod
+docker compose up -d
+```
+
+### Without S3 (development / evaluation)
+
+If `LITESTREAM_S3_BUCKET` is not set, Litestream is skipped and dbward runs directly. Use `deploy/scripts/backup.sh` for manual backups.
+
+### TLS
+
+Bind to `127.0.0.1` (default in docker-compose.prod.yml) and put a reverse proxy in front:
+
+```bash
+# Example with Caddy (auto-TLS)
+caddy reverse-proxy --from dbward.internal.example.com --to localhost:13000
+```
+
+### Upgrade
+
+```bash
+git pull && docker compose up -d --build
+# SQLite migrations run automatically on server start
+```
+
 ## Development
 
 ```bash
