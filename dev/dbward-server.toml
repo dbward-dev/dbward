@@ -26,7 +26,7 @@ min = 1
 role = "dba"
 min = 1
 
-# Production: backend-team first, then dba-team (sequential, group-based)
+# Production: admin approval required
 [[workflows]]
 database = "*"
 environment = "production"
@@ -36,14 +36,7 @@ require_reason = true
 type = "approval"
 
 [[workflows.steps.approvers]]
-group = "backend-team"
-min = 1
-
-[[workflows.steps]]
-type = "approval"
-
-[[workflows.steps.approvers]]
-group = "dba-team"
+role = "admin"
 min = 1
 
 # Global webhooks (all events, all environments)
