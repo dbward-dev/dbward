@@ -9,7 +9,7 @@ $ dbward execute "UPDATE users SET active = false WHERE last_login < '2025-01-01
 ⚠ Request req_7f3a created (production × execute_query)
   Requires 1 approval.
 
-$ dbward approve req_7f3a --reason "Confirmed with product team"
+$ dbward request approve req_7f3a --comment "Confirmed with product team"
 ✓ Approved. Executing on agent-prod-01...
 ✓ 3 rows affected (12ms)
 ```
@@ -17,22 +17,23 @@ $ dbward approve req_7f3a --reason "Confirmed with product team"
 ## Highlights
 
 - 🔐 **Approval workflows** — multi-step, conditional auto-approve, TOML policy engine
-- 📋 **Audit logs** — every operation recorded (who, what, when, which DB)
-- 🤖 **MCP-native** — AI agents operate safely; no execution without approval
+- 📋 **Audit logs** — tamper-evident hash chain, 24 event types, SQL redaction
+- 🤖 **MCP-native** — 15 tools, 6 prompts, elicitation support. AI agents operate safely
 - ⚡ **Single binary** — Rust + embedded SQLite. No Docker, no external DB
 - 🔒 **Agent isolation** — DB credentials never leave the agent. CLI/AI never touch your database directly
-- 🆓 **Free** — all features included, up to 3 workflow rules. [Apache-2.0 / MIT](LICENSE-APACHE)
+- 🆓 **Free** — approval, audit, MCP, break-glass all included. [Apache-2.0 / MIT](LICENSE-APACHE)
 
 ## How it compares
 
-| | dbward | Bytebase | dbmate |
-|---|---|---|---|
-| Approval workflows | ✅ Free | Enterprise only | — |
-| Audit logs | ✅ Free | Pro (limited) | — |
-| MCP / AI agents | ✅ Native | Add-on | — |
-| SSO (OIDC) | ✅ Free | Enterprise | — |
-| Deploy | Single binary | Docker + PostgreSQL | Single binary |
-| Price | Free (3 rules) | $20/user/mo+ | Free |
+| | dbward Free | dbward Pro | Bytebase | dbmate |
+|---|---|---|---|---|
+| Approval workflows | ✅ (5 rules) | Unlimited | Enterprise only | — |
+| Audit logs | ✅ (hash chain) | + export | Pro (limited) | — |
+| MCP / AI agents | ✅ 15 tools | ✅ | Add-on | — |
+| SSO (OIDC) | — | ✅ | Enterprise | — |
+| DB connections | 3 | Unlimited | Unlimited | 1 |
+| Deploy | Single binary | Single binary | Docker + PostgreSQL | Single binary |
+| Price | $0 | $79/mo (waitlist) | $20/user/mo+ | Free |
 
 ## Architecture
 
@@ -44,17 +45,17 @@ $ dbward approve req_7f3a --reason "Confirmed with product team"
            │ REST API
            ▼
 ┌─────────────────────────────────────────────────────────┐
-│                    dbward server                         │
-│  Approval state (SQLite) │ Policy engine │ Audit log     │
-│  Ed25519 token signing   │ OIDC/API auth │ Webhooks      │
-│  In-memory result relay  │ NO database credentials       │
+│                    dbward server                          │
+│  Approval engine │ Policy engine │ Audit log (hash chain) │
+│  Ed25519 token signing │ OIDC/API auth │ Webhooks        │
+│  In-memory result relay │ NO database credentials        │
 └──────────┬───────────────────────────────────────────────┘
            │ Agent polls (outbound HTTPS)
            ▼
 ┌─────────────────────────────────────────────────────────┐
 │                    dbward agent                           │
 │  DB credentials here only │ Executes approved operations  │
-│  Token verification (public key) │ Multiple DB support     │
+│  Token verification (Ed25519) │ Multiple DB support       │
 └──────────┬───────────────────────────────────────────────┘
            │
            ▼
@@ -73,43 +74,10 @@ curl -fsSL https://dbward.dev/install.sh | sh
 dbward init
 
 # Start local server + agent (development mode)
-dbward dev up
+dbward dev --database-url "postgres://localhost/myapp"
 ```
 
 That's it. You now have approval workflows and audit logs for your local database.
-
-### Docker Compose (team setup)
-
-Starts PostgreSQL, dbward-server, and dbward-agent:
-
-```bash
-# Start all services
-docker compose up -d --build
-
-# Create API tokens
-docker compose exec dbward-server \
-  dbward server token create --user alice --role admin --data /data/dbward.db
-docker compose exec dbward-server \
-  dbward server token create --user bob --role developer --data /data/dbward.db
-
-# Execute a query (as bob)
-docker compose run --rm \
-  -e DBWARD_SERVER_TOKEN=<bob-token> \
-  alice execute "SELECT version()"
-
-# If approval is required, approve (as alice)
-docker compose run --rm \
-  -e DBWARD_SERVER_TOKEN=<alice-token> \
-  alice request approve <request-id>
-
-# Get result (as bob)
-docker compose run --rm \
-  -e DBWARD_SERVER_TOKEN=<bob-token> \
-  alice request resume <request-id>
-
-# Tear down
-docker compose down -v
-```
 
 ### Team Setup
 
@@ -121,15 +89,14 @@ dbward server start --config dbward-server.toml
 dbward agent --config dbward-agent.toml
 
 # 3. Developers use CLI (no DB access needed)
-dbward login
 dbward execute "DELETE FROM old_data" --database primary
-# → "Request abc123 requires approval."
+# → "Request req_abc123 requires approval."
 
 # 4. Approver
-dbward request approve abc123
+dbward request approve req_abc123
 
 # 5. Developer gets result
-dbward request resume abc123
+dbward request resume req_abc123
 ```
 
 ### MCP Mode (AI agents)
@@ -139,29 +106,35 @@ dbward request resume abc123
   "mcpServers": {
     "dbward": {
       "command": "dbward",
-      "args": ["mcp"],
-      "env": {
-        "DBWARD_SERVER_URL": "http://localhost:3000",
-        "DBWARD_SERVER_TOKEN": "dbw_..."
-      }
+      "args": ["mcp", "--config", "dbward.toml"]
     }
   }
 }
 ```
 
-**MCP Tools (7):**
+**MCP Tools (15):**
 
 | Tool | Description |
 |---|---|
-| `dbward_execute_query` | Execute SQL (SELECT/DML) via agent |
+| `dbward_execute_query` | Execute SQL (SELECT/DML) via approval workflow |
 | `dbward_migrate_status` | Show migration status |
 | `dbward_migrate_up` | Apply pending migrations |
 | `dbward_migrate_down` | Rollback migrations |
-| `dbward_migrate_create` | Create migration file (local only) |
+| `dbward_migrate_create` | Create migration file (local) |
 | `dbward_check_request` | Check request status |
 | `dbward_get_result` | Get execution result |
+| `dbward_list_pending` | List pending approval requests |
+| `dbward_who_can_approve` | Show who can approve a request |
+| `dbward_find_similar_requests` | Find similar past requests |
+| `dbward_preview_impact` | EXPLAIN query before execution |
+| `dbward_explain_policy_failure` | Explain why approval is needed |
+| `dbward_list_schemas` | List database schemas/tables |
+| `dbward_describe_table` | Describe table columns |
+| `dbward_compare_schema` | Show pending migration SQL |
 
-Mutating operations on production return a request ID. The AI agent polls status and retrieves results after approval + agent execution.
+**MCP Prompts (6):** `review_migration`, `explain_request`, `draft_migration`, `draft_rollback`, `summarize_audit_trail`, `prepare_approval_comment`
+
+**Elicitation:** On production operations, dbward asks the AI client for a reason before proceeding (if the client supports MCP elicitation).
 
 ## On-Demand Execution
 
@@ -176,11 +149,11 @@ dbward uses **on-demand execution**: the agent does not execute on approval. Ins
 6. Client receives result and saves locally (~/.dbward/results/<id>.json)
 ```
 
-The server never writes results to disk — it relays them in-memory via Notify+Mutex channels with a 10-minute TTL.
+The server never writes results to disk — it relays them in-memory with a 10-minute TTL.
 
 ## Policy Engine
 
-Four policy types, all scoped to database × environment. Defined in `dbward-server.toml` (synced to SQLite on startup) or managed via REST API (admin only).
+Defined in `dbward-server.toml` (synced to SQLite on startup) or managed via REST API.
 
 ### Workflows
 
@@ -190,6 +163,7 @@ Control whether operations require approval:
 [[workflows]]
 database = "*"
 environment = "production"
+operations = ["execute_query", "migrate_up", "migrate_down"]
 
 [[workflows.steps]]
 type = "approval"
@@ -199,20 +173,20 @@ allowed_roles = ["admin"]
 
 ### Execution Policies
 
-Control re-execution limits:
+Control re-execution limits (rate limiting):
 
 ```toml
 [[execution_policies]]
 database = "primary"
 environment = "production"
-max_executions = 1
-execution_window_secs = 86400
+max_executions = 10
+execution_window_secs = 3600
 retry_on_failure = false
 ```
 
-### Result Policies
+### Result Policies (Pro)
 
-Control who can access results:
+Control who can access results and storage:
 
 ```toml
 [[result_policies]]
@@ -222,7 +196,7 @@ delivery_mode = "stream"
 access = ["requester", "admin"]
 ```
 
-### Notification Policies
+### Notification Policies (Pro)
 
 Route webhooks per database × environment:
 
@@ -242,20 +216,24 @@ format = "slack"
 dbward [OPTIONS] <COMMAND>
 
 Commands:
-  init        Interactive setup wizard
-  login       OIDC login (browser or --device for headless)
-  logout      Revoke tokens and delete credentials
-  whoami      Show current identity and role
-  migrate     Run migrations (up/down/status/create)
-  execute     Execute SQL (--emergency --reason for break-glass)
-  approve     Approve a pending request
-  reject      Reject a pending request
-  list        List requests
-  resume      Dispatch and wait for result
-  result      Show a previously saved local result
-  mcp         Start MCP stdio server
-  server      Server management (start, token create/revoke)
-  agent       Start the agent
+  init          Interactive setup wizard
+  login         OIDC login (browser or --device for headless)
+  logout        Revoke tokens and delete credentials
+  whoami        Show current identity and role
+  migrate       Run migrations (up/down/status/create)
+  execute       Execute SQL (--emergency --reason for break-glass)
+  audit         Search audit log (--verify for hash chain check)
+  mcp           Start MCP stdio server
+  server        Server management (start, token create/revoke)
+  agent         Start the agent
+  dev           Start local dev server + agent
+  request       Manage requests:
+    list          List requests (--pending-for-me, --status)
+    show          Show request detail
+    approve       Approve a pending request
+    reject        Reject a pending request
+    resume        Dispatch and wait for result
+    cancel        Cancel a pending request
 
 Global Options:
   --config <PATH>          Config file [default: dbward.toml]
@@ -267,50 +245,63 @@ Global Options:
 
 ### Core
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/health` | No | Health check |
-| GET | `/api/public-key` | No | Ed25519 public key (32 bytes) |
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | Health check |
+| GET | `/ready` | Readiness check |
+| GET | `/metrics` | Prometheus metrics |
+| GET | `/api/public-key` | Ed25519 public key |
 
 ### Requests
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/api/requests` | Yes | List requests |
-| POST | `/api/requests` | Yes | Create request |
-| GET | `/api/requests/:id` | Yes | Get request detail |
-| POST | `/api/requests/:id/approve` | Yes | Approve (requester ≠ approver) |
-| POST | `/api/requests/:id/reject` | Yes | Reject (admin or requester) |
-| POST | `/api/requests/:id/complete` | Yes | Report completion |
-| POST | `/api/requests/:id/dispatch` | Yes | Dispatch for on-demand execution |
-| GET | `/api/requests/:id/result/stream` | Yes | Long-poll for result |
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/requests` | List requests (filter by status/database/environment/user) |
+| POST | `/api/requests` | Create request |
+| GET | `/api/requests/:id` | Get request detail |
+| POST | `/api/requests/:id/approve` | Approve (requester ≠ approver) |
+| POST | `/api/requests/:id/reject` | Reject |
+| POST | `/api/requests/:id/dispatch` | Dispatch for on-demand execution |
+| POST | `/api/requests/:id/cancel` | Cancel a pending request |
+| GET | `/api/requests/:id/result/stream` | Long-poll for result |
+| GET | `/api/requests/:id/result/content` | Get stored result content |
 
 ### Agent
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | `/api/agent/poll` | Yes | Poll for dispatched jobs |
-| POST | `/api/agent/jobs/:id/claim` | Yes | Claim a job (lease) |
-| POST | `/api/agent/jobs/:id/result` | Yes | Submit execution result |
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/agent/poll` | Poll for dispatched jobs |
+| POST | `/api/agent/jobs/:id/claim` | Claim a job (lease) |
+| POST | `/api/agent/jobs/:id/heartbeat` | Extend lease |
+| POST | `/api/agent/jobs/:id/result` | Submit execution result |
 
-### Policies (admin only for mutations)
+### Policies (admin)
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET/POST | `/api/workflows` | Yes | List / create workflows |
-| GET/PUT/DELETE | `/api/workflows/:id` | Yes | Get / update / delete workflow |
-| GET/POST | `/api/execution-policies` | Yes | List / create execution policies |
-| GET/PUT/DELETE | `/api/execution-policies/:id` | Yes | Get / update / delete |
-| GET/POST | `/api/result-policies` | Yes | List / create result policies |
-| GET/PUT/DELETE | `/api/result-policies/:id` | Yes | Get / update / delete |
-| GET/POST | `/api/notification-policies` | Yes | List / create notification policies |
-| GET/PUT/DELETE | `/api/notification-policies/:id` | Yes | Get / update / delete |
+| Method | Path | Description |
+|---|---|---|
+| GET/POST | `/api/workflows` | List / create workflows |
+| GET/PUT/DELETE | `/api/workflows/:id` | Get / update / delete |
+| GET/POST | `/api/execution-policies` | List / create execution policies |
+| GET/PUT/DELETE | `/api/execution-policies/:id` | Get / update / delete |
+| GET/POST | `/api/result-policies` | List / create result policies (Pro) |
+| GET/PUT/DELETE | `/api/result-policies/:id` | Get / update / delete (Pro) |
+| GET/POST | `/api/notification-policies` | List / create notification policies (Pro) |
+| GET/PUT/DELETE | `/api/notification-policies/:id` | Get / update / delete (Pro) |
 
 ### Audit
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/api/audit` | Yes | Audit log (last 100 entries) |
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/audit` | Audit log (legacy format) |
+| GET | `/api/audit/events` | Audit events (full: category/type/outcome filters) |
+| GET | `/api/audit/verify` | Verify hash chain integrity |
+
+### Results
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/results` | List stored results |
+| GET | `/api/storage-config` | Get result storage configuration |
 
 ## Security
 
@@ -322,7 +313,8 @@ Global Options:
 - **RBAC** — admin (all), developer (migrate + execute), readonly (SELECT only)
 - **Network isolation** — server has no DB credentials; agent connects outbound only
 - **API token auth** — SHA-256 hashed, prefix+hash composite lookup
-- **OIDC auth** — JWT verification with JWKS caching, RS256/ES256, PKCE for CLI
+- **OIDC auth** — JWT verification with JWKS caching, RS256/ES256, PKCE for CLI (Pro)
+- **Audit hash chain** — SHA-256 chain linking all events, tamper-evident
 
 ## Database Support
 
@@ -333,48 +325,28 @@ Global Options:
 
 Auto-detected from URL scheme (`postgres://` or `mysql://`).
 
-## OIDC Authentication
+## Authentication
+
+### API Tokens (Free)
 
 ```bash
-dbward login              # Browser-based
+dbward server token create --user alice --role admin --data dbward.db
+# → dbw_f9a549aa...
+```
+
+### OIDC (Pro)
+
+```bash
+dbward login              # Browser-based (PKCE)
 dbward login --device     # Headless (SSH, containers)
 dbward whoami             # Check identity
 dbward logout             # Revoke + delete tokens
 ```
 
-Client config (`dbward.toml`):
-
-```toml
-[server.oidc]
-issuer = "https://accounts.google.com"
-client_id = "xxx.apps.googleusercontent.com"
-```
-
-Server config (`dbward-server.toml`):
-
-```toml
-[auth]
-mode = "both"  # "oidc", "token", or "both"
-
-[auth.oidc]
-issuer = "https://accounts.google.com"
-client_id = "xxx.apps.googleusercontent.com"
-default_role = "readonly"
-
-[[auth.oidc.role_mappings]]
-subject = "alice@example.com"
-role = "admin"
-
-[[auth.oidc.role_mappings]]
-claim = "groups"
-value = "db-developers"
-role = "developer"
-```
-
 ## Webhook Notifications
 
 ```toml
-# dbward-server.toml (global)
+# dbward-server.toml
 [[webhooks]]
 url = "https://hooks.slack.com/services/T.../B.../xxx"
 format = "slack"
@@ -385,9 +357,9 @@ format = "generic"
 secret = "whsec_xxxx"  # HMAC-SHA256 in X-Dbward-Signature header
 ```
 
-Events: `request_created`, `request_approved`, `request_rejected`, `request_completed`, `break_glass`.
+Events: `request_created`, `request_approved`, `request_rejected`, `request_executed`, `break_glass`.
 
-Per-database routing is available via notification policies (see Policy Engine above).
+Free: up to 3 webhook destinations (global). Pro: unlimited + per-database routing via notification policies.
 
 ## Break-Glass (Emergency Bypass)
 
@@ -413,18 +385,9 @@ migrations_dir = "db/migrations"
 url = "http://localhost:3000"
 token = "dbw_..."
 
-# Or use OIDC instead of token:
-# [server.oidc]
-# issuer = "https://accounts.google.com"
-# client_id = "xxx.apps.googleusercontent.com"
-
 [databases.app]
-# migrations_dir = "custom/migrations"  # optional override
+# No DB URL here — agent handles connections
 ```
-
-- Relative paths are resolved from the directory containing the config file, not the current working directory.
-- With a single configured database, `migrations_dir = "db/migrations"` points directly to `db/migrations/`.
-- With multiple databases, the default layout becomes `db/migrations/<database>/` unless each database overrides `migrations_dir`.
 
 ### Agent (`dbward-agent.toml`)
 
@@ -450,9 +413,6 @@ url = "postgres://user:pass@db-primary:5432/app"
 url = "mysql://user:pass@db-analytics:3306/warehouse"
 ```
 
-- Agent `migrations_dir` values follow the same rule: relative to the agent config file.
-- If an agent has one database and no explicit `migrations_dir`, it uses `db/migrations/`. With multiple databases, the default is `db/migrations/<database>/`.
-
 ### Server (`dbward-server.toml`)
 
 ```toml
@@ -460,16 +420,7 @@ listen = "0.0.0.0:3000"
 data = "dbward.db"
 
 [auth]
-mode = "both"
-
-[auth.oidc]
-issuer = "https://accounts.google.com"
-client_id = "xxx.apps.googleusercontent.com"
-default_role = "readonly"
-
-[[auth.oidc.role_mappings]]
-subject = "alice@example.com"
-role = "admin"
+mode = "token"  # "oidc", "token", or "both"
 
 [[webhooks]]
 url = "https://hooks.slack.com/services/..."
@@ -478,24 +429,40 @@ format = "slack"
 [[workflows]]
 database = "*"
 environment = "production"
+operations = ["execute_query", "migrate_up", "migrate_down"]
 
 [[workflows.steps]]
 type = "approval"
 min_approvals = 1
+allowed_roles = ["admin"]
 
 [[execution_policies]]
 database = "*"
 environment = "production"
-max_executions = 1
-execution_window_secs = 86400
-retry_on_failure = false
-
-[[result_policies]]
-database = "*"
-environment = "production"
-delivery_mode = "stream"
-access = ["requester", "admin"]
+max_executions = 10
+execution_window_secs = 3600
 ```
+
+## Free / Pro
+
+| | Free | Pro |
+|---|---|---|
+| Workflow rules | 5 | Unlimited |
+| Execution policies | 3 | Unlimited |
+| DB connections | 3 | Unlimited |
+| Agents | 3 | Unlimited |
+| Webhooks | 3 | Unlimited |
+| Approval + Audit + MCP + Break-glass | ✅ | ✅ |
+| OIDC / SSO | — | ✅ |
+| Group-based authorization | — | ✅ |
+| Result policies (access control) | — | ✅ |
+| Notification policies (routing) | — | ✅ |
+| Result sharing (share-with) | — | ✅ |
+| Audit export (S3/Datadog) | — | ✅ (coming) |
+
+Safety features are always free. You pay for organizational complexity.
+
+**Pro waitlist:** https://dbward.dev/waitlist
 
 ## Migration File Format (dbmate-compatible)
 
@@ -507,32 +474,23 @@ CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);
 DROP TABLE users;
 ```
 
+## Metrics
+
+`GET /metrics` — Prometheus text format, unauthenticated. Deploy behind internal network.
+
+Key alerts:
+- `dbward_agents_active == 0` → no agent running
+- `dbward_requests_oldest_pending_seconds > 3600` → stuck request
+- `rate(dbward_break_glass_total[5m]) > 0` → emergency bypass used
+
 ## Development
 
 ```bash
 # Prerequisites: Rust 1.88+, Docker (for integration tests)
-
 cargo test --workspace
-cargo test --workspace -- --include-ignored  # includes DB tests
 cargo build --release
 ```
 
 ## License
 
 Apache-2.0 / MIT (dual-licensed)
-## Metrics
-
-`GET /metrics` exposes Prometheus text format for external scraping.
-
-- Deploy behind an internal network boundary. The endpoint is unauthenticated.
-- Recommended scrape interval: `15s` to `60s`
-
-Recommended alerts:
-
-- `dbward_agents_active == 0`: critical
-- `dbward_requests_oldest_pending_seconds > 3600`: warning
-- `rate(dbward_agent_lease_expirations_total[5m]) > 0`: warning
-- Increase in `dbward_break_glass_total`: info
-- `rate(dbward_auth_failures_total[5m]) > 10`: warning
-- `histogram_quantile(0.99, sum(rate(dbward_http_request_duration_seconds_bucket[5m])) by (le, route, method)) > 5`: warning
-- `rate(dbward_webhook_deliveries_total{status="failed"}[5m]) > 0`: warning
