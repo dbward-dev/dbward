@@ -305,12 +305,18 @@ pub async fn authenticate(
     } else {
         // API token
         if state.auth_mode == "oidc" {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                "API tokens disabled, use OIDC".into(),
-            ));
+            // Allow agent tokens even in OIDC mode (agents can't do browser flows)
+            let user = authenticate_api_token(raw_token, state).await?;
+            if user.subject_type != "agent" {
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    "invalid token".into(),
+                ));
+            }
+            Ok(user)
+        } else {
+            authenticate_api_token(raw_token, state).await
         }
-        authenticate_api_token(raw_token, state).await
     }
 }
 
@@ -484,5 +490,47 @@ mod tests {
         );
         let user = authenticate(&h, &state).await.unwrap();
         assert_eq!(user.user, "alice");
+    }
+
+    #[tokio::test]
+    async fn oidc_mode_allows_agent_token() {
+        let mut state = test_state();
+        state.auth_mode = "oidc".to_string();
+        let (_, token) = create_token_with_type(&state, "my-agent", "admin", "agent")
+            .await
+            .unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        let user = authenticate(&headers, &state).await.unwrap();
+        assert_eq!(user.subject_type, "agent");
+    }
+
+    #[tokio::test]
+    async fn oidc_mode_rejects_user_token() {
+        let mut state = test_state();
+        state.auth_mode = "oidc".to_string();
+        let (_, token) = create_token(&state, "alice", "developer").await.unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        let err = authenticate(&headers, &state).await.unwrap_err();
+        assert_eq!(err.0, StatusCode::UNAUTHORIZED);
+        assert!(err.1.contains("invalid token"));
+    }
+
+    #[tokio::test]
+    async fn oidc_mode_rejects_revoked_agent_token() {
+        let mut state = test_state();
+        state.auth_mode = "oidc".to_string();
+        let (token_id, token) = create_token_with_type(&state, "my-agent", "admin", "agent")
+            .await
+            .unwrap();
+        revoke_token(&state, &token_id).await.unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", format!("Bearer {token}").parse().unwrap());
+        let err = authenticate(&headers, &state).await.unwrap_err();
+        assert_eq!(err.0, StatusCode::UNAUTHORIZED);
     }
 }
