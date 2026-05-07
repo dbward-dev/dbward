@@ -69,7 +69,7 @@ impl ResultChannels {
 
 /// Notifies long-polling GET /api/requests/{id}?wait= when status changes.
 pub struct RequestNotifier {
-    notifiers: Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
+    notifiers: Mutex<HashMap<String, (Arc<tokio::sync::Notify>, Instant)>>,
 }
 
 impl Default for RequestNotifier {
@@ -79,6 +79,8 @@ impl Default for RequestNotifier {
 }
 
 impl RequestNotifier {
+    const ENTRY_TTL: Duration = Duration::from_secs(600);
+
     pub fn new() -> Self {
         Self {
             notifiers: Mutex::new(HashMap::new()),
@@ -86,16 +88,17 @@ impl RequestNotifier {
     }
 
     pub async fn subscribe(&self, request_id: &str) -> Arc<tokio::sync::Notify> {
-        self.notifiers
-            .lock()
-            .await
-            .entry(request_id.to_string())
-            .or_insert_with(|| Arc::new(tokio::sync::Notify::new()))
+        let mut map = self.notifiers.lock().await;
+        self.cleanup_expired_inner(&mut map);
+        map.entry(request_id.to_string())
+            .or_insert_with(|| (Arc::new(tokio::sync::Notify::new()), Instant::now()))
+            .0
             .clone()
     }
 
     pub async fn notify(&self, request_id: &str) {
-        if let Some(n) = self.notifiers.lock().await.get(request_id) {
+        let map = self.notifiers.lock().await;
+        if let Some((n, _)) = map.get(request_id) {
             n.notify_waiters();
         }
     }
@@ -106,9 +109,14 @@ impl RequestNotifier {
 
     pub async fn notify_all(&self) {
         let map = self.notifiers.lock().await;
-        for n in map.values() {
+        for (n, _) in map.values() {
             n.notify_waiters();
         }
+    }
+
+    fn cleanup_expired_inner(&self, map: &mut HashMap<String, (Arc<tokio::sync::Notify>, Instant)>) {
+        let now = Instant::now();
+        map.retain(|_, (_, created)| now.duration_since(*created) < Self::ENTRY_TTL);
     }
 }
 

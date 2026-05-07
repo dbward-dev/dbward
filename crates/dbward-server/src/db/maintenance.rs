@@ -48,6 +48,10 @@ pub fn purge_old_records(
         "DELETE FROM audit_log WHERE created_at < ?1",
         rusqlite::params![audit_cutoff],
     )?;
+    conn.execute(
+        "DELETE FROM audit_events WHERE created_at < ?1",
+        rusqlite::params![audit_cutoff],
+    )?;
     Ok((req_deleted, audit_deleted))
 }
 
