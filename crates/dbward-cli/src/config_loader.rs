@@ -11,6 +11,7 @@ pub fn load(config_path: &Path) -> Result<ClientConfig, Error> {
 pub fn load_agent(config_path: &Path) -> Result<AgentConfig, Error> {
     let mut config = load_from_toml::<AgentConfig>(config_path)?;
     config.resolve_relative_paths(config_base_dir(config_path)?);
+    config.validate()?;
     Ok(config)
 }
 

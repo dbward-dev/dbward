@@ -148,6 +148,34 @@ pub struct ResolvedDatabaseConfig {
 }
 
 impl AgentConfig {
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.agent_id.trim().is_empty() {
+            return Err(Error::Config("agent_id must not be empty".into()));
+        }
+        if !self.server.url.starts_with("http://") && !self.server.url.starts_with("https://") {
+            return Err(Error::Config(format!(
+                "server.url must start with http:// or https://, got: {}",
+                self.server.url
+            )));
+        }
+        if self.server.agent_token.trim().is_empty() {
+            return Err(Error::Config("server.agent_token must not be empty".into()));
+        }
+        if self.databases.is_empty() {
+            return Err(Error::Config(
+                "at least one [databases.*] section must be configured".into(),
+            ));
+        }
+        for cap_db in &self.capabilities.databases {
+            if !self.databases.contains_key(cap_db) {
+                return Err(Error::Config(format!(
+                    "capabilities.databases contains '{cap_db}' but no [databases.{cap_db}] section exists"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub fn resolve_relative_paths(&mut self, base_dir: &Path) {
         for db in self.databases.values_mut() {
             if let Some(path) = db.migrations_dir.as_mut() {
