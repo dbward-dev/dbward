@@ -38,3 +38,6 @@ tower = { version = "0.5", features = ["util"] }
 hyper = "1"
 http-body-util = "0.1"
 tempfile = "3"
+
+[features]
+dev = []
