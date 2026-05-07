@@ -33,6 +33,21 @@ type RequestRow = (
 const MAX_METADATA_JSON_BYTES: usize = 8 * 1024;
 const MAX_IDEMPOTENCY_KEY_BYTES: usize = 255;
 
+/// Compute expires_at for approved requests based on approval_ttl_secs.
+fn compute_expires_at(status: &str, resolved_at: &Option<String>, ttl_secs: u64) -> Option<String> {
+    if ttl_secs == 0 {
+        return None;
+    }
+    if !matches!(status, "approved" | "auto_approved" | "break_glass") {
+        return None;
+    }
+    resolved_at.as_ref().and_then(|r| {
+        chrono::DateTime::parse_from_rfc3339(r)
+            .ok()
+            .map(|t| (t + chrono::Duration::seconds(ttl_secs as i64)).to_rfc3339())
+    })
+}
+
 /// Resolve a short or full request ID, returning appropriate error.
 pub(crate) fn resolve_id(
     conn: &rusqlite::Connection,
@@ -344,7 +359,14 @@ pub(crate) async fn list_requests(
     let start = (offset as usize).min(filtered.len());
     let end = (start + limit as usize).min(filtered.len());
     let page = filtered[start..end].to_vec();
-
+    let page: Vec<serde_json::Value> = page.into_iter().map(|mut r| {
+        if let Some(obj) = r.as_object_mut() {
+            let status = obj.get("status").and_then(|s| s.as_str()).unwrap_or("");
+            let resolved = obj.get("resolved_at").and_then(|v| v.as_str()).map(String::from);
+            obj.insert("expires_at".into(), compute_expires_at(status, &resolved, state.retention.approval_ttl_secs).map_or(serde_json::Value::Null, Into::into));
+        }
+        r
+    }).collect();
     Ok(Json(
         json!({"requests": page, "total": total, "limit": limit, "offset": offset}),
     ))
@@ -1222,6 +1244,7 @@ pub(crate) async fn get_request(
             "reason": reason,
             "metadata": metadata,
             "idempotency_key": idempotency_key,
+            "expires_at": compute_expires_at(&status, &resolved_at, state.retention.approval_ttl_secs),
         });
 
         if status == "approved" || status == "auto_approved" || status == "break_glass" {
