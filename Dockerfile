@@ -43,17 +43,16 @@ FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd -r -g 10001 dbward \
+ && useradd -r -u 10001 -g dbward -d /data -s /sbin/nologin dbward \
+ && mkdir -p /data && chown dbward:dbward /data
 
 WORKDIR /workspace
 
 COPY --from=builder /usr/local/bin/dbward /usr/local/bin/dbward
-COPY --from=litestream/litestream:0.5 /usr/local/bin/litestream /usr/local/bin/litestream
 
-COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-COPY deploy/litestream.yml /etc/litestream.yml
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
+USER dbward:dbward
 VOLUME /data
 
 ENTRYPOINT ["dbward"]

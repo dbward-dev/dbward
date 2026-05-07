@@ -1,0 +1,103 @@
+x-security: &security
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs:
+    - /tmp:size=64M
+
+x-dbward-build: &dbward-build
+  context: .
+  dockerfile: Dockerfile
+  target: runtime
+
+networks:
+  backend:
+    internal: true
+  frontend:
+
+services:
+  postgres:
+    image: postgres:17
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN", "SETUID", "SETGID", "FOWNER", "DAC_OVERRIDE"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp:size=64M
+      - /run/postgresql:size=16M
+    networks: [backend]
+    environment:
+      POSTGRES_USER: dbward
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_DB: dbward_dev
+    secrets: [db_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbward -d dbward_dev"]
+      start_period: 10s
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  dbward-server:
+    build: *dbward-build
+    <<: *security
+    command:
+      - server
+      - start
+      - --data
+      - /data/dbward.db
+      - --listen
+      - 0.0.0.0:3000
+      - --config
+      - /config/dbward-server.toml
+    networks: [backend, frontend]
+    volumes:
+      - server-data:/data
+      - ./dev/dbward-server.toml:/config/dbward-server.toml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/health >/dev/null"]
+      start_period: 10s
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    stop_grace_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  dbward-agent:
+    build: *dbward-build
+    <<: *security
+    entrypoint: ["/bin/sh", "/scripts/agent-entrypoint.sh"]
+    networks: [backend]
+    volumes:
+      - ./db/migrations:/workspace/db/migrations:ro
+      - ./dev/tokens:/tokens:ro
+      - ./dev/dbward-agent.toml:/config/dbward-agent.toml:ro
+      - ./dev/agent-entrypoint.sh:/scripts/agent-entrypoint.sh:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dbward-server:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+volumes:
+  pgdata:
+  server-data:
+
+secrets:
+  db_password:
+    file: ./dev/secrets/db_password.txt

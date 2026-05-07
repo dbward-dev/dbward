@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
+SERVER_URL="http://dbward-server:3000"
+
 create_token() {
     user="$1"
     role="$2"

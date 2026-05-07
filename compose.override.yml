@@ -1,0 +1,72 @@
+# Dev overrides — automatically merged with compose.yml by `docker compose up`
+# After first `docker compose up`, run `./dev/init-tokens.sh` to create dev tokens.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks: [backend, frontend]
+
+  dbward-server:
+    ports:
+      - "127.0.0.1:13000:3000"
+
+  webhook-receiver:
+    image: python:3.12-slim
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    command: ["python3", "/app/webhook-receiver.py"]
+    networks: [backend]
+    volumes:
+      - ./dev/webhook-receiver.py:/app/webhook-receiver.py:ro
+    ports:
+      - "127.0.0.1:9999:9999"
+    tmpfs:
+      - /tmp:size=16M
+
+  alice:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["/bin/sh", "/scripts/dev-entrypoint.sh", "alice"]
+    command: ["list"]
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    networks: [frontend]
+    volumes:
+      - ./db/migrations:/workspace/db/migrations:ro
+      - ./dev/tokens:/tokens:ro
+      - ./dev/dbward-cli.toml:/config/dbward-cli.toml:ro
+      - ./dev/dev-entrypoint.sh:/scripts/dev-entrypoint.sh:ro
+    profiles: [dev]
+
+  bob:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["/bin/sh", "/scripts/dev-entrypoint.sh", "bob"]
+    command: ["list"]
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    networks: [frontend]
+    volumes:
+      - ./db/migrations:/workspace/db/migrations:ro
+      - ./dev/tokens:/tokens:ro
+      - ./dev/dbward-cli.toml:/config/dbward-cli.toml:ro
+      - ./dev/dev-entrypoint.sh:/scripts/dev-entrypoint.sh:ro
+    profiles: [dev]
+
+networks:
+  backend:
+    internal: true
+  frontend:

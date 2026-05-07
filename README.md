@@ -497,7 +497,9 @@ Key alerts:
 git clone https://github.com/metapox/dbward.git && cd dbward
 
 # Configure
-cp docker-compose.prod.yml docker-compose.yml
+cat > dev/secrets/db_password.txt << 'EOF'
+your-secure-password
+EOF
 cat > .env << 'EOF'
 DATABASE_URL=postgres://user:pass@your-rds:5432/mydb
 DBWARD_AGENT_TOKEN=<generate after first start>
@@ -568,7 +570,7 @@ If `LITESTREAM_S3_BUCKET` is not set, Litestream is skipped and dbward runs dire
 
 ### TLS
 
-Bind to `127.0.0.1` (default in docker-compose.prod.yml) and put a reverse proxy in front:
+Bind to `127.0.0.1` (default in compose.yml) and put a reverse proxy in front:
 
 ```bash
 # Example with Caddy (auto-TLS)
