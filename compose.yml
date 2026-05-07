@@ -58,7 +58,7 @@ services:
     networks: [backend, frontend]
     volumes:
       - server-data:/data
-      - ./dev/dbward-server.toml:/config/dbward-server.toml:ro
+      - ./dev/${DBWARD_SERVER_CONFIG:-dbward-server.toml}:/config/dbward-server.toml:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/health >/dev/null"]
       start_period: 10s

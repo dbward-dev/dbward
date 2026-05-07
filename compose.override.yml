@@ -72,3 +72,81 @@ networks:
   backend:
     internal: true
   frontend:
+
+# === OIDC Profile ===
+# Usage: ./dev/up-oidc.sh [-d]
+# Keycloak: http://localhost:8080 (admin/admin)
+# Users: alice/alice (developer, backend-team), bob/bob (admin, backend-team), carol/carol (dba-team)
+# Note: up-oidc.sh sets DBWARD_SERVER_CONFIG=dbward-server-oidc.toml + DBWARD_LICENSE_KEY
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_HEALTH_ENABLED: "true"
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    volumes:
+      - ./dev/keycloak-realm.json:/opt/keycloak/data/import/realm.json:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks: [backend, frontend]
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3 && cat <&3 | grep -q '200'"]
+      start_period: 30s
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    profiles: [oidc]
+
+  alice-oidc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["dbward"]
+    command: ["whoami"]
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    networks: [frontend]
+    environment:
+      DBWARD_CONFIG: /config/dbward-cli.toml
+    volumes:
+      - ./db/migrations:/workspace/db/migrations:ro
+      - ./dev/dbward-cli-oidc.toml:/config/dbward-cli.toml:ro
+      - alice-credentials:/data/.config/dbward
+    tmpfs:
+      - /tmp:size=16M
+    profiles: [oidc]
+
+  bob-oidc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    entrypoint: ["dbward"]
+    command: ["whoami"]
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    networks: [frontend]
+    environment:
+      DBWARD_CONFIG: /config/dbward-cli.toml
+    volumes:
+      - ./db/migrations:/workspace/db/migrations:ro
+      - ./dev/dbward-cli-oidc.toml:/config/dbward-cli.toml:ro
+      - bob-credentials:/data/.config/dbward
+    tmpfs:
+      - /tmp:size=16M
+    profiles: [oidc]
+
+volumes:
+  alice-credentials:
+  bob-credentials:
