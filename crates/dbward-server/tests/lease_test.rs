@@ -102,7 +102,7 @@ async fn expired_lease_reclaimed_to_execution_lost() {
     {
         let conn = state.sqlite.lock().await;
         let reclaimed = db::maintenance::reclaim_expired_leases(&conn).unwrap();
-        assert_eq!(reclaimed, 1);
+        assert_eq!(reclaimed.len(), 1);
     }
 
     // Verify status is execution_lost

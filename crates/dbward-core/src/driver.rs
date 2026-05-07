@@ -196,7 +196,10 @@ fn pg_row_to_json(row: &sqlx::postgres::PgRow) -> serde_json::Value {
             _ => row
                 .try_get::<String, _>(name)
                 .map(Into::into)
-                .unwrap_or(serde_json::Value::Null),
+                .unwrap_or_else(|_| {
+                    // Binary types (BYTEA, etc.) can't be read as String
+                    serde_json::Value::String("(binary data)".into())
+                }),
         };
         map.insert(name.to_string(), val);
     }
@@ -346,7 +349,9 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
             _ => row
                 .try_get::<String, _>(name)
                 .map(Into::into)
-                .unwrap_or(serde_json::Value::Null),
+                .unwrap_or_else(|_| {
+                    serde_json::Value::String("(binary data)".into())
+                }),
         };
         map.insert(name.to_string(), val);
     }

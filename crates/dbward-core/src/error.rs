@@ -7,6 +7,9 @@ pub enum Error {
     #[error("{role} is not allowed to perform {operation}")]
     PermissionDenied { role: String, operation: Operation },
 
+    #[error("unsupported statement: {0}")]
+    UnsupportedStatement(String),
+
     #[error("DDL statements must go through migrations")]
     DdlNotAllowed,
 

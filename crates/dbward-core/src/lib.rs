@@ -16,6 +16,6 @@ pub use config::{
 };
 pub use engine::Engine;
 pub use error::Error;
-pub use query::{QueryResult, classify_query};
+pub use query::{QueryResult, QueryType, classify_query, classify_query_mysql};
 pub use rbac::check_permission;
 pub use types::{AuditEntry, Environment, Operation};

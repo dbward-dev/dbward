@@ -130,7 +130,7 @@ impl ServerClient {
     pub async fn create_request(
         &self,
         req: CreateRequest<'_>,
-    ) -> Result<(String, String, Option<ExecutionToken>), Error> {
+    ) -> Result<(String, String, Option<ExecutionToken>, Vec<String>), Error> {
         let mut body = serde_json::json!({
             "operation": req.operation,
             "environment": req.environment,
@@ -169,8 +169,16 @@ impl ServerClient {
         let id = body["id"].as_str().unwrap_or("").to_string();
         let status = body["status"].as_str().unwrap_or("").to_string();
         let token = serde_json::from_value(body["execution_token"].clone()).ok();
+        let approvers: Vec<String> = body["approvers"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        Ok((id, status, token))
+        Ok((id, status, token, approvers))
     }
 
     /// List all requests.
@@ -334,13 +342,24 @@ impl ServerClient {
                         .await?;
                 }
                 "approved" | "auto_approved" | "break_glass" => {
-                    return Err(Error::Server(format!(
-                        "request {request_id} is approved but not dispatched. Try: dbward request resume {request_id}"
-                    )));
+                    // Auto-dispatch and continue polling
+                    match self.dispatch(request_id).await {
+                        Ok(_) => {
+                            req = self
+                                .get_request_with_wait(request_id, REQUEST_STATUS_WAIT_SECS)
+                                .await?;
+                        }
+                        Err(e) => {
+                            return Err(Error::Server(format!(
+                                "request {request_id} is approved but dispatch failed: {}. Run: dbward request resume {request_id}",
+                                e.body
+                            )));
+                        }
+                    }
                 }
                 "pending" => {
                     return Err(Error::Server(format!(
-                        "Request {request_id} requires approval. Try: dbward request resume {request_id}"
+                        "Request {request_id} requires approval. Check status: dbward request show {request_id}"
                     )));
                 }
                 _ => {
@@ -400,13 +419,13 @@ impl ServerClient {
             "failed" => serde_json::json!({
                 "success": false,
                 "error": format!(
-                    "Request {request_id} failed. Result not available (relay expired, no storage configured)."
+                    "Request {request_id} failed. Result not available (relay expired, no storage configured). Check: dbward result {request_id}"
                 )
             }),
             _ => serde_json::json!({
                 "success": true,
                 "error": format!(
-                    "Request {request_id} executed successfully but result is no longer available (relay expired, no storage configured). Re-run the query to get results."
+                    "Request {request_id} executed successfully but result is no longer available. Check: dbward result {request_id}"
                 ),
                 "result": Value::Null
             }),

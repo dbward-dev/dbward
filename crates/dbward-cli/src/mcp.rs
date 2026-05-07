@@ -613,7 +613,7 @@ async fn submit_and_wait(
     detail: &str,
     reason: Option<&str>,
 ) -> Result<String, String> {
-    let (req_id, status, _token) = client
+    let (req_id, status, _token, _approvers) = client
         .create_request(crate::server_client::CreateRequest {
             operation,
             environment,

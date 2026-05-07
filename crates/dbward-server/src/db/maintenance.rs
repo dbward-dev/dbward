@@ -52,11 +52,35 @@ pub fn purge_old_records(
 }
 
 /// Reclaim expired leases: reset running→approved so client can re-dispatch.
-pub fn reclaim_expired_leases(conn: &Connection) -> Result<usize, rusqlite::Error> {
+pub fn reclaim_expired_leases(conn: &Connection) -> Result<Vec<ReclaimedRequest>, rusqlite::Error> {
     let now = chrono::Utc::now().to_rfc3339();
+
+    // Collect info about requests being reclaimed (for webhook notification)
+    let mut stmt = conn.prepare(
+        "SELECT r.id, r.created_by, r.operation, r.environment, r.database_name, r.detail
+         FROM requests r
+         JOIN agent_executions ae ON ae.request_id = r.id
+         WHERE r.status = 'running' AND ae.status = 'claimed' AND ae.lease_expires_at < ?1",
+    )?;
+    let reclaimed: Vec<ReclaimedRequest> = stmt
+        .query_map(rusqlite::params![&now], |row| {
+            Ok(ReclaimedRequest {
+                id: row.get(0)?,
+                requester: row.get(1)?,
+                operation: row.get(2)?,
+                environment: row.get(3)?,
+                database: row.get(4)?,
+                detail: row.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if reclaimed.is_empty() {
+        return Ok(reclaimed);
+    }
+
     conn.execute_batch("BEGIN")?;
-    // Mark as execution_lost instead of re-dispatching (prevents duplicate execution)
-    let count = conn.execute(
+    conn.execute(
         "UPDATE requests SET status = 'execution_lost', updated_at = ?1
          WHERE status = 'running' AND id IN (
            SELECT request_id FROM agent_executions
@@ -71,7 +95,17 @@ pub fn reclaim_expired_leases(conn: &Connection) -> Result<usize, rusqlite::Erro
         rusqlite::params![now],
     )?;
     conn.execute_batch("COMMIT")?;
-    Ok(count)
+    Ok(reclaimed)
+}
+
+#[derive(Debug)]
+pub struct ReclaimedRequest {
+    pub id: String,
+    pub requester: String,
+    pub operation: String,
+    pub environment: String,
+    pub database: String,
+    pub detail: String,
 }
 
 /// Purge expired results: delete from storage and DB.
@@ -190,7 +224,7 @@ mod tests {
         .unwrap();
 
         let reclaimed = reclaim_expired_leases(&conn).unwrap();
-        assert_eq!(reclaimed, 1);
+        assert_eq!(reclaimed.len(), 1);
 
         let request_status: String = conn
             .query_row("SELECT status FROM requests WHERE id = 'req-1'", [], |r| {

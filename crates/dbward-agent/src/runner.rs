@@ -18,6 +18,18 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
 
     // Fetch server's public key for token verification
     let public_key = client.get_public_key().await?;
+
+    // Verify DB connectivity for all configured databases
+    for (name, db_config) in &config.databases {
+        eprintln!("verifying database connection: {name}");
+        let driver = dbward_core::driver::connect(&db_config.url).await.map_err(|e| {
+            Error::Config(format!(
+                "failed to connect to database '{name}': {e}. Check url in agent config."
+            ))
+        })?;
+        drop(driver);
+    }
+
     write_probe(ALIVE_PROBE_PATH)?;
     write_probe(READY_PROBE_PATH)?;
     let _probe_guard = ProbeGuard;
@@ -25,6 +37,9 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
         "agent {} started, polling {}",
         config.agent_id, config.server.url
     );
+    if config.max_concurrent_tasks > 1 {
+        eprintln!("note: parallel job execution not yet implemented, processing sequentially");
+    }
 
     install_shutdown_task(draining.clone());
     let mut drain_started_at = None;

@@ -75,6 +75,27 @@ pub(crate) fn should_filter_capability(values: &[String]) -> bool {
     !values.is_empty() && !values.iter().any(|v| v == "*")
 }
 
+/// Extract a human-readable approver summary from workflow_snapshot_json.
+fn extract_approver_summary(snapshot_json: Option<&str>) -> Vec<String> {
+    let Some(json_str) = snapshot_json else {
+        return vec![];
+    };
+    let steps: Vec<crate::server_config::WorkflowStep> =
+        serde_json::from_str(json_str).unwrap_or_default();
+    let mut summary = Vec::new();
+    for step in &steps {
+        for approver in &step.approvers {
+            if let Some(ref role) = approver.role {
+                summary.push(format!("role:{role} (min:{})", approver.min));
+            }
+            if let Some(ref group) = approver.group {
+                summary.push(format!("group:{group} (min:{})", approver.min));
+            }
+        }
+    }
+    summary
+}
+
 fn validate_metadata(
     metadata: Option<&serde_json::Value>,
 ) -> Result<String, crate::api_error::ApiError> {
@@ -623,7 +644,14 @@ pub(crate) async fn create_request(
         database_name,
         environment,
         operation,
-    );
+    )
+    .map_err(|e| {
+        eprintln!("error: workflow policy evaluation failed: {e}");
+        crate::api_error::ApiError::internal(
+            "workflow policy evaluation failed. Check server logs for details.",
+        )
+        .with_code("workflow_eval_failed")
+    })?;
 
     if !emergency && decision.require_reason && reason.as_ref().is_none_or(|r| r.is_empty()) {
         return Err(crate::api_error::ApiError::bad_request(
@@ -811,7 +839,11 @@ pub(crate) async fn create_request(
         );
         Ok((
             StatusCode::CREATED,
-            Json(json!({"id": id, "status": "pending"})),
+            Json(json!({
+                "id": id,
+                "status": "pending",
+                "approvers": extract_approver_summary(decision.workflow_snapshot_json.as_deref()),
+            })),
         ))
     } else {
         let token = state

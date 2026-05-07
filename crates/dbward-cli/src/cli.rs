@@ -266,6 +266,9 @@ enum MigrateAction {
         /// Optional idempotency key for deduplicating identical submissions
         #[arg(long = "idempotency-key")]
         idempotency_key: Option<String>,
+        /// Share result with specified users/roles for persistent storage
+        #[arg(long = "share-with")]
+        share_with: Vec<String>,
     },
     Down {
         #[arg(long, default_value = "1")]
@@ -304,20 +307,29 @@ fn parse_role(s: &str) -> Result<String, String> {
     }
 }
 
-fn truncate_table_cell(value: &str, max_chars: usize) -> String {
-    let char_count = value.chars().count();
-    if char_count <= max_chars {
+fn truncate_table_cell(value: &str, max_width: usize) -> String {
+    if display_width(value) <= max_width {
         return value.to_string();
     }
-    if max_chars <= 3 {
-        return ".".repeat(max_chars);
+    if max_width <= 3 {
+        return ".".repeat(max_width);
     }
-    let prefix: String = value.chars().take(max_chars - 3).collect();
-    format!("{prefix}...")
+    let target = max_width - 3;
+    let mut width = 0;
+    let mut end = 0;
+    for (i, c) in value.char_indices() {
+        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        if width + w > target {
+            break;
+        }
+        width += w;
+        end = i + c.len_utf8();
+    }
+    format!("{}...", &value[..end])
 }
 
 fn display_width(value: &str) -> usize {
-    value.chars().count()
+    unicode_width::UnicodeWidthStr::width(value)
 }
 
 fn pad_table_cell(value: &str, width: usize) -> String {
@@ -498,7 +510,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             } else {
                 Some(share_with.as_slice())
             };
-            let (id, status, _token) = sc
+            let (id, status, _token, approvers) = sc
                 .create_request(server_client::CreateRequest {
                     operation: "execute_query",
                     environment: env_str,
@@ -537,7 +549,11 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 }
                 "pending" => {
                     eprintln!("Request {id} requires approval.");
+                    if !approvers.is_empty() {
+                        eprintln!("  Approvers: {}", approvers.join(", "));
+                    }
                     eprintln!("Run: dbward request resume {id}");
+                    std::process::exit(2);
                 }
                 _ => {
                     return Err(dbward_core::Error::Server(format!(
@@ -548,12 +564,13 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             Ok(())
         }
         Command::Migrate { ref action } => {
-            let (operation, detail, metadata, idempotency_key) = match action {
+            let (operation, detail, metadata, idempotency_key, migrate_share_with) = match action {
                 MigrateAction::Up {
                     count,
                     ticket,
                     repo,
                     idempotency_key,
+                    share_with,
                 } => (
                     "migrate_up",
                     dbward_migrate::build_migration_approval_detail(
@@ -562,6 +579,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     )?,
                     build_request_metadata(ticket.as_deref(), repo.as_deref()),
                     idempotency_key.as_deref(),
+                    share_with,
                 ),
                 MigrateAction::Down {
                     count,
@@ -576,6 +594,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     )?,
                     build_request_metadata(ticket.as_deref(), repo.as_deref()),
                     idempotency_key.as_deref(),
+                    &vec![],
                 ),
                 MigrateAction::Status {
                     ticket,
@@ -586,11 +605,17 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     String::new(),
                     build_request_metadata(ticket.as_deref(), repo.as_deref()),
                     idempotency_key.as_deref(),
+                    &vec![],
                 ),
                 MigrateAction::Create { .. } => unreachable!(),
             };
 
-            let (id, status, _token) = sc
+            let sw = if migrate_share_with.is_empty() {
+                None
+            } else {
+                Some(migrate_share_with.as_slice())
+            };
+            let (id, status, _token, approvers) = sc
                 .create_request(server_client::CreateRequest {
                     operation,
                     environment: env_str,
@@ -600,7 +625,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     reason: None,
                     metadata: metadata.as_ref(),
                     idempotency_key,
-                    share_with: None,
+                    share_with: sw,
                 })
                 .await?;
 
@@ -615,7 +640,11 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 }
                 "pending" => {
                     eprintln!("Request {id} requires approval.");
+                    if !approvers.is_empty() {
+                        eprintln!("  Approvers: {}", approvers.join(", "));
+                    }
                     eprintln!("Run: dbward request resume {id}");
+                    std::process::exit(2);
                 }
                 "approved" | "auto_approved" => {
                     eprintln!("Request {id} is approved but not yet dispatched.");
@@ -764,6 +793,38 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 output,
                 no_save,
             } => {
+                // Check if this is a DML re-dispatch (execution_lost → potential double execution)
+                let req = sc.get_request(&id).await?;
+                let status = req["status"].as_str().unwrap_or("");
+                let operation = req["operation"].as_str().unwrap_or("");
+                if status == "execution_lost" && operation == "execute_query" {
+                    let detail = req["detail"].as_str().unwrap_or("");
+                    eprintln!("⚠️  WARNING: This request previously failed with execution_lost.");
+                    eprintln!("   The previous execution may have partially completed.");
+                    let sql_preview: String = detail.chars().take(80).collect();
+                    eprintln!("   SQL: {sql_preview}");
+                    eprintln!("   Re-dispatching may cause DUPLICATE execution.");
+                    eprint!("   Continue? [y/N] ");
+                    std::io::Write::flush(&mut std::io::stderr()).ok();
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input).ok();
+                    if !input.trim().eq_ignore_ascii_case("y") {
+                        eprintln!("Aborted.");
+                        return Ok(());
+                    }
+                }
+
+                // Dispatch first (idempotent — safe if already dispatched)
+                if let Err(e) = sc.dispatch(&id).await {
+                    if e.status == 409 {
+                        eprintln!("Request {id} cannot be dispatched yet (may still be pending approval).");
+                        eprintln!("Check status: dbward request show {id}");
+                        return Err(dbward_core::Error::Server(
+                            "request not ready for dispatch".into(),
+                        ));
+                    }
+                    return Err(e.into_core_error("dispatch"));
+                }
                 let resp = sc.wait_for_result(&id).await?;
                 if json_output {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -1671,7 +1732,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
     // Build agent config
     let mut databases = std::collections::BTreeMap::new();
     databases.insert(
-        "default".into(),
+        "app".into(),
         dbward_core::AgentDatabaseConfig {
             url: database_url.to_string(),
             migrations_dir: None,
@@ -1688,7 +1749,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
             agent_token: agent_token.clone(),
         },
         capabilities: dbward_core::AgentCapabilities {
-            databases: vec!["default".into()],
+            databases: vec!["app".into()],
             environments: vec!["*".into()],
             operations: vec!["*".into()],
         },

@@ -26,6 +26,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
     // Background task: reclaim expired agent leases every 60s
     let sqlite = state.sqlite.clone();
     let metrics = state.metrics.clone();
+    let webhooks = state.webhooks.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(
             constants::LEASE_RECLAIM_INTERVAL_SECS,
@@ -34,9 +35,28 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
             interval.tick().await;
             let conn = sqlite.lock().await;
             match db::maintenance::reclaim_expired_leases(&conn) {
-                Ok(n) if n > 0 => {
+                Ok(reclaimed) if !reclaimed.is_empty() => {
+                    let n = reclaimed.len();
                     metrics.record_agent_lease_expirations(n as u64);
                     eprintln!("reclaimed {n} expired lease(s)");
+                    for req in &reclaimed {
+                        webhooks.dispatch(webhook::WebhookEvent {
+                            event: "request.execution_lost".into(),
+                            timestamp: chrono::Utc::now().to_rfc3339(),
+                            request_id: req.id.clone(),
+                            status: "execution_lost".into(),
+                            requester: req.requester.clone(),
+                            actor: "system".into(),
+                            actor_role: None,
+                            operation: req.operation.clone(),
+                            environment: req.environment.clone(),
+                            database: req.database.clone(),
+                            detail: req.detail.clone(),
+                            reason: Some("agent lease expired".into()),
+                            next_step: None,
+                            cli_command: Some(format!("dbward request resume {}", req.id)),
+                        });
+                    }
                 }
                 Ok(_) => {}
                 Err(err) => eprintln!("failed to reclaim expired leases: {err}"),

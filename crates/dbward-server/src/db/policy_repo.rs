@@ -3,6 +3,7 @@ use rusqlite::Connection;
 // --- Approval policy evaluation ---
 
 /// Unified approval policy decision.
+#[derive(Debug)]
 pub struct ApprovalDecision {
     pub needs_approval: bool,
     pub workflow_id: Option<String>,
@@ -10,42 +11,59 @@ pub struct ApprovalDecision {
     pub require_reason: bool,
 }
 
+#[derive(Debug)]
+pub enum PolicyEvalError {
+    Database(rusqlite::Error),
+    CorruptedConfig(String),
+}
+
+impl std::fmt::Display for PolicyEvalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Database(e) => write!(f, "database error while evaluating workflow: {e}"),
+            Self::CorruptedConfig(msg) => write!(f, "corrupted workflow configuration: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for PolicyEvalError {}
+
+impl From<rusqlite::Error> for PolicyEvalError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Database(e)
+    }
+}
+
 /// Single entry point for approval policy evaluation.
 /// Checks workflows table; if no workflow matches, auto-approves.
+/// Returns Err on any infrastructure failure (fail-closed).
 pub fn evaluate_approval_policy(
     conn: &Connection,
     database: &str,
     environment: &str,
     operation: &str,
-) -> ApprovalDecision {
-    match evaluate_workflow(conn, database, environment, operation) {
-        Ok(Some((wf_id, steps, require_reason))) => {
+) -> Result<ApprovalDecision, PolicyEvalError> {
+    match evaluate_workflow(conn, database, environment, operation)? {
+        Some((wf_id, steps, require_reason)) => {
             let needs_approval = !steps.is_empty();
-            let snapshot = serde_json::to_string(&steps).unwrap_or_else(|_| "[]".into());
-            ApprovalDecision {
+            let snapshot = serde_json::to_string(&steps).map_err(|e| {
+                PolicyEvalError::CorruptedConfig(format!(
+                    "failed to serialize workflow steps for {wf_id}: {e}"
+                ))
+            })?;
+            Ok(ApprovalDecision {
                 needs_approval,
                 workflow_id: Some(wf_id),
                 workflow_snapshot_json: Some(snapshot),
                 require_reason,
-            }
+            })
         }
-        Ok(None) => ApprovalDecision {
+        None => Ok(ApprovalDecision {
             needs_approval: false,
             workflow_id: None,
             workflow_snapshot_json: None,
             require_reason: false,
-        },
-        Err(err) => {
-            eprintln!(
-                "warning: failed to evaluate workflow policy, defaulting to auto_approve: {err}"
-            );
-            ApprovalDecision {
-                needs_approval: false,
-                workflow_id: None,
-                workflow_snapshot_json: None,
-                require_reason: false,
-            }
-        }
+        }),
     }
 }
 
@@ -55,7 +73,7 @@ pub fn evaluate_workflow(
     database: &str,
     environment: &str,
     operation: &str,
-) -> Result<Option<(String, Vec<crate::server_config::WorkflowStep>, bool)>, rusqlite::Error> {
+) -> Result<Option<(String, Vec<crate::server_config::WorkflowStep>, bool)>, PolicyEvalError> {
     let candidates = [
         (database, environment),
         ("*", environment),
@@ -76,9 +94,18 @@ pub fn evaluate_workflow(
             None;
 
         for (id, operations_json, steps_json, require_reason) in &rows {
-            let operations: Vec<String> = serde_json::from_str(operations_json).unwrap_or_default();
+            let operations: Vec<String> =
+                serde_json::from_str(operations_json).map_err(|e| {
+                    PolicyEvalError::CorruptedConfig(format!(
+                        "invalid operations_json in workflow '{id}': {e}"
+                    ))
+                })?;
             let steps: Vec<crate::server_config::WorkflowStep> =
-                serde_json::from_str(steps_json).unwrap_or_default();
+                serde_json::from_str(steps_json).map_err(|e| {
+                    PolicyEvalError::CorruptedConfig(format!(
+                        "invalid steps_json in workflow '{id}': {e}"
+                    ))
+                })?;
             if operations.is_empty() {
                 if catchall_match.is_none() {
                     catchall_match = Some((id.clone(), steps, *require_reason));
@@ -97,6 +124,37 @@ pub fn evaluate_workflow(
 }
 
 // --- TOML sync ---
+
+// --- TOML sync ---
+
+/// Validate all workflow JSON integrity on startup. Fails if any are corrupted.
+pub fn validate_workflows(conn: &Connection) -> Result<(), PolicyEvalError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, operations_json, steps_json FROM workflows",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (id, ops_json, steps_json) = row?;
+        let _: Vec<String> = serde_json::from_str(&ops_json).map_err(|e| {
+            PolicyEvalError::CorruptedConfig(format!(
+                "invalid operations_json in workflow '{id}': {e}"
+            ))
+        })?;
+        let _: Vec<crate::server_config::WorkflowStep> =
+            serde_json::from_str(&steps_json).map_err(|e| {
+                PolicyEvalError::CorruptedConfig(format!(
+                    "invalid steps_json in workflow '{id}': {e}"
+                ))
+            })?;
+    }
+    Ok(())
+}
 
 fn delete_stale_toml_records(
     conn: &Connection,
@@ -129,14 +187,16 @@ pub fn sync_workflows(
     for w in workflows {
         let mut sorted_ops = w.operations.clone();
         sorted_ops.sort();
-        let ops_json = serde_json::to_string(&sorted_ops).unwrap_or_else(|_| "[]".into());
+        let ops_json = serde_json::to_string(&sorted_ops)
+            .unwrap_or_else(|_| "[]".into());
         let ops_tag = if sorted_ops.is_empty() {
             "*".to_string()
         } else {
             sorted_ops.join(",")
         };
         let id = format!("{}:{}:{}", w.database, w.environment, ops_tag);
-        let steps_json = serde_json::to_string(&w.steps).unwrap_or_else(|_| "[]".into());
+        let steps_json = serde_json::to_string(&w.steps)
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         conn.execute(
             "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'toml', ?8, ?8)
@@ -360,7 +420,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
 
         let err = evaluate_workflow(&conn, "app", "production", "execute_query").unwrap_err();
-        assert!(matches!(err, rusqlite::Error::SqliteFailure(_, _)));
+        assert!(matches!(err, PolicyEvalError::Database(_)));
     }
 
     #[test]
@@ -368,11 +428,64 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
 
-        let decision = evaluate_approval_policy(&conn, "app", "production", "execute_query");
+        let decision =
+            evaluate_approval_policy(&conn, "app", "production", "execute_query").unwrap();
 
         assert!(!decision.needs_approval);
         assert!(decision.workflow_id.is_none());
         assert!(decision.workflow_snapshot_json.is_none());
         assert!(!decision.require_reason);
+    }
+
+    #[test]
+    fn evaluate_fails_on_corrupted_steps_json() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
+             VALUES ('bad', 'app', 'production', '[\"execute_query\"]', 'NOT VALID JSON', 0, 'api', 't1', 't1')",
+            [],
+        ).unwrap();
+
+        let err =
+            evaluate_approval_policy(&conn, "app", "production", "execute_query").unwrap_err();
+        assert!(matches!(err, PolicyEvalError::CorruptedConfig(_)));
+    }
+
+    #[test]
+    fn evaluate_fails_on_corrupted_operations_json() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
+             VALUES ('bad', 'app', 'production', 'BROKEN', '[]', 0, 'api', 't1', 't1')",
+            [],
+        ).unwrap();
+
+        let err =
+            evaluate_approval_policy(&conn, "app", "production", "execute_query").unwrap_err();
+        assert!(matches!(err, PolicyEvalError::CorruptedConfig(_)));
+    }
+
+    #[test]
+    fn validate_workflows_catches_corruption() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
+             VALUES ('ok', 'app', 'dev', '[\"execute_query\"]', '[]', 0, 'api', 't1', 't1')",
+            [],
+        ).unwrap();
+        assert!(validate_workflows(&conn).is_ok());
+
+        conn.execute(
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, source, created_at, updated_at)
+             VALUES ('bad', 'app', 'prod', '[\"execute_query\"]', '{corrupt', 0, 'api', 't1', 't1')",
+            [],
+        ).unwrap();
+        assert!(validate_workflows(&conn).is_err());
     }
 }
