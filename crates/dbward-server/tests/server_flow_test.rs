@@ -888,10 +888,12 @@ async fn shared_results_are_stored_and_exposed_only_to_shared_users() {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(stored_count, 0);
+        // With result_storage configured, all results are auto-persisted
+        assert_eq!(stored_count, 1);
     }
+    // Auto-persisted result file exists (default access: requester + admin)
     assert!(
-        !dir.path()
+        dir.path()
             .join("shared")
             .join(format!("{direct_request_id}.json"))
             .exists()

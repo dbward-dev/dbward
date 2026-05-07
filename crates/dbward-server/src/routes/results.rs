@@ -96,10 +96,11 @@ pub async fn get_result_content(
         .result_store
         .as_ref()
         .ok_or_else(|| ApiError::internal("result storage not configured"))?;
-    let data = store
-        .get(&request_id)
-        .await
-        .map_err(|e| ApiError::internal(format!("storage read: {e}")))?;
+    let data = store.get(&request_id).await.map_err(|e| {
+        ApiError::new(StatusCode::GONE, "result data is no longer available (storage lost)")
+            .with_code("result_data_lost")
+            .with_hint(format!("storage error: {e}"))
+    })?;
 
     Ok((
         [(axum::http::header::CONTENT_TYPE, "application/json")],

@@ -357,23 +357,22 @@ pub(crate) async fn agent_result(
         (exec_ctx.request_id, req_status)
     };
 
-    // Save to storage if share_with was specified
+    // Save to result storage (always when configured; share_with adds extra access)
     if success {
-        let share_with: Option<Vec<String>> = {
-            let conn = state.sqlite.lock().await;
-            conn.query_row(
-                "SELECT share_with_json FROM requests WHERE id = ?1",
-                [&request_id],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .ok()
-            .flatten()
-            .and_then(|s| serde_json::from_str(&s).ok())
-        };
+        if let Some(ref store) = state.result_store {
+            let share_with: Vec<String> = {
+                let conn = state.sqlite.lock().await;
+                conn.query_row(
+                    "SELECT share_with_json FROM requests WHERE id = ?1",
+                    [&request_id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .ok()
+                .flatten()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default()
+            };
 
-        if let Some(ref selectors) = share_with
-            && let Some(ref store) = state.result_store
-        {
             let data = serde_json::to_vec(&result).unwrap_or_default();
             let content_length = data.len() as i64;
             let checksum = format!("{:x}", sha2::Sha256::digest(&data));
@@ -383,7 +382,7 @@ pub(crate) async fn agent_result(
             match store.put(&request_id, &data).await {
                 Ok(()) => {
                     let now = chrono::Utc::now().to_rfc3339();
-                    let retention_days = 30i64; // TODO: from result_policy
+                    let retention_days = state.retention.result_ttl_days as i64;
                     let expires_at =
                         (chrono::Utc::now() + chrono::Duration::days(retention_days)).to_rfc3339();
                     let db_write_result = {
@@ -399,10 +398,10 @@ pub(crate) async fn agent_result(
                                     rusqlite::params![request_id],
                                 )?;
 
-                                // Expand selectors into result_access.
+                                // Default access: requester + admin. share_with adds extra.
                                 let mut all_selectors =
                                     vec!["requester".to_string(), "role:admin".to_string()];
-                                all_selectors.extend(selectors.iter().cloned());
+                                all_selectors.extend(share_with.iter().cloned());
                                 for sel in &all_selectors {
                                     let (sel_type, sel_value) = if sel == "requester" {
                                         ("requester", "")
@@ -442,7 +441,6 @@ pub(crate) async fn agent_result(
                     }
                 }
                 Err(_) => {
-                    // Storage failed — record but don't fail the request
                     let conn = state.sqlite.lock().await;
                     let now = chrono::Utc::now().to_rfc3339();
                     if let Err(err) = conn.execute(

@@ -67,23 +67,45 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
     // Background task: purge old requests and audit logs every hour
     let sqlite2 = state.sqlite.clone();
     let retention = state.retention.clone();
+    let purge_result_store = state.result_store.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(
             constants::RECORD_PURGE_INTERVAL_SECS,
         ));
         loop {
             interval.tick().await;
-            let conn = sqlite2.lock().await;
-            match db::maintenance::purge_old_records(
-                &conn,
-                retention.request_ttl_days,
-                retention.audit_ttl_days,
-            ) {
-                Ok((r, a)) if r > 0 || a > 0 => {
-                    eprintln!("purged {r} old request(s), {a} old audit log(s)");
+            {
+                let conn = sqlite2.lock().await;
+                match db::maintenance::purge_old_records(
+                    &conn,
+                    retention.request_ttl_days,
+                    retention.audit_ttl_days,
+                ) {
+                    Ok((r, a)) if r > 0 || a > 0 => {
+                        eprintln!("purged {r} old request(s), {a} old audit log(s)");
+                    }
+                    Ok(_) => {}
+                    Err(err) => eprintln!("failed to purge old records: {err}"),
                 }
-                Ok(_) => {}
-                Err(err) => eprintln!("failed to purge old records: {err}"),
+            }
+
+            // Purge expired result storage (release mutex during I/O)
+            if let Some(ref store) = purge_result_store {
+                let expired = {
+                    let conn = sqlite2.lock().await;
+                    db::maintenance::collect_expired_results(&conn).unwrap_or_default()
+                };
+                if !expired.is_empty() {
+                    for (request_id, _) in &expired {
+                        let _ = store.delete(request_id).await;
+                    }
+                    let conn = sqlite2.lock().await;
+                    for (request_id, _) in &expired {
+                        let _ =
+                            db::maintenance::delete_expired_result_records(&conn, request_id);
+                    }
+                    eprintln!("purged {} expired result(s)", expired.len());
+                }
             }
         }
     });
