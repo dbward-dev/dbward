@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::sync::Arc;
 
 use crate::Metrics;
@@ -12,6 +13,72 @@ pub struct WebhookConfig {
     #[serde(default = "default_format")]
     pub format: String,
     pub secret: Option<String>,
+}
+
+fn is_private_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()              // 127.0.0.0/8
+                || v4.is_private()        // 10/8, 172.16/12, 192.168/16
+                || v4.is_link_local()     // 169.254.0.0/16 (AWS metadata)
+                || v4.is_unspecified()    // 0.0.0.0
+                || v4.is_broadcast()      // 255.255.255.255
+                || v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64 // 100.64.0.0/10 (CGNAT)
+        }
+        IpAddr::V6(v6) => {
+            // IPv4-mapped (::ffff:x.x.x.x) or IPv4-compatible (::x.x.x.x)
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_private_ip(IpAddr::V4(v4));
+            }
+            v6.is_loopback()              // ::1
+                || v6.is_unspecified()    // ::
+                || {
+                    let seg = v6.segments();
+                    // fc00::/7 (unique local)
+                    (seg[0] & 0xfe00) == 0xfc00
+                    // fe80::/10 (link-local)
+                    || (seg[0] & 0xffc0) == 0xfe80
+                }
+        }
+    }
+}
+
+/// Validate a webhook URL is safe to deliver to (no SSRF).
+/// Uses blocking DNS resolution — acceptable for low-frequency webhook delivery.
+pub fn validate_webhook_url(url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url).map_err(|e| format!("invalid URL: {e}"))?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        s => return Err(format!("unsupported scheme: {s}")),
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "URL has no host".to_string())?;
+
+    // Resolve DNS and check all IPs
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let addr_str = format!("{host}:{port}");
+    let addrs: Vec<_> = addr_str
+        .to_socket_addrs()
+        .map_err(|e| format!("DNS resolution failed for {host}: {e}"))?
+        .collect();
+
+    if addrs.is_empty() {
+        return Err(format!("no addresses resolved for {host}"));
+    }
+
+    for addr in &addrs {
+        if is_private_ip(addr.ip()) {
+            return Err(format!(
+                "webhook URL resolves to private/reserved IP: {}",
+                addr.ip()
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn default_events() -> Vec<String> {
@@ -60,17 +127,48 @@ pub struct WebhookDispatcher {
 
 impl WebhookDispatcher {
     pub fn new(hooks: Vec<WebhookConfig>) -> Self {
+        let valid_hooks: Vec<_> = hooks
+            .into_iter()
+            .filter(|h| match validate_webhook_url(&h.url) {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("WARNING: skipping webhook {}: {e}", h.url);
+                    false
+                }
+            })
+            .collect();
+
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(
                 crate::constants::WEBHOOK_HTTP_TIMEOUT_SECS,
             ))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_default();
-        Self { hooks, client }
+        Self {
+            hooks: valid_hooks,
+            client,
+        }
     }
 
     pub fn empty() -> Self {
-        Self::new(vec![])
+        Self {
+            hooks: vec![],
+            client: reqwest::Client::new(),
+        }
+    }
+
+    /// Create without URL validation (for tests only).
+    #[cfg(test)]
+    pub fn new_unchecked(hooks: Vec<WebhookConfig>) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(
+                crate::constants::WEBHOOK_HTTP_TIMEOUT_SECS,
+            ))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_default();
+        Self { hooks, client }
     }
 
     /// Fire-and-forget: spawn a task for each matching webhook.
@@ -121,6 +219,12 @@ async fn send_with_retry(
     hook: &WebhookConfig,
     event: &WebhookEvent,
 ) -> Result<(), ()> {
+    // DNS rebinding protection: re-validate URL before each delivery
+    if let Err(e) = validate_webhook_url(&hook.url) {
+        eprintln!("webhook {} blocked (SSRF): {e}", hook.url);
+        return Err(());
+    }
+
     let (body, content_type) = format_payload(hook, event);
 
     for attempt in 0..crate::constants::WEBHOOK_MAX_RETRIES {
@@ -287,7 +391,7 @@ mod tests {
     #[test]
     fn dispatch_filters_by_event_name() {
         let hook = test_hook("generic", vec!["request_approved"]);
-        let dispatcher = WebhookDispatcher::new(vec![hook]);
+        let dispatcher = WebhookDispatcher::new_unchecked(vec![hook]);
         // request_created should not match the hook configured for request_approved
         // We can't easily assert dispatch doesn't fire (it's fire-and-forget),
         // but we can verify the filtering logic directly
@@ -308,5 +412,61 @@ mod tests {
         assert!(events.contains(&"request_completed".to_string()));
         assert!(events.contains(&"break_glass".to_string()));
         assert!(events.contains(&"step_approved".to_string()));
+    }
+
+    #[test]
+    fn ssrf_blocks_loopback() {
+        assert!(validate_webhook_url("http://127.0.0.1/hook").is_err());
+        assert!(validate_webhook_url("http://127.0.0.1:8080/hook").is_err());
+    }
+
+    #[test]
+    fn ssrf_blocks_private_10() {
+        assert!(validate_webhook_url("http://10.0.0.1/hook").is_err());
+    }
+
+    #[test]
+    fn ssrf_blocks_private_172() {
+        assert!(validate_webhook_url("http://172.16.0.1/hook").is_err());
+    }
+
+    #[test]
+    fn ssrf_blocks_private_192() {
+        assert!(validate_webhook_url("http://192.168.1.1/hook").is_err());
+    }
+
+    #[test]
+    fn ssrf_blocks_metadata() {
+        assert!(validate_webhook_url("http://169.254.169.254/latest/meta-data/").is_err());
+    }
+
+    #[test]
+    fn ssrf_blocks_ipv6_loopback() {
+        assert!(validate_webhook_url("http://[::1]/hook").is_err());
+    }
+
+    #[test]
+    fn ssrf_blocks_ipv4_mapped_ipv6() {
+        // ::ffff:127.0.0.1 must be blocked
+        assert!(validate_webhook_url("http://[::ffff:127.0.0.1]/hook").is_err());
+        assert!(validate_webhook_url("http://[::ffff:10.0.0.1]/hook").is_err());
+        assert!(validate_webhook_url("http://[::ffff:169.254.169.254]/hook").is_err());
+    }
+
+    #[test]
+    fn ssrf_rejects_unsupported_scheme() {
+        assert!(validate_webhook_url("ftp://example.com/hook").is_err());
+        assert!(validate_webhook_url("file:///etc/passwd").is_err());
+    }
+
+    #[test]
+    fn ssrf_rejects_no_host() {
+        assert!(validate_webhook_url("http:///path").is_err());
+    }
+
+    #[test]
+    fn ssrf_allows_public_ip() {
+        // 8.8.8.8 is Google DNS - public IP
+        assert!(validate_webhook_url("https://8.8.8.8/hook").is_ok());
     }
 }
