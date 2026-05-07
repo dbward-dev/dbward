@@ -48,5 +48,12 @@ RUN apt-get update \
 WORKDIR /workspace
 
 COPY --from=builder /usr/local/bin/dbward /usr/local/bin/dbward
+COPY --from=litestream/litestream:0.5 /usr/local/bin/litestream /usr/local/bin/litestream
+
+COPY deploy/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY deploy/litestream.yml /etc/litestream.yml
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+VOLUME /data
 
 ENTRYPOINT ["dbward"]
