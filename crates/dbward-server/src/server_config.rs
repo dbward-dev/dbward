@@ -56,6 +56,8 @@ pub struct RetentionConfig {
     pub audit_ttl_days: u32,
     #[serde(default = "default_result_ttl")]
     pub result_ttl_days: u32,
+    #[serde(default = "default_approval_ttl")]
+    pub approval_ttl_secs: u64,
 }
 
 fn default_request_ttl() -> u32 {
@@ -67,6 +69,9 @@ fn default_audit_ttl() -> u32 {
 fn default_result_ttl() -> u32 {
     30
 }
+fn default_approval_ttl() -> u64 {
+    86400
+}
 
 impl Default for RetentionConfig {
     fn default() -> Self {
@@ -74,6 +79,7 @@ impl Default for RetentionConfig {
             request_ttl_days: default_request_ttl(),
             audit_ttl_days: default_audit_ttl(),
             result_ttl_days: default_result_ttl(),
+            approval_ttl_secs: default_approval_ttl(),
         }
     }
 }

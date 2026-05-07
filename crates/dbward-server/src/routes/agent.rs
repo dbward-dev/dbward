@@ -72,6 +72,11 @@ pub(crate) async fn agent_poll(
         |e| crate::api_error::ApiError::internal(format!("agent registration failed: {e}")),
     )?;
 
+    // Free tier: check total unique database connections across all agents
+    if !databases.is_empty() {
+        crate::limits::check_database_limit(&conn, &state.license)?;
+    }
+
     // Build dynamic WHERE clause for capability filtering
     let mut where_clauses = vec!["status = 'dispatched'".to_string()];
     let mut bind_values: Vec<String> = Vec::new();

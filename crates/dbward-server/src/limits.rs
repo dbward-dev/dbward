@@ -8,6 +8,7 @@ use crate::server_config::{ResultStorageConfig, ServerConfig};
 
 pub const FREE_WORKFLOWS: usize = 5;
 pub const FREE_AGENTS: usize = 3;
+pub const FREE_DATABASES: usize = 3;
 pub const FREE_WEBHOOKS: usize = 3;
 pub const FREE_EXECUTION_POLICIES: usize = 3;
 pub const FREE_TOKENS: usize = 10;
@@ -19,6 +20,7 @@ pub enum Resource {
     Workflow,
     ExecutionPolicy,
     Agent,
+    Database,
     Token,
 }
 
@@ -28,6 +30,7 @@ impl Resource {
             Self::Workflow => FREE_WORKFLOWS,
             Self::ExecutionPolicy => FREE_EXECUTION_POLICIES,
             Self::Agent => FREE_AGENTS,
+            Self::Database => FREE_DATABASES,
             Self::Token => FREE_TOKENS,
         }
     }
@@ -37,6 +40,7 @@ impl Resource {
             Self::Workflow => "Workflow rule",
             Self::ExecutionPolicy => "Execution policy",
             Self::Agent => "Agent",
+            Self::Database => "Database connection",
             Self::Token => "API token",
         }
     }
@@ -46,6 +50,7 @@ impl Resource {
             Self::Workflow => "SELECT COUNT(*) FROM workflows",
             Self::ExecutionPolicy => "SELECT COUNT(*) FROM execution_policies",
             Self::Agent => "SELECT COUNT(*) FROM agents",
+            Self::Database => "SELECT COUNT(DISTINCT j.value) FROM agents, json_each(json_extract(capabilities_json, '$.databases')) AS j",
             Self::Token => "SELECT COUNT(*) FROM tokens WHERE revoked_at IS NULL",
         }
     }
@@ -74,6 +79,30 @@ pub fn check_can_create(
                 resource.name(),
                 count,
                 resource.limit()
+            ),
+        )
+        .with_code("plan_limit_reached")
+        .with_hint(format!("Upgrade to dbward Pro → {WAITLIST_URL}")));
+    }
+    Ok(())
+}
+
+/// Check database connection limit (called after upsert, so uses `>` not `>=`).
+pub fn check_database_limit(conn: &Connection, license: &License) -> Result<(), ApiError> {
+    if license.is_pro() {
+        return Ok(());
+    }
+    let count: usize = conn
+        .query_row(Resource::Database.count_query(), [], |row| row.get(0))
+        .map_err(|e| ApiError::internal(format!("limit check failed: {e}")))?;
+    if count > Resource::Database.limit() {
+        return Err(ApiError::new(
+            StatusCode::PAYMENT_REQUIRED,
+            format!(
+                "{} limit reached ({}/{}).",
+                Resource::Database.name(),
+                count,
+                Resource::Database.limit()
             ),
         )
         .with_code("plan_limit_reached")

@@ -1388,8 +1388,34 @@ pub(crate) async fn dispatch_request(
         &mut conn,
     )?;
 
-    // For executed/failed: check re-execution policy before attempting atomic update
-    if status == "executed" || status == "failed" {
+    // Check approval expiry
+    if matches!(status.as_str(), "approved" | "auto_approved" | "break_glass") {
+        let ttl = state.retention.approval_ttl_secs;
+        if ttl > 0 {
+            match resolved_at {
+                Some(ref resolved) => {
+                    if let Ok(resolved_time) = chrono::DateTime::parse_from_rfc3339(resolved) {
+                        let elapsed = chrono::Utc::now().signed_duration_since(resolved_time);
+                        if elapsed.num_seconds() > 0 && elapsed.num_seconds() as u64 > ttl {
+                            return Err(crate::api_error::ApiError::new(
+                                StatusCode::GONE,
+                                "approval has expired; please re-submit the request",
+                            )
+                            .with_code("approval_expired"));
+                        }
+                    }
+                }
+                None => {
+                    return Err(crate::api_error::ApiError::internal(
+                        "approved request has no resolved_at timestamp",
+                    ));
+                }
+            }
+        }
+    }
+
+    // For executed/failed/execution_lost: check re-execution policy
+    if status == "executed" || status == "failed" || status == "execution_lost" {
         let (max_exec, window_secs, retry) =
             crate::db::policy_repo::get_execution_policy(&conn, &database_name, &environment);
 
