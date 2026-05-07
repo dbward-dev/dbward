@@ -33,12 +33,17 @@ type RequestRow = (
 const MAX_METADATA_JSON_BYTES: usize = 8 * 1024;
 const MAX_IDEMPOTENCY_KEY_BYTES: usize = 255;
 
+/// Statuses subject to approval expiry.
+fn is_expirable_status(status: &str) -> bool {
+    matches!(status, "approved" | "auto_approved" | "break_glass")
+}
+
 /// Compute expires_at for approved requests based on approval_ttl_secs.
 fn compute_expires_at(status: &str, resolved_at: &Option<String>, ttl_secs: u64) -> Option<String> {
     if ttl_secs == 0 {
         return None;
     }
-    if !matches!(status, "approved" | "auto_approved" | "break_glass") {
+    if !is_expirable_status(status) {
         return None;
     }
     resolved_at.as_ref().and_then(|r| {
@@ -1412,7 +1417,7 @@ pub(crate) async fn dispatch_request(
     )?;
 
     // Check approval expiry
-    if matches!(status.as_str(), "approved" | "auto_approved" | "break_glass") {
+    if is_expirable_status(&status) {
         let ttl = state.retention.approval_ttl_secs;
         if ttl > 0 {
             match resolved_at {
