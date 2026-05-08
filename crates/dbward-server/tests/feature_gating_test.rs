@@ -32,6 +32,7 @@ fn free_state() -> AppState {
         audit_config: Default::default(),
         trusted_proxies: vec![],
         update_available: Arc::new(Mutex::new(None)),
+        update_check_enabled: false,
     }
 }
 

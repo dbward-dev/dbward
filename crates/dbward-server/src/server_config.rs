@@ -115,6 +115,9 @@ pub struct ServerConfig {
     pub trusted_proxies: Vec<String>,
     #[serde(default)]
     pub logging: LoggingConfig,
+    /// Enable periodic update check against GitHub Releases. Default: false (enable after public).
+    #[serde(default)]
+    pub update_check: bool,
 }
 
 /// Logging configuration.

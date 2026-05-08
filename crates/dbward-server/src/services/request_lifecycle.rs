@@ -505,6 +505,7 @@ mod tests {
             audit_config: Default::default(),
             trusted_proxies: vec![],
         update_available: Arc::new(tokio::sync::Mutex::new(None)),
+            update_check_enabled: false,
         }
     }
 

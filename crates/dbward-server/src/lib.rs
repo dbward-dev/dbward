@@ -13,6 +13,7 @@ pub mod server_config;
 pub(crate) mod services;
 mod state;
 pub mod token;
+pub mod update_checker;
 pub mod webhook;
 
 pub use metrics::Metrics;
@@ -241,6 +242,12 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
             }
         }
     });
+
+    // Background task: check for updates
+    update_checker::spawn_update_checker(
+        state.update_check_enabled,
+        state.update_available.clone(),
+    );
 
     let app = routes::router(state.clone());
 

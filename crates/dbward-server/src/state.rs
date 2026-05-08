@@ -138,6 +138,7 @@ pub struct AppState {
     pub audit_config: crate::server_config::AuditConfig,
     pub trusted_proxies: Vec<String>,
     pub update_available: Arc<Mutex<Option<String>>>,
+    pub update_check_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
