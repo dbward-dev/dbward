@@ -137,6 +137,17 @@ pub fn delete_expired_result_records(
     Ok(())
 }
 
+/// Delete tokens that were revoked more than `days_ago` days ago.
+pub fn purge_revoked_tokens(conn: &Connection, days_ago: u32) -> Result<usize, rusqlite::Error> {
+    let cutoff =
+        (chrono::Utc::now() - chrono::Duration::days(days_ago as i64)).to_rfc3339();
+    let deleted = conn.execute(
+        "DELETE FROM tokens WHERE revoked_at IS NOT NULL AND revoked_at < ?1",
+        rusqlite::params![cutoff],
+    )?;
+    Ok(deleted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -55,6 +55,11 @@ services:
       - 0.0.0.0:3000
       - --config
       - /config/dbward-server.toml
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks: [backend, frontend]
     volumes:
       - server-data:/data
@@ -78,6 +83,11 @@ services:
     build: *dbward-build
     <<: *security
     entrypoint: ["/bin/sh", "/scripts/agent-entrypoint.sh"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     networks: [backend]
     volumes:
       - ./db/migrations:/workspace/db/migrations:ro

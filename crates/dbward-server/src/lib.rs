@@ -140,6 +140,17 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
                     eprintln!("purged {} expired result(s)", expired.len());
                 }
             }
+
+            // WAL checkpoint + revoked token cleanup
+            {
+                let conn = sqlite2.lock().await;
+                let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
+                if let Ok(n) = db::maintenance::purge_revoked_tokens(&conn, 90) {
+                    if n > 0 {
+                        eprintln!("purged {n} old revoked token(s)");
+                    }
+                }
+            }
         }
     });
 
