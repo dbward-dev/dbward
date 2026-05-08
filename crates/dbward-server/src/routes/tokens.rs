@@ -89,6 +89,44 @@ pub(crate) async fn create_token(
     .await
     .map_err(|e| ApiError::internal(e))?;
 
+    // Record with caller IP (the insert in create_token_full has actor=system, no IP)
+    {
+        let mut conn = state.sqlite.lock().await;
+        let meta = serde_json::json!({
+            "subject_user": body.subject_id,
+            "role": body.role,
+            "subject_type": body.subject_type,
+            "groups": body.groups,
+        })
+        .to_string();
+        let _ = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            crate::db::audit_event_repo::AuditEvent {
+                event_type: "token_created",
+                event_category: "token",
+                outcome: "success",
+                actor_id: &user.user,
+                actor_type: "user",
+                resource_type: Some("token"),
+                resource_id: Some(&token_id),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: None,
+                operation: None,
+                environment: None,
+                database_name: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: None,
+                metadata_json: &meta,
+            },
+            &headers,
+            &state.audit_config,
+            &state.trusted_proxies,
+        );
+    }
+
     Ok((
         StatusCode::CREATED,
         Json(json!({
