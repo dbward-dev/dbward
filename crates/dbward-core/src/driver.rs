@@ -132,14 +132,11 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
-        
+        // PostgreSQL simple query protocol guarantees atomicity for multi-statement
         let result = sqlx::raw_sql(sql)
             .execute(&self.pool)
             .await
-            .map_err(|e| {
-                // If any statement failed, PostgreSQL/MySQL auto-rolls back the transaction
-                Error::Database(e.to_string())
-            })?;
+            .map_err(|e| Error::Database(e.to_string()))?;
         Ok(result.rows_affected())
     }
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), Error> {
@@ -294,15 +291,27 @@ impl DatabaseDriver for MysqlDriver {
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
-        
-        let result = sqlx::raw_sql(sql)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                // If any statement failed, PostgreSQL/MySQL auto-rolls back the transaction
-                Error::Database(e.to_string())
-            })?;
-        Ok(result.rows_affected())
+        // MySQL: wrap multi-statement in explicit transaction for atomicity
+        // (MySQL has no implicit transaction block for multi-statement batches)
+        if !crate::query::is_multi_statement_mysql(sql) {
+            let result = sqlx::raw_sql(sql)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| Error::Database(e.to_string()))?;
+            return Ok(result.rows_affected());
+        }
+        let stmts = crate::query::split_statements_mysql(sql);
+        let mut tx = self.pool.begin().await
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let mut total_affected = 0u64;
+        for stmt in &stmts {
+            let r = sqlx::query(stmt).execute(&mut *tx).await
+                .map_err(|e| Error::Database(e.to_string()))?;
+            total_affected += r.rows_affected();
+        }
+        tx.commit().await
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(total_affected)
     }
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), Error> {
         let mut tx = self

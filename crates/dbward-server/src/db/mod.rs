@@ -11,6 +11,34 @@ use rusqlite::Connection;
 /// Latest schema version. Increment when adding migrations.
 pub const LATEST_SCHEMA_VERSION: i64 = 7;
 
+/// Backup SQLite DB before schema migration if needed.
+/// Returns the backup path if a backup was created.
+pub fn backup_if_migration_needed(conn: &Connection, db_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let current_version: i64 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap_or(0);
+    if current_version > 0 && current_version < LATEST_SCHEMA_VERSION {
+        let backup_path = db_path.with_extension(format!("db.bak.v{current_version}"));
+        if backup_path.exists() {
+            tracing::info!(path = %backup_path.display(), "SQLite backup already exists, skipping");
+            return Some(backup_path);
+        }
+        if let Err(e) = std::fs::copy(db_path, &backup_path) {
+            tracing::warn!(error = %e, "failed to backup SQLite before migration");
+            return None;
+        }
+        tracing::info!(
+            from = current_version,
+            to = LATEST_SCHEMA_VERSION,
+            backup = %backup_path.display(),
+            "SQLite backup created before schema migration"
+        );
+        Some(backup_path)
+    } else {
+        None
+    }
+}
+
 /// Initialize SQLite database with WAL mode and versioned schema.
 pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.pragma_update(None, "journal_mode", "WAL")?;

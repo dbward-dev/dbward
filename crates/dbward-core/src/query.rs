@@ -5,6 +5,22 @@ use sqlparser::parser::Parser;
 
 use crate::Error;
 
+/// Check if SQL contains multiple statements (MySQL dialect).
+pub fn is_multi_statement_mysql(sql: &str) -> bool {
+    match Parser::parse_sql(&MySqlDialect {}, sql.trim()) {
+        Ok(stmts) => stmts.len() > 1,
+        Err(_) => false,
+    }
+}
+
+/// Split multi-statement SQL into individual statements (MySQL dialect).
+pub fn split_statements_mysql(sql: &str) -> Vec<String> {
+    match Parser::parse_sql(&MySqlDialect {}, sql.trim()) {
+        Ok(stmts) if stmts.len() > 1 => stmts.iter().map(|s| s.to_string()).collect(),
+        _ => vec![sql.to_string()],
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum QueryType {

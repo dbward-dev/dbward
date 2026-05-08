@@ -1543,6 +1543,9 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
 
             let conn = rusqlite::Connection::open(data)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+            if let Some(backup_path) = dbward_server::db::backup_if_migration_needed(&conn, std::path::Path::new(data)) {
+                eprintln!("Backup created: {}", backup_path.display());
+            }
             dbward_server::db::init(&conn)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
             dbward_server::db::policy_repo::sync_workflows(&conn, &server_cfg.workflows)
