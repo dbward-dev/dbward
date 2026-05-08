@@ -52,3 +52,15 @@ For details, see the [Architecture section in README](README.md#architecture).
 - Single-node only; no HA or clustering support
 - HTTPS is required but must be provided by a reverse proxy (not built-in)
 - Break-glass bypasses approval (by design); monitored via webhook + audit log
+
+## Ignored Security Advisories
+
+The following RustSec advisories are acknowledged and ignored in `deny.toml`:
+
+| ID | Crate | Reason |
+|----|-------|--------|
+| RUSTSEC-2026-0066 | tokio-tar | Dev-dependency only (testcontainers). Not in release binary. |
+| RUSTSEC-2026-0112 | tokio-tar | Dev-dependency only (testcontainers). Not in release binary. |
+| RUSTSEC-2026-0113 | tar | Dev-dependency only (testcontainers). Not in release binary. |
+| RUSTSEC-2023-0071 | rsa | Transitive via rustls. dbward does not use RSA key exchange. |
+| RUSTSEC-2025-0134 | rustls-pemfile | Unmaintained. Transitive via reqwest/rustls. No direct usage. |
