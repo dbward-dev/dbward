@@ -1781,3 +1781,229 @@ pub(crate) async fn stream_result(
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- compute_expires_at ---
+
+    #[test]
+    fn expires_at_none_when_ttl_zero() {
+        assert_eq!(
+            compute_expires_at("approved", &Some("2026-01-01T00:00:00+00:00".into()), 0),
+            None
+        );
+    }
+
+    #[test]
+    fn expires_at_none_for_non_expirable_status() {
+        let ts = Some("2026-01-01T00:00:00+00:00".into());
+        assert_eq!(compute_expires_at("pending", &ts, 3600), None);
+        assert_eq!(compute_expires_at("rejected", &ts, 3600), None);
+        assert_eq!(compute_expires_at("cancelled", &ts, 3600), None);
+    }
+
+    #[test]
+    fn expires_at_computes_for_approved() {
+        let result = compute_expires_at(
+            "approved",
+            &Some("2026-01-01T00:00:00+00:00".into()),
+            3600,
+        );
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("2026-01-01T01:00:00"));
+    }
+
+    #[test]
+    fn expires_at_works_for_break_glass_and_auto_approved() {
+        let ts = Some("2026-05-01T12:00:00+00:00".into());
+        assert!(compute_expires_at("break_glass", &ts, 60).is_some());
+        assert!(compute_expires_at("auto_approved", &ts, 60).is_some());
+    }
+
+    #[test]
+    fn expires_at_none_when_resolved_at_missing() {
+        assert_eq!(compute_expires_at("approved", &None, 3600), None);
+    }
+
+    #[test]
+    fn expires_at_none_when_resolved_at_invalid() {
+        assert_eq!(
+            compute_expires_at("approved", &Some("not-a-date".into()), 3600),
+            None
+        );
+    }
+
+    // --- should_filter_capability ---
+
+    #[test]
+    fn filter_capability_empty_means_no_filter() {
+        assert!(!should_filter_capability(&[]));
+    }
+
+    #[test]
+    fn filter_capability_wildcard_means_no_filter() {
+        assert!(!should_filter_capability(&["*".into()]));
+        assert!(!should_filter_capability(&["app".into(), "*".into()]));
+    }
+
+    #[test]
+    fn filter_capability_specific_values_means_filter() {
+        assert!(should_filter_capability(&["app".into()]));
+        assert!(should_filter_capability(&["app".into(), "analytics".into()]));
+    }
+
+    // --- parse_pagination ---
+
+    #[test]
+    fn pagination_defaults() {
+        let params = HashMap::new();
+        assert_eq!(parse_pagination(&params), (50, 0));
+    }
+
+    #[test]
+    fn pagination_respects_values() {
+        let mut params = HashMap::new();
+        params.insert("limit".into(), "10".into());
+        params.insert("offset".into(), "20".into());
+        assert_eq!(parse_pagination(&params), (10, 20));
+    }
+
+    #[test]
+    fn pagination_clamps_limit() {
+        let mut params = HashMap::new();
+        params.insert("limit".into(), "9999".into());
+        assert_eq!(parse_pagination(&params), (200, 0));
+    }
+
+    #[test]
+    fn pagination_handles_invalid_input() {
+        let mut params = HashMap::new();
+        params.insert("limit".into(), "abc".into());
+        params.insert("offset".into(), "-5".into());
+        let (limit, offset) = parse_pagination(&params);
+        assert_eq!(limit, 50); // fallback to default
+        assert_eq!(offset, 0); // clamped to 0
+    }
+
+    // --- validate_metadata ---
+
+    #[test]
+    fn metadata_none_returns_empty_object() {
+        assert_eq!(validate_metadata(None).unwrap(), "{}");
+    }
+
+    #[test]
+    fn metadata_valid_object() {
+        let v = serde_json::json!({"key": "value"});
+        assert!(validate_metadata(Some(&v)).is_ok());
+    }
+
+    #[test]
+    fn metadata_rejects_non_object() {
+        let v = serde_json::json!("string");
+        assert!(validate_metadata(Some(&v)).is_err());
+        let v = serde_json::json!([1, 2, 3]);
+        assert!(validate_metadata(Some(&v)).is_err());
+    }
+
+    #[test]
+    fn metadata_rejects_oversized() {
+        let big = "x".repeat(MAX_METADATA_JSON_BYTES + 1);
+        let v = serde_json::json!({"data": big});
+        assert!(validate_metadata(Some(&v)).is_err());
+    }
+
+    // --- validate_idempotency_key ---
+
+    #[test]
+    fn idempotency_key_none_returns_none() {
+        assert_eq!(validate_idempotency_key(None).unwrap(), None);
+    }
+
+    #[test]
+    fn idempotency_key_valid() {
+        let v = serde_json::json!("deploy-abc123");
+        assert_eq!(
+            validate_idempotency_key(Some(&v)).unwrap(),
+            Some("deploy-abc123".into())
+        );
+    }
+
+    #[test]
+    fn idempotency_key_rejects_non_string() {
+        let v = serde_json::json!(123);
+        assert!(validate_idempotency_key(Some(&v)).is_err());
+    }
+
+    #[test]
+    fn idempotency_key_rejects_empty() {
+        let v = serde_json::json!("  ");
+        assert!(validate_idempotency_key(Some(&v)).is_err());
+    }
+
+    #[test]
+    fn idempotency_key_rejects_oversized() {
+        let big = "x".repeat(MAX_IDEMPOTENCY_KEY_BYTES + 1);
+        let v = serde_json::json!(big);
+        assert!(validate_idempotency_key(Some(&v)).is_err());
+    }
+
+    // --- extract_approver_summary ---
+
+    #[test]
+    fn approver_summary_none_returns_empty() {
+        assert_eq!(extract_approver_summary(None), Vec::<String>::new());
+    }
+
+    #[test]
+    fn approver_summary_parses_roles() {
+        let json = r#"[{"type":"approval","approvers":[{"role":"admin","min":1}]}]"#;
+        let result = extract_approver_summary(Some(json));
+        assert_eq!(result, vec!["role:admin (min:1)"]);
+    }
+
+    #[test]
+    fn approver_summary_parses_groups() {
+        let json = r#"[{"type":"approval","approvers":[{"group":"dba-team","min":2}]}]"#;
+        let result = extract_approver_summary(Some(json));
+        assert_eq!(result, vec!["group:dba-team (min:2)"]);
+    }
+
+    #[test]
+    fn approver_summary_invalid_json_returns_empty() {
+        assert_eq!(extract_approver_summary(Some("not json")), Vec::<String>::new());
+    }
+
+    #[test]
+    fn pagination_limit_zero_clamps_to_one() {
+        let mut params = HashMap::new();
+        params.insert("limit".into(), "0".into());
+        assert_eq!(parse_pagination(&params), (1, 0));
+    }
+
+    #[test]
+    fn idempotency_key_trims_whitespace() {
+        let v = serde_json::json!("  hello  ");
+        assert_eq!(
+            validate_idempotency_key(Some(&v)).unwrap(),
+            Some("hello".into())
+        );
+    }
+
+    #[test]
+    fn approver_summary_multiple_steps() {
+        let json = r#"[
+            {"type":"approval","approvers":[{"role":"developer","min":1}]},
+            {"type":"approval","approvers":[{"group":"dba-team","min":2},{"role":"admin","min":1}]}
+        ]"#;
+        let result = extract_approver_summary(Some(json));
+        assert_eq!(result, vec![
+            "role:developer (min:1)",
+            "group:dba-team (min:2)",
+            "role:admin (min:1)",
+        ]);
+    }
+}
