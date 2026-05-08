@@ -436,6 +436,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         Command::Agent {
             config: agent_config_path,
         } => {
+            dbward_agent::init_logging();
             let agent_config = config_loader::load_agent(agent_config_path)?;
             return dbward_agent::run(agent_config).await;
         }
@@ -1505,6 +1506,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
             )
             .map_err(dbward_core::Error::Server)?;
 
+            let _log_guard = dbward_server::init_logging(&server_cfg.logging);
+
             // Free tier config validation
             let license = dbward_server::license::License::load();
             let warnings = dbward_server::limits::validate_config(&server_cfg, &license);
@@ -1765,6 +1768,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
 // ---------------------------------------------------------------------------
 
 async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error> {
+    dbward_agent::init_logging();
+
     let dev_dir = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".dbward")

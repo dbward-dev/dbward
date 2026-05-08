@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use tracing::info;
 
 /// Log in-flight request counts on server restart (no state changes).
 /// Recovery is handled by periodic lease reclaim (reclaim_expired_leases).
@@ -14,8 +15,10 @@ pub(super) fn recover_in_flight_requests(conn: &Connection) -> Result<(), rusqli
         |row| row.get(0),
     )?;
     if dispatched > 0 || running > 0 {
-        eprintln!(
-            "in-flight requests on startup: {dispatched} dispatched, {running} running (will be handled by lease reclaim)"
+        info!(
+            dispatched = dispatched,
+            running = running,
+            "in-flight requests on startup (will be handled by lease reclaim)"
         );
     }
     Ok(())

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::net::{IpAddr, ToSocketAddrs};
 use std::sync::Arc;
+use tracing::{error, warn};
 
 use crate::Metrics;
 
@@ -228,22 +229,22 @@ async fn send_with_retry(
         match req.body(body.clone()).send().await {
             Ok(resp) if resp.status().is_success() => return Ok(()),
             Ok(resp) => {
-                eprintln!(
-                    "webhook {} returned {} (attempt {})",
-                    hook.url,
-                    resp.status(),
-                    attempt + 1
+                warn!(
+                    url = %hook.url,
+                    status = %resp.status(),
+                    attempt = attempt + 1,
+                    "webhook returned non-success status"
                 );
             }
             Err(e) => {
-                eprintln!("webhook {} failed: {e} (attempt {})", hook.url, attempt + 1);
+                warn!(url = %hook.url, error = %e, attempt = attempt + 1, "webhook failed");
             }
         }
     }
-    eprintln!(
-        "webhook {} failed after {} attempts",
-        hook.url,
-        crate::constants::WEBHOOK_MAX_RETRIES
+    error!(
+        url = %hook.url,
+        max_retries = crate::constants::WEBHOOK_MAX_RETRIES,
+        "webhook failed after all attempts"
     );
     Err(())
 }
@@ -319,7 +320,7 @@ fn format_payload(hook: &WebhookConfig, event: &WebhookEvent) -> (String, String
             let payload = match serde_json::to_string(event) {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("BUG: webhook event serialization failed: {e}");
+                    error!(error = %e, "BUG: webhook event serialization failed");
                     format!("{{\"error\":\"serialization failed\"}}")
                 }
             };

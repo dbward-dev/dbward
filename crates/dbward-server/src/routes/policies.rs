@@ -3,6 +3,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use serde_json::json;
+use tracing::error;
 
 use crate::auth;
 use crate::authz::{self, Action, Resource};
@@ -162,7 +163,7 @@ pub(crate) async fn create_workflow(
         reason: None,
         metadata_json: &meta,
     }, &headers, &state.audit_config, &state.trusted_proxies) {
-                eprintln!("audit write failed: {e}");
+                error!(error = %e, "audit write failed");
             }
 
     Ok((

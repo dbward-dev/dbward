@@ -40,11 +40,11 @@ impl License {
 
         match verify_license_key(&key) {
             Ok(plan) => {
-                eprintln!("License verified: plan={plan:?}");
+                tracing::info!(plan = ?plan, "License verified");
                 Self { plan }
             }
             Err(e) => {
-                eprintln!("WARNING: license key invalid ({e}), falling back to Free");
+                tracing::warn!(error = %e, "license key invalid, falling back to Free");
                 Self { plan: Plan::Free }
             }
         }

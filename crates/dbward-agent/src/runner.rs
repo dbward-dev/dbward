@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use dbward_core::{AgentConfig, Engine, Error};
 use dbward_migrate::Migrator;
+use tracing::{error, info, warn};
 
 use crate::server_client::AgentClient;
 
@@ -21,7 +22,7 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
 
     // Verify DB connectivity for all configured databases
     for (name, db_config) in &config.databases {
-        eprintln!("verifying database connection: {name}");
+        info!(database = %name, "verifying database connection");
         let driver = dbward_core::driver::connect(&db_config.url)
             .await
             .map_err(|e| {
@@ -43,12 +44,13 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
     write_probe(READY_PROBE_PATH)?;
     let _probe_guard = ProbeGuard;
 
-    eprintln!(
-        "agent {} started, polling {}",
-        config.agent_id, config.server.url
+    info!(
+        agent_id = %config.agent_id,
+        server = %config.server.url,
+        "agent started, polling"
     );
     if config.max_concurrent_tasks > 1 {
-        eprintln!("note: parallel job execution not yet implemented, processing sequentially");
+        warn!("parallel job execution not yet implemented, processing sequentially");
     }
 
     install_shutdown_task(draining.clone());
@@ -62,12 +64,12 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
             if drain_started_at.is_none() {
                 drain_started_at = Some(tokio::time::Instant::now());
                 if let Err(err) = remove_probe(READY_PROBE_PATH) {
-                    eprintln!("failed to remove readiness probe: {err}");
+                    warn!(%err, "failed to remove readiness probe");
                 }
-                eprintln!("agent draining");
+                info!("agent draining");
             }
             if should_exit_drain(&draining, &in_flight) {
-                eprintln!("agent shut down");
+                info!("agent shut down");
                 return Ok(());
             }
             if drain_timed_out(drain_started_at, config.drain_timeout_secs) {
@@ -116,25 +118,23 @@ async fn poll_once(
             if prev >= MAX_CONSECUTIVE_POLL_FAILURES && ready_removed.swap(false, Ordering::SeqCst)
             {
                 if let Err(e) = write_probe(READY_PROBE_PATH) {
-                    eprintln!("failed to restore readiness probe: {e}");
+                    warn!(%e, "failed to restore readiness probe");
                 } else {
-                    eprintln!("readiness probe restored after recovery");
+                    info!("readiness probe restored after recovery");
                 }
             }
             j
         }
         Err(e) => {
             let count = consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1;
-            eprintln!("poll failed ({count}/{MAX_CONSECUTIVE_POLL_FAILURES}): {e}");
+            warn!(count, max = MAX_CONSECUTIVE_POLL_FAILURES, %e, "poll failed");
             if count >= MAX_CONSECUTIVE_POLL_FAILURES
                 && !ready_removed.swap(true, Ordering::SeqCst)
             {
                 if let Err(re) = remove_probe(READY_PROBE_PATH) {
-                    eprintln!("failed to remove readiness probe: {re}");
+                    warn!(%re, "failed to remove readiness probe");
                 } else {
-                    eprintln!(
-                        "readiness probe removed after {count} consecutive poll failures"
-                    );
+                    warn!(count, "readiness probe removed after consecutive poll failures");
                 }
             }
             return;
@@ -145,14 +145,14 @@ async fn poll_once(
         let request_id = match job["id"].as_str() {
             Some(id) => id.to_string(),
             None => {
-                eprintln!("warning: skipping job with missing id field");
+                warn!("skipping job with missing id field");
                 continue;
             }
         };
 
         in_flight.fetch_add(1, Ordering::SeqCst);
         if let Err(e) = execute_job(config, client, public_key, &request_id, &job).await {
-            eprintln!("job {request_id} failed: {e}");
+            error!(request_id = %request_id, %e, "job failed");
         }
         in_flight.fetch_sub(1, Ordering::SeqCst);
     }
@@ -175,7 +175,7 @@ async fn execute_job(
     let database = claim["database"].as_str().unwrap_or("");
     let detail = claim["detail"].as_str().unwrap_or("");
 
-    eprintln!("claimed job {request_id} ({operation} on {database})");
+    info!(request_id, operation, database, "claimed job");
 
     // Verify token
     let token: dbward_core::token::ExecutionToken =
@@ -218,7 +218,7 @@ async fn execute_job(
         loop {
             interval.tick().await;
             if let Err(e) = hb_client.heartbeat(&hb_exec_id).await {
-                eprintln!("heartbeat failed: {e}");
+                warn!(%e, "heartbeat failed");
             }
         }
     });
@@ -231,7 +231,7 @@ async fn execute_job(
         }
         Err(e) => {
             let msg = e.to_string();
-            eprintln!("job {request_id} execution failed: {msg}");
+            error!(request_id, error = %msg, "job execution failed");
             hb_handle.abort();
             send_result_with_retry(client, exec_id, false, None, Some(&msg)).await;
             return Ok(());
@@ -239,7 +239,7 @@ async fn execute_job(
     };
 
     hb_handle.abort();
-    eprintln!("job {request_id} execution completed");
+    info!(request_id, "job execution completed");
     send_result_with_retry(client, exec_id, success, result_value, None).await;
     Ok(())
 }
@@ -262,10 +262,10 @@ async fn send_result_with_retry(
             Ok(_) => return,
             Err(e) => {
                 if tokio::time::Instant::now() + backoff > deadline {
-                    eprintln!("result submit failed after retries: {e}");
+                    error!(%e, "result submit failed after retries");
                     return;
                 }
-                eprintln!("result submit failed, retrying in {backoff:?}: {e}");
+                warn!(%e, ?backoff, "result submit failed, retrying");
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(std::time::Duration::from_secs(15));
             }
@@ -278,7 +278,7 @@ fn install_shutdown_task(draining: std::sync::Arc<AtomicBool>) {
         wait_for_shutdown_signal().await;
         draining.store(true, Ordering::SeqCst);
         if let Err(err) = remove_probe(READY_PROBE_PATH) {
-            eprintln!("failed to remove readiness probe: {err}");
+            warn!(%err, "failed to remove readiness probe");
         }
     });
 }
@@ -295,9 +295,9 @@ async fn wait_for_shutdown_signal() {
                 }
             }
             Err(err) => {
-                eprintln!("failed to register SIGTERM handler: {err}");
+                error!(%err, "failed to register SIGTERM handler");
                 if let Err(ctrl_c_err) = ctrl_c.await {
-                    eprintln!("failed while waiting for Ctrl-C: {ctrl_c_err}");
+                    error!(%ctrl_c_err, "failed while waiting for Ctrl-C");
                 }
             }
         }
@@ -305,7 +305,7 @@ async fn wait_for_shutdown_signal() {
     #[cfg(not(unix))]
     {
         if let Err(err) = tokio::signal::ctrl_c().await {
-            eprintln!("failed while waiting for Ctrl-C: {err}");
+            error!(%err, "failed while waiting for Ctrl-C");
         }
     }
 }
@@ -335,10 +335,10 @@ struct ProbeGuard;
 impl Drop for ProbeGuard {
     fn drop(&mut self) {
         if let Err(err) = remove_probe(ALIVE_PROBE_PATH) {
-            eprintln!("failed to remove liveness probe: {err}");
+            warn!(%err, "failed to remove liveness probe");
         }
         if let Err(err) = remove_probe(READY_PROBE_PATH) {
-            eprintln!("failed to remove readiness probe: {err}");
+            warn!(%err, "failed to remove readiness probe");
         }
     }
 }

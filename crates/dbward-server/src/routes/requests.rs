@@ -6,6 +6,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::error;
 
 use crate::auth;
 use crate::authz::{self, Action, Resource};
@@ -747,7 +748,7 @@ pub(crate) async fn create_request(
         operation,
     )
     .map_err(|e| {
-        eprintln!("error: workflow policy evaluation failed: {e}");
+        error!(error = %e, "workflow policy evaluation failed");
         crate::api_error::ApiError::internal(
             "workflow policy evaluation failed. Check server logs for details.",
         )
@@ -875,7 +876,7 @@ pub(crate) async fn create_request(
             reason: reason.as_deref(),
             metadata_json: &meta.to_string(),
         }, &headers, &state.audit_config, &state.trusted_proxies) {
-                    eprintln!("audit write failed: {e}");
+                    error!(error = %e, "audit write failed");
                 }
     }
 
@@ -1040,7 +1041,7 @@ pub(crate) async fn approve_request(
             reason: body_val["comment"].as_str(),
             metadata_json: &meta.to_string(),
         }, &headers, &state.audit_config, &state.trusted_proxies) {
-                    eprintln!("audit write failed: {e}");
+                    error!(error = %e, "audit write failed");
                 }
     }
 
@@ -1155,7 +1156,7 @@ pub(crate) async fn reject_request(
             reason: comment,
             metadata_json: "{}",
         }, &headers, &state.audit_config, &state.trusted_proxies) {
-                    eprintln!("audit write failed: {e}");
+                    error!(error = %e, "audit write failed");
                 }
 
         let notif_hooks =
@@ -1264,7 +1265,7 @@ pub(crate) async fn cancel_request(
             reason: cancel_reason.as_deref(),
             metadata_json: "{}",
         }, &headers, &state.audit_config, &state.trusted_proxies) {
-                    eprintln!("audit write failed: {e}");
+                    error!(error = %e, "audit write failed");
                 }
 
         let notif_hooks = crate::db::policy_repo::get_notification_webhooks(

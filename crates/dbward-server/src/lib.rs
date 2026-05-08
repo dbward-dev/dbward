@@ -19,6 +19,91 @@ pub use metrics::Metrics;
 pub use state::{AppState, RequestNotifier, ResultChannels};
 
 use std::net::SocketAddr;
+use tracing::{error, info};
+
+/// Initialize structured logging. Call once before `start()`.
+/// Set `RUST_LOG` for level filter (default: info).
+/// Set `DBWARD_LOG_FORMAT=json` for JSON output (default: compact human-readable).
+pub fn init_logging(config: &server_config::LoggingConfig) -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_subscriber::{fmt, EnvFilter};
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let json = std::env::var("DBWARD_LOG_FORMAT")
+        .map(|v| v == "json")
+        .unwrap_or(false);
+
+    match config.output.as_str() {
+        "file" => {
+            let path = config.file_path.as_deref().unwrap_or("/var/log/dbward/server.log");
+            let dir = std::path::Path::new(path).parent().unwrap_or(std::path::Path::new("."));
+            let file_name = std::path::Path::new(path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or("server.log");
+
+            if let Err(e) = std::fs::create_dir_all(dir) {
+                eprintln!("FATAL: cannot create log directory {}: {e}. Falling back to stderr.", dir.display());
+                if json {
+                    fmt()
+                        .json()
+                        .with_env_filter(filter)
+                        .with_target(true)
+                        .with_writer(std::io::stderr)
+                        .init();
+                } else {
+                    fmt()
+                        .compact()
+                        .with_env_filter(filter)
+                        .with_target(false)
+                        .with_writer(std::io::stderr)
+                        .init();
+                }
+                return None;
+            }
+
+            let appender = match config.rotation.as_str() {
+                "hourly" => tracing_appender::rolling::hourly(dir, file_name),
+                "never" => tracing_appender::rolling::never(dir, file_name),
+                _ => tracing_appender::rolling::daily(dir, file_name),
+            };
+            let (writer, guard) = tracing_appender::non_blocking(appender);
+            if json {
+                fmt()
+                    .json()
+                    .with_env_filter(filter)
+                    .with_target(true)
+                    .with_writer(writer)
+                    .init();
+            } else {
+                fmt()
+                    .compact()
+                    .with_env_filter(filter)
+                    .with_target(false)
+                    .with_writer(writer)
+                    .init();
+            }
+            Some(guard)
+        }
+        _ => {
+            if json {
+                fmt()
+                    .json()
+                    .with_env_filter(filter)
+                    .with_target(true)
+                    .with_writer(std::io::stderr)
+                    .init();
+            } else {
+                fmt()
+                    .compact()
+                    .with_env_filter(filter)
+                    .with_target(false)
+                    .with_writer(std::io::stderr)
+                    .init();
+            }
+            None
+        }
+    }
+}
 
 pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core::Error> {
     authz::warmup().await.map_err(|(_, message)| {
@@ -40,7 +125,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
                 Ok(reclaimed) if !reclaimed.is_empty() => {
                     let n = reclaimed.len();
                     metrics.record_agent_lease_expirations(n as u64);
-                    eprintln!("reclaimed {n} expired lease(s)");
+                    info!(count = n, "reclaimed expired leases");
                     drop(conn);
                     let mut conn = sqlite.lock().await;
                     for req in &reclaimed {
@@ -86,7 +171,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
                     }
                 }
                 Ok(_) => {}
-                Err(err) => eprintln!("failed to reclaim expired leases: {err}"),
+                Err(err) => error!(error = %err, "failed to reclaim expired leases"),
             }
         }
     });
@@ -109,10 +194,10 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
                     retention.audit_ttl_days,
                 ) {
                     Ok((r, a)) if r > 0 || a > 0 => {
-                        eprintln!("purged {r} old request(s), {a} old audit log(s)");
+                        info!(requests = r, audit_logs = a, "purged old records");
                     }
                     Ok(_) => {}
-                    Err(err) => eprintln!("failed to purge old records: {err}"),
+                    Err(err) => error!(error = %err, "failed to purge old records"),
                 }
             }
 
@@ -123,7 +208,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
                     match db::maintenance::collect_expired_results(&conn) {
                         Ok(v) => v,
                         Err(e) => {
-                            eprintln!("failed to collect expired results: {e}");
+                            error!(error = %e, "failed to collect expired results");
                             vec![]
                         }
                     }
@@ -137,7 +222,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
                         let _ =
                             db::maintenance::delete_expired_result_records(&conn, request_id);
                     }
-                    eprintln!("purged {} expired result(s)", expired.len());
+                    info!(count = expired.len(), "purged expired results");
                 }
             }
 
@@ -147,7 +232,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
                 let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)");
                 if let Ok(n) = db::maintenance::purge_revoked_tokens(&conn, 90) {
                     if n > 0 {
-                        eprintln!("purged {n} old revoked token(s)");
+                        info!(count = n, "purged old revoked tokens");
                     }
                 }
             }
@@ -160,14 +245,14 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
         .await
         .map_err(dbward_core::Error::Io)?;
 
-    eprintln!("dbward server listening on {addr}");
+    info!(addr = %addr, "dbward server listening");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(state))
         .await
         .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
 
-    eprintln!("dbward server shut down");
+    info!("dbward server shut down");
     Ok(())
 }
 
@@ -178,16 +263,16 @@ async fn shutdown_signal(state: AppState) {
         match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
             Ok(mut sigterm) => {
                 tokio::select! {
-                    _ = ctrl_c => eprintln!("\nReceived SIGINT, draining..."),
-                    _ = sigterm.recv() => eprintln!("\nReceived SIGTERM, draining..."),
+                    _ = ctrl_c => info!("received SIGINT, draining..."),
+                    _ = sigterm.recv() => info!("received SIGTERM, draining..."),
                 }
             }
             Err(err) => {
-                eprintln!("failed to register SIGTERM handler: {err}");
+                error!(error = %err, "failed to register SIGTERM handler");
                 if let Err(ctrl_c_err) = ctrl_c.await {
-                    eprintln!("failed while waiting for Ctrl-C: {ctrl_c_err}");
+                    error!(error = %ctrl_c_err, "failed while waiting for Ctrl-C");
                 } else {
-                    eprintln!("\nReceived SIGINT, draining...");
+                    info!("received SIGINT, draining...");
                 }
             }
         }
@@ -195,8 +280,8 @@ async fn shutdown_signal(state: AppState) {
     #[cfg(not(unix))]
     {
         match ctrl_c.await {
-            Ok(()) => eprintln!("\nReceived SIGINT, draining..."),
-            Err(err) => eprintln!("failed while waiting for Ctrl-C: {err}"),
+            Ok(()) => info!("received SIGINT, draining..."),
+            Err(err) => error!(error = %err, "failed while waiting for Ctrl-C"),
         }
     }
 
@@ -212,5 +297,5 @@ async fn shutdown_signal(state: AppState) {
         constants::SHUTDOWN_DRAIN_SECS,
     ))
     .await;
-    eprintln!("Drain complete, shutting down listener...");
+    info!("drain complete, shutting down listener...");
 }

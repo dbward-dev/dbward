@@ -4,6 +4,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
+use tracing::error;
 
 use crate::api_error::ApiError;
 use crate::auth;
@@ -321,7 +322,7 @@ async fn reload_webhooks(state: &AppState) {
     let configs = match crate::db::webhook_repo::load_active_webhook_configs(&conn) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("BUG: failed to reload webhooks: {e}");
+            error!(error = %e, "BUG: failed to reload webhooks");
             return;
         }
     };

@@ -4,6 +4,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use serde_json::json;
 use sha2::Digest;
+use tracing::error;
 
 use crate::auth;
 use crate::authz::{self, Action, Resource};
@@ -302,7 +303,7 @@ pub(crate) async fn agent_claim(
         })
         .to_string(),
     }, &headers, &state.audit_config, &state.trusted_proxies) {
-                eprintln!("audit write failed: {e}");
+                error!(error = %e, "audit write failed");
             }
 
     Ok(Json(json!({
@@ -430,7 +431,7 @@ pub(crate) async fn agent_result(
             })
             .to_string(),
         }, &headers, &state.audit_config, &state.trusted_proxies) {
-                    eprintln!("audit write failed: {e}");
+                    error!(error = %e, "audit write failed");
                 }
 
         let notif_hooks = crate::db::policy_repo::get_notification_webhooks(
@@ -520,8 +521,10 @@ pub(crate) async fn agent_result(
 
                     if db_write_result.is_err() {
                         if let Err(err) = store.delete(&request_id).await {
-                            eprintln!(
-                                "failed to delete partially stored result {request_id}: {err}"
+                            error!(
+                                request_id = %request_id,
+                                error = %err,
+                                "failed to delete partially stored result"
                             );
                         }
                         let conn = state.sqlite.lock().await;
@@ -529,8 +532,10 @@ pub(crate) async fn agent_result(
                             "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, ?2, ?3, 0, '', ?4, 'storage_failed', ?5, ?5)",
                             rusqlite::params![request_id, backend, storage_key, retention_days, now],
                         ) {
-                            eprintln!(
-                                "failed to mark result storage failure for {request_id}: {err}"
+                            error!(
+                                request_id = %request_id,
+                                error = %err,
+                                "failed to mark result storage failure"
                             );
                         }
                     }
@@ -546,7 +551,7 @@ pub(crate) async fn agent_result(
                             crate::constants::RESULT_STORAGE_FAILURE_RETENTION_DAYS,
                         ],
                     ) {
-                        eprintln!("failed to persist storage failure for {request_id}: {err}");
+                        error!(request_id = %request_id, error = %err, "failed to persist storage failure");
                     }
                 }
             }

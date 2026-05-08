@@ -4,6 +4,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
+use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::state::{AppState, AuthUser};
@@ -40,10 +41,10 @@ fn best_effort_insert_audit_event(
             &state.audit_config,
             &state.trusted_proxies,
         ) {
-            eprintln!("audit write failed: {e}");
+            error!(error = %e, "audit write failed");
         }
     } else {
-        eprintln!("WARN: audit event dropped (lock contention): {}", event.event_type);
+        warn!(event_type = %event.event_type, "audit event dropped (lock contention)");
     }
 }
 
@@ -201,7 +202,7 @@ pub async fn revoke_token(state: &AppState, token_id: &str) -> Result<(), String
         reason: None,
         metadata_json: "{}",
     },) {
-                eprintln!("audit write failed: {e}");
+                error!(error = %e, "audit write failed");
             }
     Ok(())
 }

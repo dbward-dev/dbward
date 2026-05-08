@@ -113,6 +113,39 @@ pub struct ServerConfig {
     pub audit: AuditConfig,
     #[serde(default)]
     pub trusted_proxies: Vec<String>,
+    #[serde(default)]
+    pub logging: LoggingConfig,
+}
+
+/// Logging configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoggingConfig {
+    /// "stderr" (default) or "file"
+    #[serde(default = "default_log_output")]
+    pub output: String,
+    /// Log file path (only used when output = "file")
+    #[serde(default)]
+    pub file_path: Option<String>,
+    /// Rotation: "daily" (default), "hourly", "never"
+    #[serde(default = "default_rotation")]
+    pub rotation: String,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            output: "stderr".into(),
+            file_path: None,
+            rotation: "daily".into(),
+        }
+    }
+}
+
+fn default_log_output() -> String {
+    "stderr".into()
+}
+fn default_rotation() -> String {
+    "daily".into()
 }
 
 /// Audit log configuration.

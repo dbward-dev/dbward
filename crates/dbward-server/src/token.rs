@@ -1,7 +1,7 @@
 use std::path::Path;
-
 use chrono::{Duration, Utc};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+use tracing::info;
 
 pub use dbward_core::token::{ExecutionToken, hash_detail, token_message, verify_token};
 
@@ -45,7 +45,7 @@ impl TokenSigner {
                 std::fs::write(&key_path, &key_bytes).map_err(|e| e.to_string())?;
             }
             std::fs::write(&pub_path, key.verifying_key().to_bytes()).map_err(|e| e.to_string())?;
-            eprintln!("Generated signing keypair: {}", pub_path.display());
+            info!(path = %pub_path.display(), "generated signing keypair");
             key
         };
 

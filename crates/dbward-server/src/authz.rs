@@ -4,6 +4,7 @@ use casbin::rhai::Dynamic;
 use casbin::{CoreApi, DefaultModel, Enforcer, StringAdapter};
 use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
+use tracing::{error, warn};
 
 use crate::state::{AppState, AuthUser};
 
@@ -211,10 +212,10 @@ pub async fn authorize_and_audit(
                 reason: None,
                 metadata_json: &meta,
             },) {
-                        eprintln!("audit write failed: {e}");
+                        error!(error = %e, "audit write failed");
                     }
         } else {
-            eprintln!("WARN: authz_denied audit event dropped (lock contention)");
+            warn!("authz_denied audit event dropped (lock contention)");
         }
     }
     result
@@ -281,7 +282,7 @@ pub fn authorize_with_audit(
             reason: None,
             metadata_json: &meta,
         },) {
-                    eprintln!("audit write failed: {e}");
+                    error!(error = %e, "audit write failed");
                 }
     }
     result
