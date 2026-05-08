@@ -380,7 +380,22 @@ pub fn resolve_client_ip(
     peer_ip: Option<&str>,
     trusted_proxies: &[String],
 ) -> ResolvedIp {
-    let peer = peer_ip.map(|s| s.to_string());
+    // Fallback: use X-Real-IP or first X-Forwarded-For entry if peer_ip is unavailable
+    let peer = peer_ip
+        .map(|s| s.to_string())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.trim().to_string())
+        })
+        .or_else(|| {
+            headers
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .map(|s| s.trim().to_string())
+        });
 
     if trusted_proxies.is_empty() {
         return ResolvedIp {
@@ -419,12 +434,27 @@ pub fn resolve_client_ip(
 }
 
 fn cidr_contains(cidr: &str, ip: &str) -> bool {
-    // Simple prefix match for common CIDRs (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
-    if let Some(prefix) = cidr.split('/').next() {
-        ip.starts_with(prefix.trim_end_matches('0').trim_end_matches('.'))
-    } else {
-        cidr == ip
+    let Some((network, prefix_len_str)) = cidr.split_once('/') else {
+        return cidr == ip;
+    };
+    let Ok(prefix_len) = prefix_len_str.parse::<u32>() else {
+        return false;
+    };
+    let Ok(net_addr) = network.parse::<std::net::Ipv4Addr>() else {
+        return false;
+    };
+    let Ok(ip_addr) = ip.parse::<std::net::Ipv4Addr>() else {
+        return false;
+    };
+    if prefix_len > 32 {
+        return false;
     }
+    let mask = if prefix_len == 0 {
+        0u32
+    } else {
+        !0u32 << (32 - prefix_len)
+    };
+    (u32::from(net_addr) & mask) == (u32::from(ip_addr) & mask)
 }
 
 #[cfg(test)]
