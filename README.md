@@ -445,6 +445,15 @@ database = "*"
 environment = "production"
 max_executions = 10
 execution_window_secs = 3600
+
+[logging]
+output = "stderr"              # "stderr" (default) or "file"
+# file_path = "/var/log/dbward/server.log"  # only when output = "file"
+# rotation = "daily"           # "daily" (default), "hourly", "never"
+
+# Environment variables:
+#   DBWARD_LOG_FORMAT=json     → JSON output (production)
+#   RUST_LOG=info              → log level filter (default: info)
 ```
 
 ## Free / Pro
