@@ -167,8 +167,10 @@ operations = ["execute_query", "migrate_up", "migrate_down"]
 
 [[workflows.steps]]
 type = "approval"
-min_approvals = 1
-allowed_roles = ["admin"]
+
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
 ```
 
 ### Execution Policies
@@ -249,7 +251,7 @@ Global Options:
 |---|---|---|
 | GET | `/health` | Health check |
 | GET | `/ready` | Readiness check |
-| GET | `/metrics` | Prometheus metrics |
+| GET | `/metrics` | Prometheus metrics (admin auth required) |
 | GET | `/api/public-key` | Ed25519 public key |
 
 ### Requests
@@ -357,7 +359,7 @@ format = "generic"
 secret = "whsec_xxxx"  # HMAC-SHA256 in X-Dbward-Signature header
 ```
 
-Events: `request_created`, `request_approved`, `request_rejected`, `request_executed`, `break_glass`.
+Events: `request_created`, `request_approved`, `request_rejected`, `request_completed`, `break_glass`.
 
 Free: up to 3 webhook destinations (global). Pro: unlimited + per-database routing via notification policies.
 
@@ -416,8 +418,8 @@ url = "mysql://user:pass@db-analytics:3306/warehouse"
 ### Server (`dbward-server.toml`)
 
 ```toml
-listen = "0.0.0.0:3000"
-data = "dbward.db"
+# listen address and data path are set via CLI flags:
+#   dbward server start --listen 0.0.0.0:3000 --data dbward.db --config dbward-server.toml
 
 [auth]
 mode = "token"  # "oidc", "token", or "both"
@@ -433,8 +435,10 @@ operations = ["execute_query", "migrate_up", "migrate_down"]
 
 [[workflows.steps]]
 type = "approval"
-min_approvals = 1
-allowed_roles = ["admin"]
+
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
 
 [[execution_policies]]
 database = "*"
@@ -464,19 +468,33 @@ Safety features are always free. You pay for organizational complexity.
 
 **Pro waitlist:** https://dbward.dev/waitlist
 
-## Migration File Format (dbmate-compatible)
+## Migration File Format
+
+Migrations use a directory-per-migration structure:
+
+```
+db/migrations/
+├── 20260501120000_create_users/
+│   ├── up.sql
+│   └── down.sql
+└── 20260502090000_add_email/
+    ├── up.sql
+    └── down.sql
+```
 
 ```sql
--- migrate:up
+-- up.sql
 CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);
+```
 
--- migrate:down
+```sql
+-- down.sql
 DROP TABLE users;
 ```
 
 ## Metrics
 
-`GET /metrics` — Prometheus text format, unauthenticated. Deploy behind internal network.
+`GET /metrics` — Prometheus text format, requires admin authentication. Include your admin token in the `Authorization` header.
 
 Key alerts:
 - `dbward_agents_active == 0` → no agent running
@@ -591,6 +609,27 @@ git pull && docker compose up -d --build
 cargo test --workspace
 cargo build --release
 ```
+
+## Documentation
+
+Detailed documentation is available in the [`docs/`](docs/) directory:
+
+| Path | Description |
+|------|-------------|
+| [`docs/architecture.md`](docs/architecture.md) | System architecture and design decisions |
+| **Deployment** | |
+| [`docs/deployment/server.md`](docs/deployment/server.md) | Server configuration and setup |
+| [`docs/deployment/agent.md`](docs/deployment/agent.md) | Agent deployment and configuration |
+| [`docs/deployment/authentication.md`](docs/deployment/authentication.md) | API tokens, OIDC (Pro), and groups |
+| **Guides** | |
+| [`docs/guides/workflows.md`](docs/guides/workflows.md) | Workflow and approval policy configuration |
+| [`docs/guides/migrations.md`](docs/guides/migrations.md) | Migration management |
+| [`docs/guides/mcp-integration.md`](docs/guides/mcp-integration.md) | MCP integration for AI agents |
+| [`docs/guides/ci-cd.md`](docs/guides/ci-cd.md) | CI/CD pipeline integration |
+| **Reference** | |
+| [`docs/reference/api.md`](docs/reference/api.md) | REST API reference |
+| [`docs/reference/cli.md`](docs/reference/cli.md) | CLI command reference |
+| [`docs/reference/configuration.md`](docs/reference/configuration.md) | Configuration file reference |
 
 ## License
 
