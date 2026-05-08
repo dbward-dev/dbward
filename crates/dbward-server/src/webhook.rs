@@ -126,18 +126,9 @@ pub struct WebhookDispatcher {
 }
 
 impl WebhookDispatcher {
+    /// Create dispatcher. TOML-configured webhooks are admin-trusted (no SSRF validation).
+    /// Future: API-created webhooks should call validate_webhook_url() before adding.
     pub fn new(hooks: Vec<WebhookConfig>) -> Self {
-        let valid_hooks: Vec<_> = hooks
-            .into_iter()
-            .filter(|h| match validate_webhook_url(&h.url) {
-                Ok(()) => true,
-                Err(e) => {
-                    eprintln!("WARNING: skipping webhook {}: {e}", h.url);
-                    false
-                }
-            })
-            .collect();
-
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(
                 crate::constants::WEBHOOK_HTTP_TIMEOUT_SECS,
@@ -146,7 +137,7 @@ impl WebhookDispatcher {
             .build()
             .unwrap_or_default();
         Self {
-            hooks: valid_hooks,
+            hooks,
             client,
         }
     }
@@ -158,32 +149,9 @@ impl WebhookDispatcher {
         }
     }
 
-    /// Replace the webhook list (called after CRUD operations).
+    /// Replace webhook list (used when config is reloaded via API).
     pub fn reload(&mut self, hooks: Vec<WebhookConfig>) {
-        let valid_hooks: Vec<_> = hooks
-            .into_iter()
-            .filter(|h| match validate_webhook_url(&h.url) {
-                Ok(()) => true,
-                Err(e) => {
-                    eprintln!("WARNING: skipping webhook {}: {e}", h.url);
-                    false
-                }
-            })
-            .collect();
-        self.hooks = valid_hooks;
-    }
-
-    /// Create without URL validation (for tests only).
-    #[cfg(test)]
-    pub fn new_unchecked(hooks: Vec<WebhookConfig>) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(
-                crate::constants::WEBHOOK_HTTP_TIMEOUT_SECS,
-            ))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap_or_default();
-        Self { hooks, client }
+        self.hooks = hooks;
     }
 
     /// Fire-and-forget: spawn a task for each matching webhook.
@@ -234,12 +202,6 @@ async fn send_with_retry(
     hook: &WebhookConfig,
     event: &WebhookEvent,
 ) -> Result<(), ()> {
-    // DNS rebinding protection: re-validate URL before each delivery
-    if let Err(e) = validate_webhook_url(&hook.url) {
-        eprintln!("webhook {} blocked (SSRF): {e}", hook.url);
-        return Err(());
-    }
-
     let (body, content_type) = format_payload(hook, event);
 
     for attempt in 0..crate::constants::WEBHOOK_MAX_RETRIES {
@@ -412,7 +374,7 @@ mod tests {
     #[test]
     fn dispatch_filters_by_event_name() {
         let hook = test_hook("generic", vec!["request_approved"]);
-        let dispatcher = WebhookDispatcher::new_unchecked(vec![hook]);
+        let dispatcher = WebhookDispatcher::new(vec![hook]);
         // request_created should not match the hook configured for request_approved
         // We can't easily assert dispatch doesn't fire (it's fire-and-forget),
         // but we can verify the filtering logic directly

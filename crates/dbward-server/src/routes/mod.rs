@@ -122,6 +122,7 @@ pub fn router(state: AppState) -> Router {
                 .put(webhooks::update_webhook)
                 .delete(webhooks::delete_webhook),
         )
+        .layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)) // 64MB (agent results can be up to 50MB)
         .layer(middleware::from_fn_with_state(
             state.clone(),
             http_metrics_middleware,

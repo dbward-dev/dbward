@@ -10,7 +10,7 @@ services:
     ports:
       - "127.0.0.1:13000:3000"
     environment:
-      DBWARD_LICENSE_KEY: "${DBWARD_LICENSE_KEY:-}"  # Pro mode: export DBWARD_LICENSE_KEY=$(cat fixtures/license/pro.license)
+      DBWARD_LICENSE_KEY: "${DBWARD_LICENSE_KEY:-}"
 
   webhook-receiver:
     image: python:3.12-slim
@@ -68,22 +68,17 @@ services:
       - ./dev/dev-entrypoint.sh:/scripts/dev-entrypoint.sh:ro
     profiles: [dev]
 
-networks:
-  backend:
-    internal: true
-  frontend:
-
-# === OIDC Profile ===
-# Usage: ./dev/up-oidc.sh [-d]
-# Keycloak: http://localhost:8080 (admin/admin)
-# Users: alice/alice (developer, backend-team), bob/bob (admin, backend-team), carol/carol (dba-team)
-# Note: up-oidc.sh sets DBWARD_SERVER_CONFIG=dbward-server-oidc.toml + DBWARD_LICENSE_KEY
-
+  # === OIDC Profile ===
+  # Usage: ./dev/up-oidc.sh [-d]
+  # Keycloak: http://localhost:8080 (admin/admin)
+  # Users: alice/alice (developer, backend-team), bob/bob (admin, backend-team), carol/carol (dba-team)
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     command: ["start-dev", "--import-realm"]
     environment:
       KC_HEALTH_ENABLED: "true"
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: "8080"
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
     volumes:
@@ -146,6 +141,11 @@ networks:
     tmpfs:
       - /tmp:size=16M
     profiles: [oidc]
+
+networks:
+  backend:
+    internal: true
+  frontend:
 
 volumes:
   alice-credentials:
