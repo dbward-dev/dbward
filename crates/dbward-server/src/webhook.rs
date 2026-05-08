@@ -85,9 +85,11 @@ fn default_events() -> Vec<String> {
     vec![
         "request_created".into(),
         "request_approved".into(),
+        "request_auto_approved".into(),
         "request_rejected".into(),
         "request_cancelled".into(),
         "request_completed".into(),
+        "request_failed".into(),
         "break_glass".into(),
         "step_approved".into(),
     ]
@@ -249,34 +251,66 @@ async fn send_with_retry(
 fn format_payload(hook: &WebhookConfig, event: &WebhookEvent) -> (String, String) {
     match hook.format.as_str() {
         "slack" => {
-            let emoji = if event.event == "break_glass" {
-                "🚨"
-            } else {
-                "📋"
+            let emoji = match event.event.as_str() {
+                "break_glass" => "🚨",
+                "request_approved" | "step_approved" => "👍",
+                "request_auto_approved" | "request_completed" => "✅",
+                "request_rejected" => "❌",
+                "request_cancelled" => "🚫",
+                "request_failed" => "⚠️",
+                _ => "📋",
             };
-            let detail_short = if event.detail.len() > 100 {
-                format!("{}...", &event.detail[..100])
+            let title = match event.event.as_str() {
+                "request_created" => "New Request",
+                "request_approved" => "Request Approved",
+                "request_auto_approved" => "Auto-Approved",
+                "step_approved" => "Step Approved",
+                "request_rejected" => "Request Rejected",
+                "request_cancelled" => "Request Cancelled",
+                "request_completed" => "Request Completed",
+                "request_failed" => "Request Failed",
+                "break_glass" => "Break-Glass Request",
+                other => other,
+            };
+            let detail_short = if event.detail.len() > 200 {
+                let end = event
+                    .detail
+                    .char_indices()
+                    .map(|(i, _)| i)
+                    .take_while(|&i| i <= 200)
+                    .last()
+                    .unwrap_or(0);
+                format!("{}...", &event.detail[..end])
             } else {
                 event.detail.clone()
             };
+            let sep = "━━━━━━━━━━━━━━━━━━━━━━";
             let mut text = format!(
-                "{emoji} *[dbward]* `{}` by *{}*\n`{}` on `{}`\n```{}```{}",
-                event.event,
-                event.actor,
+                "{emoji} *[dbward] {title}*\n{sep}\n*Requester:* {}\n*Operation:* `{}`\n*Environment:* `{}`\n*Database:* `{}`\n{sep}\n```{}```",
+                event.requester,
                 event.operation,
                 event.environment,
+                event.database,
                 detail_short,
-                event
-                    .reason
-                    .as_ref()
-                    .map(|r| format!("\nReason: {r}"))
-                    .unwrap_or_default(),
             );
+            if let Some(ref reason) = event.reason {
+                text.push_str(&format!("\n*Reason:* {reason}"));
+            }
             if let Some(ref ns) = event.next_step {
-                text.push_str(&format!("\nNext: {ns}"));
+                let next_str = if let Some(obj) = ns.as_object() {
+                    obj.get("approvers")
+                        .and_then(|a| a.as_str())
+                        .unwrap_or(&ns.to_string())
+                        .to_string()
+                } else if let Some(s) = ns.as_str() {
+                    s.to_string()
+                } else {
+                    ns.to_string()
+                };
+                text.push_str(&format!("\n*Next:* {next_str}"));
             }
             if let Some(ref cmd) = event.cli_command {
-                text.push_str(&format!("\n`{cmd}`"));
+                text.push_str(&format!("\n{sep}\n`{cmd}`"));
             }
             let payload = json!({"text": &text});
             (payload.to_string(), "application/json".into())
@@ -362,12 +396,24 @@ mod tests {
     fn slack_truncates_long_detail() {
         let hook = test_hook("slack", vec!["request_created"]);
         let mut event = test_event("request_created");
-        event.detail = "X".repeat(200);
+        event.detail = "X".repeat(300);
         let (body, _) = format_payload(&hook, &event);
         let text = serde_json::from_str::<serde_json::Value>(&body).unwrap()["text"]
             .as_str()
             .unwrap()
             .to_string();
+        assert!(text.contains("..."));
+    }
+
+    #[test]
+    fn slack_truncates_multibyte_safely() {
+        let hook = test_hook("slack", vec!["request_created"]);
+        let mut event = test_event("request_created");
+        // 100 Japanese chars = 300 bytes (> 200 bytes), triggers truncation
+        event.detail = "あ".repeat(100);
+        let (body, _) = format_payload(&hook, &event);
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let text = parsed["text"].as_str().unwrap();
         assert!(text.contains("..."));
     }
 
@@ -390,9 +436,11 @@ mod tests {
         let events = default_events();
         assert!(events.contains(&"request_created".to_string()));
         assert!(events.contains(&"request_approved".to_string()));
+        assert!(events.contains(&"request_auto_approved".to_string()));
         assert!(events.contains(&"request_rejected".to_string()));
         assert!(events.contains(&"request_cancelled".to_string()));
         assert!(events.contains(&"request_completed".to_string()));
+        assert!(events.contains(&"request_failed".to_string()));
         assert!(events.contains(&"break_glass".to_string()));
         assert!(events.contains(&"step_approved".to_string()));
     }

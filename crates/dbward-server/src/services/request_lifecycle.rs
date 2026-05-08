@@ -93,6 +93,17 @@ pub(crate) async fn approve_request_inner(
         .unwrap_or_default();
 
     if steps.is_empty() {
+        let allow_self_approve_empty = workflow_id
+            .as_deref()
+            .and_then(|wf_id| {
+                conn.query_row(
+                    "SELECT allow_self_approve FROM workflows WHERE id = ?1",
+                    rusqlite::params![wf_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .ok()
+            })
+            .unwrap_or(false);
         authz::authorize_sync(
             approver,
             Action::ApproveRequest,
@@ -100,6 +111,7 @@ pub(crate) async fn approve_request_inner(
                 requester_id: req_user.clone(),
                 allowed_roles: Vec::new(),
                 allowed_groups: vec![],
+                allow_self_approve: allow_self_approve_empty,
             },
         )?;
         let now = chrono::Utc::now().to_rfc3339();
@@ -179,6 +191,18 @@ pub(crate) async fn approve_request_inner(
         })
         .unwrap_or(false);
 
+    let allow_self_approve = workflow_id
+        .as_deref()
+        .and_then(|workflow_id| {
+            conn.query_row(
+                "SELECT allow_self_approve FROM workflows WHERE id = ?1",
+                rusqlite::params![workflow_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .ok()
+        })
+        .unwrap_or(false);
+
     if !allow_same
         && existing_approvals
             .iter()
@@ -220,6 +244,7 @@ pub(crate) async fn approve_request_inner(
             requester_id: req_user.clone(),
             allowed_roles,
             allowed_groups,
+            allow_self_approve,
         },
     )?;
 

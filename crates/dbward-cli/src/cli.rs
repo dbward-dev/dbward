@@ -181,8 +181,8 @@ enum RequestAction {
     /// Reject a pending request
     Reject {
         id: String,
-        #[arg(long)]
-        comment: Option<String>,
+        #[arg(long, alias = "comment")]
+        reason: Option<String>,
     },
     /// Cancel a request
     Cancel {
@@ -699,8 +699,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 }
                 Ok(())
             }
-            RequestAction::Reject { id, comment } => {
-                match sc.reject(&id, comment.as_deref()).await {
+            RequestAction::Reject { id, reason } => {
+                match sc.reject(&id, reason.as_deref()).await {
                     Ok(body) => {
                         if json_output {
                             println!("{}", serde_json::to_string_pretty(&body)?);
@@ -1713,6 +1713,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         steps: vec![],
         require_reason: false,
         allow_same_approver_across_steps: false,
+        allow_self_approve: false,
     }];
     dbward_server::db::policy_repo::sync_workflows(&conn, &workflows)
         .map_err(|e| dbward_core::Error::Server(e.to_string()))?;

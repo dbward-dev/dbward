@@ -296,7 +296,7 @@ pub(crate) async fn agent_result(
     let result = body["result"].clone();
     let error_msg = body["error"].as_str().map(|s| s.to_string());
 
-    let (request_id, req_status) = {
+    let (request_id, req_status, wh_operation, wh_environment, wh_database, wh_detail, wh_requester, wh_agent_id, webhook_ctx) = {
         let mut conn = state.sqlite.lock().await;
 
         let exec_ctx = crate::db::agent_repo::get_execution_context(&conn, &id)
@@ -371,7 +371,23 @@ pub(crate) async fn agent_result(
                     eprintln!("audit write failed: {e}");
                 }
 
-        (exec_ctx.request_id, req_status)
+        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(
+            &conn,
+            &req_ctx.database_name,
+            &req_ctx.environment,
+        );
+
+        (
+            exec_ctx.request_id,
+            req_status,
+            req_ctx.operation,
+            req_ctx.environment,
+            req_ctx.database_name,
+            req_ctx.detail,
+            req_ctx.created_by,
+            exec_ctx.agent_id,
+            notif_hooks,
+        )
     };
 
     // Save to result storage (always when configured; share_with adds extra access)
@@ -501,6 +517,35 @@ pub(crate) async fn agent_result(
     slot.notify.notify_waiters();
 
     state.request_notifier.notify(&request_id).await;
+
+    // B17: Fire webhook on completion/failure (skip if request was already cancelled)
+    if req_status != "cancelled" {
+        let event_name = if success {
+            "request_completed"
+        } else {
+            "request_failed"
+        };
+        state.webhooks.read().unwrap().dispatch_with_policy(
+            webhook_ctx,
+            crate::webhook::WebhookEvent {
+                event: event_name.into(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: request_id.clone(),
+                status: req_status.clone(),
+                requester: wh_requester,
+                actor: wh_agent_id,
+                actor_role: Some("agent".into()),
+                operation: wh_operation,
+                environment: wh_environment,
+                detail: wh_detail,
+                database: wh_database,
+                reason: error_msg.clone(),
+                next_step: None,
+                cli_command: None,
+            },
+            state.metrics.clone(),
+        );
+    }
 
     Ok(Json(
         json!({"status": req_status, "request_id": request_id}),

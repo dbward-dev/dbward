@@ -23,6 +23,7 @@ fn test_state() -> AppState {
             steps: vec![],
             require_reason: false,
             allow_same_approver_across_steps: false,
+            allow_self_approve: false,
         },
         dbward_server::server_config::WorkflowDef {
             database: "*".into(),
@@ -40,6 +41,7 @@ fn test_state() -> AppState {
             }],
             require_reason: false,
             allow_same_approver_across_steps: false,
+            allow_self_approve: false,
         },
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();

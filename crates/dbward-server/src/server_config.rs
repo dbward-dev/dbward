@@ -15,6 +15,8 @@ pub struct WorkflowDef {
     pub require_reason: bool,
     #[serde(default)]
     pub allow_same_approver_across_steps: bool,
+    #[serde(default)]
+    pub allow_self_approve: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]

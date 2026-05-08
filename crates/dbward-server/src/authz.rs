@@ -135,6 +135,7 @@ pub enum Resource {
         requester_id: String,
         allowed_roles: Vec<String>,
         allowed_groups: Vec<String>,
+        allow_self_approve: bool,
     },
     AgentExecution {
         agent_id: String,
@@ -379,6 +380,7 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
                 requester_id,
                 allowed_roles,
                 allowed_groups,
+                ..
             },
         ) => {
             is_admin(principal)
@@ -391,13 +393,12 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
                 requester_id,
                 allowed_roles,
                 allowed_groups,
+                allow_self_approve,
             },
         ) => {
-            if principal.user == *requester_id {
+            if principal.user == *requester_id && !allow_self_approve {
                 return false;
             }
-            // Admin does NOT bypass step-level group/role checks.
-            // Approval must come from someone matching the step's approvers.
             principal_matches_approver(principal, allowed_roles, allowed_groups)
         }
         (
@@ -406,6 +407,7 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
                 requester_id,
                 allowed_roles,
                 allowed_groups,
+                ..
             },
         ) => {
             is_admin(principal)
@@ -602,6 +604,7 @@ mod tests {
             requester_id: "alice".into(),
             allowed_roles: vec!["admin".into()],
             allowed_groups: vec![],
+            allow_self_approve: false,
         };
 
         assert_eq!(
@@ -614,12 +617,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn requester_can_self_approve_when_allowed() {
+        let principal = user("alice", &["admin"], "user");
+        let resource = Resource::ApprovalStep {
+            requester_id: "alice".into(),
+            allowed_roles: vec!["admin".into()],
+            allowed_groups: vec![],
+            allow_self_approve: true,
+        };
+
+        assert!(
+            authorize(&principal, Action::ApproveRequest, resource)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
     async fn current_step_role_can_reject() {
         let principal = user("bob", &["ops"], "user");
         let resource = Resource::ApprovalStep {
             requester_id: "alice".into(),
             allowed_roles: vec!["ops".into()],
             allowed_groups: vec![],
+            allow_self_approve: false,
         };
 
         assert!(
@@ -654,6 +675,7 @@ mod tests {
             requester_id: "alice".into(),
             allowed_roles: vec![],
             allowed_groups: vec!["prod-approvers".into()],
+            allow_self_approve: false,
         };
 
         assert!(
@@ -670,6 +692,7 @@ mod tests {
             requester_id: "alice".into(),
             allowed_roles: vec!["ops".into()],
             allowed_groups: vec![],
+            allow_self_approve: false,
         };
 
         assert!(

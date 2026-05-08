@@ -9,7 +9,7 @@ pub mod webhook_repo;
 use rusqlite::Connection;
 
 /// Latest schema version. Increment when adding migrations.
-pub const LATEST_SCHEMA_VERSION: i64 = 5;
+pub const LATEST_SCHEMA_VERSION: i64 = 6;
 
 /// Initialize SQLite database with WAL mode and versioned schema.
 pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -191,6 +191,15 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Erro
             }
             Ok(())
         }
+        6 => {
+            if !has_column(conn, "workflows", "allow_self_approve")? {
+                conn.execute_batch(
+                    "ALTER TABLE workflows
+                     ADD COLUMN allow_self_approve INTEGER NOT NULL DEFAULT 0",
+                )?;
+            }
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -324,6 +333,7 @@ fn create_schema_v1(conn: &Connection) -> Result<(), rusqlite::Error> {
             steps_json TEXT NOT NULL DEFAULT '[]',
             require_reason INTEGER NOT NULL DEFAULT 0,
             allow_same_approver_across_steps INTEGER NOT NULL DEFAULT 0,
+            allow_self_approve INTEGER NOT NULL DEFAULT 0,
             source TEXT NOT NULL DEFAULT 'api',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,

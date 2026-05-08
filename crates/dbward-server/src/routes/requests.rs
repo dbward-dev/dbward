@@ -494,10 +494,12 @@ fn request_is_approvable_by_user(
         .map(crate::services::request_lifecycle::step_allowed_roles_groups)
         .unwrap_or_default();
 
+    // TODO(v0.1.1): read allow_self_approve from workflow to show self-approvable requests
     let approval_resource = authz::Resource::ApprovalStep {
         requester_id: created_by.to_string(),
         allowed_roles,
         allowed_groups,
+        allow_self_approve: false,
     };
 
     if authz::authorize_sync(user, Action::ApproveRequest, approval_resource).is_err() {
@@ -535,6 +537,27 @@ pub(crate) fn current_approval_resource(
     requester_id: String,
     workflow_snapshot_json: Option<&str>,
 ) -> Result<(Resource, usize, Vec<String>, usize), crate::api_error::ApiError> {
+    current_approval_resource_with_workflow(conn, request_id, requester_id, workflow_snapshot_json, None)
+}
+
+pub(crate) fn current_approval_resource_with_workflow(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    requester_id: String,
+    workflow_snapshot_json: Option<&str>,
+    workflow_id: Option<&str>,
+) -> Result<(Resource, usize, Vec<String>, usize), crate::api_error::ApiError> {
+    let allow_self_approve = workflow_id
+        .and_then(|wf_id| {
+            conn.query_row(
+                "SELECT allow_self_approve FROM workflows WHERE id = ?1",
+                rusqlite::params![wf_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .ok()
+        })
+        .unwrap_or(false);
+
     let steps: Vec<crate::server_config::WorkflowStep> = workflow_snapshot_json
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
@@ -545,6 +568,7 @@ pub(crate) fn current_approval_resource(
                 requester_id,
                 allowed_roles: Vec::new(),
                 allowed_groups: vec![],
+                allow_self_approve,
             },
             0,
             Vec::new(),
@@ -580,6 +604,7 @@ pub(crate) fn current_approval_resource(
             requester_id,
             allowed_roles: allowed_roles.clone(),
             allowed_groups: allowed_groups.clone(),
+            allow_self_approve,
         },
         current_step,
         allowed_labels,
@@ -812,12 +837,15 @@ pub(crate) async fn create_request(
     }
 
     if emergency {
+        crate::db::request_repo::mark_dispatched(&conn, &id, &now)
+            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
         state.metrics.record_break_glass();
         let token = state
             .token_signer
             .issue(&id, operation, environment, database_name, detail);
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
+        drop(conn);
         state.webhooks.read().unwrap().dispatch_with_policy(
             notif_hooks,
             crate::webhook::WebhookEvent {
@@ -838,6 +866,8 @@ pub(crate) async fn create_request(
             },
             state.metrics.clone(),
         );
+        ensure_result_slot(&state, &id).await;
+        state.request_notifier.notify(&id).await;
         Ok((
             StatusCode::CREATED,
             Json(json!({"id": id, "status": "break_glass", "execution_token": token})),
@@ -882,7 +912,29 @@ pub(crate) async fn create_request(
         let token = state
             .token_signer
             .issue(&id, operation, environment, database_name, detail);
+        let notif_hooks =
+            crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
         drop(conn);
+        state.webhooks.read().unwrap().dispatch_with_policy(
+            notif_hooks,
+            crate::webhook::WebhookEvent {
+                event: "request_auto_approved".into(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                request_id: id.clone(),
+                status: "dispatched".into(),
+                requester: user.user.clone(),
+                actor: user.user.clone(),
+                actor_role: Some(user.effective_permission().into()),
+                operation: operation.into(),
+                environment: environment.into(),
+                detail: detail.into(),
+                database: database_name.into(),
+                reason: reason.clone(),
+                next_step: None,
+                cli_command: Some(format!("dbward request resume {id}")),
+            },
+            state.metrics.clone(),
+        );
         ensure_result_slot(&state, &id).await;
         state.request_notifier.notify(&id).await;
         Ok((
@@ -1331,6 +1383,34 @@ pub(crate) async fn get_request(
                 "total_steps": steps.len(),
                 "steps": step_views,
             });
+        }
+
+        // B5: Include error_message for failed/execution_lost requests
+        if status == "failed" || status == "execution_lost" {
+            let err_msg: Option<String> = conn
+                .query_row(
+                    "SELECT error_message FROM agent_executions WHERE request_id = ?1 ORDER BY created_at DESC LIMIT 1",
+                    rusqlite::params![id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(None);
+            if err_msg.is_some() {
+                resp["error_message"] = json!(err_msg);
+            }
+        }
+
+        // B22: Include reject reason for rejected requests
+        if status == "rejected" {
+            let reject_comment: Option<String> = conn
+                .query_row(
+                    "SELECT comment FROM approvals WHERE request_id = ?1 AND action = 'reject' ORDER BY created_at DESC LIMIT 1",
+                    rusqlite::params![id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(None);
+            if reject_comment.is_some() {
+                resp["reject_reason"] = json!(reject_comment);
+            }
         }
 
         Ok(resp)

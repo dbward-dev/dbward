@@ -201,8 +201,8 @@ fn pg_row_to_json(row: &sqlx::postgres::PgRow) -> serde_json::Value {
                 .unwrap_or(serde_json::Value::Null),
             // TIMESTAMPTZ, TIMESTAMP, DATE, UUID, NUMERIC → string via fallback
             _ => row
-                .try_get::<String, _>(name)
-                .map(Into::into)
+                .try_get::<Option<String>, _>(name)
+                .map(|opt| opt.map(Into::into).unwrap_or(serde_json::Value::Null))
                 .unwrap_or_else(|_| {
                     // Binary types (BYTEA, etc.) can't be read as String
                     serde_json::Value::String("(binary data)".into())
@@ -361,8 +361,8 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
                 .unwrap_or(serde_json::Value::Null),
             // TIMESTAMP, DATETIME, DATE, DECIMAL → string via fallback
             _ => row
-                .try_get::<String, _>(name)
-                .map(Into::into)
+                .try_get::<Option<String>, _>(name)
+                .map(|opt| opt.map(Into::into).unwrap_or(serde_json::Value::Null))
                 .unwrap_or_else(|_| serde_json::Value::String("(binary data)".into())),
         };
         map.insert(name.to_string(), val);

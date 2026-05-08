@@ -74,7 +74,14 @@ impl ClientConfig {
             return Ok(self.databases.keys().next().unwrap().clone());
         }
         if self.databases.is_empty() {
-            return Ok("default".to_string());
+            if self.default_database.is_some() {
+                // Already handled above; unreachable in practice
+                return Ok("default".to_string());
+            }
+            return Err(Error::Config(
+                "no database configured; use --database <name> or set default_database in config"
+                    .into(),
+            ));
         }
         Err(Error::Config(
             "multiple databases configured; use --database <name> or set default_database".into(),
@@ -300,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn client_config_empty_databases_returns_default() {
+    fn client_config_empty_databases_errors_without_default() {
         let config: ClientConfig = toml::from_str(
             r#"
             [server]
@@ -308,7 +315,20 @@ mod tests {
         "#,
         )
         .unwrap();
-        assert_eq!(config.resolve_database_name(None).unwrap(), "default");
+        assert!(config.resolve_database_name(None).is_err());
+    }
+
+    #[test]
+    fn client_config_default_database_used_when_no_databases() {
+        let config: ClientConfig = toml::from_str(
+            r#"
+            default_database = "myapp"
+            [server]
+            url = "http://localhost:3000"
+        "#,
+        )
+        .unwrap();
+        assert_eq!(config.resolve_database_name(None).unwrap(), "myapp");
     }
 
     #[test]

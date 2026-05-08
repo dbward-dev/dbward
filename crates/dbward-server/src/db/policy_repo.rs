@@ -194,12 +194,12 @@ pub fn sync_workflows(
         let steps_json = serde_json::to_string(&w.steps)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         conn.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'toml', ?8, ?8)
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, allow_self_approve, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'toml', ?9, ?9)
              ON CONFLICT(database_name, environment, operations_json) DO UPDATE SET
-               id = ?1, steps_json = ?5, require_reason = ?6, allow_same_approver_across_steps = ?7, updated_at = ?8
+               id = ?1, steps_json = ?5, require_reason = ?6, allow_same_approver_across_steps = ?7, allow_self_approve = ?8, updated_at = ?9
              WHERE source = 'toml'",
-            rusqlite::params![id, w.database, w.environment, ops_json, steps_json, w.require_reason, w.allow_same_approver_across_steps, now],
+            rusqlite::params![id, w.database, w.environment, ops_json, steps_json, w.require_reason, w.allow_same_approver_across_steps, w.allow_self_approve, now],
         )?;
         toml_ids.push(id);
     }
