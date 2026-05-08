@@ -120,6 +120,9 @@ enum Command {
         /// Verify hash chain integrity
         #[arg(long)]
         verify: bool,
+        /// Output format: table (default), json, csv
+        #[arg(long, value_name = "FORMAT", default_value = "table")]
+        output: String,
     },
     /// Start MCP stdio server
     Mcp,
@@ -900,6 +903,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             ref since,
             ref until,
             verify,
+            ref output,
         } => {
             if verify {
                 let resp = sc.get_json("/api/audit/verify").await?;
@@ -936,6 +940,52 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 .await?;
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&body)?);
+                return Ok(());
+            }
+            if output == "json" {
+                println!("{}", serde_json::to_string_pretty(&body["audit_events"])?);
+                return Ok(());
+            }
+            if output == "csv" {
+                let empty = vec![];
+                let entries = body["audit_events"].as_array().unwrap_or(&empty);
+                let total = body["total"].as_u64().unwrap_or(0);
+                if total > entries.len() as u64 {
+                    eprintln!(
+                        "⚠ Showing {} of {} events. Use --limit to export more.",
+                        entries.len(),
+                        total
+                    );
+                }
+                println!("id,event_type,event_category,outcome,actor_id,created_at,environment,database_name,operation,client_ip,resource_type,resource_id,request_id,event_hash,reason");
+                for e in entries {
+                    let escape = |s: &str| {
+                        if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+                            format!("\"{}\"", s.replace('"', "\"\""))
+                        } else {
+                            s.to_string()
+                        }
+                    };
+                    let f = |key: &str| e[key].as_str().unwrap_or("").to_string();
+                    println!(
+                        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                        escape(&f("id")),
+                        escape(&f("event_type")),
+                        escape(&f("event_category")),
+                        escape(&f("outcome")),
+                        escape(&f("actor_id")),
+                        escape(&f("created_at")),
+                        escape(&f("environment")),
+                        escape(&f("database_name")),
+                        escape(&f("operation")),
+                        escape(&f("client_ip")),
+                        escape(&f("resource_type")),
+                        escape(&f("resource_id")),
+                        escape(&f("request_id")),
+                        escape(&f("event_hash")),
+                        escape(&f("reason")),
+                    );
+                }
                 return Ok(());
             }
             let empty = vec![];
