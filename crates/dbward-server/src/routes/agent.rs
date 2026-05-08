@@ -9,6 +9,35 @@ use crate::auth;
 use crate::authz::{self, Action, Resource};
 use crate::state::AppState;
 
+/// List all known agents (admin only).
+pub(crate) async fn list_agents(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
+    let user = auth::authenticate(&headers, &state).await?;
+    authz::authorize_and_audit(&user, Action::ReadMetrics, Resource::Global, &state).await?;
+
+    let conn = state.sqlite.lock().await;
+    let agents = crate::db::agent_repo::list_agents(&conn)
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+
+    let items: Vec<serde_json::Value> = agents
+        .into_iter()
+        .map(|(id, caps_json, last_seen, created)| {
+            let caps: serde_json::Value =
+                serde_json::from_str(&caps_json).unwrap_or(json!({}));
+            json!({
+                "id": id,
+                "capabilities": caps,
+                "last_seen_at": last_seen,
+                "created_at": created,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "agents": items })))
+}
+
 // ---------------------------------------------------------------------------
 // Agent endpoints
 // ---------------------------------------------------------------------------

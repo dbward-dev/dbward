@@ -31,6 +31,19 @@ pub fn get_agent_capabilities(conn: &Connection, agent_id: &str) -> Option<Strin
     .ok()
 }
 
+/// List all known agents with their last_seen_at and capabilities.
+pub fn list_agents(conn: &Connection) -> Result<Vec<(String, String, String, String)>, rusqlite::Error> {
+    let mut stmt = conn.prepare(
+        "SELECT id, capabilities_json, last_seen_at, created_at FROM agents ORDER BY last_seen_at DESC",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Claim a dispatched request, create agent execution, and mark request as running.
 pub fn create_execution_and_mark_running(
     conn: &mut Connection,

@@ -51,6 +51,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/results", get(results::list_results))
         .route("/api/storage-config", get(results::get_storage_config))
         .route("/api/agent/poll", axum::routing::post(agent::agent_poll))
+        .route("/api/agents", get(agent::list_agents))
         .route(
             "/api/agent/jobs/{id}/claim",
             axum::routing::post(agent::agent_claim),
