@@ -344,3 +344,143 @@ async fn break_glass_rejected_for_non_permitted_role() {
     ).await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
+
+// ─── TTL Expiration ───
+
+#[tokio::test]
+async fn expired_token_rejected() {
+    let state = test_state();
+    let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
+    let app = routes::router(state.clone());
+
+    // Create a token with 1-second TTL
+    let resp = app
+        .oneshot(
+            Request::post("/api/tokens")
+                .header("authorization", auth_header(&admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "subject_id": "bob",
+                        "role": "developer",
+                        "expires_in": 1
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp).await;
+    let short_lived_token = body["token"].as_str().unwrap().to_string();
+
+    // Wait for expiration
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Using expired token should fail
+    let app = routes::router(state);
+    let resp = app
+        .oneshot(
+            Request::get("/api/requests")
+                .header("authorization", auth_header(&short_lived_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ─── Self-Revoke ───
+
+#[tokio::test]
+async fn developer_can_revoke_own_token() {
+    let state = test_state();
+    let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
+    let app = routes::router(state.clone());
+
+    // Admin creates a token for "dev1"
+    let resp = app
+        .oneshot(
+            Request::post("/api/tokens")
+                .header("authorization", auth_header(&admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"subject_id": "dev1", "role": "developer"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = body_json(resp).await;
+    let dev_token = body["token"].as_str().unwrap().to_string();
+    let token_id = body["id"].as_str().unwrap().to_string();
+
+    // dev1 revokes their own token
+    let app = routes::router(state);
+    let resp = app
+        .oneshot(
+            Request::delete(&format!("/api/tokens/{token_id}"))
+                .header("authorization", auth_header(&dev_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn developer_cannot_revoke_others_token() {
+    let state = test_state();
+    let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
+
+    // Create token for dev1
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post("/api/tokens")
+                .header("authorization", auth_header(&admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"subject_id": "dev1", "role": "developer"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let dev1_token_id = body["id"].as_str().unwrap().to_string();
+
+    // Create token for dev2
+    let app = routes::router(state.clone());
+    let resp = app
+        .oneshot(
+            Request::post("/api/tokens")
+                .header("authorization", auth_header(&admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"subject_id": "dev2", "role": "developer"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = body_json(resp).await;
+    let dev2_token = body["token"].as_str().unwrap().to_string();
+
+    // dev2 tries to revoke dev1's token → should fail
+    let app = routes::router(state);
+    let resp = app
+        .oneshot(
+            Request::delete(&format!("/api/tokens/{dev1_token_id}"))
+                .header("authorization", auth_header(&dev2_token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}

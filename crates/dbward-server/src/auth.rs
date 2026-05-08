@@ -121,7 +121,7 @@ async fn create_token_with_type_and_groups(
     subject_type: &str,
     groups: &[&str],
 ) -> Result<(String, String), String> {
-    create_token_full(state, user, role, subject_type, groups, None).await
+    create_token_full(state, user, role, subject_type, groups, None, None).await
 }
 
 pub async fn create_token_full(
@@ -131,6 +131,7 @@ pub async fn create_token_full(
     subject_type: &str,
     groups: &[&str],
     name: Option<&str>,
+    expires_at: Option<&str>,
 ) -> Result<(String, String), String> {
     let token_id = Uuid::new_v4().to_string();
     let raw_token = format!("dbw_{}", Uuid::new_v4().to_string().replace('-', ""));
@@ -147,6 +148,7 @@ pub async fn create_token_full(
         &prefix,
         role,
         name,
+        expires_at,
         &Utc::now().to_rfc3339(),
     )
     .map_err(|e| e.to_string())?;
@@ -330,13 +332,30 @@ async fn authenticate_api_token(
     let conn = state.sqlite.lock().await;
 
     match crate::db::token_repo::lookup_active_token(&conn, &prefix, &hash) {
-        Ok(Some(row)) => Ok(AuthUser {
-            token_id: row.id,
-            user: row.subject_id,
-            roles: vec![row.role],
-            groups: row.groups,
-            subject_type: row.subject_type,
-        }),
+        Ok(Some(row)) => {
+            // Reject expired tokens (parse for timezone-safe comparison)
+            if let Some(ref exp) = row.expires_at {
+                if let Ok(exp_time) = chrono::DateTime::parse_from_rfc3339(exp) {
+                    if chrono::Utc::now() >= exp_time {
+                        drop(conn);
+                        record_auth_failure(state, "api_token", "expired");
+                        return Err((StatusCode::UNAUTHORIZED, "token expired".into()));
+                    }
+                } else {
+                    // Unparseable expires_at: fail-closed
+                    drop(conn);
+                    record_auth_failure(state, "api_token", "expired");
+                    return Err((StatusCode::UNAUTHORIZED, "token expired".into()));
+                }
+            }
+            Ok(AuthUser {
+                token_id: row.id,
+                user: row.subject_id,
+                roles: vec![row.role],
+                groups: row.groups,
+                subject_type: row.subject_type,
+            })
+        }
         Ok(None) => {
             let reason = match crate::db::token_repo::lookup_token_status(&conn, &prefix, &hash) {
                 Ok(Some(status)) if status == "revoked" => "revoked",
@@ -476,6 +495,7 @@ mod tests {
                 "fakehash000",
                 &prefix_a,
                 "admin",
+                None,
                 None,
                 "2024-01-01T00:00:00Z",
             )

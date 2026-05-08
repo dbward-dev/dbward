@@ -20,6 +20,10 @@ pub(crate) struct CreateTokenRequest {
     pub name: Option<String>,
     #[serde(default)]
     pub groups: Vec<String>,
+    /// TTL in seconds (alternative to expires_at)
+    pub expires_in: Option<u64>,
+    /// Absolute expiration time (RFC 3339)
+    pub expires_at: Option<String>,
 }
 
 fn default_role() -> String {
@@ -55,6 +59,24 @@ pub(crate) async fn create_token(
     }
 
     let group_refs: Vec<&str> = body.groups.iter().map(|s| s.as_str()).collect();
+    let expires_at = match (body.expires_in, &body.expires_at) {
+        (Some(_), Some(_)) => {
+            return Err(ApiError::bad_request("specify either expires_in or expires_at, not both")
+                .with_code("validation_error"));
+        }
+        (Some(secs), None) => {
+            Some((chrono::Utc::now() + chrono::Duration::seconds(secs as i64)).to_rfc3339())
+        }
+        (None, Some(at)) => {
+            let parsed = chrono::DateTime::parse_from_rfc3339(at)
+                .map_err(|_| ApiError::bad_request("expires_at must be valid RFC 3339").with_code("validation_error"))?;
+            if parsed <= chrono::Utc::now() {
+                return Err(ApiError::bad_request("expires_at must be in the future").with_code("validation_error"));
+            }
+            Some(parsed.to_utc().to_rfc3339())
+        }
+        (None, None) => None,
+    };
     let (token_id, raw_token) = auth::create_token_full(
         &state,
         &body.subject_id,
@@ -62,6 +84,7 @@ pub(crate) async fn create_token(
         &body.subject_type,
         &group_refs,
         body.name.as_deref(),
+        expires_at.as_deref(),
     )
     .await
     .map_err(|e| ApiError::internal(e))?;
@@ -76,6 +99,7 @@ pub(crate) async fn create_token(
             "role": body.role,
             "name": body.name,
             "groups": body.groups,
+            "expires_at": expires_at,
             "created_at": chrono::Utc::now().to_rfc3339(),
         })),
     ))
@@ -105,6 +129,7 @@ pub(crate) async fn list_tokens(
                 "status": t.status,
                 "groups": t.groups,
                 "created_at": t.created_at,
+                "expires_at": t.expires_at,
                 "revoked_at": t.revoked_at,
             })
         })
@@ -119,16 +144,52 @@ pub(crate) async fn revoke_token(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ManageToken, Resource::Global).await?;
+
+    // Allow self-revoke: if the token belongs to the caller, skip admin check
+    let is_owner = {
+        let conn = state.sqlite.lock().await;
+        crate::db::token_repo::get_token_owner(&conn, &id)
+            .map_err(|e| ApiError::internal(e.to_string()))?
+            .map(|owner| owner == user.user)
+            .unwrap_or(false)
+    };
+    if !is_owner {
+        authz::authorize(&user, Action::ManageToken, Resource::Global).await?;
+    }
 
     let now = chrono::Utc::now().to_rfc3339();
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
     let found = crate::db::token_repo::revoke_token(&conn, &id, &now)
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
     if !found {
         return Err(ApiError::not_found("token not found").with_code("token_not_found"));
     }
+
+    let meta = json!({"revoked_by": user.user, "self_revoke": is_owner}).to_string();
+    let _ = crate::db::audit_event_repo::insert_audit_event(
+        &mut conn,
+        &crate::db::audit_event_repo::AuditEvent {
+            event_type: "token_revoked",
+            event_category: "token",
+            outcome: "success",
+            actor_id: &user.user,
+            actor_type: "user",
+            resource_type: Some("token"),
+            resource_id: Some(&id),
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
+            metadata_json: &meta,
+        },
+    );
 
     Ok(Json(json!({
         "id": id,

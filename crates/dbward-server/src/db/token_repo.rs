@@ -6,6 +6,7 @@ pub(crate) struct TokenRow {
     pub(crate) role: String,
     pub(crate) subject_type: String,
     pub(crate) groups: Vec<String>,
+    pub(crate) expires_at: Option<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -18,11 +19,12 @@ pub(crate) fn insert_token(
     token_prefix: &str,
     role: &str,
     name: Option<&str>,
+    expires_at: Option<&str>,
     now: &str,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, role, name, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        rusqlite::params![id, subject_type, subject_id, token_hash, token_prefix, role, name, "active", now],
+        "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, role, name, status, expires_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        rusqlite::params![id, subject_type, subject_id, token_hash, token_prefix, role, name, "active", expires_at, now],
     )?;
     Ok(())
 }
@@ -59,16 +61,17 @@ pub(crate) fn lookup_active_token(
     hash: &str,
 ) -> Result<Option<TokenRow>, rusqlite::Error> {
     match conn.query_row(
-        "SELECT id, subject_id, role, subject_type FROM tokens WHERE token_prefix = ?1 AND token_hash = ?2 AND status = 'active'",
+        "SELECT id, subject_id, role, subject_type, expires_at FROM tokens WHERE token_prefix = ?1 AND token_hash = ?2 AND status = 'active'",
         rusqlite::params![prefix, hash],
         |row| Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, String>(3)?,
+            row.get::<_, Option<String>>(4)?,
         )),
     ) {
-        Ok((id, subject_id, role, subject_type)) => {
+        Ok((id, subject_id, role, subject_type, expires_at)) => {
             let groups = {
                 let mut stmt =
                     conn.prepare("SELECT group_name FROM token_groups WHERE token_id = ?1")?;
@@ -81,6 +84,7 @@ pub(crate) fn lookup_active_token(
                 role,
                 subject_type,
                 groups,
+                expires_at,
             }))
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -114,12 +118,13 @@ pub(crate) struct TokenListRow {
     pub(crate) status: String,
     pub(crate) groups: Vec<String>,
     pub(crate) created_at: String,
+    pub(crate) expires_at: Option<String>,
     pub(crate) revoked_at: Option<String>,
 }
 
 pub(crate) fn list_tokens(conn: &Connection) -> Result<Vec<TokenListRow>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT id, token_prefix, subject_id, subject_type, role, name, status, created_at, revoked_at FROM tokens ORDER BY created_at DESC",
+        "SELECT id, token_prefix, subject_id, subject_type, role, name, status, created_at, expires_at, revoked_at FROM tokens ORDER BY created_at DESC",
     )?;
     let rows = stmt
         .query_map([], |row| {
@@ -133,12 +138,13 @@ pub(crate) fn list_tokens(conn: &Connection) -> Result<Vec<TokenListRow>, rusqli
                 row.get::<_, String>(6)?,
                 row.get::<_, String>(7)?,
                 row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<String>>(9)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut result = Vec::with_capacity(rows.len());
-    for (id, prefix, subject_id, subject_type, role, name, status, created_at, revoked_at) in rows {
+    for (id, prefix, subject_id, subject_type, role, name, status, created_at, expires_at, revoked_at) in rows {
         let mut grp_stmt = conn.prepare("SELECT group_name FROM token_groups WHERE token_id = ?1")?;
         let groups = grp_stmt
             .query_map([&id], |row| row.get(0))?
@@ -153,6 +159,7 @@ pub(crate) fn list_tokens(conn: &Connection) -> Result<Vec<TokenListRow>, rusqli
             status,
             groups,
             created_at,
+            expires_at,
             revoked_at,
         });
     }
@@ -161,4 +168,16 @@ pub(crate) fn list_tokens(conn: &Connection) -> Result<Vec<TokenListRow>, rusqli
 
 pub(crate) fn count_active_tokens(conn: &Connection) -> Result<i64, rusqlite::Error> {
     conn.query_row("SELECT COUNT(*) FROM tokens WHERE status = 'active'", [], |row| row.get(0))
+}
+
+pub(crate) fn get_token_owner(conn: &Connection, token_id: &str) -> Result<Option<String>, rusqlite::Error> {
+    match conn.query_row(
+        "SELECT subject_id FROM tokens WHERE id = ?1",
+        rusqlite::params![token_id],
+        |row| row.get::<_, String>(0),
+    ) {
+        Ok(subject_id) => Ok(Some(subject_id)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
