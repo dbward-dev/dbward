@@ -333,10 +333,16 @@ async fn authenticate_api_token(
 
     match crate::db::token_repo::lookup_active_token(&conn, &prefix, &hash) {
         Ok(Some(row)) => {
-            // Reject expired tokens
+            // Reject expired tokens (parse for timezone-safe comparison)
             if let Some(ref exp) = row.expires_at {
-                let now = chrono::Utc::now().to_rfc3339();
-                if *exp <= now {
+                if let Ok(exp_time) = chrono::DateTime::parse_from_rfc3339(exp) {
+                    if chrono::Utc::now() >= exp_time {
+                        drop(conn);
+                        record_auth_failure(state, "api_token", "expired");
+                        return Err((StatusCode::UNAUTHORIZED, "token expired".into()));
+                    }
+                } else {
+                    // Unparseable expires_at: fail-closed
                     drop(conn);
                     record_auth_failure(state, "api_token", "expired");
                     return Err((StatusCode::UNAUTHORIZED, "token expired".into()));

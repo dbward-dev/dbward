@@ -67,7 +67,14 @@ pub(crate) async fn create_token(
         (Some(secs), None) => {
             Some((chrono::Utc::now() + chrono::Duration::seconds(secs as i64)).to_rfc3339())
         }
-        (None, Some(at)) => Some(at.clone()),
+        (None, Some(at)) => {
+            let parsed = chrono::DateTime::parse_from_rfc3339(at)
+                .map_err(|_| ApiError::bad_request("expires_at must be valid RFC 3339").with_code("validation_error"))?;
+            if parsed <= chrono::Utc::now() {
+                return Err(ApiError::bad_request("expires_at must be in the future").with_code("validation_error"));
+            }
+            Some(parsed.to_utc().to_rfc3339())
+        }
         (None, None) => None,
     };
     let (token_id, raw_token) = auth::create_token_full(
@@ -151,13 +158,38 @@ pub(crate) async fn revoke_token(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    let conn = state.sqlite.lock().await;
+    let mut conn = state.sqlite.lock().await;
     let found = crate::db::token_repo::revoke_token(&conn, &id, &now)
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
     if !found {
         return Err(ApiError::not_found("token not found").with_code("token_not_found"));
     }
+
+    let meta = json!({"revoked_by": user.user, "self_revoke": is_owner}).to_string();
+    let _ = crate::db::audit_event_repo::insert_audit_event(
+        &mut conn,
+        &crate::db::audit_event_repo::AuditEvent {
+            event_type: "token_revoked",
+            event_category: "token",
+            outcome: "success",
+            actor_id: &user.user,
+            actor_type: "user",
+            resource_type: Some("token"),
+            resource_id: Some(&id),
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
+            metadata_json: &meta,
+        },
+    );
 
     Ok(Json(json!({
         "id": id,

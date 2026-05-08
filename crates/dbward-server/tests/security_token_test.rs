@@ -352,7 +352,7 @@ async fn expired_token_rejected() {
     let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
     let app = routes::router(state.clone());
 
-    // Create a token that already expired
+    // Create a token with 1-second TTL
     let resp = app
         .oneshot(
             Request::post("/api/tokens")
@@ -362,7 +362,7 @@ async fn expired_token_rejected() {
                     json!({
                         "subject_id": "bob",
                         "role": "developer",
-                        "expires_at": "2020-01-01T00:00:00Z"
+                        "expires_in": 1
                     })
                     .to_string(),
                 ))
@@ -372,14 +372,17 @@ async fn expired_token_rejected() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = body_json(resp).await;
-    let expired_token = body["token"].as_str().unwrap().to_string();
+    let short_lived_token = body["token"].as_str().unwrap().to_string();
+
+    // Wait for expiration
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     // Using expired token should fail
     let app = routes::router(state);
     let resp = app
         .oneshot(
             Request::get("/api/requests")
-                .header("authorization", auth_header(&expired_token))
+                .header("authorization", auth_header(&short_lived_token))
                 .body(Body::empty())
                 .unwrap(),
         )
