@@ -113,7 +113,8 @@ impl AgentClient {
         Ok(())
     }
 
-    pub async fn heartbeat(&self, execution_id: &str) -> Result<(), Error> {
+    /// Returns true if the request has been cancelled.
+    pub async fn heartbeat(&self, execution_id: &str) -> Result<bool, Error> {
         let resp = self
             .client
             .post(format!(
@@ -129,7 +130,8 @@ impl AgentClient {
             let text = resp.text().await.unwrap_or_default();
             return Err(Error::Server(format!("heartbeat failed: {text}")));
         }
-        Ok(())
+        let body: serde_json::Value = resp.json().await.unwrap_or_default();
+        Ok(body["cancelled"].as_bool().unwrap_or(false))
     }
 
     pub async fn get_public_key(&self) -> Result<ed25519_dalek::VerifyingKey, Error> {

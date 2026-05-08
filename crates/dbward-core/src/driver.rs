@@ -38,13 +38,45 @@ pub trait DatabaseDriver: Send + Sync {
 
 /// Create a driver from a database URL. Scheme determines the backend.
 pub async fn connect(url: &str) -> Result<Arc<dyn DatabaseDriver>, Error> {
+    connect_with_timeout(url, None).await
+}
+
+pub async fn connect_with_timeout(
+    url: &str,
+    statement_timeout_secs: Option<u64>,
+) -> Result<Arc<dyn DatabaseDriver>, Error> {
     if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-        let pool = sqlx::PgPool::connect(url)
+        let mut opts = sqlx::postgres::PgPoolOptions::new().max_connections(5);
+        if let Some(secs) = statement_timeout_secs {
+            opts = opts.after_connect(move |conn, _meta| {
+                Box::pin(async move {
+                    sqlx::query(&format!("SET statement_timeout = '{secs}s'"))
+                        .execute(&mut *conn)
+                        .await?;
+                    Ok(())
+                })
+            });
+        }
+        let pool = opts
+            .connect(url)
             .await
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(Arc::new(PostgresDriver { pool }))
     } else if url.starts_with("mysql://") {
-        let pool = sqlx::MySqlPool::connect(url)
+        let mut opts = sqlx::mysql::MySqlPoolOptions::new().max_connections(5);
+        if let Some(secs) = statement_timeout_secs {
+            let ms = secs * 1000;
+            opts = opts.after_connect(move |conn, _meta| {
+                Box::pin(async move {
+                    sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
+                        .execute(&mut *conn)
+                        .await?;
+                    Ok(())
+                })
+            });
+        }
+        let pool = opts
+            .connect(url)
             .await
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(Arc::new(MysqlDriver { pool }))
@@ -100,10 +132,14 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
+        
         let result = sqlx::raw_sql(sql)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| {
+                // If any statement failed, PostgreSQL/MySQL auto-rolls back the transaction
+                Error::Database(e.to_string())
+            })?;
         Ok(result.rows_affected())
     }
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), Error> {
@@ -258,10 +294,14 @@ impl DatabaseDriver for MysqlDriver {
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, Error> {
+        
         let result = sqlx::raw_sql(sql)
             .execute(&self.pool)
             .await
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| {
+                // If any statement failed, PostgreSQL/MySQL auto-rolls back the transaction
+                Error::Database(e.to_string())
+            })?;
         Ok(result.rows_affected())
     }
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), Error> {

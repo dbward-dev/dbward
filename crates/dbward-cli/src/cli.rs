@@ -727,6 +727,22 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 Ok(())
             }
             RequestAction::Cancel { id, reason } => {
+                // Check if running — prompt for confirmation
+                let req_info = sc.get_json(&format!("/api/requests/{id}")).await;
+                if let Ok(info) = &req_info {
+                    if info["status"].as_str() == Some("running") {
+                        eprintln!("⚠ Query is currently executing on the database.");
+                        eprintln!("  Cancelling will kill the running query and roll back any changes.");
+                        eprint!("  Continue? [y/N] ");
+                        let mut input = String::new();
+                        std::io::stdin().read_line(&mut input).unwrap_or(0);
+                        if !input.trim().eq_ignore_ascii_case("y") {
+                            eprintln!("Aborted.");
+                            return Ok(());
+                        }
+                    }
+                }
+
                 match sc.cancel_request(&id, reason.as_deref()).await {
                     Ok(body) => {
                         if json_output {
@@ -1883,6 +1899,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         lease_duration_secs: 300,
         drain_timeout_secs: 60,
         max_concurrent_tasks: 2,
+        statement_timeout_secs: None,
         server: dbward_core::AgentServerConfig {
             url: server_url,
             agent_token: agent_token.clone(),

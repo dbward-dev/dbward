@@ -322,7 +322,7 @@ pub(crate) async fn agent_heartbeat(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
+) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::AgentPoll, Resource::Global, &state).await?;
 
@@ -342,7 +342,17 @@ pub(crate) async fn agent_heartbeat(
             "execution not found or not claimed",
         ));
     }
-    Ok(StatusCode::OK)
+
+    let cancelled: bool = conn.query_row(
+        "SELECT r.status FROM requests r JOIN agent_executions e ON e.request_id = r.id WHERE e.id = ?1",
+        rusqlite::params![id],
+        |row| {
+            let status: String = row.get(0)?;
+            Ok(status == "cancelled")
+        },
+    ).unwrap_or(false);
+
+    Ok(Json(serde_json::json!({"cancelled": cancelled})))
 }
 
 /// Agent sends execution result. Server relays to waiting CLI via channel.

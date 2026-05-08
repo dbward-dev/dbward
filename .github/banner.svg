@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200" width="800" height="200">
+  <rect width="800" height="200" rx="12" fill="#0F172A"/>
+  <!-- Symbol -->
+  <path d="M290,55 Q278,55 278,67 L278,133 Q278,145 290,145" stroke="#D4A017" stroke-width="3.5" stroke-linecap="round" fill="none" opacity="0.3"/>
+  <path d="M348,55 Q360,55 360,67 L360,133 Q360,145 348,145" stroke="#D4A017" stroke-width="3.5" stroke-linecap="round" fill="none" opacity="0.3"/>
+  <rect x="296" y="68" width="44" height="14" rx="7" fill="#D4A017" opacity="0.4"/>
+  <rect x="296" y="93" width="44" height="14" rx="7" fill="#D4A017" opacity="0.7"/>
+  <rect x="296" y="118" width="44" height="14" rx="7" fill="#D4A017"/>
+  <!-- Wordmark -->
+  <text x="376" y="115" font-family="Outfit, system-ui, sans-serif" font-size="52" letter-spacing="-1">
+    <tspan font-weight="700" fill="#D4A017">db</tspan><tspan font-weight="400" fill="#F1F5F9">ward</tspan>
+  </text>
+  <!-- Tagline -->
+  <text x="400" y="160" text-anchor="middle" font-family="Outfit, system-ui, sans-serif" font-size="16" font-weight="400" fill="#94A3B8">Workflow + approval engine for database operations</text>
+</svg>

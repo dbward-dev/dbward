@@ -23,7 +23,10 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
     // Verify DB connectivity for all configured databases
     for (name, db_config) in &config.databases {
         info!(database = %name, "verifying database connection");
-        let driver = dbward_core::driver::connect(&db_config.url)
+        let driver = dbward_core::driver::connect_with_timeout(
+            &db_config.url,
+            Some(config.statement_timeout_secs.unwrap_or(30)),
+        )
             .await
             .map_err(|e| {
                 Error::Config(format!(
@@ -208,17 +211,28 @@ async fn execute_job(
         other => dbward_core::Environment::Custom(other.to_string()),
     };
 
-    // Heartbeat task: extend lease while executing
-    let heartbeat_interval = std::time::Duration::from_secs(config.lease_duration_secs / 3);
+    // Cancel detection via heartbeat response
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancelled_clone = cancelled.clone();
+
+    // Heartbeat + cancel check task
     let hb_client = client.clone();
     let hb_exec_id = exec_id.to_string();
+    let cancel_check_interval = std::time::Duration::from_secs(2);
     let hb_handle = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(heartbeat_interval);
+        let mut interval = tokio::time::interval(cancel_check_interval);
         interval.tick().await; // skip immediate first tick
         loop {
             interval.tick().await;
-            if let Err(e) = hb_client.heartbeat(&hb_exec_id).await {
-                warn!(%e, "heartbeat failed");
+            match hb_client.heartbeat(&hb_exec_id).await {
+                Ok(true) => {
+                    cancelled_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                    break;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    warn!(%e, "heartbeat failed");
+                }
             }
         }
     });
@@ -239,6 +253,13 @@ async fn execute_job(
     };
 
     hb_handle.abort();
+
+    if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+        warn!(request_id, "job was cancelled during execution");
+        send_result_with_retry(client, exec_id, false, None, Some("cancelled by user")).await;
+        return Ok(());
+    }
+
     info!(request_id, "job execution completed");
     send_result_with_retry(client, exec_id, success, result_value, None).await;
     Ok(())

@@ -118,6 +118,8 @@ pub struct AgentConfig {
     pub drain_timeout_secs: u64,
     #[serde(default = "default_max_concurrent")]
     pub max_concurrent_tasks: u32,
+    /// DB-level statement timeout in seconds (default: 30). Set to 0 to disable.
+    pub statement_timeout_secs: Option<u64>,
     pub server: AgentServerConfig,
     #[serde(default)]
     pub capabilities: AgentCapabilities,
