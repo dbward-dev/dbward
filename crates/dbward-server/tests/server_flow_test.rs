@@ -175,9 +175,18 @@ async fn ready_check() {
 
 #[tokio::test]
 async fn metrics_endpoint_returns_prometheus_text() {
-    let app = routes::router(test_state());
+    let state = test_state();
+    let (_, admin_token) = auth::create_token_with_type(&state, "admin", "admin", "user")
+        .await
+        .unwrap();
+    let app = routes::router(state);
     let resp = app
-        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::get("/metrics")
+                .header("authorization", format!("Bearer {admin_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);

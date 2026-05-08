@@ -213,7 +213,10 @@ pub(crate) async fn ready(State(state): State<AppState>) -> impl IntoResponse {
 
 pub(crate) async fn metrics(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
+    let user = crate::auth::authenticate(&headers, &state).await?;
+    crate::authz::authorize(&user, crate::authz::Action::ReadMetrics, crate::authz::Resource::Global).await?;
     let body = state
         .metrics
         .render(&state.sqlite)
