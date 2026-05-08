@@ -20,6 +20,10 @@ pub(crate) struct CreateTokenRequest {
     pub name: Option<String>,
     #[serde(default)]
     pub groups: Vec<String>,
+    /// TTL in seconds (alternative to expires_at)
+    pub expires_in: Option<u64>,
+    /// Absolute expiration time (RFC 3339)
+    pub expires_at: Option<String>,
 }
 
 fn default_role() -> String {
@@ -55,6 +59,17 @@ pub(crate) async fn create_token(
     }
 
     let group_refs: Vec<&str> = body.groups.iter().map(|s| s.as_str()).collect();
+    let expires_at = match (body.expires_in, &body.expires_at) {
+        (Some(_), Some(_)) => {
+            return Err(ApiError::bad_request("specify either expires_in or expires_at, not both")
+                .with_code("validation_error"));
+        }
+        (Some(secs), None) => {
+            Some((chrono::Utc::now() + chrono::Duration::seconds(secs as i64)).to_rfc3339())
+        }
+        (None, Some(at)) => Some(at.clone()),
+        (None, None) => None,
+    };
     let (token_id, raw_token) = auth::create_token_full(
         &state,
         &body.subject_id,
@@ -62,6 +77,7 @@ pub(crate) async fn create_token(
         &body.subject_type,
         &group_refs,
         body.name.as_deref(),
+        expires_at.as_deref(),
     )
     .await
     .map_err(|e| ApiError::internal(e))?;
@@ -76,6 +92,7 @@ pub(crate) async fn create_token(
             "role": body.role,
             "name": body.name,
             "groups": body.groups,
+            "expires_at": expires_at,
             "created_at": chrono::Utc::now().to_rfc3339(),
         })),
     ))
@@ -105,6 +122,7 @@ pub(crate) async fn list_tokens(
                 "status": t.status,
                 "groups": t.groups,
                 "created_at": t.created_at,
+                "expires_at": t.expires_at,
                 "revoked_at": t.revoked_at,
             })
         })
@@ -119,7 +137,18 @@ pub(crate) async fn revoke_token(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize(&user, Action::ManageToken, Resource::Global).await?;
+
+    // Allow self-revoke: if the token belongs to the caller, skip admin check
+    let is_owner = {
+        let conn = state.sqlite.lock().await;
+        crate::db::token_repo::get_token_owner(&conn, &id)
+            .map_err(|e| ApiError::internal(e.to_string()))?
+            .map(|owner| owner == user.user)
+            .unwrap_or(false)
+    };
+    if !is_owner {
+        authz::authorize(&user, Action::ManageToken, Resource::Global).await?;
+    }
 
     let now = chrono::Utc::now().to_rfc3339();
     let conn = state.sqlite.lock().await;
