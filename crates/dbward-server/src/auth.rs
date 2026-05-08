@@ -29,10 +29,17 @@ fn token_prefix(raw: &str) -> String {
 
 fn best_effort_insert_audit_event(
     state: &AppState,
-    event: &crate::db::audit_event_repo::AuditEvent<'_>,
+    event: crate::db::audit_event_repo::AuditEvent<'_>,
+    headers: &HeaderMap,
 ) {
     if let Ok(mut conn) = state.sqlite.try_lock() {
-        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn, event) {
+        if let Err(e) = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            event,
+            headers,
+            &state.audit_config,
+            &state.trusted_proxies,
+        ) {
             eprintln!("audit write failed: {e}");
         }
     }
@@ -54,7 +61,7 @@ fn should_record_oidc_login_success(raw_token: &str) -> bool {
     true
 }
 
-fn record_auth_failure(state: &AppState, method: &str, reason: &str) {
+fn record_auth_failure(state: &AppState, headers: &HeaderMap, method: &str, reason: &str) {
     state.metrics.record_auth_failure(reason);
     let metadata = serde_json::json!({
         "method": method,
@@ -63,7 +70,7 @@ fn record_auth_failure(state: &AppState, method: &str, reason: &str) {
     .to_string();
     best_effort_insert_audit_event(
         state,
-        &crate::db::audit_event_repo::AuditEvent {
+        crate::db::audit_event_repo::AuditEvent {
             event_type: "auth_failure",
             event_category: "auth",
             outcome: "failure",
@@ -83,6 +90,7 @@ fn record_auth_failure(state: &AppState, method: &str, reason: &str) {
             reason: Some(reason),
             metadata_json: &metadata,
         },
+        headers,
     );
 }
 
@@ -234,7 +242,7 @@ pub async fn authenticate(
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| {
-            record_auth_failure(state, "authorization_header", "invalid");
+            record_auth_failure(state, headers, "authorization_header", "invalid");
             (
                 StatusCode::UNAUTHORIZED,
                 "missing Authorization header".into(),
@@ -242,7 +250,7 @@ pub async fn authenticate(
         })?;
 
     let raw_token = header.strip_prefix("Bearer ").ok_or_else(|| {
-        record_auth_failure(state, "authorization_header", "invalid");
+        record_auth_failure(state, headers, "authorization_header", "invalid");
         (
             StatusCode::UNAUTHORIZED,
             "invalid Authorization format".into(),
@@ -264,7 +272,7 @@ pub async fn authenticate(
                 if should_record_oidc_login_success(raw_token) {
                     best_effort_insert_audit_event(
                         state,
-                        &crate::db::audit_event_repo::AuditEvent {
+                        crate::db::audit_event_repo::AuditEvent {
                             event_type: "login_success",
                             event_category: "auth",
                             outcome: "success",
@@ -284,6 +292,7 @@ pub async fn authenticate(
                             reason: None,
                             metadata_json: "{\"method\":\"oidc\"}",
                         },
+                        headers,
                     );
                 }
                 Ok(AuthUser {
@@ -300,7 +309,7 @@ pub async fn authenticate(
                 } else {
                     "invalid"
                 };
-                record_auth_failure(state, "oidc", reason);
+                record_auth_failure(state, headers, "oidc", reason);
                 Err((StatusCode::UNAUTHORIZED, e))
             }
         }
@@ -308,7 +317,7 @@ pub async fn authenticate(
         // API token
         if state.auth_mode == "oidc" {
             // Allow agent tokens even in OIDC mode (agents can't do browser flows)
-            let user = authenticate_api_token(raw_token, state).await?;
+            let user = authenticate_api_token(raw_token, state, headers).await?;
             if user.subject_type != "agent" {
                 return Err((
                     StatusCode::UNAUTHORIZED,
@@ -317,7 +326,7 @@ pub async fn authenticate(
             }
             Ok(user)
         } else {
-            authenticate_api_token(raw_token, state).await
+            authenticate_api_token(raw_token, state, headers).await
         }
     }
 }
@@ -325,6 +334,7 @@ pub async fn authenticate(
 async fn authenticate_api_token(
     raw_token: &str,
     state: &AppState,
+    headers: &HeaderMap,
 ) -> Result<AuthUser, (StatusCode, String)> {
     let prefix = token_prefix(raw_token);
     let hash = hash_token(raw_token);
@@ -338,13 +348,13 @@ async fn authenticate_api_token(
                 if let Ok(exp_time) = chrono::DateTime::parse_from_rfc3339(exp) {
                     if chrono::Utc::now() >= exp_time {
                         drop(conn);
-                        record_auth_failure(state, "api_token", "expired");
+                        record_auth_failure(state, headers, "api_token", "expired");
                         return Err((StatusCode::UNAUTHORIZED, "token expired".into()));
                     }
                 } else {
                     // Unparseable expires_at: fail-closed
                     drop(conn);
-                    record_auth_failure(state, "api_token", "expired");
+                    record_auth_failure(state, headers, "api_token", "expired");
                     return Err((StatusCode::UNAUTHORIZED, "token expired".into()));
                 }
             }
@@ -364,7 +374,7 @@ async fn authenticate_api_token(
                 Err(_) => "invalid",
             };
             drop(conn);
-            record_auth_failure(state, "api_token", reason);
+            record_auth_failure(state, headers, "api_token", reason);
             Err((StatusCode::UNAUTHORIZED, "invalid token".into()))
         }
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),

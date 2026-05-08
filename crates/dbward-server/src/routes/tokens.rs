@@ -167,9 +167,9 @@ pub(crate) async fn revoke_token(
     }
 
     let meta = json!({"revoked_by": user.user, "self_revoke": is_owner}).to_string();
-    let _ = crate::db::audit_event_repo::insert_audit_event(
+    let _ = crate::db::audit_event_repo::record_audit_event(
         &mut conn,
-        &crate::db::audit_event_repo::AuditEvent {
+        crate::db::audit_event_repo::AuditEvent {
             event_type: "token_revoked",
             event_category: "token",
             outcome: "success",
@@ -189,6 +189,9 @@ pub(crate) async fn revoke_token(
             reason: None,
             metadata_json: &meta,
         },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
     );
 
     Ok(Json(json!({

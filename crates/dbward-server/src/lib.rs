@@ -41,7 +41,32 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
                     let n = reclaimed.len();
                     metrics.record_agent_lease_expirations(n as u64);
                     eprintln!("reclaimed {n} expired lease(s)");
+                    drop(conn);
+                    let mut conn = sqlite.lock().await;
                     for req in &reclaimed {
+                        let _ = db::audit_event_repo::insert_audit_event(
+                            &mut conn,
+                            &db::audit_event_repo::AuditEvent {
+                                event_type: "execution_lost",
+                                event_category: "agent",
+                                outcome: "failure",
+                                actor_id: "system",
+                                actor_type: "system",
+                                resource_type: Some("request"),
+                                resource_id: Some(&req.id),
+                                peer_ip: None,
+                                client_ip: None,
+                                client_ip_source: None,
+                                request_id: Some(&req.id),
+                                operation: Some(&req.operation),
+                                environment: Some(&req.environment),
+                                database_name: Some(&req.database),
+                                detail_fingerprint: None,
+                                detail_raw: None,
+                                reason: Some("agent lease expired"),
+                                metadata_json: "{}",
+                            },
+                        );
                         webhooks.read().unwrap().dispatch(webhook::WebhookEvent {
                             event: "request.execution_lost".into(),
                             timestamp: chrono::Utc::now().to_rfc3339(),

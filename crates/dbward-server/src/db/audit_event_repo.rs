@@ -2,6 +2,7 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
 /// Parameters for inserting an audit event.
+/// `peer_ip`, `client_ip`, `client_ip_source` are populated by `record_audit_event`.
 pub struct AuditEvent<'a> {
     pub event_type: &'a str,
     pub event_category: &'a str,
@@ -121,6 +122,48 @@ pub fn insert_audit_event(
     tx.commit()?;
 
     Ok(id)
+}
+
+/// High-level wrapper: resolves IP from headers, applies redaction, then inserts.
+pub fn record_audit_event(
+    conn: &mut Connection,
+    event: AuditEvent,
+    headers: &axum::http::HeaderMap,
+    audit_config: &crate::server_config::AuditConfig,
+    trusted_proxies: &[String],
+) -> Result<String, rusqlite::Error> {
+    let ip = if audit_config.record_ip {
+        resolve_client_ip(headers, None, trusted_proxies)
+    } else {
+        ResolvedIp {
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+        }
+    };
+
+    let redacted: String;
+    let detail_raw = match event.detail_raw {
+        None => None,
+        Some(raw) => match audit_config.redaction.as_str() {
+            "full" => None,
+            "literals" => {
+                redacted = redact_literals(raw);
+                Some(redacted.as_str())
+            }
+            _ => Some(raw),
+        },
+    };
+
+    let resolved = AuditEvent {
+        peer_ip: ip.peer_ip.as_deref(),
+        client_ip: ip.client_ip.as_deref(),
+        client_ip_source: ip.client_ip_source.as_deref(),
+        detail_raw,
+        ..event
+    };
+
+    insert_audit_event(conn, &resolved)
 }
 
 /// Verify the hash chain integrity. Returns (total_events, first_broken_id).

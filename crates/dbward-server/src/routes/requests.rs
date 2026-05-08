@@ -697,13 +697,47 @@ pub(crate) async fn create_request(
 
     // Check access policy (DB-level access control)
     let mut conn = state.sqlite.lock().await;
-    crate::db::policy_repo::check_access_policy(
+    if let Err(e) = crate::db::policy_repo::check_access_policy(
         &conn,
         database_name,
         environment,
         &user,
         &state.license,
-    )?;
+    ) {
+        let meta = serde_json::json!({
+            "policy_type": "access",
+            "database": database_name,
+            "environment": environment,
+        })
+        .to_string();
+        let _ = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            crate::db::audit_event_repo::AuditEvent {
+                event_type: "authz_denied",
+                event_category: "auth",
+                outcome: "denied",
+                actor_id: &user.user,
+                actor_type: "user",
+                resource_type: Some("request"),
+                resource_id: None,
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: None,
+                operation: Some(operation),
+                environment: Some(environment),
+                database_name: Some(database_name),
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: None,
+                metadata_json: &meta,
+            },
+            &headers,
+            &state.audit_config,
+            &state.trusted_proxies,
+        );
+        return Err(e);
+    }
 
     // Evaluate workflow policy
     let decision = crate::db::policy_repo::evaluate_approval_policy(
@@ -820,8 +854,8 @@ pub(crate) async fn create_request(
             "emergency": emergency,
             "workflow_id": decision.workflow_id,
         });
-        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
-        &crate::db::audit_event_repo::AuditEvent {
+        if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
+        crate::db::audit_event_repo::AuditEvent {
             event_type,
             event_category: "approval",
             outcome,
@@ -840,7 +874,7 @@ pub(crate) async fn create_request(
             detail_raw: Some(detail),
             reason: reason.as_deref(),
             metadata_json: &meta.to_string(),
-        },) {
+        }, &headers, &state.audit_config, &state.trusted_proxies) {
                     eprintln!("audit write failed: {e}");
                 }
     }
@@ -985,8 +1019,8 @@ pub(crate) async fn approve_request(
             "step_completed": result.response["step_completed"],
             "total_steps": result.response["total_steps"],
         });
-        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
-        &crate::db::audit_event_repo::AuditEvent {
+        if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
+        crate::db::audit_event_repo::AuditEvent {
             event_type: "request_approved",
             event_category: "approval",
             outcome: "success",
@@ -1005,7 +1039,7 @@ pub(crate) async fn approve_request(
             detail_raw: None,
             reason: body_val["comment"].as_str(),
             metadata_json: &meta.to_string(),
-        },) {
+        }, &headers, &state.audit_config, &state.trusted_proxies) {
                     eprintln!("audit write failed: {e}");
                 }
     }
@@ -1100,8 +1134,8 @@ pub(crate) async fn reject_request(
         state.metrics.record_approval("reject");
 
         // Audit: request_rejected
-        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
-        &crate::db::audit_event_repo::AuditEvent {
+        if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
+        crate::db::audit_event_repo::AuditEvent {
             event_type: "request_rejected",
             event_category: "approval",
             outcome: "success",
@@ -1120,7 +1154,7 @@ pub(crate) async fn reject_request(
             detail_raw: None,
             reason: comment,
             metadata_json: "{}",
-        },) {
+        }, &headers, &state.audit_config, &state.trusted_proxies) {
                     eprintln!("audit write failed: {e}");
                 }
 
@@ -1209,8 +1243,8 @@ pub(crate) async fn cancel_request(
         }
 
         // Audit: request_cancelled
-        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
-        &crate::db::audit_event_repo::AuditEvent {
+        if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
+        crate::db::audit_event_repo::AuditEvent {
             event_type: "request_cancelled",
             event_category: "approval",
             outcome: "success",
@@ -1229,7 +1263,7 @@ pub(crate) async fn cancel_request(
             detail_raw: None,
             reason: cancel_reason.as_deref(),
             metadata_json: "{}",
-        },) {
+        }, &headers, &state.audit_config, &state.trusted_proxies) {
                     eprintln!("audit write failed: {e}");
                 }
 

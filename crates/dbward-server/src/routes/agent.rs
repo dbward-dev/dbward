@@ -100,6 +100,39 @@ pub(crate) async fn agent_poll(
     crate::db::agent_repo::upsert_agent(&conn, &user.user, &user.token_id, &caps_json).map_err(
         |e| crate::api_error::ApiError::internal(format!("agent registration failed: {e}")),
     )?;
+    drop(conn);
+
+    if !is_existing {
+        let mut conn = state.sqlite.lock().await;
+        let _ = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            crate::db::audit_event_repo::AuditEvent {
+                event_type: "agent_registered",
+                event_category: "agent",
+                outcome: "success",
+                actor_id: &user.user,
+                actor_type: "agent",
+                resource_type: Some("agent"),
+                resource_id: Some(&user.user),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: None,
+                operation: None,
+                environment: None,
+                database_name: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: None,
+                metadata_json: &caps_json,
+            },
+            &headers,
+            &state.audit_config,
+            &state.trusted_proxies,
+        );
+    }
+
+    let conn = state.sqlite.lock().await;
 
     // Free tier: check total unique database connections across all agents
     if !databases.is_empty() {
@@ -245,8 +278,8 @@ pub(crate) async fn agent_claim(
     };
 
     // Audit: execution_started
-    if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
-    &crate::db::audit_event_repo::AuditEvent {
+    if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    crate::db::audit_event_repo::AuditEvent {
         event_type: "execution_started",
         event_category: "execution",
         outcome: "success",
@@ -268,7 +301,7 @@ pub(crate) async fn agent_claim(
             "execution_id": exec_id,
         })
         .to_string(),
-    },) {
+    }, &headers, &state.audit_config, &state.trusted_proxies) {
                 eprintln!("audit write failed: {e}");
             }
 
@@ -368,8 +401,8 @@ pub(crate) async fn agent_result(
             .record_agent_execution(if success { "succeeded" } else { "failed" });
 
         // Audit: execution_completed or execution_failed
-        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
-        &crate::db::audit_event_repo::AuditEvent {
+        if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
+        crate::db::audit_event_repo::AuditEvent {
             event_type: if success {
                 "execution_completed"
             } else {
@@ -396,7 +429,7 @@ pub(crate) async fn agent_result(
                 "error": error_msg,
             })
             .to_string(),
-        },) {
+        }, &headers, &state.audit_config, &state.trusted_proxies) {
                     eprintln!("audit write failed: {e}");
                 }
 
