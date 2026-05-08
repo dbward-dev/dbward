@@ -1618,6 +1618,36 @@ pub(crate) async fn dispatch_request(
     ensure_result_slot(&state, &id).await;
     state.request_notifier.notify(&id).await;
 
+    {
+        let mut conn = state.sqlite.lock().await;
+        let _ = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            crate::db::audit_event_repo::AuditEvent {
+                event_type: "request_dispatched",
+                event_category: "approval",
+                outcome: "success",
+                actor_id: &user.user,
+                actor_type: "user",
+                resource_type: Some("request"),
+                resource_id: Some(&id),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: Some(&id),
+                operation: None,
+                environment: Some(&environment),
+                database_name: Some(&database_name),
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: None,
+                metadata_json: "{}",
+            },
+            &headers,
+            &state.audit_config,
+            &state.trusted_proxies,
+        );
+    }
+
     Ok(Json(json!({"id": id, "status": "dispatched"})))
 }
 
