@@ -63,6 +63,7 @@ fn test_state() -> AppState {
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
+        update_available: Arc::new(Mutex::new(None)),
     }
 }
 

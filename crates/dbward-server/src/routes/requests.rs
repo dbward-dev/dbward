@@ -197,8 +197,17 @@ pub(crate) async fn ensure_result_slot(state: &AppState, request_id: &str) {
         .await;
 }
 
-pub(crate) async fn health() -> impl IntoResponse {
-    Json(json!({"status": "ok"}))
+pub(crate) async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    let mut resp = json!({
+        "status": "ok",
+        "version": crate::VERSION,
+        "api_version": crate::API_VERSION,
+        "schema_version": crate::db::LATEST_SCHEMA_VERSION,
+    });
+    if let Some(ref v) = *state.update_available.lock().await {
+        resp["update_available"] = json!(v);
+    }
+    Json(resp)
 }
 
 pub(crate) async fn ready(State(state): State<AppState>) -> impl IntoResponse {

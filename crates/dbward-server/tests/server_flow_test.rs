@@ -72,6 +72,7 @@ fn test_state() -> AppState {
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
+        update_available: Arc::new(Mutex::new(None)),
     }
 }
 
@@ -145,6 +146,7 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
+        update_available: Arc::new(Mutex::new(None)),
     };
     (state, dir)
 }
@@ -1909,6 +1911,7 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
+        update_available: Arc::new(Mutex::new(None)),
     };
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
@@ -3814,6 +3817,7 @@ fn test_state_multistep() -> AppState {
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
+        update_available: Arc::new(Mutex::new(None)),
     }
 }
 
@@ -3880,6 +3884,7 @@ fn test_state_multistep_allow_same() -> AppState {
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
+        update_available: Arc::new(Mutex::new(None)),
     }
 }
 

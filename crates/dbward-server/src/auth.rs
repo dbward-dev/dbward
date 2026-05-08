@@ -382,6 +382,7 @@ mod tests {
             break_glass_roles: crate::server_config::default_break_glass_roles(),
             audit_config: Default::default(),
             trusted_proxies: vec![],
+        update_available: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 

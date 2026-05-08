@@ -137,6 +137,7 @@ pub struct AppState {
     pub break_glass_roles: Vec<String>,
     pub audit_config: crate::server_config::AuditConfig,
     pub trusted_proxies: Vec<String>,
+    pub update_available: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Debug, Clone)]

@@ -18,6 +18,9 @@ pub mod webhook;
 pub use metrics::Metrics;
 pub use state::{AppState, RequestNotifier, ResultChannels};
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const API_VERSION: u32 = 1;
+
 use std::net::SocketAddr;
 use tracing::{error, info};
 

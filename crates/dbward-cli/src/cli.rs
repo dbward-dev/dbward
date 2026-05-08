@@ -1638,6 +1638,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     .unwrap_or_else(dbward_server::server_config::default_break_glass_roles),
                 audit_config: server_cfg.audit.clone(),
                 trusted_proxies: server_cfg.trusted_proxies.clone(),
+                update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             };
             let addr: std::net::SocketAddr = listen
                 .parse()
@@ -1677,6 +1678,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
                     audit_config: Default::default(),
                     trusted_proxies: vec![],
+            update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 };
                 let group_refs: Vec<&str> = groups.iter().map(|s| s.as_str()).collect();
 
@@ -1768,6 +1770,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
                     audit_config: Default::default(),
                     trusted_proxies: vec![],
+            update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 };
                 dbward_server::auth::revoke_token(&state, id)
                     .await
@@ -1840,6 +1843,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
+            update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
     };
 
     // Create tokens
