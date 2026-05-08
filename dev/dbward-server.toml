@@ -26,7 +26,7 @@ min = 1
 role = "dba"
 min = 1
 
-# Production: admin approval required
+# Production: 2-step approval (backend-team then dba-team, distinct actors)
 [[workflows]]
 database = "*"
 environment = "production"
@@ -36,14 +36,21 @@ require_reason = true
 type = "approval"
 
 [[workflows.steps.approvers]]
-role = "admin"
+group = "backend-team"
+min = 1
+
+[[workflows.steps]]
+type = "approval"
+
+[[workflows.steps.approvers]]
+group = "dba-team"
 min = 1
 
 # Global webhooks (all events, all environments)
 [[webhooks]]
 url = "http://webhook-receiver:9999"
 format = "generic"
-events = ["request_created", "request_approved", "request_rejected", "request_completed", "break_glass", "step_approved"]
+events = ["request_created", "request_approved", "request_auto_approved", "request_rejected", "request_completed", "request_failed", "break_glass", "step_approved"]
 
 # Result storage (local filesystem inside container)
 [result_storage]
