@@ -182,38 +182,40 @@ pub async fn authorize_and_audit(
     enforcer().await?;
     let resource_json = serde_json::to_value(&resource).unwrap_or(serde_json::Value::Null);
     let result = authorize_sync(principal, action, resource);
-    if result.is_err()
-        && let Ok(mut conn) = state.sqlite.try_lock()
-    {
-        let meta = serde_json::json!({
-            "action": action.as_str(),
-            "role": principal.effective_permission(),
-            "resource": resource_json,
-        })
-        .to_string();
-        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
-        &crate::db::audit_event_repo::AuditEvent {
-            event_type: "authz_denied",
-            event_category: "auth",
-            outcome: "denied",
-            actor_id: &principal.user,
-            actor_type: &principal.subject_type,
-            resource_type: None,
-            resource_id: None,
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
-            request_id: None,
-            operation: None,
-            environment: None,
-            database_name: None,
-            detail_fingerprint: None,
-            detail_raw: None,
-            reason: None,
-            metadata_json: &meta,
-        },) {
-                    eprintln!("audit write failed: {e}");
-                }
+    if result.is_err() {
+        if let Ok(mut conn) = state.sqlite.try_lock() {
+            let meta = serde_json::json!({
+                "action": action.as_str(),
+                "role": principal.effective_permission(),
+                "resource": resource_json,
+            })
+            .to_string();
+            if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
+            &crate::db::audit_event_repo::AuditEvent {
+                event_type: "authz_denied",
+                event_category: "auth",
+                outcome: "denied",
+                actor_id: &principal.user,
+                actor_type: &principal.subject_type,
+                resource_type: None,
+                resource_id: None,
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: None,
+                operation: None,
+                environment: None,
+                database_name: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: None,
+                metadata_json: &meta,
+            },) {
+                        eprintln!("audit write failed: {e}");
+                    }
+        } else {
+            eprintln!("WARN: authz_denied audit event dropped (lock contention)");
+        }
     }
     result
 }

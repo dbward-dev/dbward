@@ -82,6 +82,27 @@ pub(crate) async fn create_webhook(
     .map_err(|e| ApiError::internal(e.to_string()))?;
     drop(conn);
 
+    {
+        let mut conn = state.sqlite.lock().await;
+        let _ = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            crate::db::audit_event_repo::AuditEvent {
+                event_type: "webhook_created",
+                event_category: "policy",
+                outcome: "success",
+                actor_id: &user.user,
+                actor_type: "user",
+                resource_type: Some("webhook"),
+                resource_id: Some(&id),
+                peer_ip: None, client_ip: None, client_ip_source: None,
+                request_id: None, operation: None, environment: None, database_name: None,
+                detail_fingerprint: None, detail_raw: None, reason: None,
+                metadata_json: &serde_json::json!({"url": body.url, "format": body.format}).to_string(),
+            },
+            &headers, &state.audit_config, &state.trusted_proxies,
+        );
+    }
+
     reload_webhooks(&state).await;
 
     Ok((
@@ -216,6 +237,27 @@ pub(crate) async fn update_webhook(
 
     reload_webhooks(&state).await;
 
+    {
+        let mut conn = state.sqlite.lock().await;
+        let _ = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            crate::db::audit_event_repo::AuditEvent {
+                event_type: "webhook_updated",
+                event_category: "policy",
+                outcome: "success",
+                actor_id: &user.user,
+                actor_type: "user",
+                resource_type: Some("webhook"),
+                resource_id: Some(&id),
+                peer_ip: None, client_ip: None, client_ip_source: None,
+                request_id: None, operation: None, environment: None, database_name: None,
+                detail_fingerprint: None, detail_raw: None, reason: None,
+                metadata_json: &serde_json::json!({"url": w.url}).to_string(),
+            },
+            &headers, &state.audit_config, &state.trusted_proxies,
+        );
+    }
+
     let events: Vec<String> = serde_json::from_str(&w.events_json).unwrap_or_default();
     Ok(Json(json!({
         "id": w.id,
@@ -248,6 +290,27 @@ pub(crate) async fn delete_webhook(
     }
 
     reload_webhooks(&state).await;
+
+    {
+        let mut conn = state.sqlite.lock().await;
+        let _ = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            crate::db::audit_event_repo::AuditEvent {
+                event_type: "webhook_deleted",
+                event_category: "policy",
+                outcome: "success",
+                actor_id: &user.user,
+                actor_type: "user",
+                resource_type: Some("webhook"),
+                resource_id: Some(&id),
+                peer_ip: None, client_ip: None, client_ip_source: None,
+                request_id: None, operation: None, environment: None, database_name: None,
+                detail_fingerprint: None, detail_raw: None, reason: None,
+                metadata_json: "{}",
+            },
+            &headers, &state.audit_config, &state.trusted_proxies,
+        );
+    }
 
     Ok(Json(json!({ "id": id, "deleted": true })))
 }

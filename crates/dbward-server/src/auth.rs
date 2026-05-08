@@ -42,6 +42,8 @@ fn best_effort_insert_audit_event(
         ) {
             eprintln!("audit write failed: {e}");
         }
+    } else {
+        eprintln!("WARN: audit event dropped (lock contention): {}", event.event_type);
     }
 }
 
