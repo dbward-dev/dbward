@@ -106,6 +106,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub notification_policies: Vec<NotificationPolicyDef>,
     #[serde(default)]
+    pub access_policies: Vec<AccessPolicyDef>,
+    #[serde(default)]
     pub result_storage: ResultStorageConfig,
     #[serde(default)]
     pub audit: AuditConfig,
@@ -188,6 +190,17 @@ fn default_max_executions() -> u32 {
 }
 fn default_execution_window() -> u64 {
     86400
+}
+
+/// Access policy definition from TOML config.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AccessPolicyDef {
+    pub database: String,
+    pub environment: String,
+    #[serde(default)]
+    pub allowed_roles: Vec<String>,
+    #[serde(default)]
+    pub allowed_groups: Vec<String>,
 }
 
 /// Result policy definition from TOML config.

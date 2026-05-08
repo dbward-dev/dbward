@@ -280,6 +280,82 @@ pub fn sync_notification_policies(
     Ok(())
 }
 
+pub fn sync_access_policies(
+    conn: &Connection,
+    policies: &[crate::server_config::AccessPolicyDef],
+) -> Result<(), rusqlite::Error> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut toml_ids: Vec<String> = Vec::new();
+    for p in policies {
+        let id = format!("{}:{}", p.database, p.environment);
+        let roles_json = serde_json::to_string(&p.allowed_roles).unwrap_or_else(|_| "[]".into());
+        let groups_json = serde_json::to_string(&p.allowed_groups).unwrap_or_else(|_| "[]".into());
+        conn.execute(
+            "INSERT INTO access_policies (id, database_name, environment, allowed_roles_json, allowed_groups_json, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'toml', ?6, ?6)
+             ON CONFLICT(database_name, environment) DO UPDATE SET
+               allowed_roles_json = ?4, allowed_groups_json = ?5, updated_at = ?6
+             WHERE source = 'toml'",
+            rusqlite::params![id, p.database, p.environment, roles_json, groups_json, now],
+        )?;
+        toml_ids.push(id);
+    }
+    delete_stale_toml_records(conn, "access_policies", &toml_ids)?;
+    Ok(())
+}
+
+/// Check if a user is allowed to create requests for the given database×environment.
+/// Returns Ok(()) if allowed, Err(403) if denied.
+/// Open by default: no matching policy = allow.
+pub fn check_access_policy(
+    conn: &Connection,
+    database: &str,
+    environment: &str,
+    user: &crate::state::AuthUser,
+    license: &crate::license::License,
+) -> Result<(), crate::api_error::ApiError> {
+    if user.effective_permission() == "admin" {
+        return Ok(());
+    }
+
+    let lookup = |db: &str, env: &str| -> Option<(String, String)> {
+        conn.query_row(
+            "SELECT allowed_roles_json, allowed_groups_json FROM access_policies WHERE database_name = ?1 AND environment = ?2",
+            rusqlite::params![db, env],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).ok()
+    };
+
+    let policy = lookup(database, environment)
+        .or_else(|| lookup("*", environment))
+        .or_else(|| lookup(database, "*"))
+        .or_else(|| lookup("*", "*"));
+
+    let Some((roles_json, groups_json)) = policy else {
+        return Ok(());
+    };
+
+    crate::limits::require_pro("Access policies", license)?;
+
+    let allowed_roles: Vec<String> = serde_json::from_str(&roles_json).unwrap_or_default();
+    let allowed_groups: Vec<String> = serde_json::from_str(&groups_json).unwrap_or_default();
+
+    if allowed_roles.is_empty() && allowed_groups.is_empty() {
+        return Ok(());
+    }
+
+    let role_match = allowed_roles.iter().any(|r| user.roles.iter().any(|ur| ur == r));
+    let group_match = allowed_groups.iter().any(|g| user.groups.iter().any(|ug| ug == g));
+
+    if role_match || group_match {
+        Ok(())
+    } else {
+        Err(crate::api_error::ApiError::forbidden(format!(
+            "access denied: you are not authorized to access database '{database}' in '{environment}'"
+        )).with_code("access_policy_denied"))
+    }
+}
+
 // --- Policy lookups ---
 
 pub fn get_execution_policy(

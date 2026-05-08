@@ -9,7 +9,7 @@ pub mod webhook_repo;
 use rusqlite::Connection;
 
 /// Latest schema version. Increment when adding migrations.
-pub const LATEST_SCHEMA_VERSION: i64 = 6;
+pub const LATEST_SCHEMA_VERSION: i64 = 7;
 
 /// Initialize SQLite database with WAL mode and versioned schema.
 pub fn init(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -200,6 +200,22 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Erro
             }
             Ok(())
         }
+        7 => {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS access_policies (
+                    id TEXT PRIMARY KEY,
+                    database_name TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    allowed_roles_json TEXT NOT NULL DEFAULT '[]',
+                    allowed_groups_json TEXT NOT NULL DEFAULT '[]',
+                    source TEXT NOT NULL DEFAULT 'api',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(database_name, environment)
+                )",
+            )?;
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -371,6 +387,18 @@ fn create_schema_v1(conn: &Connection) -> Result<(), rusqlite::Error> {
             database_name TEXT NOT NULL,
             environment TEXT NOT NULL,
             webhooks_json TEXT NOT NULL DEFAULT '[]',
+            source TEXT NOT NULL DEFAULT 'api',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(database_name, environment)
+        );
+
+        CREATE TABLE IF NOT EXISTS access_policies (
+            id TEXT PRIMARY KEY,
+            database_name TEXT NOT NULL,
+            environment TEXT NOT NULL,
+            allowed_roles_json TEXT NOT NULL DEFAULT '[]',
+            allowed_groups_json TEXT NOT NULL DEFAULT '[]',
             source TEXT NOT NULL DEFAULT 'api',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,

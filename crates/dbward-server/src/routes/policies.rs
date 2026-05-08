@@ -898,3 +898,109 @@ pub(crate) async fn delete_notification_policy(
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }
+
+// --- Access Policies ---
+
+pub(crate) async fn list_access_policies(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
+    let user = auth::authenticate(&headers, &state).await?;
+    authz::authorize_and_audit(&user, Action::ListPolicy, Resource::PolicyObject, &state).await?;
+
+    let conn = state.sqlite.lock().await;
+    let mut stmt = conn
+        .prepare("SELECT id, database_name, environment, allowed_roles_json, allowed_groups_json, source, created_at FROM access_policies ORDER BY database_name, environment")
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+    let rows: Vec<serde_json::Value> = stmt
+        .query_map([], |row| {
+            let roles: String = row.get(3)?;
+            let groups: String = row.get(4)?;
+            Ok(json!({
+                "id": row.get::<_, String>(0)?,
+                "database": row.get::<_, String>(1)?,
+                "environment": row.get::<_, String>(2)?,
+                "allowed_roles": serde_json::from_str::<serde_json::Value>(&roles).unwrap_or_default(),
+                "allowed_groups": serde_json::from_str::<serde_json::Value>(&groups).unwrap_or_default(),
+                "source": row.get::<_, String>(5)?,
+                "created_at": row.get::<_, String>(6)?,
+            }))
+        })
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+
+    Ok(Json(json!({"access_policies": rows})))
+}
+
+pub(crate) async fn create_access_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<impl IntoResponse, crate::api_error::ApiError> {
+    let user = auth::authenticate(&headers, &state).await?;
+    authz::authorize_and_audit(&user, Action::CreatePolicy, Resource::PolicyObject, &state).await?;
+    crate::limits::require_pro("Access policies", &state.license)?;
+
+    let database = body["database"]
+        .as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "database required".into()))?;
+    let environment = body["environment"]
+        .as_str()
+        .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
+    let allowed_roles = body["allowed_roles"]
+        .as_array()
+        .map(|a| serde_json::to_string(a).unwrap_or_else(|_| "[]".into()))
+        .unwrap_or_else(|| "[]".into());
+    let allowed_groups = body["allowed_groups"]
+        .as_array()
+        .map(|a| serde_json::to_string(a).unwrap_or_else(|_| "[]".into()))
+        .unwrap_or_else(|| "[]".into());
+
+    let id = format!("{database}:{environment}");
+    let now = chrono::Utc::now().to_rfc3339();
+
+    let conn = state.sqlite.lock().await;
+    conn.execute(
+        "INSERT INTO access_policies (id, database_name, environment, allowed_roles_json, allowed_groups_json, source, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'api', ?6, ?6)",
+        rusqlite::params![id, database, environment, allowed_roles, allowed_groups, now],
+    )
+    .map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            crate::api_error::ApiError::conflict(format!(
+                "access policy for {database}:{environment} already exists"
+            ))
+        } else {
+            crate::api_error::ApiError::internal(e.to_string())
+        }
+    })?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({"id": id, "database": database, "environment": environment})),
+    ))
+}
+
+pub(crate) async fn delete_access_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
+    let user = auth::authenticate(&headers, &state).await?;
+    authz::authorize_and_audit(&user, Action::DeletePolicy, Resource::PolicyObject, &state).await?;
+
+    let conn = state.sqlite.lock().await;
+    let deleted = conn
+        .execute(
+            "DELETE FROM access_policies WHERE id = ?1",
+            rusqlite::params![id],
+        )
+        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+
+    if deleted == 0 {
+        return Err(crate::api_error::ApiError::not_found("access policy not found"));
+    }
+
+    Ok(Json(json!({"id": id, "deleted": true})))
+}

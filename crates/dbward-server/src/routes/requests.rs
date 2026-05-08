@@ -695,8 +695,17 @@ pub(crate) async fn create_request(
         .with_code("approver_cannot_create_request"));
     }
 
-    // Evaluate workflow policy
+    // Check access policy (DB-level access control)
     let mut conn = state.sqlite.lock().await;
+    crate::db::policy_repo::check_access_policy(
+        &conn,
+        database_name,
+        environment,
+        &user,
+        &state.license,
+    )?;
+
+    // Evaluate workflow policy
     let decision = crate::db::policy_repo::evaluate_approval_policy(
         &conn,
         database_name,

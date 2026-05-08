@@ -109,6 +109,14 @@ pub fn router(state: AppState) -> Router {
                 .delete(policies::delete_notification_policy),
         )
         .route(
+            "/api/access-policies",
+            get(policies::list_access_policies).post(policies::create_access_policy),
+        )
+        .route(
+            "/api/access-policies/{id}",
+            delete(policies::delete_access_policy),
+        )
+        .route(
             "/api/tokens",
             get(tokens::list_tokens).post(tokens::create_token),
         )
