@@ -1787,6 +1787,25 @@ pub(crate) async fn stream_result(
 mod tests {
     use super::*;
 
+    // --- is_expirable_status ---
+
+    #[test]
+    fn expirable_statuses() {
+        assert!(is_expirable_status("approved"));
+        assert!(is_expirable_status("auto_approved"));
+        assert!(is_expirable_status("break_glass"));
+    }
+
+    #[test]
+    fn non_expirable_statuses() {
+        assert!(!is_expirable_status("pending"));
+        assert!(!is_expirable_status("rejected"));
+        assert!(!is_expirable_status("cancelled"));
+        assert!(!is_expirable_status("dispatched"));
+        assert!(!is_expirable_status("completed"));
+        assert!(!is_expirable_status("failed"));
+    }
+
     // --- compute_expires_at ---
 
     #[test]

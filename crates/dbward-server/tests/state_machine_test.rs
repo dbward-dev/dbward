@@ -577,3 +577,56 @@ async fn cannot_reject_after_cancel() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 }
+
+
+#[tokio::test]
+async fn dispatch_fails_when_approval_expired() {
+    let mut state = test_state();
+    state.retention.approval_ttl_secs = 1;
+
+    let app = routes::router(state.clone());
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
+
+    // Dev creates request (production env requires approval)
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/api/requests")
+                .header("authorization", auth_header(&dev_token))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"operation":"execute_query","environment":"production","detail":"SELECT 1","database":"default"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let v = body_json(resp).await;
+    let id = v["id"].as_str().unwrap().to_string();
+
+    // Simulate: approved but expired (backdate resolved_at, set status to approved)
+    {
+        let conn = state.sqlite.lock().await;
+        let past = (chrono::Utc::now() - chrono::Duration::seconds(10)).to_rfc3339();
+        conn.execute(
+            "UPDATE requests SET status = 'approved', resolved_at = ?1 WHERE id = ?2",
+            rusqlite::params![past, id],
+        )
+        .unwrap();
+    }
+
+    // Dispatch should fail with 410 Gone (approval expired)
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/requests/{id}/dispatch"))
+                .header("authorization", auth_header(&admin_token))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::GONE);
+}
