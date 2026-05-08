@@ -7,6 +7,7 @@ use dbward_core::ClientConfig;
 use crate::config_loader;
 use crate::mcp;
 use crate::oidc_login;
+use crate::self_update;
 use crate::server_client;
 
 const LIST_DETAIL_WIDTH: usize = 30;
@@ -154,6 +155,8 @@ enum Command {
         #[command(subcommand)]
         action: ResultAction,
     },
+    /// Update dbward to the latest version
+    SelfUpdate,
 }
 
 #[derive(Subcommand)]
@@ -442,6 +445,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         }
         Command::Dev { database_url, port } => {
             return run_dev(database_url, *port).await;
+        }
+        Command::SelfUpdate => {
+            return self_update::run_self_update().await;
         }
         _ => {}
     }
@@ -1045,7 +1051,8 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         | Command::Whoami
         | Command::Server { .. }
         | Command::Agent { .. }
-        | Command::Dev { .. } => unreachable!(),
+        | Command::Dev { .. }
+        | Command::SelfUpdate => unreachable!(),
     }
 }
 

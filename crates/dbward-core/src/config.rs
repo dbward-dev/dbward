@@ -154,6 +154,7 @@ pub struct ResolvedDatabaseConfig {
     pub name: String,
     pub url: String,
     pub migrations_dir: PathBuf,
+    pub statement_timeout_secs: Option<u64>,
 }
 
 impl AgentConfig {
@@ -209,6 +210,7 @@ impl AgentConfig {
             name: name.to_string(),
             url: db.url.clone(),
             migrations_dir,
+            statement_timeout_secs: self.statement_timeout_secs.or(Some(30)),
         })
     }
 }

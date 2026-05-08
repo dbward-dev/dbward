@@ -17,7 +17,11 @@ impl Engine {
         resolved: &ResolvedDatabaseConfig,
         environment: Environment,
     ) -> Result<Self, Error> {
-        let driver = crate::driver::connect(&resolved.url).await?;
+        let driver = crate::driver::connect_with_timeout(
+            &resolved.url,
+            resolved.statement_timeout_secs,
+        )
+        .await?;
         Ok(Self {
             driver,
             database_name: resolved.name.clone(),

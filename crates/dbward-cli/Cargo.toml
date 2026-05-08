@@ -33,3 +33,6 @@ rand = "0.9"
 sha2 = "0.10"
 chrono.workspace = true
 unicode-width = "0.2"
+flate2 = "1"
+tar = "0.4"
+tempfile = "3"

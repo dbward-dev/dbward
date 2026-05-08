@@ -17,10 +17,15 @@ pub fn spawn_update_checker(enabled: bool, update_available: Arc<Mutex<Option<St
         // Initial check after 10s delay (let server finish startup)
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         loop {
-            if let Some(latest) = check_latest_version().await {
-                let current = crate::VERSION;
-                if is_newer(&latest, current) {
-                    *update_available.lock().await = Some(latest);
+            match check_latest_version().await {
+                Some(latest) => {
+                    let current = crate::VERSION;
+                    if is_newer(&latest, current) {
+                        *update_available.lock().await = Some(latest);
+                    }
+                }
+                None => {
+                    tracing::debug!("update check failed (repo may be private)");
                 }
             }
             tokio::time::sleep(std::time::Duration::from_secs(CHECK_INTERVAL_SECS)).await;
