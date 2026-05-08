@@ -168,34 +168,6 @@ pub async fn create_token_full(
             .map_err(|e| e.to_string())?;
     }
 
-    // Audit: token_created
-    let meta =
-        serde_json::json!({"subject_user": user, "role": role, "subject_type": subject_type})
-            .to_string();
-    if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
-    &crate::db::audit_event_repo::AuditEvent {
-        event_type: "token_created",
-        event_category: "token",
-        outcome: "success",
-        actor_id: "system",
-        actor_type: "system",
-        resource_type: Some("token"),
-        resource_id: Some(&token_id),
-        peer_ip: None,
-        client_ip: None,
-        client_ip_source: None,
-        request_id: None,
-        operation: None,
-        environment: None,
-        database_name: None,
-        detail_fingerprint: None,
-        detail_raw: None,
-        reason: None,
-        metadata_json: &meta,
-    },) {
-                eprintln!("audit write failed: {e}");
-            }
-
     Ok((token_id, raw_token))
 }
 

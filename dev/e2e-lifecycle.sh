@@ -143,4 +143,15 @@ else
   fail "Unicode" "detail=$DETAIL"
 fi
 
+# --- Audit integrity ---
+echo "--- Audit integrity ---"
+VERIFY=$(api GET "/api/audit/verify" "$ADMIN_BACKEND")
+INTACT=$(echo "$VERIFY" | python3 -c "import sys,json; print(str(json.load(sys.stdin).get('chain_intact',False)).lower())")
+COUNT=$(echo "$VERIFY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verified_events',0))")
+if [ "$INTACT" = "true" ] && [ "$COUNT" -gt 0 ] 2>/dev/null; then
+  pass "Hash chain intact ($COUNT events)"
+else
+  fail "Audit chain" "intact=$INTACT count=$COUNT"
+fi
+
 summary

@@ -1685,6 +1685,33 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                         .await
                         .map_err(dbward_core::Error::Server)?
                 };
+
+                // Audit: token_created (CLI path, actor=system)
+                {
+                    let type_label = if *agent { "agent" } else { "user" };
+                    let meta = serde_json::json!({
+                        "subject_user": user, "role": role, "subject_type": type_label,
+                    }).to_string();
+                    let mut conn = state.sqlite.lock().await;
+                    let _ = dbward_server::db::audit_event_repo::insert_audit_event(
+                        &mut conn,
+                        &dbward_server::db::audit_event_repo::AuditEvent {
+                            event_type: "token_created",
+                            event_category: "token",
+                            outcome: "success",
+                            actor_id: "system",
+                            actor_type: "system",
+                            resource_type: Some("token"),
+                            resource_id: Some(&token_id),
+                            peer_ip: None, client_ip: None, client_ip_source: None,
+                            request_id: None, operation: None, environment: None,
+                            database_name: None, detail_fingerprint: None, detail_raw: None,
+                            reason: None,
+                            metadata_json: &meta,
+                        },
+                    );
+                }
+
                 let type_label = if *agent { "agent" } else { "user" };
                 println!("Token created:");
                 println!("  ID:    {token_id}");

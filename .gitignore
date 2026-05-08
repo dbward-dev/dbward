@@ -2,6 +2,7 @@
 *.swp
 *.swo
 .DS_Store
+.env
 db/migrations/
 dev/secrets/
 dev/tokens/
