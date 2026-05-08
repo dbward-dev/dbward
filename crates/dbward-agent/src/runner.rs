@@ -54,6 +54,9 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
     install_shutdown_task(draining.clone());
     let mut drain_started_at = None;
 
+    let consecutive_failures = AtomicUsize::new(0);
+    let ready_removed = AtomicBool::new(false);
+
     loop {
         if draining.load(Ordering::SeqCst) {
             if drain_started_at.is_none() {
@@ -77,16 +80,28 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
             continue;
         }
 
-        poll_once(&config, &client, &public_key, &in_flight).await;
+        poll_once(
+            &config,
+            &client,
+            &public_key,
+            &in_flight,
+            &consecutive_failures,
+            &ready_removed,
+        )
+        .await;
         tokio::time::sleep(poll_interval).await;
     }
 }
+
+const MAX_CONSECUTIVE_POLL_FAILURES: usize = 6;
 
 async fn poll_once(
     config: &AgentConfig,
     client: &AgentClient,
     public_key: &ed25519_dalek::VerifyingKey,
     in_flight: &AtomicUsize,
+    consecutive_failures: &AtomicUsize,
+    ready_removed: &AtomicBool,
 ) {
     let jobs = match client
         .poll(
@@ -96,9 +111,32 @@ async fn poll_once(
         )
         .await
     {
-        Ok(j) => j,
+        Ok(j) => {
+            let prev = consecutive_failures.swap(0, Ordering::SeqCst);
+            if prev >= MAX_CONSECUTIVE_POLL_FAILURES && ready_removed.swap(false, Ordering::SeqCst)
+            {
+                if let Err(e) = write_probe(READY_PROBE_PATH) {
+                    eprintln!("failed to restore readiness probe: {e}");
+                } else {
+                    eprintln!("readiness probe restored after recovery");
+                }
+            }
+            j
+        }
         Err(e) => {
-            eprintln!("poll failed: {e}");
+            let count = consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1;
+            eprintln!("poll failed ({count}/{MAX_CONSECUTIVE_POLL_FAILURES}): {e}");
+            if count >= MAX_CONSECUTIVE_POLL_FAILURES
+                && !ready_removed.swap(true, Ordering::SeqCst)
+            {
+                if let Err(re) = remove_probe(READY_PROBE_PATH) {
+                    eprintln!("failed to remove readiness probe: {re}");
+                } else {
+                    eprintln!(
+                        "readiness probe removed after {count} consecutive poll failures"
+                    );
+                }
+            }
             return;
         }
     };
