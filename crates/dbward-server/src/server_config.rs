@@ -339,3 +339,129 @@ impl ServerConfig {
         Ok(())
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn load_returns_default_when_file_missing() {
+        let config = ServerConfig::load(std::path::Path::new("/nonexistent/path.toml")).unwrap();
+        // Default trait gives empty strings; serde defaults only apply during deserialization
+        assert!(config.webhooks.is_empty());
+        assert!(config.workflows.is_empty());
+    }
+
+    #[test]
+    fn load_parses_minimal_toml() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, r#"listen = "0.0.0.0:9000""#).unwrap();
+        let config = ServerConfig::load(f.path()).unwrap();
+        assert_eq!(config.listen, "0.0.0.0:9000");
+        assert_eq!(config.data, "dbward.db"); // default preserved
+    }
+
+    #[test]
+    fn load_rejects_invalid_toml() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, "not valid toml {{{{").unwrap();
+        assert!(ServerConfig::load(f.path()).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_empty_webhook_secret() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"
+[[webhooks]]
+url = "https://example.com/hook"
+events = ["request_created"]
+secret = "   "
+"#
+        )
+        .unwrap();
+        let err = ServerConfig::load(f.path()).unwrap_err();
+        assert!(err.contains("secret must not be empty"));
+    }
+
+    #[test]
+    fn validate_allows_webhook_without_secret() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"
+[[webhooks]]
+url = "https://example.com/hook"
+events = ["request_created"]
+"#
+        )
+        .unwrap();
+        assert!(ServerConfig::load(f.path()).is_ok());
+    }
+
+    #[test]
+    fn retention_defaults() {
+        let r = RetentionConfig::default();
+        assert_eq!(r.request_ttl_days, 90);
+        assert_eq!(r.audit_ttl_days, 365);
+        assert_eq!(r.approval_ttl_secs, 86400);
+    }
+
+    #[test]
+    fn load_parses_workflow() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"
+[[workflows]]
+database = "app"
+environment = "production"
+operations = ["execute_query"]
+
+[[workflows.steps]]
+type = "approval"
+
+[[workflows.steps.approvers]]
+role = "admin"
+min = 2
+"#
+        )
+        .unwrap();
+        let config = ServerConfig::load(f.path()).unwrap();
+        assert_eq!(config.workflows.len(), 1);
+        assert_eq!(config.workflows[0].steps[0].approvers[0].min, 2);
+        assert_eq!(
+            config.workflows[0].steps[0].approvers[0].role,
+            Some("admin".into())
+        );
+    }
+
+    #[test]
+    fn workflow_step_defaults() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"
+[[workflows]]
+database = "*"
+environment = "*"
+
+[[workflows.steps]]
+type = "approval"
+
+[[workflows.steps.approvers]]
+role = "admin"
+"#
+        )
+        .unwrap();
+        let config = ServerConfig::load(f.path()).unwrap();
+        let step = &config.workflows[0].steps[0];
+        assert_eq!(step.mode, "all"); // default
+        assert!(step.require_distinct_actors); // default true
+        assert_eq!(step.approvers[0].min, 1); // default
+    }
+}

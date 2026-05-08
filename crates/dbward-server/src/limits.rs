@@ -213,3 +213,111 @@ pub fn apply_free_limits(mut config: ServerConfig) -> ServerConfig {
     config.notification_policies.clear();
     config
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn free_license() -> License {
+        License { plan: crate::license::Plan::Free }
+    }
+
+    fn pro_license() -> License {
+        License { plan: crate::license::Plan::Pro }
+    }
+
+    // --- validate_config ---
+
+    #[test]
+    fn validate_config_empty_for_pro() {
+        let config = ServerConfig::default();
+        assert!(validate_config(&config, &pro_license()).is_empty());
+    }
+
+    #[test]
+    fn validate_config_no_warnings_under_limit() {
+        let config = ServerConfig::default();
+        assert!(validate_config(&config, &free_license()).is_empty());
+    }
+
+    #[test]
+    fn validate_config_warns_excess_workflows() {
+        let mut config = ServerConfig::default();
+        config.workflows = (0..FREE_WORKFLOWS + 2)
+            .map(|i| crate::server_config::WorkflowDef {
+                database: format!("db{i}"),
+                environment: "*".into(),
+                operations: vec![],
+                steps: vec![],
+                require_reason: false,
+                allow_same_approver_across_steps: false,
+                allow_self_approve: false,
+            })
+            .collect();
+        let warnings = validate_config(&config, &free_license());
+        assert!(warnings.iter().any(|w| matches!(w, ConfigWarning::Truncated { resource: "workflows", .. })));
+    }
+
+    #[test]
+    fn validate_config_blocks_oidc() {
+        let mut config = ServerConfig::default();
+        config.auth = Some(crate::server_config::AuthConfig {
+            mode: "oidc".into(),
+            oidc: Some(crate::server_config::OidcConfig {
+                issuer: "https://example.com".into(),
+                client_id: "id".into(),
+                client_secret_env: None,
+                jwks_uri: None,
+                default_role: "readonly".into(),
+                role_mappings: vec![],
+            }),
+            break_glass_roles: vec![],
+        });
+        let warnings = validate_config(&config, &free_license());
+        assert!(warnings.iter().any(|w| matches!(w, ConfigWarning::HardBlock("OIDC/SSO"))));
+    }
+
+    // --- apply_free_limits ---
+
+    #[test]
+    fn apply_free_limits_truncates() {
+        let mut config = ServerConfig::default();
+        config.workflows = (0..10)
+            .map(|i| crate::server_config::WorkflowDef {
+                database: format!("db{i}"),
+                environment: "*".into(),
+                operations: vec![],
+                steps: vec![],
+                require_reason: false,
+                allow_same_approver_across_steps: false,
+                allow_self_approve: false,
+            })
+            .collect();
+        let limited = apply_free_limits(config);
+        assert_eq!(limited.workflows.len(), FREE_WORKFLOWS);
+    }
+
+    // --- require_pro ---
+
+    #[test]
+    fn require_pro_passes_for_pro() {
+        assert!(require_pro("feature", &pro_license()).is_ok());
+    }
+
+    #[test]
+    fn require_pro_blocks_for_free() {
+        let err = require_pro("feature", &free_license()).unwrap_err();
+        assert_eq!(err.status, StatusCode::PAYMENT_REQUIRED);
+    }
+
+    // --- Resource ---
+
+    #[test]
+    fn resource_limits_are_correct() {
+        assert_eq!(Resource::Workflow.limit(), 5);
+        assert_eq!(Resource::Agent.limit(), 3);
+        assert_eq!(Resource::Database.limit(), 3);
+        assert_eq!(Resource::Token.limit(), 10);
+    }
+}

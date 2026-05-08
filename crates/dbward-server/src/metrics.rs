@@ -525,3 +525,62 @@ fn escape_label_value(value: &str) -> String {
 fn format_seconds(sum_micros: u64) -> String {
     format!("{:.6}", sum_micros as f64 / 1_000_000.0)
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn record_request_created_increments() {
+        let m = Metrics::new();
+        m.record_request_created("pending", "production", "app");
+        m.record_request_created("pending", "production", "app");
+        m.record_request_created("auto_approved", "dev", "app");
+
+        let map = m.requests_total.lock().unwrap();
+        let key = ("pending".into(), "production".into(), "app".into());
+        assert_eq!(map[&key].load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn record_approval_increments() {
+        let m = Metrics::new();
+        m.record_approval("approve");
+        m.record_approval("approve");
+        m.record_approval("reject");
+
+        let map = m.approvals_total.lock().unwrap();
+        assert_eq!(map["approve"].load(Ordering::Relaxed), 2);
+        assert_eq!(map["reject"].load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn record_lease_expirations_also_records_execution_lost() {
+        let m = Metrics::new();
+        m.record_agent_lease_expirations(3);
+        assert_eq!(m.agent_lease_expirations_total.load(Ordering::Relaxed), 3);
+
+        let map = m.agent_executions_total.lock().unwrap();
+        assert_eq!(map["execution_lost"].load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn record_http_request_no_panic() {
+        let m = Metrics::new();
+        m.record_http_request("GET", "/api/requests", 200, 0.05);
+        m.record_http_request("GET", "/api/requests", 200, 0.15);
+        m.record_http_request("POST", "/api/requests", 201, 1.5);
+
+        let map = m.http_requests_total.lock().unwrap();
+        let key = ("GET".into(), "/api/requests".into(), 200u16);
+        assert_eq!(map[&key].load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn format_seconds_precision() {
+        assert_eq!(format_seconds(1_500_000), "1.500000");
+        assert_eq!(format_seconds(0), "0.000000");
+        assert_eq!(format_seconds(123), "0.000123");
+    }
+}
