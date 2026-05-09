@@ -86,6 +86,15 @@ By contributing, you agree that your contributions will be licensed under:
 - `dbward-server`: [BSL 1.1](LICENSE-BSL) (converts to Apache-2.0 on 2029-05-08)
 - All other crates: [Apache-2.0](LICENSE-APACHE) OR [MIT](LICENSE-MIT)
 
+## Breaking Change Policy
+
+While dbward is pre-1.0 (v0.x):
+
+- **Patch versions (0.1.x)**: No breaking changes. Config files, API, and CLI remain compatible.
+- **Minor versions (0.x.0)**: May introduce breaking changes. Always documented in CHANGELOG.
+- **SQLite schema**: Forward-compatible only. Columns are added, never removed. Rollback is possible by restoring the auto-created backup.
+- **Config files**: New fields always have default values. Existing TOML files continue to work without modification.
+
 ## Questions?
 
 Open a [GitHub Discussion](https://github.com/metapox/dbward/discussions) or file an issue.
