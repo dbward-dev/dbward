@@ -67,7 +67,7 @@ pub(crate) async fn create_webhook(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
     let events_json = serde_json::to_string(&body.events)
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        ?;
 
     let conn = state.db().await;
     crate::db::webhook_repo::insert_webhook(
@@ -80,7 +80,7 @@ pub(crate) async fn create_webhook(
         "api",
         &now,
     )
-    .map_err(|e| ApiError::internal(e.to_string()))?;
+    ?;
     drop(conn);
 
     {
@@ -131,7 +131,7 @@ pub(crate) async fn list_webhooks(
 
     let conn = state.db().await;
     let webhooks = crate::db::webhook_repo::list_webhooks(&conn)
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        ?;
 
     let items: Vec<serde_json::Value> = webhooks
         .into_iter()
@@ -165,7 +165,7 @@ pub(crate) async fn get_webhook(
 
     let conn = state.db().await;
     let w = crate::db::webhook_repo::get_webhook(&conn, &id)
-        .map_err(|e| ApiError::internal(e.to_string()))?
+        ?
         .ok_or_else(|| ApiError::not_found("webhook not found").with_code("webhook_not_found"))?;
 
     let events: Vec<String> = serde_json::from_str(&w.events_json).unwrap_or_default();
@@ -225,14 +225,14 @@ pub(crate) async fn update_webhook(
         secret_param,
         &now,
     )
-    .map_err(|e| ApiError::internal(e.to_string()))?;
+    ?;
 
     if !updated {
         return Err(ApiError::not_found("webhook not found").with_code("webhook_not_found"));
     }
 
     let w = crate::db::webhook_repo::get_webhook(&conn, &id)
-        .map_err(|e| ApiError::internal(e.to_string()))?
+        ?
         .ok_or_else(|| ApiError::internal("webhook disappeared after update"))?;
     drop(conn);
 
@@ -283,7 +283,7 @@ pub(crate) async fn delete_webhook(
 
     let conn = state.db().await;
     let deleted = crate::db::webhook_repo::delete_webhook(&conn, &id)
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        ?;
     drop(conn);
 
     if !deleted {

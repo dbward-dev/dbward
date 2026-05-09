@@ -133,7 +133,7 @@ fn validate_metadata(
     }
 
     let metadata_json = serde_json::to_string(metadata)
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
     if metadata_json.len() > MAX_METADATA_JSON_BYTES {
         return Err(crate::api_error::ApiError::bad_request(format!(
             "metadata must be at most {MAX_METADATA_JSON_BYTES} bytes"
@@ -317,7 +317,7 @@ pub(crate) async fn list_requests(
     );
     let mut stmt = conn
         .prepare(&query_sql)
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     let candidates: Vec<(serde_json::Value, String, Option<String>)> = stmt
         .query_map(rusqlite::params_from_iter(&bind_values), |row| {
@@ -342,9 +342,9 @@ pub(crate) async fn list_requests(
                 workflow_snapshot_json,
             ))
         })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        ?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     let all_approvals = load_pending_request_approvals(&conn)?;
     let mut filtered = Vec::new();
@@ -402,7 +402,7 @@ pub(crate) fn list_requests_pending_for_me(
         .prepare(
             "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at, workflow_snapshot_json, reason FROM requests WHERE status = 'pending' ORDER BY created_at DESC",
         )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     let candidates: Vec<(serde_json::Value, String, Option<String>)> = stmt
         .query_map([], |row| {
@@ -428,9 +428,9 @@ pub(crate) fn list_requests_pending_for_me(
                 ws,
             ))
         })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        ?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     // Batch-load all approvals for pending requests (eliminates N+1)
     let all_approvals = load_pending_request_approvals(conn)?;
@@ -458,7 +458,7 @@ fn load_pending_request_approvals(
 ) -> Result<ApprovalMap, crate::api_error::ApiError> {
     let mut stmt = conn
         .prepare("SELECT request_id, step_index, actor_id, actor_role FROM approvals WHERE action = 'approve' AND request_id IN (SELECT id FROM requests WHERE status = 'pending')")
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
     let rows = stmt
         .query_map([], |row| {
             Ok((
@@ -468,9 +468,9 @@ fn load_pending_request_approvals(
                 row.get::<_, String>(3)?,
             ))
         })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        ?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
     let mut map: ApprovalMap = HashMap::new();
     for (req_id, step, actor, role) in rows {
         map.entry(req_id).or_default().push((step, actor, role));
@@ -538,8 +538,7 @@ pub(crate) fn get_approvals_for_request(
     conn: &rusqlite::Connection,
     request_id: &str,
 ) -> Result<Vec<(i64, String, String)>, crate::api_error::ApiError> {
-    crate::db::request_repo::get_approvals(conn, request_id)
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))
+    Ok(crate::db::request_repo::get_approvals(conn, request_id)?)
 }
 
 pub(crate) fn current_approval_resource(
@@ -825,7 +824,7 @@ pub(crate) async fn create_request(
         Err(err) if is_unique_idempotency_key_violation(&err) => {
             if let Some(ref key) = idempotency_key
                 && let Some(existing) = crate::db::request_repo::find_by_idempotency_key(&conn, key)
-                    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+                    ?
             {
                 return Ok((
                     StatusCode::OK,
@@ -846,7 +845,7 @@ pub(crate) async fn create_request(
 
     if status == "auto_approved" {
         crate::db::request_repo::mark_dispatched(&conn, &id, &now)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     state
@@ -894,7 +893,7 @@ pub(crate) async fn create_request(
 
     if emergency {
         crate::db::request_repo::mark_dispatched(&conn, &id, &now)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         state.metrics.record_break_glass();
         let token = state
             .token_signer
@@ -1127,9 +1126,9 @@ pub(crate) async fn reject_request(
         let now = chrono::Utc::now().to_rfc3339();
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         crate::db::request_repo::mark_rejected(&tx, &id, &now)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         crate::db::request_repo::insert_approval(
             &tx,
             &id,
@@ -1140,9 +1139,9 @@ pub(crate) async fn reject_request(
             comment,
             &now,
         )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         state.metrics.record_approval("reject");
 
         // Audit: request_rejected
@@ -1246,7 +1245,7 @@ pub(crate) async fn cancel_request(
             cancel_reason.as_deref(),
             &now,
         )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
         if !updated {
             return Err(crate::api_error::ApiError::conflict(
                 "request cannot be cancelled",
@@ -1369,7 +1368,7 @@ pub(crate) async fn get_request(
                     .token_signer
                     .issue(id, &operation, &environment, &database_name, &detail);
             resp["execution_token"] = serde_json::to_value(token)
-                .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+                ?;
         }
 
         // Include approval_progress when workflow snapshot exists
@@ -1380,7 +1379,7 @@ pub(crate) async fn get_request(
         {
             let approvals: Vec<(i64, String, String, String, Option<String>, String)> = conn
                 .prepare("SELECT step_index, actor_id, actor_role, created_at, comment, action FROM approvals WHERE request_id = ?1")
-                .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+                ?
                 .query_map(rusqlite::params![id], |row| {
                     Ok((
                         row.get(0)?,
@@ -1391,9 +1390,9 @@ pub(crate) async fn get_request(
                         row.get(5)?,
                     ))
                 })
-                .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+                ?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+                ?;
 
             let step_views: Vec<serde_json::Value> = steps.iter().enumerate().map(|(i, step)| {
                         let step_apprs: Vec<serde_json::Value> = approvals.iter()
@@ -1623,7 +1622,7 @@ pub(crate) async fn dispatch_request(
 
     if status != "dispatched"
         && !crate::db::request_repo::mark_dispatched(&conn, &id, &now)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+            ?
     {
         return Err(crate::api_error::ApiError::conflict(
             "request cannot be dispatched (wrong status)",

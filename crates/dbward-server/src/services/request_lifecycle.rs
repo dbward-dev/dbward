@@ -118,9 +118,9 @@ pub(crate) async fn approve_request_inner(
         let now = chrono::Utc::now().to_rfc3339();
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         if !crate::db::request_repo::mark_approved(&tx, id, &now)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+            ?
         {
             return Err(crate::api_error::ApiError::conflict(
                 "request state changed during approval",
@@ -137,9 +137,9 @@ pub(crate) async fn approve_request_inner(
             comment,
             &now,
         )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
 
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
@@ -169,13 +169,13 @@ pub(crate) async fn approve_request_inner(
     let existing_approvals: Vec<(i64, String, String)> = {
         let mut stmt = conn.prepare(
             "SELECT step_index, actor_id, actor_role FROM approvals WHERE request_id = ?1 AND action = 'approve'"
-        ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        )?;
         stmt.query_map(rusqlite::params![id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        ?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        ?
     };
 
     // Check cross-step distinct approver constraint
@@ -319,7 +319,7 @@ pub(crate) async fn approve_request_inner(
     let now = chrono::Utc::now().to_rfc3339();
     let tx = conn
         .transaction()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
     crate::db::request_repo::insert_approval(
         &tx,
         id,
@@ -330,7 +330,7 @@ pub(crate) async fn approve_request_inner(
         comment,
         &now,
     )
-    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+    ?;
 
     let mut updated_approvals = existing_approvals.clone();
     updated_approvals.push((
@@ -348,7 +348,7 @@ pub(crate) async fn approve_request_inner(
 
     if all_satisfied {
         if !crate::db::request_repo::mark_approved(&tx, id, &now)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+            ?
         {
             return Err(crate::api_error::ApiError::conflict(
                 "request state changed during approval",
@@ -356,7 +356,7 @@ pub(crate) async fn approve_request_inner(
             .with_code("request_approve_wrong_status"));
         }
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
 
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
@@ -382,9 +382,9 @@ pub(crate) async fn approve_request_inner(
         })
     } else {
         crate::db::request_repo::touch_updated_at(&tx, id, &now)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
 
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);

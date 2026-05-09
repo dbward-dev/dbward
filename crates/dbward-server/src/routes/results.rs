@@ -79,11 +79,11 @@ pub async fn get_result_content(
             .prepare(
                 "SELECT selector_type, selector_value FROM result_access WHERE request_id = ?1",
             )
-            .map_err(|e| ApiError::internal(e.to_string()))?;
+            ?;
         stmt.query_map([&request_id], |row| Ok((row.get(0)?, row.get(1)?)))
-            .map_err(|e| ApiError::internal(e.to_string()))?
+            ?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| ApiError::internal(e.to_string()))?
+            ?
     };
 
     let allowed = selectors
@@ -187,7 +187,7 @@ pub async fn list_results(
 
     let mut stmt = conn
         .prepare(&sql)
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        ?;
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params
         .iter()
         .map(|p| p as &dyn rusqlite::types::ToSql)
@@ -207,9 +207,9 @@ pub async fn list_results(
                 "expires_at": row.get::<_, String>(8)?,
             }))
         })
-        .map_err(|e| ApiError::internal(e.to_string()))?
+        ?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        ?;
 
     Ok(Json(json!({ "results": results })))
 }

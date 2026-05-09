@@ -106,7 +106,7 @@ pub(crate) async fn list_audit_events(
 
     let mut stmt = conn
         .prepare(&query_sql)
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
     let rows = stmt
         .query_map(rusqlite::params_from_iter(&bind_values), |row| {
             Ok(json!({
@@ -132,7 +132,7 @@ pub(crate) async fn list_audit_events(
                 "created_at": row.get::<_, String>(19)?,
             }))
         })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     let entries: Vec<serde_json::Value> = rows.filter_map(|r| r.ok()).collect();
 
@@ -161,7 +161,7 @@ pub(crate) async fn verify_audit_chain(
 
     let conn = state.db().await;
     let (count, broken) = crate::db::audit_event_repo::verify_hash_chain(&conn)
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     Ok(Json(json!({
         "verified_events": count,
