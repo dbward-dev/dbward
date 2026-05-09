@@ -372,7 +372,7 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
             is_admin(principal) || principal.user == *requester_id
         }
         ("CreateRequest", Resource::Global) | ("CreateRequest", Resource::Request { .. }) => {
-            role_allows(&principal.permission, "developer")
+            role_allows(&principal.permission, dbward_core::role::DEVELOPER)
         }
         ("GetRequest", Resource::Request { requester_id, .. }) => {
             is_admin(principal) || principal.user == *requester_id
@@ -436,7 +436,7 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
             if is_admin(principal) {
                 return true;
             }
-            principal.permission == "developer"
+            principal.permission == dbward_core::role::DEVELOPER
                 && requested_user
                     .as_ref()
                     .map(|requested| requested == &principal.user)
@@ -477,20 +477,11 @@ fn principal_matches_approver(
 }
 
 fn role_allows(actual: &str, required: &str) -> bool {
-    permission_rank(actual) >= permission_rank(required)
-}
-
-fn permission_rank(permission: &str) -> i8 {
-    match permission {
-        "admin" => 3,
-        "developer" => 2,
-        "readonly" => 1,
-        _ => 0,
-    }
+    dbward_core::role::satisfies(actual, required)
 }
 
 fn is_admin(principal: &Principal) -> bool {
-    principal.permission == "admin"
+    principal.permission == dbward_core::role::ADMIN
 }
 
 /// Evaluate a principal selector entry against the given principal.
