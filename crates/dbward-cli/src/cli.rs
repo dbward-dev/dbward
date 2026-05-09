@@ -543,6 +543,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     no_store,
                 })
                 .await?;
+            if no_store {
+                eprintln!("⚠ --no-store: result will not be persisted. If you disconnect, it cannot be recovered.");
+            }
 
             match status.as_str() {
                 "dispatched" | "break_glass" | "running" => {

@@ -35,7 +35,22 @@ pub async fn get_result_content(
             [&request_id],
             |row| row.get(0),
         )
-        .map_err(|_| ApiError::not_found("result not stored for this request"))?;
+        .map_err(|_| {
+            // Check if this was a --no-store request
+            let is_no_store: bool = conn
+                .query_row(
+                    "SELECT no_store FROM requests WHERE id = ?1",
+                    [&request_id],
+                    |row| row.get::<_, i64>(0).map(|v| v != 0),
+                )
+                .unwrap_or(false);
+            if is_no_store {
+                ApiError::new(StatusCode::GONE, "this request was created with --no-store; result was not persisted")
+                    .with_code("result_not_stored")
+            } else {
+                ApiError::not_found("result not stored for this request")
+            }
+        })?;
 
     if status == "storage_failed" {
         return Err(
