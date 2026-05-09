@@ -197,7 +197,7 @@ pub fn validate_config(config: &ServerConfig, license: &License) -> Vec<ConfigWa
     if config.auth.as_ref().and_then(|a| a.oidc.as_ref()).is_some() {
         w.push(ConfigWarning::HardBlock("OIDC/SSO"));
     }
-    if matches!(config.result_storage, ResultStorageConfig::S3 { .. }) {
+    if matches!(config.result_storage, Some(ResultStorageConfig::S3 { .. })) {
         w.push(ConfigWarning::HardBlock("S3 result storage"));
     }
     w

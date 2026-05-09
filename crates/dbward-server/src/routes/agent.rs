@@ -464,9 +464,20 @@ pub(crate) async fn agent_result(
         )
     };
 
-    // Save to result storage (always when configured; share_with adds extra access)
+    // Save to result storage (skip if no_store flag is set)
     if success {
-        if let Some(ref store) = state.result_store {
+        let no_store: bool = {
+            let conn = state.sqlite.lock().await;
+            conn.query_row(
+                "SELECT no_store FROM requests WHERE id = ?1",
+                [&request_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+                != 0
+        };
+
+        if !no_store {
             let share_with: Vec<String> = {
                 let conn = state.sqlite.lock().await;
                 conn.query_row(
@@ -483,10 +494,10 @@ pub(crate) async fn agent_result(
             let data = serde_json::to_vec(&result).unwrap_or_default();
             let content_length = data.len() as i64;
             let checksum = format!("{:x}", sha2::Sha256::digest(&data));
-            let storage_key = store.storage_key(&request_id);
-            let backend = store.backend();
+            let storage_key = state.result_store.storage_key(&request_id);
+            let backend = state.result_store.backend();
 
-            match store.put(&request_id, &data).await {
+            match state.result_store.put(&request_id, &data).await {
                 Ok(()) => {
                     let now = chrono::Utc::now().to_rfc3339();
                     let retention_days = state.retention.result_ttl_days as i64;
@@ -531,7 +542,7 @@ pub(crate) async fn agent_result(
                     };
 
                     if db_write_result.is_err() {
-                        if let Err(err) = store.delete(&request_id).await {
+                        if let Err(err) = state.result_store.delete(&request_id).await {
                             error!(
                                 request_id = %request_id,
                                 error = %err,

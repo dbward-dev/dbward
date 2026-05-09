@@ -206,7 +206,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
             }
 
             // Purge expired result storage (release mutex during I/O)
-            if let Some(ref store) = purge_result_store {
+            {
                 let expired = {
                     let conn = sqlite2.lock().await;
                     match db::maintenance::collect_expired_results(&conn) {
@@ -219,7 +219,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
                 };
                 if !expired.is_empty() {
                     for (request_id, _) in &expired {
-                        let _ = store.delete(request_id).await;
+                        let _ = purge_result_store.delete(request_id).await;
                     }
                     let conn = sqlite2.lock().await;
                     for (request_id, _) in &expired {

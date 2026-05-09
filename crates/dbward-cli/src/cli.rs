@@ -97,6 +97,9 @@ enum Command {
         /// Share result with specified principals (e.g. group:backend-team, user:bob)
         #[arg(long = "share-with")]
         share_with: Vec<String>,
+        /// Do not persist result to server storage
+        #[arg(long = "no-store")]
+        no_store: bool,
     },
     /// Search audit log
     Audit {
@@ -214,6 +217,11 @@ enum RequestAction {
 enum ResultAction {
     /// List shared results accessible to you
     List,
+    /// Get stored result content by request ID
+    Get {
+        /// Request ID (full UUID or 8-char short ID)
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -513,6 +521,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
             ref repo,
             ref idempotency_key,
             ref share_with,
+            no_store,
         } => {
             let metadata = build_request_metadata(ticket.as_deref(), repo.as_deref());
             let sw = if share_with.is_empty() {
@@ -531,6 +540,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     metadata: metadata.as_ref(),
                     idempotency_key: idempotency_key.as_deref(),
                     share_with: sw,
+                    no_store,
                 })
                 .await?;
 
@@ -636,6 +646,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     metadata: metadata.as_ref(),
                     idempotency_key,
                     share_with: sw,
+                    no_store: false,
                 })
                 .await?;
 
@@ -911,6 +922,11 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                         }
                     }
                 }
+                Ok(())
+            }
+            ResultAction::Get { ref id } => {
+                let body = sc.get_result_content(id).await?;
+                println!("{}", serde_json::to_string_pretty(&body)?);
                 Ok(())
             }
         },
@@ -1611,33 +1627,26 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                 retention: server_cfg.retention,
                 request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                result_store: match &server_cfg.result_storage {
-                    dbward_server::server_config::ResultStorageConfig::Disabled => None,
+                result_store: match server_cfg.result_storage.as_ref().expect("[result_storage] is required") {
                     dbward_server::server_config::ResultStorageConfig::Local { root_dir } => {
-                        match dbward_server::result_storage::ResultStore::new_local(root_dir) {
-                            Ok(s) => Some(std::sync::Arc::new(s)),
-                            Err(e) => {
-                                eprintln!("Warning: result storage init failed: {e}");
-                                None
-                            }
-                        }
+                        std::sync::Arc::new(
+                            dbward_server::result_storage::ResultStore::new_local(root_dir)
+                                .expect("result storage init failed"),
+                        )
                     }
                     dbward_server::server_config::ResultStorageConfig::S3 {
                         bucket,
                         region,
                         endpoint,
                     } => {
-                        match dbward_server::result_storage::ResultStore::new_s3(
-                            bucket,
-                            region,
-                            endpoint.as_deref(),
-                        ) {
-                            Ok(s) => Some(std::sync::Arc::new(s)),
-                            Err(e) => {
-                                eprintln!("Warning: result storage init failed: {e}");
-                                None
-                            }
-                        }
+                        std::sync::Arc::new(
+                            dbward_server::result_storage::ResultStore::new_s3(
+                                bucket,
+                                region,
+                                endpoint.as_deref(),
+                            )
+                            .expect("result storage init failed"),
+                        )
                     }
                 },
                 draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -1684,7 +1693,11 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                     retention: Default::default(),
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                    result_store: None,
+                    result_store: std::sync::Arc::new(
+                        dbward_server::result_storage::ResultStore::new_local(
+                            &std::env::temp_dir().join("dbward-token-op").to_string_lossy(),
+                        ).expect("result storage init"),
+                    ),
                     draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
                     audit_config: Default::default(),
@@ -1777,7 +1790,11 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                     retention: Default::default(),
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                    result_store: None,
+                    result_store: std::sync::Arc::new(
+                        dbward_server::result_storage::ResultStore::new_local(
+                            &std::env::temp_dir().join("dbward-token-op").to_string_lossy(),
+                        ).expect("result storage init"),
+                    ),
                     draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
                     audit_config: Default::default(),
@@ -1851,13 +1868,21 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
         retention: Default::default(),
         request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None,
+        result_store: {
+            let results_dir = dev_dir.join("results");
+            std::sync::Arc::new(
+                dbward_server::result_storage::ResultStore::new_local(
+                    results_dir.to_str().unwrap_or("./data/results"),
+                )
+                .expect("failed to init local result storage for dev mode"),
+            )
+        },
         draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
-            update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-                update_check_enabled: false,
+        update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        update_check_enabled: false,
     };
 
     // Create tokens

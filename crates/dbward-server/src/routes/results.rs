@@ -92,11 +92,7 @@ pub async fn get_result_content(
     drop(conn);
 
     // Read from storage
-    let store = state
-        .result_store
-        .as_ref()
-        .ok_or_else(|| ApiError::internal("result storage not configured"))?;
-    let data = store.get(&request_id).await.map_err(|e| {
+    let data = state.result_store.get(&request_id).await.map_err(|e| {
         ApiError::new(StatusCode::GONE, "result data is no longer available (storage lost)")
             .with_code("result_data_lost")
             .with_hint(format!("storage error: {e}"))
@@ -212,10 +208,6 @@ pub async fn get_storage_config(
     if user.effective_permission() != "admin" {
         return Err(ApiError::forbidden("admin only").with_code("admin_required"));
     }
-    let config = if state.result_store.is_some() {
-        json!({"configured": true, "backend": "active"})
-    } else {
-        json!({"configured": false})
-    };
+    let config = json!({"configured": true, "backend": state.result_store.backend()});
     Ok(Json(config))
 }

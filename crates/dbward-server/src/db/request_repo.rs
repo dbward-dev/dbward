@@ -34,6 +34,7 @@ pub struct NewRequest<'a> {
     pub workflow_id: Option<&'a str>,
     pub workflow_snapshot_json: Option<&'a str>,
     pub share_with_json: Option<&'a str>,
+    pub no_store: bool,
 }
 
 // --- ID resolution ---
@@ -150,8 +151,8 @@ pub fn insert_request(
     now: &str,
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
-        "INSERT INTO requests (id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, emergency, reason, metadata_json, idempotency_key, workflow_id, workflow_snapshot_json, share_with_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-        rusqlite::params![req.id, req.created_by, req.operation, req.environment, req.database_name, req.detail, req.status, now, now, req.emergency, req.reason, req.metadata_json, req.idempotency_key, req.workflow_id, req.workflow_snapshot_json, req.share_with_json],
+        "INSERT INTO requests (id, created_by, operation, environment, database_name, detail, status, created_at, updated_at, emergency, reason, metadata_json, idempotency_key, workflow_id, workflow_snapshot_json, share_with_json, no_store) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+        rusqlite::params![req.id, req.created_by, req.operation, req.environment, req.database_name, req.detail, req.status, now, now, req.emergency, req.reason, req.metadata_json, req.idempotency_key, req.workflow_id, req.workflow_snapshot_json, req.share_with_json, req.no_store],
     )?;
     Ok(())
 }

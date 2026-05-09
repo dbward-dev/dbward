@@ -108,7 +108,7 @@ pub struct ServerConfig {
     #[serde(default)]
     pub access_policies: Vec<AccessPolicyDef>,
     #[serde(default)]
-    pub result_storage: ResultStorageConfig,
+    pub result_storage: Option<ResultStorageConfig>,
     #[serde(default)]
     pub audit: AuditConfig,
     #[serde(default)]
@@ -183,7 +183,6 @@ fn default_audit_retention_days() -> u32 {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "backend", rename_all = "snake_case")]
 pub enum ResultStorageConfig {
-    Disabled,
     Local {
         root_dir: String,
     },
@@ -192,12 +191,6 @@ pub enum ResultStorageConfig {
         region: String,
         endpoint: Option<String>,
     },
-}
-
-impl Default for ResultStorageConfig {
-    fn default() -> Self {
-        Self::Disabled
-    }
 }
 
 /// Notification policy definition from TOML config.
@@ -330,6 +323,9 @@ impl ServerConfig {
     }
 
     fn validate(&self) -> Result<(), String> {
+        if self.result_storage.is_none() {
+            return Err("[result_storage] section is required in server config".into());
+        }
         for (i, wh) in self.webhooks.iter().enumerate() {
             if let Some(ref secret) = wh.secret {
                 if secret.trim().is_empty() {
@@ -361,7 +357,12 @@ mod tests {
     #[test]
     fn load_parses_minimal_toml() {
         let mut f = NamedTempFile::new().unwrap();
-        writeln!(f, r#"listen = "0.0.0.0:9000""#).unwrap();
+        writeln!(f, r#"listen = "0.0.0.0:9000"
+
+[result_storage]
+backend = "local"
+root_dir = "/tmp/dbward-test"
+"#).unwrap();
         let config = ServerConfig::load(f.path()).unwrap();
         assert_eq!(config.listen, "0.0.0.0:9000");
         assert_eq!(config.data, "dbward.db"); // default preserved
@@ -380,6 +381,10 @@ mod tests {
         writeln!(
             f,
             r#"
+[result_storage]
+backend = "local"
+root_dir = "/tmp/dbward-test"
+
 [[webhooks]]
 url = "https://example.com/hook"
 events = ["request_created"]
@@ -397,6 +402,10 @@ secret = "   "
         writeln!(
             f,
             r#"
+[result_storage]
+backend = "local"
+root_dir = "/tmp/dbward-test"
+
 [[webhooks]]
 url = "https://example.com/hook"
 events = ["request_created"]
@@ -420,6 +429,10 @@ events = ["request_created"]
         writeln!(
             f,
             r#"
+[result_storage]
+backend = "local"
+root_dir = "/tmp/dbward-test"
+
 [[workflows]]
 database = "app"
 environment = "production"
@@ -449,6 +462,10 @@ min = 2
         writeln!(
             f,
             r#"
+[result_storage]
+backend = "local"
+root_dir = "/tmp/dbward-test"
+
 [[workflows]]
 database = "*"
 environment = "*"
@@ -466,5 +483,13 @@ role = "admin"
         assert_eq!(step.mode, "all"); // default
         assert!(step.require_distinct_actors); // default true
         assert_eq!(step.approvers[0].min, 1); // default
+    }
+
+    #[test]
+    fn validate_rejects_missing_result_storage() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, r#"listen = "0.0.0.0:9000""#).unwrap();
+        let err = ServerConfig::load(f.path()).unwrap_err();
+        assert!(err.contains("result_storage"));
     }
 }

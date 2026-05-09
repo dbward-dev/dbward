@@ -667,6 +667,7 @@ pub(crate) async fn create_request(
     if share_with_json.is_some() {
         crate::limits::require_pro("Result sharing (share-with)", &state.license)?;
     }
+    let no_store = body["no_store"].as_bool().unwrap_or(false);
     let metadata_json = validate_metadata(body.get("metadata"))?;
     let idempotency_key = validate_idempotency_key(body.get("idempotency_key"))?;
 
@@ -815,6 +816,7 @@ pub(crate) async fn create_request(
             workflow_id: decision.workflow_id.as_deref(),
             workflow_snapshot_json: decision.workflow_snapshot_json.as_deref(),
             share_with_json: share_with_json.as_deref(),
+            no_store,
         },
         &now,
     ) {
@@ -1717,21 +1719,57 @@ pub(crate) async fn stream_result(
     let slot = match state.result_channels.get(&id).await {
         Some(slot) => slot,
         None => {
-            let msg = match status.as_str() {
+            match status.as_str() {
                 "executed" | "failed" => {
-                    "result relay is no longer available for this request".to_string()
+                    // Try storage fallback
+                    let no_store: bool = {
+                        let conn = state.sqlite.lock().await;
+                        conn.query_row(
+                            "SELECT no_store FROM requests WHERE id = ?1",
+                            [&id],
+                            |row| row.get::<_, i64>(0),
+                        )
+                        .unwrap_or(0)
+                            != 0
+                    };
+                    if no_store {
+                        return Err(crate::api_error::ApiError::new(
+                            StatusCode::GONE,
+                            "result was not stored (no_store flag set)",
+                        )
+                        .with_code("result_not_stored"));
+                    }
+                    let data = state.result_store.get(&id).await.map_err(|_| {
+                        crate::api_error::ApiError::conflict(
+                            "result relay expired and storage read failed",
+                        )
+                        .with_code("result_relay_unavailable")
+                    })?;
+                    let payload: serde_json::Value =
+                        serde_json::from_slice(&data).unwrap_or_else(|_| {
+                            serde_json::json!({"success": status == "executed", "raw": true})
+                        });
+                    return Ok(Json(payload));
                 }
                 "approved" | "auto_approved" | "break_glass" => {
-                    "request is approved but not dispatched".to_string()
+                    return Err(crate::api_error::ApiError::conflict(
+                        "request is approved but not dispatched",
+                    )
+                    .with_code("result_relay_unavailable"));
                 }
                 "dispatched" | "running" => {
-                    "result relay state is missing; retry dispatch".to_string()
+                    return Err(crate::api_error::ApiError::conflict(
+                        "result relay state is missing; retry dispatch",
+                    )
+                    .with_code("result_relay_unavailable"));
                 }
-                _ => format!("request status is {status}"),
-            };
-            return Err(
-                crate::api_error::ApiError::conflict(msg).with_code("result_relay_unavailable")
-            );
+                _ => {
+                    return Err(crate::api_error::ApiError::conflict(format!(
+                        "request status is {status}"
+                    ))
+                    .with_code("result_relay_unavailable"));
+                }
+            }
         }
     };
 

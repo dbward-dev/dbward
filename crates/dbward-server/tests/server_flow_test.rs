@@ -67,7 +67,7 @@ fn test_state() -> AppState {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None,
+        result_store: Arc::new(dbward_server::result_storage::ResultStore::new_local(&std::env::temp_dir().join("dbward-test").to_string_lossy()).unwrap()),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
@@ -80,11 +80,11 @@ fn test_state() -> AppState {
 fn test_state_with_store() -> (AppState, TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let mut state = test_state();
-    state.result_store = Some(Arc::new(
+    state.result_store = Arc::new(
         dbward_server::result_storage::ResultStore::new_local(dir.path().to_str().unwrap())
             .unwrap()
             .with_prefix("shared"),
-    ));
+    );
     (state, dir)
 }
 
@@ -142,7 +142,7 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: Some(result_store),
+        result_store: result_store,
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
@@ -576,8 +576,6 @@ async fn shared_result_content_requires_matching_result_access() {
     }
     state
         .result_store
-        .as_ref()
-        .unwrap()
         .put(request_id, br#"{"rows":[1]}"#)
         .await
         .unwrap();
@@ -1908,7 +1906,7 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None,
+        result_store: Arc::new(dbward_server::result_storage::ResultStore::new_local(&std::env::temp_dir().join("dbward-test").to_string_lossy()).unwrap()),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
@@ -3815,7 +3813,7 @@ fn test_state_multistep() -> AppState {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None,
+        result_store: Arc::new(dbward_server::result_storage::ResultStore::new_local(&std::env::temp_dir().join("dbward-test").to_string_lossy()).unwrap()),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
@@ -3883,7 +3881,7 @@ fn test_state_multistep_allow_same() -> AppState {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: None,
+        result_store: Arc::new(dbward_server::result_storage::ResultStore::new_local(&std::env::temp_dir().join("dbward-test").to_string_lossy()).unwrap()),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),

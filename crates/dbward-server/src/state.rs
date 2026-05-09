@@ -132,7 +132,7 @@ pub struct AppState {
     pub result_channels: Arc<ResultChannels>,
     pub retention: RetentionConfig,
     pub request_notifier: Arc<RequestNotifier>,
-    pub result_store: Option<Arc<crate::result_storage::ResultStore>>,
+    pub result_store: Arc<crate::result_storage::ResultStore>,
     pub draining: Arc<std::sync::atomic::AtomicBool>,
     pub break_glass_roles: Vec<String>,
     pub audit_config: crate::server_config::AuditConfig,

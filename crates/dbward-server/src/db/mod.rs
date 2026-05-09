@@ -9,7 +9,7 @@ pub mod webhook_repo;
 use rusqlite::Connection;
 
 /// Latest schema version. Increment when adding migrations.
-pub const LATEST_SCHEMA_VERSION: i64 = 7;
+pub const LATEST_SCHEMA_VERSION: i64 = 8;
 
 /// Backup SQLite DB before schema migration if needed.
 /// Returns the backup path if a backup was created.
@@ -244,6 +244,14 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Erro
             )?;
             Ok(())
         }
+        8 => {
+            if !has_column(conn, "requests", "no_store")? {
+                conn.execute_batch(
+                    "ALTER TABLE requests ADD COLUMN no_store INTEGER NOT NULL DEFAULT 0",
+                )?;
+            }
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -297,6 +305,7 @@ fn create_schema_v1(conn: &Connection) -> Result<(), rusqlite::Error> {
             metadata_json TEXT NOT NULL DEFAULT '{}',
             idempotency_key TEXT,
             share_with_json TEXT,
+            no_store INTEGER NOT NULL DEFAULT 0,
             workflow_id TEXT,
             workflow_snapshot_json TEXT,
             created_at TEXT NOT NULL,

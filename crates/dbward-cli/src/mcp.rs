@@ -629,6 +629,7 @@ async fn submit_and_wait(
             metadata: None,
             idempotency_key: None,
             share_with: None,
+            no_store: false,
         })
         .await
         .map_err(|e| e.to_string())?;

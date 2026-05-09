@@ -488,6 +488,8 @@ mod tests {
     fn test_state() -> AppState {
         let conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let store = crate::result_storage::ResultStore::new_local(tmp.path().to_str().unwrap()).unwrap();
         AppState {
             license: crate::license::License { plan: crate::license::Plan::Pro },
             sqlite: Arc::new(tokio::sync::Mutex::new(conn)),
@@ -499,7 +501,7 @@ mod tests {
             result_channels: Arc::new(ResultChannels::new()),
             retention: Default::default(),
             request_notifier: Arc::new(crate::state::RequestNotifier::new()),
-            result_store: None,
+            result_store: Arc::new(store),
             draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             break_glass_roles: crate::server_config::default_break_glass_roles(),
             audit_config: Default::default(),
@@ -538,6 +540,7 @@ mod tests {
                 workflow_id: Some("wf"),
                 workflow_snapshot_json: Some(workflow_snapshot_json),
                 share_with_json: None,
+                no_store: false,
             },
             "2026-01-01T00:00:00Z",
         )
