@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::authz::{self, Action, Resource};
 use crate::token::TokenSigner;
-
+use dbward_core::request_status::{transition, RequestEvent, RequestStatus};
 pub(crate) fn compute_next_step(
     steps: &[serde_json::Value],
     current_step_index: usize,
@@ -79,12 +79,13 @@ pub(crate) async fn approve_request_inner(
         ctx.workflow_snapshot_json,
     );
 
-    if status != "pending" {
-        return Err(
-            crate::api_error::ApiError::conflict(format!("request is already {status}"))
-                .with_code("request_approve_wrong_status"),
-        );
-    }
+    let current = RequestStatus::parse(&status).ok_or_else(|| {
+        crate::api_error::ApiError::internal(format!("unknown status: {status}"))
+    })?;
+    transition(current, &RequestEvent::Approve).map_err(|_| {
+        crate::api_error::ApiError::conflict(format!("request is already {status}"))
+            .with_code("request_approve_wrong_status")
+    })?;
 
     // Parse workflow steps from snapshot
     let steps: Vec<crate::server_config::WorkflowStep> = workflow_snapshot_json

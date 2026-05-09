@@ -1,6 +1,7 @@
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
+use dbward_core::request_status::{self, RequestEvent, RequestStatus};
 use axum::response::IntoResponse;
 use serde_json::json;
 use std::collections::HashMap;
@@ -1086,7 +1087,7 @@ pub(crate) async fn reject_request(
         .and_then(|v| v.as_str())
         .filter(|v| !v.is_empty());
 
-    {
+    let id = {
         let mut conn = state.sqlite.lock().await;
         let id = resolve_id(&conn, &id)?;
 
@@ -1097,12 +1098,11 @@ pub(crate) async fn reject_request(
         let database_name = ctx.database_name.clone();
         let environment = ctx.environment.clone();
 
-        if status != "pending" {
-            return Err(crate::api_error::ApiError::conflict(format!(
-                "request is already {status}"
-            ))
-            .with_code("request_reject_wrong_status"));
-        }
+        let current = RequestStatus::parse(&status).ok_or_else(|| crate::api_error::ApiError::internal(format!("unknown status: {status}")))?;
+        request_status::transition(current, &RequestEvent::Reject).map_err(|_| {
+            crate::api_error::ApiError::conflict(format!("request is already {status}"))
+                .with_code("request_reject_wrong_status")
+        })?;
 
         let workflow_snapshot_json = ctx.workflow_snapshot_json.clone();
         let (approval_resource, step_idx, step_roles, total_steps) = current_approval_resource(
@@ -1192,7 +1192,8 @@ pub(crate) async fn reject_request(
             },
             state.metrics.clone(),
         );
-    }
+        id
+    };
 
     state.request_notifier.notify(&id).await;
 
@@ -1229,15 +1230,13 @@ pub(crate) async fn cancel_request(
             &mut conn,
         )?;
 
-        if matches!(
-            ctx.status.as_str(),
-            "executed" | "failed" | "rejected" | "cancelled"
-        ) {
-            return Err(crate::api_error::ApiError::conflict(format!(
+        let current = RequestStatus::parse(&ctx.status).ok_or_else(|| crate::api_error::ApiError::internal(format!("unknown status: {}", ctx.status)))?;
+        request_status::transition(current, &RequestEvent::Cancel).map_err(|_| {
+            crate::api_error::ApiError::conflict(format!(
                 "request is already {}",
                 ctx.status
-            )));
-        }
+            ))
+        })?;
 
         let now = chrono::Utc::now().to_rfc3339();
         let updated = crate::db::request_repo::mark_cancelled(
@@ -1616,6 +1615,12 @@ pub(crate) async fn dispatch_request(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
+    let current = RequestStatus::parse(&status).ok_or_else(|| crate::api_error::ApiError::internal(format!("unknown status: {status}")))?;
+    request_status::transition(current, &RequestEvent::Dispatch).map_err(|_| {
+        crate::api_error::ApiError::conflict("request cannot be dispatched (wrong status)")
+            .with_code("request_dispatch_wrong_status")
+    })?;
+
     if status != "dispatched"
         && !crate::db::request_repo::mark_dispatched(&conn, &id, &now)
             .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
