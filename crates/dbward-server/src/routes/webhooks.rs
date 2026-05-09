@@ -69,7 +69,7 @@ pub(crate) async fn create_webhook(
     let events_json = serde_json::to_string(&body.events)
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     crate::db::webhook_repo::insert_webhook(
         &conn,
         &id,
@@ -84,7 +84,7 @@ pub(crate) async fn create_webhook(
     drop(conn);
 
     {
-        let mut conn = state.sqlite.lock().await;
+        let mut conn = state.db().await;
         let _ = crate::db::audit_event_repo::record_audit_event(
             &mut conn,
             crate::db::audit_event_repo::AuditEvent {
@@ -129,7 +129,7 @@ pub(crate) async fn list_webhooks(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::ManageWebhook, Resource::Global).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let webhooks = crate::db::webhook_repo::list_webhooks(&conn)
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
@@ -163,7 +163,7 @@ pub(crate) async fn get_webhook(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::ManageWebhook, Resource::Global).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let w = crate::db::webhook_repo::get_webhook(&conn, &id)
         .map_err(|e| ApiError::internal(e.to_string()))?
         .ok_or_else(|| ApiError::not_found("webhook not found").with_code("webhook_not_found"))?;
@@ -215,7 +215,7 @@ pub(crate) async fn update_webhook(
         Some(Some(s)) => Some(Some(s.as_str())),
     };
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let updated = crate::db::webhook_repo::update_webhook(
         &conn,
         &id,
@@ -239,7 +239,7 @@ pub(crate) async fn update_webhook(
     reload_webhooks(&state).await;
 
     {
-        let mut conn = state.sqlite.lock().await;
+        let mut conn = state.db().await;
         let _ = crate::db::audit_event_repo::record_audit_event(
             &mut conn,
             crate::db::audit_event_repo::AuditEvent {
@@ -281,7 +281,7 @@ pub(crate) async fn delete_webhook(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::ManageWebhook, Resource::Global).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let deleted = crate::db::webhook_repo::delete_webhook(&conn, &id)
         .map_err(|e| ApiError::internal(e.to_string()))?;
     drop(conn);
@@ -293,7 +293,7 @@ pub(crate) async fn delete_webhook(
     reload_webhooks(&state).await;
 
     {
-        let mut conn = state.sqlite.lock().await;
+        let mut conn = state.db().await;
         let _ = crate::db::audit_event_repo::record_audit_event(
             &mut conn,
             crate::db::audit_event_repo::AuditEvent {
@@ -318,7 +318,7 @@ pub(crate) async fn delete_webhook(
 
 /// Reload WebhookDispatcher from DB after CRUD operations.
 async fn reload_webhooks(state: &AppState) {
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let configs = match crate::db::webhook_repo::load_active_webhook_configs(&conn) {
         Ok(c) => c,
         Err(e) => {

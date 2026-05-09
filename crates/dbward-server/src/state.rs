@@ -141,6 +141,48 @@ pub struct AppState {
     pub update_check_enabled: bool,
 }
 
+impl AppState {
+    pub async fn db(&self) -> tokio::sync::MutexGuard<'_, Connection> {
+        self.sqlite.lock().await
+    }
+
+    /// Create an AppState with sensible defaults for testing.
+    /// Requires the `test-helpers` feature.
+    #[cfg(feature = "test-helpers")]
+    pub fn test_default() -> Self {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::init(&conn).unwrap();
+        Self {
+            sqlite: Arc::new(Mutex::new(conn)),
+            token_signer: Arc::new(crate::token::TokenSigner::generate()),
+            webhooks: Arc::new(std::sync::RwLock::new(
+                crate::webhook::WebhookDispatcher::new(vec![]),
+            )),
+            metrics: Arc::new(crate::metrics::Metrics::new()),
+            license: crate::license::License::default(),
+            oidc: None,
+            auth_mode: "token".into(),
+            result_channels: Arc::new(ResultChannels::new()),
+            retention: RetentionConfig::default(),
+            request_notifier: Arc::new(RequestNotifier::new()),
+            result_store: Arc::new(
+                crate::result_storage::ResultStore::new_local(
+                    &std::env::temp_dir()
+                        .join(format!("dbward-test-{}", std::process::id()))
+                        .to_string_lossy(),
+                )
+                .unwrap(),
+            ),
+            draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            break_glass_roles: vec!["admin".into()],
+            audit_config: crate::server_config::AuditConfig::default(),
+            trusted_proxies: vec![],
+            update_available: Arc::new(Mutex::new(None)),
+            update_check_enabled: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub token_id: String,

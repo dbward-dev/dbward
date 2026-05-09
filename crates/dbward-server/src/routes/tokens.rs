@@ -91,7 +91,7 @@ pub(crate) async fn create_token(
 
     // Record with caller IP (the insert in create_token_full has actor=system, no IP)
     {
-        let mut conn = state.sqlite.lock().await;
+        let mut conn = state.db().await;
         let meta = serde_json::json!({
             "subject_user": body.subject_id,
             "role": body.role,
@@ -150,7 +150,7 @@ pub(crate) async fn list_tokens(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize(&user, Action::ManageToken, Resource::Global).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let tokens = crate::db::token_repo::list_tokens(&conn)
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
@@ -185,7 +185,7 @@ pub(crate) async fn revoke_token(
 
     // Allow self-revoke: if the token belongs to the caller, skip admin check
     let is_owner = {
-        let conn = state.sqlite.lock().await;
+        let conn = state.db().await;
         crate::db::token_repo::get_token_owner(&conn, &id)
             .map_err(|e| ApiError::internal(e.to_string()))?
             .map(|owner| owner == user.user)
@@ -196,7 +196,7 @@ pub(crate) async fn revoke_token(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     let found = crate::db::token_repo::revoke_token(&conn, &id, &now)
         .map_err(|e| ApiError::internal(e.to_string()))?;
 

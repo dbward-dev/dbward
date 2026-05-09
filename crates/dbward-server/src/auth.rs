@@ -149,7 +149,7 @@ pub async fn create_token_full(
     let hash = hash_token(&raw_token);
     let prefix = token_prefix(&raw_token);
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     crate::db::token_repo::insert_token(
         &conn,
         &token_id,
@@ -174,7 +174,7 @@ pub async fn create_token_full(
 
 /// Revoke a token by ID.
 pub async fn revoke_token(state: &AppState, token_id: &str) -> Result<(), String> {
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     let found = crate::db::token_repo::revoke_token(&conn, token_id, &Utc::now().to_rfc3339())
         .map_err(|e| e.to_string())?;
     if !found {
@@ -314,7 +314,7 @@ async fn authenticate_api_token(
     let prefix = token_prefix(raw_token);
     let hash = hash_token(raw_token);
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
 
     match crate::db::token_repo::lookup_active_token(&conn, &prefix, &hash) {
         Ok(Some(row)) => {
@@ -475,7 +475,7 @@ mod tests {
         // Insert a second token with the same prefix but different hash
         let prefix_a = token_prefix(&token_a);
         {
-            let conn = state.sqlite.lock().await;
+            let conn = state.db().await;
             crate::db::token_repo::insert_token(
                 &conn,
                 "fake-id",

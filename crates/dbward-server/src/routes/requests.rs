@@ -215,7 +215,7 @@ pub(crate) async fn ready(State(state): State<AppState>) -> impl IntoResponse {
     if state.draining.load(std::sync::atomic::Ordering::Relaxed) {
         return StatusCode::SERVICE_UNAVAILABLE;
     }
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     match conn.query_row("SELECT 1", [], |row| row.get::<_, i64>(0)) {
         Ok(1) => StatusCode::OK,
         _ => StatusCode::SERVICE_UNAVAILABLE,
@@ -281,7 +281,7 @@ pub(crate) async fn list_requests(
         .map(|v| v == "true")
         .unwrap_or(false);
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
 
     if pending_for_me {
         return list_requests_pending_for_me(&conn, &user, limit, offset);
@@ -708,7 +708,7 @@ pub(crate) async fn create_request(
     }
 
     // Check access policy (DB-level access control)
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     if let Err(e) = crate::db::policy_repo::check_access_policy(
         &conn,
         database_name,
@@ -1009,7 +1009,7 @@ pub(crate) async fn approve_request(
     let approver = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&approver, Action::ApproveRequest, Resource::Global, &state).await?;
     let id = {
-        let conn = state.sqlite.lock().await;
+        let conn = state.db().await;
         resolve_id(&conn, &id)?
     };
 
@@ -1027,7 +1027,7 @@ pub(crate) async fn approve_request(
 
     // Audit: request_approved
     {
-        let mut conn = state.sqlite.lock().await;
+        let mut conn = state.db().await;
         let meta = serde_json::json!({
             "step_completed": result.response["step_completed"],
             "total_steps": result.response["total_steps"],
@@ -1088,7 +1088,7 @@ pub(crate) async fn reject_request(
         .filter(|v| !v.is_empty());
 
     let id = {
-        let mut conn = state.sqlite.lock().await;
+        let mut conn = state.db().await;
         let id = resolve_id(&conn, &id)?;
 
         let ctx = crate::db::request_repo::get_request_context(&conn, &id)
@@ -1213,7 +1213,7 @@ pub(crate) async fn cancel_request(
     let cancel_reason = body_val["reason"].as_str().map(str::to_string);
 
     let (id, requester, operation, environment, database_name, detail, notif_hooks) = {
-        let mut conn = state.sqlite.lock().await;
+        let mut conn = state.db().await;
         let id = resolve_id(&conn, &id)?;
         let ctx = crate::db::request_repo::get_request_context(&conn, &id)
             .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
@@ -1329,7 +1329,7 @@ pub(crate) async fn get_request(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::GetRequest, Resource::Global, &state).await?;
     let id = {
-        let conn = state.sqlite.lock().await;
+        let conn = state.db().await;
         resolve_id(&conn, &id)?
     };
     let wait: u64 = params
@@ -1472,7 +1472,7 @@ pub(crate) async fn get_request(
 
     // First read
     let (resp, status) = {
-        let mut conn = state.sqlite.lock().await;
+        let mut conn = state.db().await;
         let resp = build_response(&conn, &id, &state)?;
         let request_resource = request_resource(
             resp["created_by"].as_str().unwrap_or("").to_string(),
@@ -1505,7 +1505,7 @@ pub(crate) async fn get_request(
             _ = tokio::time::sleep(std::time::Duration::from_secs(wait)) => {},
         }
         // Re-read after notification
-        let conn = state.sqlite.lock().await;
+        let conn = state.db().await;
         let resp = build_response(&conn, &id, &state)?;
         return Ok(Json(resp));
     }
@@ -1521,7 +1521,7 @@ pub(crate) async fn dispatch_request(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::DispatchRequest, Resource::Global, &state).await?;
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     let id = resolve_id(&conn, &id)?;
 
     // Check ownership
@@ -1636,7 +1636,7 @@ pub(crate) async fn dispatch_request(
     state.request_notifier.notify(&id).await;
 
     {
-        let mut conn = state.sqlite.lock().await;
+        let mut conn = state.db().await;
         let _ = crate::db::audit_event_repo::record_audit_event(
             &mut conn,
             crate::db::audit_event_repo::AuditEvent {
@@ -1684,7 +1684,7 @@ pub(crate) async fn stream_result(
         String,
         String,
     ) = {
-        let conn = state.sqlite.lock().await;
+        let conn = state.db().await;
         let id = resolve_id(&conn, &id)?;
         let row = conn
             .query_row(
@@ -1704,7 +1704,7 @@ pub(crate) async fn stream_result(
     };
 
     let access_roles = {
-        let conn = state.sqlite.lock().await;
+        let conn = state.db().await;
         let (_, access_roles) =
             crate::db::policy_repo::get_result_policy(&conn, &database_name, &environment);
         access_roles
@@ -1728,7 +1728,7 @@ pub(crate) async fn stream_result(
                 "executed" | "failed" => {
                     // Try storage fallback
                     let no_store: bool = {
-                        let conn = state.sqlite.lock().await;
+                        let conn = state.db().await;
                         conn.query_row(
                             "SELECT no_store FROM requests WHERE id = ?1",
                             [&id],

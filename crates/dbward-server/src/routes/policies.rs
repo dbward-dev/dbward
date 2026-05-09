@@ -16,7 +16,7 @@ pub(crate) async fn list_workflows(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::ListPolicy, Resource::PolicyObject, &state).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at FROM workflows ORDER BY database_name, environment")
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
@@ -55,7 +55,7 @@ pub(crate) async fn get_workflow(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::GetPolicy, Resource::PolicyObject, &state).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let row = conn
         .query_row(
             "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at FROM workflows WHERE id = ?1",
@@ -108,7 +108,7 @@ pub(crate) async fn create_workflow(
     let steps_json = steps.to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     crate::limits::check_can_create(&conn, crate::limits::Resource::Workflow, &state.license)?;
     {
         let tx = conn
@@ -181,7 +181,7 @@ pub(crate) async fn update_workflow(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::UpdatePolicy, Resource::PolicyObject, &state).await?;
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     let now = chrono::Utc::now().to_rfc3339();
 
     // Check exists
@@ -272,7 +272,7 @@ pub(crate) async fn delete_workflow(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::DeletePolicy, Resource::PolicyObject, &state).await?;
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
 
     // Block deletion if pending requests reference this workflow
     let pending_count: i64 = conn
@@ -333,7 +333,7 @@ pub(crate) async fn list_execution_policies(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::ListPolicy, Resource::PolicyObject, &state).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at FROM execution_policies ORDER BY database_name, environment")
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
@@ -367,7 +367,7 @@ pub(crate) async fn get_execution_policy_handler(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::GetPolicy, Resource::PolicyObject, &state).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let row = conn
         .query_row(
             "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at FROM execution_policies WHERE id = ?1",
@@ -412,7 +412,7 @@ pub(crate) async fn create_execution_policy(
     let id = format!("{database}:{environment}");
     let now = chrono::Utc::now().to_rfc3339();
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     crate::limits::check_can_create(
         &conn,
         crate::limits::Resource::ExecutionPolicy,
@@ -469,7 +469,7 @@ pub(crate) async fn update_execution_policy(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::UpdatePolicy, Resource::PolicyObject, &state).await?;
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.query_row(
@@ -532,7 +532,7 @@ pub(crate) async fn delete_execution_policy(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::DeletePolicy, Resource::PolicyObject, &state).await?;
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     {
         let tx = conn
             .transaction()
@@ -583,7 +583,7 @@ pub(crate) async fn list_result_policies(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::ListPolicy, Resource::PolicyObject, &state).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at FROM result_policies ORDER BY database_name, environment")
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
@@ -621,7 +621,7 @@ pub(crate) async fn get_result_policy_handler(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::GetPolicy, Resource::PolicyObject, &state).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let row = conn
         .query_row(
             "SELECT id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at FROM result_policies WHERE id = ?1",
@@ -671,7 +671,7 @@ pub(crate) async fn create_result_policy(
     let access_json = access.to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     {
         let tx = conn
             .transaction()
@@ -724,7 +724,7 @@ pub(crate) async fn update_result_policy(
     authz::authorize_and_audit(&user, Action::UpdatePolicy, Resource::PolicyObject, &state).await?;
     crate::limits::require_pro("Result policies", &state.license)?;
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.query_row(
@@ -787,7 +787,7 @@ pub(crate) async fn delete_result_policy(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::DeletePolicy, Resource::PolicyObject, &state).await?;
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     {
         let tx = conn
             .transaction()
@@ -838,7 +838,7 @@ pub(crate) async fn list_notification_policies(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::ListPolicy, Resource::PolicyObject, &state).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, webhooks_json, source, created_at, updated_at FROM notification_policies ORDER BY database_name, environment")
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
@@ -872,7 +872,7 @@ pub(crate) async fn get_notification_policy(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::GetPolicy, Resource::PolicyObject, &state).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let row = conn
         .query_row(
             "SELECT id, database_name, environment, webhooks_json, source, created_at, updated_at FROM notification_policies WHERE id = ?1",
@@ -916,7 +916,7 @@ pub(crate) async fn create_notification_policy(
     let webhooks_json = webhooks.to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     {
         let tx = conn
             .transaction()
@@ -969,7 +969,7 @@ pub(crate) async fn update_notification_policy(
     authz::authorize_and_audit(&user, Action::UpdatePolicy, Resource::PolicyObject, &state).await?;
     crate::limits::require_pro("Notification policies", &state.license)?;
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.query_row(
@@ -1025,7 +1025,7 @@ pub(crate) async fn delete_notification_policy(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::DeletePolicy, Resource::PolicyObject, &state).await?;
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     {
         let tx = conn
             .transaction()
@@ -1074,7 +1074,7 @@ pub(crate) async fn list_access_policies(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::ListPolicy, Resource::PolicyObject, &state).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, allowed_roles_json, allowed_groups_json, source, created_at FROM access_policies ORDER BY database_name, environment")
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
@@ -1126,7 +1126,7 @@ pub(crate) async fn create_access_policy(
     let id = format!("{database}:{environment}");
     let now = chrono::Utc::now().to_rfc3339();
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     conn.execute(
         "INSERT INTO access_policies (id, database_name, environment, allowed_roles_json, allowed_groups_json, source, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, 'api', ?6, ?6)",
@@ -1171,7 +1171,7 @@ pub(crate) async fn delete_access_policy(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::DeletePolicy, Resource::PolicyObject, &state).await?;
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
     let deleted = conn
         .execute(
             "DELETE FROM access_policies WHERE id = ?1",

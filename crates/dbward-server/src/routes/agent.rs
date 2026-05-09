@@ -18,7 +18,7 @@ pub(crate) async fn list_agents(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::ReadMetrics, Resource::Global, &state).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let agents = crate::db::agent_repo::list_agents(&conn)
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
@@ -100,7 +100,7 @@ pub(crate) async fn agent_poll(
         })
         .unwrap_or_default();
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
 
     // Free tier: check agent limit for new agents only
     let is_existing: bool = conn
@@ -144,7 +144,7 @@ pub(crate) async fn agent_poll(
     drop(conn);
 
     if !is_existing {
-        let mut conn = state.sqlite.lock().await;
+        let mut conn = state.db().await;
         let _ = crate::db::audit_event_repo::record_audit_event(
             &mut conn,
             crate::db::audit_event_repo::AuditEvent {
@@ -173,7 +173,7 @@ pub(crate) async fn agent_poll(
         );
     }
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
 
     // Free tier: check total unique database connections across all agents
     if !databases.is_empty() {
@@ -252,7 +252,7 @@ pub(crate) async fn agent_claim(
     authz::authorize_and_audit(&user, Action::AgentClaim, Resource::Global, &state).await?;
     let agent_id = user.user.clone();
 
-    let mut conn = state.sqlite.lock().await;
+    let mut conn = state.db().await;
 
     let ctx = crate::db::request_repo::get_request_context(&conn, &id)
         .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
@@ -367,7 +367,7 @@ pub(crate) async fn agent_heartbeat(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::AgentPoll, Resource::Global, &state).await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let new_expires = chrono::Utc::now() + chrono::Duration::seconds(300);
     let updated = conn
         .execute(
@@ -411,7 +411,7 @@ pub(crate) async fn agent_result(
     let error_msg = body["error"].as_str().map(|s| s.to_string());
 
     let (request_id, req_status, wh_operation, wh_environment, wh_database, wh_detail, wh_requester, wh_agent_id, webhook_ctx) = {
-        let mut conn = state.sqlite.lock().await;
+        let mut conn = state.db().await;
 
         let exec_ctx = crate::db::agent_repo::get_execution_context(&conn, &id)
             .map_err(|_| crate::api_error::ApiError::not_found("execution not found"))?;
@@ -507,7 +507,7 @@ pub(crate) async fn agent_result(
     // Save to result storage (skip if no_store flag is set)
     if success {
         let no_store: bool = {
-            let conn = state.sqlite.lock().await;
+            let conn = state.db().await;
             conn.query_row(
                 "SELECT no_store FROM requests WHERE id = ?1",
                 [&request_id],
@@ -519,7 +519,7 @@ pub(crate) async fn agent_result(
 
         if !no_store {
             let share_with: Vec<String> = {
-                let conn = state.sqlite.lock().await;
+                let conn = state.db().await;
                 conn.query_row(
                     "SELECT share_with_json FROM requests WHERE id = ?1",
                     [&request_id],
@@ -544,7 +544,7 @@ pub(crate) async fn agent_result(
                     let expires_at =
                         (chrono::Utc::now() + chrono::Duration::days(retention_days)).to_rfc3339();
                     let db_write_result = {
-                        let mut conn = state.sqlite.lock().await;
+                        let mut conn = state.db().await;
                         let tx = conn.transaction();
                         tx.and_then(|tx| {
                                 tx.execute(
@@ -589,7 +589,7 @@ pub(crate) async fn agent_result(
                                 "failed to delete partially stored result"
                             );
                         }
-                        let conn = state.sqlite.lock().await;
+                        let conn = state.db().await;
                         if let Err(err) = conn.execute(
                             "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, ?2, ?3, 0, '', ?4, 'storage_failed', ?5, ?5)",
                             rusqlite::params![request_id, backend, storage_key, retention_days, now],
@@ -603,7 +603,7 @@ pub(crate) async fn agent_result(
                     }
                 }
                 Err(_) => {
-                    let conn = state.sqlite.lock().await;
+                    let conn = state.db().await;
                     let now = chrono::Utc::now().to_rfc3339();
                     if let Err(err) = conn.execute(
                         "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, 'unknown', '', 0, '', ?3, 'storage_failed', ?2, ?2)",

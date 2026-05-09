@@ -41,7 +41,7 @@ pub(crate) async fn list_audit_events(
 
     let (limit, offset) = parse_pagination(&params);
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
 
     let mut where_clauses: Vec<String> = Vec::new();
     let mut bind_values: Vec<String> = Vec::new();
@@ -159,7 +159,7 @@ pub(crate) async fn verify_audit_chain(
     )
     .await?;
 
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
     let (count, broken) = crate::db::audit_event_repo::verify_hash_chain(&conn)
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
