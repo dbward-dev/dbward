@@ -1197,7 +1197,7 @@ pub(crate) async fn reject_request(
 
     state.request_notifier.notify(&id).await;
 
-    Ok(Json(json!({"id": id, "status": "rejected"})))
+    Ok(Json(serde_json::to_value(dbward_api_types::requests::StatusResponse { id, status: RequestStatus::Rejected }).unwrap()))
 }
 
 pub(crate) async fn cancel_request(
@@ -1317,7 +1317,7 @@ pub(crate) async fn cancel_request(
         state.metrics.clone(),
     );
 
-    Ok(Json(json!({"id": id, "status": "cancelled"})))
+    Ok(Json(serde_json::to_value(dbward_api_types::requests::StatusResponse { id, status: RequestStatus::Cancelled }).unwrap()))
 }
 
 pub(crate) async fn get_request(
@@ -1665,7 +1665,7 @@ pub(crate) async fn dispatch_request(
         );
     }
 
-    Ok(Json(json!({"id": id, "status": "dispatched"})))
+    Ok(Json(serde_json::to_value(dbward_api_types::requests::StatusResponse { id, status: RequestStatus::Dispatched }).unwrap()))
 }
 
 /// Client waits for execution result (long poll).

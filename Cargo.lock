@@ -773,6 +773,7 @@ dependencies = [
  "base64 0.22.1",
  "casbin",
  "chrono",
+ "dbward-api-types",
  "dbward-core",
  "ed25519-dalek",
  "hex",
