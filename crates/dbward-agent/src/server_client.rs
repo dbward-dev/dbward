@@ -46,7 +46,7 @@ impl AgentClient {
         operations: &[String],
         limit: u32,
         status: Option<&AgentStatus>,
-    ) -> Result<Vec<Value>, Error> {
+    ) -> Result<Vec<dbward_api_types::agent::Job>, Error> {
         let mut body = json!({
             "databases": databases,
             "environments": environments,
@@ -81,15 +81,15 @@ impl AgentClient {
             return Err(Error::Server(format!("poll failed ({status}): {body}")));
         }
 
-        let body: Value = resp
+        let poll_resp: dbward_api_types::agent::PollResponse = resp
             .json()
             .await
             .map_err(|e| Error::Server(format!("poll parse failed: {e}")))?;
 
-        Ok(body["jobs"].as_array().cloned().unwrap_or_default())
+        Ok(poll_resp.jobs)
     }
 
-    pub async fn claim(&self, request_id: &str, agent_id: &str) -> Result<Value, Error> {
+    pub async fn claim(&self, request_id: &str, agent_id: &str) -> Result<dbward_api_types::agent::ClaimResponse, Error> {
         let resp = self
             .client
             .post(format!(
@@ -103,18 +103,13 @@ impl AgentClient {
             .map_err(|e| Error::Server(format!("claim failed: {e}")))?;
 
         let status = resp.status();
-        let body: Value = resp
-            .json()
-            .await
-            .map_err(|e| Error::Server(format!("claim parse failed: {e}")))?;
-
         if !status.is_success() {
-            return Err(Error::Server(format!(
-                "claim failed ({}): {}",
-                status, body
-            )));
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::Server(format!("claim failed ({status}): {body}")));
         }
-        Ok(body)
+        resp.json()
+            .await
+            .map_err(|e| Error::Server(format!("claim parse failed: {e}")))
     }
 
     pub async fn send_result(
@@ -164,8 +159,11 @@ impl AgentClient {
             let text = resp.text().await.unwrap_or_default();
             return Err(Error::Server(format!("heartbeat failed: {text}")));
         }
-        let body: serde_json::Value = resp.json().await.unwrap_or_default();
-        Ok(body["cancelled"].as_bool().unwrap_or(false))
+        let hb: dbward_api_types::agent::HeartbeatResponse = resp
+            .json()
+            .await
+            .map_err(|e| Error::Server(format!("heartbeat parse failed: {e}")))?;
+        Ok(hb.cancelled)
     }
 
     pub async fn get_public_key(&self) -> Result<ed25519_dalek::VerifyingKey, Error> {

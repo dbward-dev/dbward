@@ -189,13 +189,7 @@ async fn poll_once(
     };
 
     for job in jobs {
-        let request_id = match job["id"].as_str() {
-            Some(id) => id.to_string(),
-            None => {
-                warn!("skipping job with missing id field");
-                continue;
-            }
-        };
+        let request_id = job.id.clone();
 
         let permit = match semaphore.clone().try_acquire_owned() {
             Ok(p) => p,
@@ -213,7 +207,7 @@ async fn poll_once(
         // Track active job
         let active_job = ActiveJob {
             request_id: request_id.clone(),
-            operation: job["operation"].as_str().unwrap_or("").to_string(),
+            operation: job.operation.clone(),
             started_at: chrono::Utc::now().to_rfc3339(),
         };
         active_jobs.lock().await.push(active_job);
@@ -224,7 +218,7 @@ async fn poll_once(
                 let _guard = InFlightGuard(in_flight);
 
                 if let Err(e) =
-                    execute_job(&config, &client, &public_key, &request_id, &job).await
+                    execute_job(&config, &client, &public_key, &request_id).await
                 {
                     error!(request_id = %request_id, %e, "job failed");
                 }
@@ -245,23 +239,21 @@ async fn execute_job(
     client: &AgentClient,
     public_key: &ed25519_dalek::VerifyingKey,
     request_id: &str,
-    _job: &serde_json::Value,
 ) -> Result<(), Error> {
     // Claim
     let claim = client.claim(request_id, &config.agent_id).await?;
-    let exec_id = claim["execution_id"]
-        .as_str()
-        .ok_or_else(|| Error::Server("missing execution_id in claim".into()))?;
-    let operation = claim["operation"].as_str().unwrap_or("");
-    let environment = claim["environment"].as_str().unwrap_or("");
-    let database = claim["database"].as_str().unwrap_or("");
-    let detail = claim["detail"].as_str().unwrap_or("");
+    let exec_id = &claim.execution_id;
+    let operation = claim.operation.as_str();
+    let environment = claim.environment.as_str();
+    let database = claim.database.as_str();
+    let detail_value = &claim.detail;
+    let detail = detail_value.as_str().unwrap_or("");
 
-    info!(request_id, operation, database, "claimed job");
+    info!(request_id, %operation, %database, "claimed job");
 
     // Verify token
     let token: dbward_core::token::ExecutionToken =
-        serde_json::from_value(claim["execution_token"].clone())
+        serde_json::from_value(claim.execution_token.clone())
             .map_err(|e| Error::Server(format!("invalid execution_token: {e}")))?;
 
     // Resolve DB and execute

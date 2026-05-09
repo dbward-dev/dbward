@@ -702,6 +702,7 @@ name = "dbward-agent"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "dbward-api-types",
  "dbward-core",
  "dbward-migrate",
  "ed25519-dalek",
