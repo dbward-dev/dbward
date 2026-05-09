@@ -1234,6 +1234,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 trusted_proxies: server_cfg.trusted_proxies.clone(),
                 update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 update_check_enabled: server_cfg.update_check,
+                enforcer: dbward_server::authz::get_enforcer_arc(),
             };
             let addr: std::net::SocketAddr = listen
                 .parse()
@@ -1279,6 +1280,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     trusted_proxies: vec![],
             update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 update_check_enabled: false,
+                enforcer: dbward_server::authz::get_enforcer_arc(),
                 };
                 let group_refs: Vec<&str> = groups.iter().map(|s| s.as_str()).collect();
 
@@ -1376,6 +1378,7 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     trusted_proxies: vec![],
             update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
                 update_check_enabled: false,
+                enforcer: dbward_server::authz::get_enforcer_arc(),
                 };
                 dbward_server::auth::revoke_token(&state, id)
                     .await
@@ -1458,6 +1461,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         trusted_proxies: vec![],
         update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         update_check_enabled: false,
+                enforcer: dbward_server::authz::get_enforcer_arc(),
     };
 
     // Create tokens

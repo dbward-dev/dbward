@@ -1,6 +1,6 @@
 pub(crate) mod api_error;
 pub mod auth;
-pub(crate) mod authz;
+pub mod authz;
 pub(crate) mod constants;
 pub mod db;
 pub mod license;
