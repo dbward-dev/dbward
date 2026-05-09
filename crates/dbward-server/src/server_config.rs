@@ -326,6 +326,15 @@ impl ServerConfig {
         if self.result_storage.is_none() {
             return Err("[result_storage] section is required in server config".into());
         }
+        if self.retention.result_ttl_days == 0 {
+            return Err("retention.result_ttl_days must be at least 1".into());
+        }
+        if self.retention.request_ttl_days == 0 {
+            return Err("retention.request_ttl_days must be at least 1".into());
+        }
+        if self.retention.audit_ttl_days == 0 {
+            return Err("retention.audit_ttl_days must be at least 1".into());
+        }
         for (i, wh) in self.webhooks.iter().enumerate() {
             if let Some(ref secret) = wh.secret {
                 if secret.trim().is_empty() {

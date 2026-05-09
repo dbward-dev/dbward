@@ -33,6 +33,7 @@ type RequestRow = (
 );
 
 const MAX_METADATA_JSON_BYTES: usize = 8 * 1024;
+pub(crate) const MAX_REASON_BYTES: usize = 1024;
 const MAX_IDEMPOTENCY_KEY_BYTES: usize = 255;
 
 /// Statuses subject to approval expiry.
@@ -141,6 +142,25 @@ fn validate_metadata(
     }
 
     Ok(metadata_json)
+}
+
+fn validate_text_field(
+    value: Option<&str>,
+    field_name: &str,
+    max_bytes: usize,
+) -> Result<Option<String>, crate::api_error::ApiError> {
+    let Some(v) = value else { return Ok(None) };
+    let trimmed = v.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.len() > max_bytes {
+        return Err(crate::api_error::ApiError::bad_request(format!(
+            "{field_name} must be at most {max_bytes} bytes",
+        ))
+        .with_code(&format!("{field_name}_too_long")));
+    }
+    Ok(Some(trimmed.to_string()))
 }
 
 fn validate_idempotency_key(
@@ -266,7 +286,7 @@ pub(crate) async fn list_requests(
                     "created_by": created_by,
                     "operation": row.get::<_, String>(2)?,
                     "environment": row.get::<_, String>(3)?,
-                    "database_name": row.get::<_, String>(4)?,
+                    "database": row.get::<_, String>(4)?,
                     "detail": row.get::<_, String>(5)?,
                     "status": row.get::<_, String>(6)?,
                     "emergency": row.get::<_, bool>(7)?,
@@ -287,7 +307,7 @@ pub(crate) async fn list_requests(
         let resource = request_resource(
             row["created_by"].as_str().unwrap_or("").to_string(),
             row["status"].as_str().unwrap_or("").to_string(),
-            row["database_name"].as_str().unwrap_or("").to_string(),
+            row["database"].as_str().unwrap_or("").to_string(),
             row["environment"].as_str().unwrap_or("").to_string(),
         );
         if authz::authorize_sync(&user, Action::ListRequests, resource).is_ok() {
@@ -360,7 +380,7 @@ pub(crate) fn list_requests_pending_for_me(
                     "created_by": created_by,
                     "operation": row.get::<_, String>(2)?,
                     "environment": row.get::<_, String>(3)?,
-                    "database_name": row.get::<_, String>(4)?,
+                    "database": row.get::<_, String>(4)?,
                     "detail": row.get::<_, String>(5)?,
                     "status": row.get::<_, String>(6)?,
                     "emergency": row.get::<_, bool>(7)?,
@@ -606,8 +626,23 @@ pub(crate) async fn create_request(
         .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
     let detail = body["detail"].as_str().unwrap_or("");
     let database_name = body["database"].as_str().unwrap_or("default");
+    match operation {
+        "execute_query" if detail.trim().is_empty() => {
+            return Err(crate::api_error::ApiError::bad_request(
+                "detail (SQL) is required for execute_query",
+            )
+            .with_code("detail_required"));
+        }
+        "migrate_up" | "migrate_down" if detail.trim().is_empty() => {
+            return Err(crate::api_error::ApiError::bad_request(
+                "migration detail must not be empty",
+            )
+            .with_code("detail_required"));
+        }
+        _ => {}
+    }
     let emergency = body["emergency"].as_bool().unwrap_or(false);
-    let reason = body["reason"].as_str().map(|s| s.to_string());
+    let reason = validate_text_field(body["reason"].as_str(), "reason", MAX_REASON_BYTES)?;
     let share_with_json: Option<String> = body["share_with"]
         .as_array()
         .map(|arr| serde_json::to_string(arr).unwrap_or_default());
@@ -1041,6 +1076,14 @@ pub(crate) async fn reject_request(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::RejectRequest, Resource::Global, &state).await?;
     let body_val: serde_json::Value = serde_json::from_str(&body_str).unwrap_or(json!({}));
+    if let Some(c) = body_val.get("comment").and_then(|v| v.as_str()) {
+        if c.len() > MAX_REASON_BYTES {
+            return Err(crate::api_error::ApiError::bad_request(
+                "comment must be at most 1024 bytes",
+            )
+            .with_code("comment_too_long"));
+        }
+    }
     let comment = body_val
         .get("comment")
         .and_then(|v| v.as_str())
@@ -1177,7 +1220,7 @@ pub(crate) async fn cancel_request(
     authz::authorize_and_audit(&user, Action::CancelRequest, Resource::Global, &state).await?;
 
     let body_val: serde_json::Value = serde_json::from_str(&body_str).unwrap_or(json!({}));
-    let cancel_reason = body_val["reason"].as_str().map(str::to_string);
+    let cancel_reason = validate_text_field(body_val["reason"].as_str(), "reason", MAX_REASON_BYTES)?;
 
     let (id, requester, operation, environment, database_name, detail, notif_hooks) = {
         let mut conn = state.db().await;
@@ -1331,7 +1374,7 @@ pub(crate) async fn get_request(
 
         let mut resp = json!({
             "id": id_val, "created_by": created_by, "operation": operation,
-            "environment": environment, "database_name": database_name, "detail": detail, "status": status,
+            "environment": environment, "database": database_name, "detail": detail, "status": status,
             "created_at": created_at, "updated_at": updated_at, "resolved_at": resolved_at,
             "reason": reason,
             "metadata": metadata,
@@ -1452,7 +1495,7 @@ pub(crate) async fn get_request(
         let request_resource = request_resource(
             resp["created_by"].as_str().unwrap_or("").to_string(),
             resp["status"].as_str().unwrap_or("").to_string(),
-            resp["database_name"].as_str().unwrap_or("").to_string(),
+            resp["database"].as_str().unwrap_or("").to_string(),
             resp["environment"].as_str().unwrap_or("").to_string(),
         );
         if authz::authorize_with_audit(&user, Action::GetRequest, request_resource, &mut conn)

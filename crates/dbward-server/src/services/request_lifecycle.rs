@@ -52,6 +52,14 @@ pub(crate) async fn approve_request_inner(
     body_val: &serde_json::Value,
 ) -> Result<ApproveResult, crate::api_error::ApiError> {
     let mut conn = sqlite.lock().await;
+    if let Some(c) = body_val.get("comment").and_then(|v| v.as_str()) {
+        if c.len() > crate::routes::requests::MAX_REASON_BYTES {
+            return Err(crate::api_error::ApiError::bad_request(
+                "comment must be at most 1024 bytes",
+            )
+            .with_code("comment_too_long"));
+        }
+    }
     let comment = body_val
         .get("comment")
         .and_then(|v| v.as_str())
