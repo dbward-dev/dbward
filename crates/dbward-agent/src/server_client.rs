@@ -27,6 +27,7 @@ impl AgentClient {
         databases: &[String],
         environments: &[String],
         operations: &[String],
+        limit: u32,
     ) -> Result<Vec<Value>, Error> {
         let resp = self
             .client
@@ -36,6 +37,7 @@ impl AgentClient {
                 "databases": databases,
                 "environments": environments,
                 "operations": operations,
+                "limit": limit,
             }))
             .send()
             .await

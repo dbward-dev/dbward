@@ -1,21 +1,33 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use dbward_core::{AgentConfig, Engine, Error};
 use dbward_migrate::Migrator;
-use tracing::{error, info, warn};
+use tokio::sync::Semaphore;
+use tracing::{error, info, warn, Instrument};
 
 use crate::server_client::AgentClient;
 
 const ALIVE_PROBE_PATH: &str = "/tmp/dbward-agent-alive";
 const READY_PROBE_PATH: &str = "/tmp/dbward-agent-ready";
 
+/// Guard that decrements in_flight on drop (panic-safe).
+struct InFlightGuard(Arc<AtomicUsize>);
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// Run the agent poll loop. Blocks until interrupted.
 pub async fn run(config: AgentConfig) -> Result<(), Error> {
     let client = AgentClient::new(&config.server.url, &config.server.agent_token);
     let poll_interval = Duration::from_millis(config.poll_interval_ms);
-    let draining = std::sync::Arc::new(AtomicBool::new(false));
-    let in_flight = std::sync::Arc::new(AtomicUsize::new(0));
+    let draining = Arc::new(AtomicBool::new(false));
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let max_concurrent = config.max_concurrent_tasks.max(1) as usize;
+    let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
     // Fetch server's public key for token verification
     let public_key = client.get_public_key().await?;
@@ -39,7 +51,7 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
     // Verify server connectivity and agent token validity
     let cap = &config.capabilities;
     client
-        .poll(&cap.databases, &cap.environments, &cap.operations)
+        .poll(&cap.databases, &cap.environments, &cap.operations, 1)
         .await
         .map_err(|e| Error::Config(format!("server connection check failed: {e}")))?;
 
@@ -50,11 +62,9 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
     info!(
         agent_id = %config.agent_id,
         server = %config.server.url,
+        max_concurrent = max_concurrent,
         "agent started, polling"
     );
-    if config.max_concurrent_tasks > 1 {
-        warn!("parallel job execution not yet implemented, processing sequentially");
-    }
 
     install_shutdown_task(draining.clone());
     let mut drain_started_at = None;
@@ -90,6 +100,7 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
             &client,
             &public_key,
             &in_flight,
+            &semaphore,
             &consecutive_failures,
             &ready_removed,
         )
@@ -104,15 +115,23 @@ async fn poll_once(
     config: &AgentConfig,
     client: &AgentClient,
     public_key: &ed25519_dalek::VerifyingKey,
-    in_flight: &AtomicUsize,
+    in_flight: &Arc<AtomicUsize>,
+    semaphore: &Arc<Semaphore>,
     consecutive_failures: &AtomicUsize,
     ready_removed: &AtomicBool,
 ) {
+    // Only request as many jobs as we have capacity for
+    let available = semaphore.available_permits() as u32;
+    if available == 0 {
+        return;
+    }
+
     let jobs = match client
         .poll(
             &config.capabilities.databases,
             &config.capabilities.environments,
             &config.capabilities.operations,
+            available,
         )
         .await
     {
@@ -153,11 +172,32 @@ async fn poll_once(
             }
         };
 
+        let permit = match semaphore.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => break, // no more capacity
+        };
+
+        let config = config.clone();
+        let client = client.clone();
+        let public_key = *public_key;
+        let in_flight = in_flight.clone();
+
         in_flight.fetch_add(1, Ordering::SeqCst);
-        if let Err(e) = execute_job(config, client, public_key, &request_id, &job).await {
-            error!(request_id = %request_id, %e, "job failed");
-        }
-        in_flight.fetch_sub(1, Ordering::SeqCst);
+        let span = tracing::info_span!("job", request_id = %request_id);
+        tokio::spawn(
+            async move {
+                let _guard = InFlightGuard(in_flight);
+
+                if let Err(e) =
+                    execute_job(&config, &client, &public_key, &request_id, &job).await
+                {
+                    error!(request_id = %request_id, %e, "job failed");
+                }
+
+                drop(permit);
+            }
+            .instrument(span),
+        );
     }
 }
 

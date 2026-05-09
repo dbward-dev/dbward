@@ -173,9 +173,10 @@ pub(crate) async fn agent_poll(
     }
 
     let where_sql = where_clauses.join(" AND ");
+    let limit = body["limit"].as_u64().unwrap_or(10).min(20) as usize;
     let query_sql = format!(
         "SELECT id, created_by, operation, environment, database_name, detail
-         FROM requests WHERE {where_sql} ORDER BY created_at ASC LIMIT 10"
+         FROM requests WHERE {where_sql} ORDER BY created_at ASC LIMIT {limit}"
     );
 
     let mut stmt = conn
