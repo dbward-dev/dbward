@@ -1,8 +1,8 @@
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use dbward_core::request_status::{self, RequestEvent, RequestStatus};
 use axum::response::IntoResponse;
+use dbward_core::request_status::{self, RequestEvent, RequestStatus};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -132,8 +132,7 @@ fn validate_metadata(
         );
     }
 
-    let metadata_json = serde_json::to_string(metadata)
-        ?;
+    let metadata_json = serde_json::to_string(metadata)?;
     if metadata_json.len() > MAX_METADATA_JSON_BYTES {
         return Err(crate::api_error::ApiError::bad_request(format!(
             "metadata must be at most {MAX_METADATA_JSON_BYTES} bytes"
@@ -187,15 +186,7 @@ fn is_unique_idempotency_key_violation(err: &rusqlite::Error) -> bool {
 }
 
 pub(crate) async fn ensure_result_slot(state: &AppState, request_id: &str) {
-    let slot = Arc::new(crate::state::ResultSlot {
-        result: tokio::sync::Mutex::new(None),
-        notify: tokio::sync::Notify::new(),
-        created_at: Instant::now(),
-    });
-    state
-        .result_channels
-        .insert(request_id.to_string(), slot)
-        .await;
+    state.result_channels.get_or_insert(request_id).await;
 }
 
 pub(crate) fn parse_pagination(params: &HashMap<String, String>) -> (i64, i64) {
@@ -263,9 +254,7 @@ pub(crate) async fn list_requests(
     let query_sql = format!(
         "SELECT id, created_by, operation, environment, database_name, detail, status, emergency, created_at, updated_at, resolved_at, reason, workflow_snapshot_json FROM requests {where_sql} ORDER BY created_at DESC",
     );
-    let mut stmt = conn
-        .prepare(&query_sql)
-        ?;
+    let mut stmt = conn.prepare(&query_sql)?;
 
     let candidates: Vec<(serde_json::Value, String, Option<String>)> = stmt
         .query_map(rusqlite::params_from_iter(&bind_values), |row| {
@@ -289,10 +278,8 @@ pub(crate) async fn list_requests(
                 created_by,
                 workflow_snapshot_json,
             ))
-        })
-        ?
-        .collect::<Result<Vec<_>, _>>()
-        ?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     let all_approvals = load_pending_request_approvals(&conn)?;
     let mut filtered = Vec::new();
@@ -326,14 +313,24 @@ pub(crate) async fn list_requests(
     let start = (offset as usize).min(filtered.len());
     let end = (start + limit as usize).min(filtered.len());
     let page = filtered[start..end].to_vec();
-    let page: Vec<serde_json::Value> = page.into_iter().map(|mut r| {
-        if let Some(obj) = r.as_object_mut() {
-            let status = obj.get("status").and_then(|s| s.as_str()).unwrap_or("");
-            let resolved = obj.get("resolved_at").and_then(|v| v.as_str()).map(String::from);
-            obj.insert("expires_at".into(), compute_expires_at(status, &resolved, state.retention.approval_ttl_secs).map_or(serde_json::Value::Null, Into::into));
-        }
-        r
-    }).collect();
+    let page: Vec<serde_json::Value> = page
+        .into_iter()
+        .map(|mut r| {
+            if let Some(obj) = r.as_object_mut() {
+                let status = obj.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                let resolved = obj
+                    .get("resolved_at")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                obj.insert(
+                    "expires_at".into(),
+                    compute_expires_at(status, &resolved, state.retention.approval_ttl_secs)
+                        .map_or(serde_json::Value::Null, Into::into),
+                );
+            }
+            r
+        })
+        .collect();
     Ok(Json(
         json!({"requests": page, "total": total, "limit": limit, "offset": offset}),
     ))
@@ -375,10 +372,8 @@ pub(crate) fn list_requests_pending_for_me(
                 created_by,
                 ws,
             ))
-        })
-        ?
-        .collect::<Result<Vec<_>, _>>()
-        ?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     // Batch-load all approvals for pending requests (eliminates N+1)
     let all_approvals = load_pending_request_approvals(conn)?;
@@ -415,10 +410,8 @@ fn load_pending_request_approvals(
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
             ))
-        })
-        ?
-        .collect::<Result<Vec<_>, _>>()
-        ?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     let mut map: ApprovalMap = HashMap::new();
     for (req_id, step, actor, role) in rows {
         map.entry(req_id).or_default().push((step, actor, role));
@@ -495,7 +488,13 @@ pub(crate) fn current_approval_resource(
     requester_id: String,
     workflow_snapshot_json: Option<&str>,
 ) -> Result<(Resource, usize, Vec<String>, usize), crate::api_error::ApiError> {
-    current_approval_resource_with_workflow(conn, request_id, requester_id, workflow_snapshot_json, None)
+    current_approval_resource_with_workflow(
+        conn,
+        request_id,
+        requester_id,
+        workflow_snapshot_json,
+        None,
+    )
 }
 
 pub(crate) fn current_approval_resource_with_workflow(
@@ -773,8 +772,8 @@ pub(crate) async fn create_request(
         Err(err) if is_unique_idempotency_key_violation(&err) => {
             let _ = conn.execute_batch("ROLLBACK");
             if let Some(ref key) = idempotency_key
-                && let Some(existing) = crate::db::request_repo::find_by_idempotency_key(&conn, key)
-                    ?
+                && let Some(existing) =
+                    crate::db::request_repo::find_by_idempotency_key(&conn, key)?
             {
                 return Ok((
                     StatusCode::OK,
@@ -819,29 +818,34 @@ pub(crate) async fn create_request(
             "emergency": emergency,
             "workflow_id": decision.workflow_id,
         });
-        if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
-        crate::db::audit_event_repo::AuditEvent {
-            event_type,
-            event_category: "approval",
-            outcome,
-            actor_id: &user.user,
-            actor_type: "user",
-            resource_type: Some("request"),
-            resource_id: Some(&id),
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
-            request_id: Some(&id),
-            operation: Some(operation),
-            environment: Some(environment),
-            database_name: Some(database_name),
-            detail_fingerprint: None,
-            detail_raw: Some(detail),
-            reason: reason.as_deref(),
-            metadata_json: &meta.to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies) {
-                    error!(error = %e, "audit write failed");
-                }
+        if let Err(e) = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            crate::db::audit_event_repo::AuditEvent {
+                event_type,
+                event_category: "approval",
+                outcome,
+                actor_id: &user.user,
+                actor_type: "user",
+                resource_type: Some("request"),
+                resource_id: Some(&id),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: Some(&id),
+                operation: Some(operation),
+                environment: Some(environment),
+                database_name: Some(database_name),
+                detail_fingerprint: None,
+                detail_raw: Some(detail),
+                reason: reason.as_deref(),
+                metadata_json: &meta.to_string(),
+            },
+            &headers,
+            &state.audit_config,
+            &state.trusted_proxies,
+        ) {
+            error!(error = %e, "audit write failed");
+        }
     }
 
     if emergency {
@@ -982,29 +986,34 @@ pub(crate) async fn approve_request(
             "step_completed": result.response["step_completed"],
             "total_steps": result.response["total_steps"],
         });
-        if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
-        crate::db::audit_event_repo::AuditEvent {
-            event_type: "request_approved",
-            event_category: "approval",
-            outcome: "success",
-            actor_id: &approver.user,
-            actor_type: "user",
-            resource_type: Some("request"),
-            resource_id: Some(&id),
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
-            request_id: Some(&id),
-            operation: None,
-            environment: None,
-            database_name: None,
-            detail_fingerprint: None,
-            detail_raw: None,
-            reason: body_val["comment"].as_str(),
-            metadata_json: &meta.to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies) {
-                    error!(error = %e, "audit write failed");
-                }
+        if let Err(e) = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            crate::db::audit_event_repo::AuditEvent {
+                event_type: "request_approved",
+                event_category: "approval",
+                outcome: "success",
+                actor_id: &approver.user,
+                actor_type: "user",
+                resource_type: Some("request"),
+                resource_id: Some(&id),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: Some(&id),
+                operation: None,
+                environment: None,
+                database_name: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: body_val["comment"].as_str(),
+                metadata_json: &meta.to_string(),
+            },
+            &headers,
+            &state.audit_config,
+            &state.trusted_proxies,
+        ) {
+            error!(error = %e, "audit write failed");
+        }
     }
 
     // Post-transaction async work
@@ -1012,11 +1021,11 @@ pub(crate) async fn approve_request(
         ensure_result_slot(&state, &id).await;
     }
     if let Some(event) = result.webhook_event {
-        state
-            .webhooks
-            .read()
-            .unwrap()
-            .dispatch_with_policy(result.notif_hooks, event, state.metrics.clone());
+        state.webhooks.read().unwrap().dispatch_with_policy(
+            result.notif_hooks,
+            event,
+            state.metrics.clone(),
+        );
     }
     state.request_notifier.notify(&id).await;
 
@@ -1048,7 +1057,9 @@ pub(crate) async fn reject_request(
         let database_name = ctx.database_name.clone();
         let environment = ctx.environment.clone();
 
-        let current = RequestStatus::parse(&status).ok_or_else(|| crate::api_error::ApiError::internal(format!("unknown status: {status}")))?;
+        let current = RequestStatus::parse(&status).ok_or_else(|| {
+            crate::api_error::ApiError::internal(format!("unknown status: {status}"))
+        })?;
         request_status::transition(current, &RequestEvent::Reject).map_err(|_| {
             crate::api_error::ApiError::conflict(format!("request is already {status}"))
                 .with_code("request_reject_wrong_status")
@@ -1075,11 +1086,8 @@ pub(crate) async fn reject_request(
         }
 
         let now = chrono::Utc::now().to_rfc3339();
-        let tx = conn
-            .transaction()
-            ?;
-        crate::db::request_repo::mark_rejected(&tx, &id, &now)
-            ?;
+        let tx = conn.transaction()?;
+        crate::db::request_repo::mark_rejected(&tx, &id, &now)?;
         crate::db::request_repo::insert_approval(
             &tx,
             &id,
@@ -1089,36 +1097,39 @@ pub(crate) async fn reject_request(
             user.effective_permission(),
             comment,
             &now,
-        )
-        ?;
-        tx.commit()
-            ?;
+        )?;
+        tx.commit()?;
         state.metrics.record_approval("reject");
 
         // Audit: request_rejected
-        if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
-        crate::db::audit_event_repo::AuditEvent {
-            event_type: "request_rejected",
-            event_category: "approval",
-            outcome: "success",
-            actor_id: &user.user,
-            actor_type: "user",
-            resource_type: Some("request"),
-            resource_id: Some(&id),
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
-            request_id: Some(&id),
-            operation: None,
-            environment: Some(&environment),
-            database_name: Some(&database_name),
-            detail_fingerprint: None,
-            detail_raw: None,
-            reason: comment,
-            metadata_json: "{}",
-        }, &headers, &state.audit_config, &state.trusted_proxies) {
-                    error!(error = %e, "audit write failed");
-                }
+        if let Err(e) = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            crate::db::audit_event_repo::AuditEvent {
+                event_type: "request_rejected",
+                event_category: "approval",
+                outcome: "success",
+                actor_id: &user.user,
+                actor_type: "user",
+                resource_type: Some("request"),
+                resource_id: Some(&id),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: Some(&id),
+                operation: None,
+                environment: Some(&environment),
+                database_name: Some(&database_name),
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: comment,
+                metadata_json: "{}",
+            },
+            &headers,
+            &state.audit_config,
+            &state.trusted_proxies,
+        ) {
+            error!(error = %e, "audit write failed");
+        }
 
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
@@ -1147,7 +1158,13 @@ pub(crate) async fn reject_request(
 
     state.request_notifier.notify(&id).await;
 
-    Ok(Json(serde_json::to_value(dbward_api_types::requests::StatusResponse { id, status: RequestStatus::Rejected }).unwrap()))
+    Ok(Json(
+        serde_json::to_value(dbward_api_types::requests::StatusResponse {
+            id,
+            status: RequestStatus::Rejected,
+        })
+        .unwrap(),
+    ))
 }
 
 pub(crate) async fn cancel_request(
@@ -1180,12 +1197,11 @@ pub(crate) async fn cancel_request(
             &mut conn,
         )?;
 
-        let current = RequestStatus::parse(&ctx.status).ok_or_else(|| crate::api_error::ApiError::internal(format!("unknown status: {}", ctx.status)))?;
+        let current = RequestStatus::parse(&ctx.status).ok_or_else(|| {
+            crate::api_error::ApiError::internal(format!("unknown status: {}", ctx.status))
+        })?;
         request_status::transition(current, &RequestEvent::Cancel).map_err(|_| {
-            crate::api_error::ApiError::conflict(format!(
-                "request is already {}",
-                ctx.status
-            ))
+            crate::api_error::ApiError::conflict(format!("request is already {}", ctx.status))
         })?;
 
         let now = chrono::Utc::now().to_rfc3339();
@@ -1195,8 +1211,7 @@ pub(crate) async fn cancel_request(
             &user.user,
             cancel_reason.as_deref(),
             &now,
-        )
-        ?;
+        )?;
         if !updated {
             return Err(crate::api_error::ApiError::conflict(
                 "request cannot be cancelled",
@@ -1204,29 +1219,34 @@ pub(crate) async fn cancel_request(
         }
 
         // Audit: request_cancelled
-        if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
-        crate::db::audit_event_repo::AuditEvent {
-            event_type: "request_cancelled",
-            event_category: "approval",
-            outcome: "success",
-            actor_id: &user.user,
-            actor_type: "user",
-            resource_type: Some("request"),
-            resource_id: Some(&id),
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
-            request_id: Some(&id),
-            operation: Some(&ctx.operation),
-            environment: Some(&ctx.environment),
-            database_name: Some(&ctx.database_name),
-            detail_fingerprint: None,
-            detail_raw: None,
-            reason: cancel_reason.as_deref(),
-            metadata_json: "{}",
-        }, &headers, &state.audit_config, &state.trusted_proxies) {
-                    error!(error = %e, "audit write failed");
-                }
+        if let Err(e) = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            crate::db::audit_event_repo::AuditEvent {
+                event_type: "request_cancelled",
+                event_category: "approval",
+                outcome: "success",
+                actor_id: &user.user,
+                actor_type: "user",
+                resource_type: Some("request"),
+                resource_id: Some(&id),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: Some(&id),
+                operation: Some(&ctx.operation),
+                environment: Some(&ctx.environment),
+                database_name: Some(&ctx.database_name),
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: cancel_reason.as_deref(),
+                metadata_json: "{}",
+            },
+            &headers,
+            &state.audit_config,
+            &state.trusted_proxies,
+        ) {
+            error!(error = %e, "audit write failed");
+        }
 
         let notif_hooks = crate::db::policy_repo::get_notification_webhooks(
             &conn,
@@ -1267,7 +1287,13 @@ pub(crate) async fn cancel_request(
         state.metrics.clone(),
     );
 
-    Ok(Json(serde_json::to_value(dbward_api_types::requests::StatusResponse { id, status: RequestStatus::Cancelled }).unwrap()))
+    Ok(Json(
+        serde_json::to_value(dbward_api_types::requests::StatusResponse {
+            id,
+            status: RequestStatus::Cancelled,
+        })
+        .unwrap(),
+    ))
 }
 
 pub(crate) async fn get_request(
@@ -1318,8 +1344,7 @@ pub(crate) async fn get_request(
                 state
                     .token_signer
                     .issue(id, &operation, &environment, &database_name, &detail);
-            resp["execution_token"] = serde_json::to_value(token)
-                ?;
+            resp["execution_token"] = serde_json::to_value(token)?;
         }
 
         // Include approval_progress when workflow snapshot exists
@@ -1565,16 +1590,14 @@ pub(crate) async fn dispatch_request(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    let current = RequestStatus::parse(&status).ok_or_else(|| crate::api_error::ApiError::internal(format!("unknown status: {status}")))?;
+    let current = RequestStatus::parse(&status)
+        .ok_or_else(|| crate::api_error::ApiError::internal(format!("unknown status: {status}")))?;
     request_status::transition(current, &RequestEvent::Dispatch).map_err(|_| {
         crate::api_error::ApiError::conflict("request cannot be dispatched (wrong status)")
             .with_code("request_dispatch_wrong_status")
     })?;
 
-    if status != "dispatched"
-        && !crate::db::request_repo::mark_dispatched(&conn, &id, &now)
-            ?
-    {
+    if status != "dispatched" && !crate::db::request_repo::mark_dispatched(&conn, &id, &now)? {
         return Err(crate::api_error::ApiError::conflict(
             "request cannot be dispatched (wrong status)",
         )
@@ -1615,7 +1638,13 @@ pub(crate) async fn dispatch_request(
         );
     }
 
-    Ok(Json(serde_json::to_value(dbward_api_types::requests::StatusResponse { id, status: RequestStatus::Dispatched }).unwrap()))
+    Ok(Json(
+        serde_json::to_value(dbward_api_types::requests::StatusResponse {
+            id,
+            status: RequestStatus::Dispatched,
+        })
+        .unwrap(),
+    ))
 }
 
 /// Client waits for execution result (long poll).
@@ -1700,10 +1729,9 @@ pub(crate) async fn stream_result(
                         )
                         .with_code("result_relay_unavailable")
                     })?;
-                    let payload: serde_json::Value =
-                        serde_json::from_slice(&data).unwrap_or_else(|_| {
-                            serde_json::json!({"success": status == "executed", "raw": true})
-                        });
+                    let payload: serde_json::Value = serde_json::from_slice(&data).unwrap_or_else(
+                        |_| serde_json::json!({"success": status == "executed", "raw": true}),
+                    );
                     return Ok(Json(payload));
                 }
                 "approved" | "auto_approved" | "break_glass" => {
@@ -1746,12 +1774,31 @@ pub(crate) async fn stream_result(
         std::time::Duration::from_secs(crate::constants::RESULT_WAIT_TIMEOUT_SECS),
         async {
             loop {
-                slot.notify.notified().await;
+                tokio::select! {
+                    _ = slot.notify.notified() => {},
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => {},
+                }
                 if state.draining.load(std::sync::atomic::Ordering::Relaxed) {
                     return Err(());
                 }
                 if slot.result.lock().await.is_some() {
                     return Ok(());
+                }
+                // Defense: re-check DB status (handles slot-overwrite race)
+                let conn = state.db().await;
+                let current_status: String = conn
+                    .query_row("SELECT status FROM requests WHERE id = ?1", [&id], |row| {
+                        row.get(0)
+                    })
+                    .unwrap_or_default();
+                drop(conn);
+                if current_status == "executed" || current_status == "failed" {
+                    if let Ok(data) = state.result_store.get(&id).await {
+                        if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&data) {
+                            *slot.result.lock().await = Some(payload);
+                            return Ok(());
+                        }
+                    }
                 }
             }
         },
@@ -1783,7 +1830,6 @@ pub(crate) async fn stream_result(
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1828,11 +1874,8 @@ mod tests {
 
     #[test]
     fn expires_at_computes_for_approved() {
-        let result = compute_expires_at(
-            "approved",
-            &Some("2026-01-01T00:00:00+00:00".into()),
-            3600,
-        );
+        let result =
+            compute_expires_at("approved", &Some("2026-01-01T00:00:00+00:00".into()), 3600);
         assert!(result.is_some());
         assert!(result.unwrap().contains("2026-01-01T01:00:00"));
     }
@@ -1873,7 +1916,10 @@ mod tests {
     #[test]
     fn filter_capability_specific_values_means_filter() {
         assert!(should_filter_capability(&["app".into()]));
-        assert!(should_filter_capability(&["app".into(), "analytics".into()]));
+        assert!(should_filter_capability(&[
+            "app".into(),
+            "analytics".into()
+        ]));
     }
 
     // --- parse_pagination ---
@@ -1995,7 +2041,10 @@ mod tests {
 
     #[test]
     fn approver_summary_invalid_json_returns_empty() {
-        assert_eq!(extract_approver_summary(Some("not json")), Vec::<String>::new());
+        assert_eq!(
+            extract_approver_summary(Some("not json")),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -2021,10 +2070,13 @@ mod tests {
             {"type":"approval","approvers":[{"group":"dba-team","min":2},{"role":"admin","min":1}]}
         ]"#;
         let result = extract_approver_summary(Some(json));
-        assert_eq!(result, vec![
-            "role:developer (min:1)",
-            "group:dba-team (min:2)",
-            "role:admin (min:1)",
-        ]);
+        assert_eq!(
+            result,
+            vec![
+                "role:developer (min:1)",
+                "group:dba-team (min:2)",
+                "role:admin (min:1)",
+            ]
+        );
     }
 }

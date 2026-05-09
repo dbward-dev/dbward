@@ -1,7 +1,7 @@
+use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::Json;
 use serde_json::json;
 
 use crate::state::AppState;
@@ -35,7 +35,12 @@ pub(crate) async fn metrics(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = crate::auth::authenticate(&headers, &state).await?;
-    crate::authz::authorize(&user, crate::authz::Action::ReadMetrics, crate::authz::Resource::Global).await?;
+    crate::authz::authorize(
+        &user,
+        crate::authz::Action::ReadMetrics,
+        crate::authz::Resource::Global,
+    )
+    .await?;
     let body = state
         .metrics
         .render(&state.sqlite)

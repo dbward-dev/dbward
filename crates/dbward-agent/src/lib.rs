@@ -7,7 +7,7 @@ pub use runner::run;
 /// Set `RUST_LOG` for level filter (default: info).
 /// Set `DBWARD_LOG_FORMAT=json` for JSON output (default: compact human-readable).
 pub fn init_logging() {
-    use tracing_subscriber::{fmt, EnvFilter};
+    use tracing_subscriber::{EnvFilter, fmt};
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let json = std::env::var("DBWARD_LOG_FORMAT")

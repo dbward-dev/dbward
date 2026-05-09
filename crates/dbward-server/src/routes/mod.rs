@@ -18,8 +18,8 @@ use std::time::Instant;
 use crate::state::AppState;
 use health::{get_public_key, health, metrics, ready};
 use requests::{
-    approve_request, cancel_request, create_request, dispatch_request, get_request,
-    list_requests, reject_request, stream_result,
+    approve_request, cancel_request, create_request, dispatch_request, get_request, list_requests,
+    reject_request, stream_result,
 };
 
 pub fn router(state: AppState) -> Router {

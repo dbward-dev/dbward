@@ -104,9 +104,7 @@ pub(crate) async fn list_audit_events(
     bind_values.push(limit.to_string());
     bind_values.push(offset.to_string());
 
-    let mut stmt = conn
-        .prepare(&query_sql)
-        ?;
+    let mut stmt = conn.prepare(&query_sql)?;
     let rows = stmt
         .query_map(rusqlite::params_from_iter(&bind_values), |row| {
             Ok(json!({
@@ -160,8 +158,7 @@ pub(crate) async fn verify_audit_chain(
     .await?;
 
     let conn = state.db().await;
-    let (count, broken) = crate::db::audit_event_repo::verify_hash_chain(&conn)
-        ?;
+    let (count, broken) = crate::db::audit_event_repo::verify_hash_chain(&conn)?;
 
     Ok(Json(json!({
         "verified_events": count,

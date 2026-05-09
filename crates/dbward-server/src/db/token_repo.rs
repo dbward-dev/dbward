@@ -144,8 +144,21 @@ pub(crate) fn list_tokens(conn: &Connection) -> Result<Vec<TokenListRow>, rusqli
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut result = Vec::with_capacity(rows.len());
-    for (id, prefix, subject_id, subject_type, role, name, status, created_at, expires_at, revoked_at) in rows {
-        let mut grp_stmt = conn.prepare("SELECT group_name FROM token_groups WHERE token_id = ?1")?;
+    for (
+        id,
+        prefix,
+        subject_id,
+        subject_type,
+        role,
+        name,
+        status,
+        created_at,
+        expires_at,
+        revoked_at,
+    ) in rows
+    {
+        let mut grp_stmt =
+            conn.prepare("SELECT group_name FROM token_groups WHERE token_id = ?1")?;
         let groups = grp_stmt
             .query_map([&id], |row| row.get(0))?
             .collect::<Result<Vec<String>, _>>()?;
@@ -167,10 +180,17 @@ pub(crate) fn list_tokens(conn: &Connection) -> Result<Vec<TokenListRow>, rusqli
 }
 
 pub(crate) fn count_active_tokens(conn: &Connection) -> Result<i64, rusqlite::Error> {
-    conn.query_row("SELECT COUNT(*) FROM tokens WHERE status = 'active'", [], |row| row.get(0))
+    conn.query_row(
+        "SELECT COUNT(*) FROM tokens WHERE status = 'active'",
+        [],
+        |row| row.get(0),
+    )
 }
 
-pub(crate) fn get_token_owner(conn: &Connection, token_id: &str) -> Result<Option<String>, rusqlite::Error> {
+pub(crate) fn get_token_owner(
+    conn: &Connection,
+    token_id: &str,
+) -> Result<Option<String>, rusqlite::Error> {
     match conn.query_row(
         "SELECT subject_id FROM tokens WHERE id = ?1",
         rusqlite::params![token_id],

@@ -301,15 +301,21 @@ impl DatabaseDriver for MysqlDriver {
             return Ok(result.rows_affected());
         }
         let stmts = crate::query::split_statements_mysql(sql);
-        let mut tx = self.pool.begin().await
+        let mut tx = self
+            .pool
+            .begin()
+            .await
             .map_err(|e| Error::Database(e.to_string()))?;
         let mut total_affected = 0u64;
         for stmt in &stmts {
-            let r = sqlx::query(stmt).execute(&mut *tx).await
+            let r = sqlx::query(stmt)
+                .execute(&mut *tx)
+                .await
                 .map_err(|e| Error::Database(e.to_string()))?;
             total_affected += r.rows_affected();
         }
-        tx.commit().await
+        tx.commit()
+            .await
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(total_affected)
     }

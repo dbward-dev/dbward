@@ -46,23 +46,33 @@ fn test_state() -> AppState {
     ];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
-        license: dbward_server::license::License { plan: dbward_server::license::Plan::Pro },
+        license: dbward_server::license::License {
+            plan: dbward_server::license::Plan::Pro,
+        },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
-        webhooks: Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
+        webhooks: Arc::new(std::sync::RwLock::new(
+            dbward_server::webhook::WebhookDispatcher::empty(),
+        )),
         metrics: Arc::new(Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: Arc::new(dbward_server::result_storage::ResultStore::new_local(&std::env::temp_dir().join("dbward-test").to_string_lossy()).unwrap()),
+        result_store: Arc::new(
+            dbward_server::result_storage::ResultStore::new_local(
+                &std::env::temp_dir().join("dbward-test").to_string_lossy(),
+            )
+            .unwrap(),
+        ),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
+        enforcer: dbward_server::authz::get_enforcer_arc(),
     }
 }
 
@@ -580,14 +590,15 @@ async fn cannot_reject_after_cancel() {
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 }
 
-
 #[tokio::test]
 async fn dispatch_fails_when_approval_expired() {
     let mut state = test_state();
     state.retention.approval_ttl_secs = 1;
 
     let app = routes::router(state.clone());
-    let (_, dev_token) = auth::create_token(&state, "dev1", "developer").await.unwrap();
+    let (_, dev_token) = auth::create_token(&state, "dev1", "developer")
+        .await
+        .unwrap();
     let (_, admin_token) = auth::create_token(&state, "admin1", "admin").await.unwrap();
 
     // Dev creates request (production env requires approval)

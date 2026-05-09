@@ -3,7 +3,16 @@ use serde_json;
 pub(crate) const LIST_DETAIL_WIDTH: usize = 30;
 pub(crate) const RESULT_CELL_MAX_WIDTH: usize = 60;
 
-type RequestListRow = (String, String, String, String, String, String, String, String);
+type RequestListRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+);
 
 pub(crate) fn print_request_list(requests: &[serde_json::Value]) {
     let mut rows: Vec<RequestListRow> = Vec::new();
@@ -390,7 +399,10 @@ pub(crate) fn print_agents_status(body: &serde_json::Value) {
         let last_seen = format_duration_ago(ago);
         let uptime_str = format_duration_short(uptime);
 
-        println!("{:<20} {:<10} {:<7} {:<12} {:<10}", id, status, load, last_seen, uptime_str);
+        println!(
+            "{:<20} {:<10} {:<7} {:<12} {:<10}",
+            id, status, load, last_seen, uptime_str
+        );
     }
 
     // Print active jobs if any

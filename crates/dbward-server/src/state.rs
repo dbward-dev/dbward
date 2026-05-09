@@ -47,6 +47,21 @@ impl ResultChannels {
         self.slots.lock().await.get(request_id).cloned()
     }
 
+    pub async fn get_or_insert(&self, request_id: &str) -> Arc<ResultSlot> {
+        self.cleanup_expired().await;
+        let mut slots = self.slots.lock().await;
+        slots
+            .entry(request_id.to_string())
+            .or_insert_with(|| {
+                Arc::new(ResultSlot {
+                    result: Mutex::new(None),
+                    notify: tokio::sync::Notify::new(),
+                    created_at: Instant::now(),
+                })
+            })
+            .clone()
+    }
+
     pub async fn remove(&self, request_id: &str) -> Option<Arc<ResultSlot>> {
         self.slots.lock().await.remove(request_id)
     }
@@ -114,7 +129,10 @@ impl RequestNotifier {
         }
     }
 
-    fn cleanup_expired_inner(&self, map: &mut HashMap<String, (Arc<tokio::sync::Notify>, Instant)>) {
+    fn cleanup_expired_inner(
+        &self,
+        map: &mut HashMap<String, (Arc<tokio::sync::Notify>, Instant)>,
+    ) {
         let now = Instant::now();
         map.retain(|_, (_, created)| now.duration_since(*created) < Self::ENTRY_TTL);
     }
@@ -180,7 +198,7 @@ impl AppState {
             trusted_proxies: vec![],
             update_available: Arc::new(Mutex::new(None)),
             update_check_enabled: false,
-            enforcer: crate::authz::get_enforcer_arc(),
+            enforcer: crate::authz::get_enforcer_arc_or_default(),
         }
     }
 }

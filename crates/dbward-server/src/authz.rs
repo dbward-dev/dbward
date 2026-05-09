@@ -72,6 +72,11 @@ pub fn get_enforcer_arc() -> Arc<RwLock<Enforcer>> {
         .clone()
 }
 
+/// Returns the shared Enforcer Arc. Safe to call before warmup (returns uninitialized placeholder).
+pub fn get_enforcer_arc_or_default() -> Arc<RwLock<Enforcer>> {
+    get_enforcer_arc()
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Action {
     ListRequests,
@@ -197,29 +202,31 @@ pub async fn authorize_and_audit(
                 "resource": resource_json,
             })
             .to_string();
-            if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
-            &crate::db::audit_event_repo::AuditEvent {
-                event_type: "authz_denied",
-                event_category: "auth",
-                outcome: "denied",
-                actor_id: &principal.user,
-                actor_type: &principal.subject_type,
-                resource_type: None,
-                resource_id: None,
-                peer_ip: None,
-                client_ip: None,
-                client_ip_source: None,
-                request_id: None,
-                operation: None,
-                environment: None,
-                database_name: None,
-                detail_fingerprint: None,
-                detail_raw: None,
-                reason: None,
-                metadata_json: &meta,
-            },) {
-                        error!(error = %e, "audit write failed");
-                    }
+            if let Err(e) = crate::db::audit_event_repo::insert_audit_event(
+                &mut conn,
+                &crate::db::audit_event_repo::AuditEvent {
+                    event_type: "authz_denied",
+                    event_category: "auth",
+                    outcome: "denied",
+                    actor_id: &principal.user,
+                    actor_type: &principal.subject_type,
+                    resource_type: None,
+                    resource_id: None,
+                    peer_ip: None,
+                    client_ip: None,
+                    client_ip_source: None,
+                    request_id: None,
+                    operation: None,
+                    environment: None,
+                    database_name: None,
+                    detail_fingerprint: None,
+                    detail_raw: None,
+                    reason: None,
+                    metadata_json: &meta,
+                },
+            ) {
+                error!(error = %e, "audit write failed");
+            }
         } else {
             warn!("authz_denied audit event dropped (lock contention)");
         }
@@ -268,29 +275,31 @@ pub fn authorize_with_audit(
             "resource": resource_json,
         })
         .to_string();
-        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(conn,
-        &crate::db::audit_event_repo::AuditEvent {
-            event_type: "authz_denied",
-            event_category: "auth",
-            outcome: "denied",
-            actor_id: &principal.user,
-            actor_type: &principal.subject_type,
-            resource_type: None,
-            resource_id: None,
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
-            request_id: None,
-            operation: None,
-            environment: None,
-            database_name: None,
-            detail_fingerprint: None,
-            detail_raw: None,
-            reason: None,
-            metadata_json: &meta,
-        },) {
-                    error!(error = %e, "audit write failed");
-                }
+        if let Err(e) = crate::db::audit_event_repo::insert_audit_event(
+            conn,
+            &crate::db::audit_event_repo::AuditEvent {
+                event_type: "authz_denied",
+                event_category: "auth",
+                outcome: "denied",
+                actor_id: &principal.user,
+                actor_type: &principal.subject_type,
+                resource_type: None,
+                resource_id: None,
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: None,
+                operation: None,
+                environment: None,
+                database_name: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: None,
+                metadata_json: &meta,
+            },
+        ) {
+            error!(error = %e, "audit write failed");
+        }
     }
     result
 }

@@ -139,10 +139,7 @@ impl WebhookDispatcher {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_default();
-        Self {
-            hooks,
-            client,
-        }
+        Self { hooks, client }
     }
 
     pub fn empty() -> Self {
@@ -288,11 +285,7 @@ fn format_payload(hook: &WebhookConfig, event: &WebhookEvent) -> (String, String
             let sep = "━━━━━━━━━━━━━━━━━━━━━━";
             let mut text = format!(
                 "{emoji} *[dbward] {title}*\n{sep}\n*Requester:* {}\n*Operation:* `{}`\n*Environment:* `{}`\n*Database:* `{}`\n{sep}\n```{}```",
-                event.requester,
-                event.operation,
-                event.environment,
-                event.database,
-                detail_short,
+                event.requester, event.operation, event.environment, event.database, detail_short,
             );
             if let Some(ref reason) = event.reason {
                 text.push_str(&format!("\n*Reason:* {reason}"));

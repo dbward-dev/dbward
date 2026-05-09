@@ -18,7 +18,7 @@ fn test_state() -> AppState {
         steps: vec![],
         require_reason: false,
         allow_same_approver_across_steps: false,
-            allow_self_approve: false,
+        allow_self_approve: false,
     }];
     db::policy_repo::sync_workflows(&conn, &workflows).unwrap();
     AppState {
@@ -36,13 +36,19 @@ fn test_state() -> AppState {
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: Arc::new(dbward_server::result_storage::ResultStore::new_local(&std::env::temp_dir().join("dbward-test").to_string_lossy()).unwrap()),
+        result_store: Arc::new(
+            dbward_server::result_storage::ResultStore::new_local(
+                &std::env::temp_dir().join("dbward-test").to_string_lossy(),
+            )
+            .unwrap(),
+        ),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
+        enforcer: dbward_server::authz::get_enforcer_arc(),
     }
 }
 
@@ -54,10 +60,9 @@ async fn admin_token(state: &AppState) -> String {
 }
 
 async fn dev_token(state: &AppState) -> String {
-    let (_, token) =
-        dbward_server::auth::create_token_with_type(state, "dev", "developer", "user")
-            .await
-            .unwrap();
+    let (_, token) = dbward_server::auth::create_token_with_type(state, "dev", "developer", "user")
+        .await
+        .unwrap();
     token
 }
 
@@ -67,9 +72,7 @@ fn req(method: &str, uri: &str, token: &str, body: Option<&str>) -> axum::http::
         .uri(uri)
         .header("authorization", format!("Bearer {token}"))
         .header("content-type", "application/json");
-    builder
-        .body(body.unwrap_or("").to_string())
-        .unwrap()
+    builder.body(body.unwrap_or("").to_string()).unwrap()
 }
 
 // === Token API Tests ===
@@ -122,7 +125,12 @@ async fn token_create_list_revoke() {
     // Revoke
     let resp = app
         .clone()
-        .oneshot(req("DELETE", &format!("/api/tokens/{token_id}"), &admin, None))
+        .oneshot(req(
+            "DELETE",
+            &format!("/api/tokens/{token_id}"),
+            &admin,
+            None,
+        ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);

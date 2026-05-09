@@ -75,14 +75,8 @@ mod tests {
             effective_permission(&["readonly".into(), "admin".into()]),
             ADMIN
         );
-        assert_eq!(
-            effective_permission(&["developer".into()]),
-            DEVELOPER
-        );
-        assert_eq!(
-            effective_permission(&["team-lead".into()]),
-            APPROVER
-        );
+        assert_eq!(effective_permission(&["developer".into()]), DEVELOPER);
+        assert_eq!(effective_permission(&["team-lead".into()]), APPROVER);
     }
 
     #[test]

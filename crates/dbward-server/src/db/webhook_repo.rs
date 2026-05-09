@@ -51,7 +51,10 @@ pub(crate) fn list_webhooks(conn: &Connection) -> Result<Vec<WebhookRow>, rusqli
     Ok(rows)
 }
 
-pub(crate) fn get_webhook(conn: &Connection, id: &str) -> Result<Option<WebhookRow>, rusqlite::Error> {
+pub(crate) fn get_webhook(
+    conn: &Connection,
+    id: &str,
+) -> Result<Option<WebhookRow>, rusqlite::Error> {
     match conn.query_row(
         "SELECT id, url, events_json, format, secret IS NOT NULL, status, source, created_at, updated_at FROM webhooks WHERE id = ?1",
         rusqlite::params![id],
@@ -119,7 +122,10 @@ pub(crate) fn delete_config_webhooks(conn: &Connection) -> Result<(), rusqlite::
 }
 
 /// Get the secret for a webhook (used by dispatcher for HMAC signing).
-pub(crate) fn get_webhook_secret(conn: &Connection, id: &str) -> Result<Option<String>, rusqlite::Error> {
+pub(crate) fn get_webhook_secret(
+    conn: &Connection,
+    id: &str,
+) -> Result<Option<String>, rusqlite::Error> {
     match conn.query_row(
         "SELECT secret FROM webhooks WHERE id = ?1",
         rusqlite::params![id],
@@ -132,7 +138,11 @@ pub(crate) fn get_webhook_secret(conn: &Connection, id: &str) -> Result<Option<S
 }
 
 pub(crate) fn count_active_webhooks(conn: &Connection) -> Result<i64, rusqlite::Error> {
-    conn.query_row("SELECT COUNT(*) FROM webhooks WHERE status = 'active'", [], |row| row.get(0))
+    conn.query_row(
+        "SELECT COUNT(*) FROM webhooks WHERE status = 'active'",
+        [],
+        |row| row.get(0),
+    )
 }
 
 /// Sync config-file webhooks to DB. Deletes all source='config' entries and re-inserts.
@@ -145,16 +155,26 @@ pub fn seed_config_webhooks(
     for cfg in configs {
         let id = uuid::Uuid::new_v4().to_string();
         let events_json = serde_json::to_string(&cfg.events).unwrap_or_else(|_| "[]".into());
-        insert_webhook(conn, &id, &cfg.url, &events_json, &cfg.format, cfg.secret.as_deref(), "config", &now)?;
+        insert_webhook(
+            conn,
+            &id,
+            &cfg.url,
+            &events_json,
+            &cfg.format,
+            cfg.secret.as_deref(),
+            "config",
+            &now,
+        )?;
     }
     Ok(())
 }
 
 /// Load all active webhooks as WebhookConfig (for dispatcher initialization).
-pub fn load_active_webhook_configs(conn: &Connection) -> Result<Vec<crate::webhook::WebhookConfig>, rusqlite::Error> {
-    let mut stmt = conn.prepare(
-        "SELECT url, events_json, format, secret FROM webhooks WHERE status = 'active'",
-    )?;
+pub fn load_active_webhook_configs(
+    conn: &Connection,
+) -> Result<Vec<crate::webhook::WebhookConfig>, rusqlite::Error> {
+    let mut stmt = conn
+        .prepare("SELECT url, events_json, format, secret FROM webhooks WHERE status = 'active'")?;
     let rows = stmt
         .query_map([], |row| {
             Ok((
@@ -170,7 +190,12 @@ pub fn load_active_webhook_configs(conn: &Connection) -> Result<Vec<crate::webho
         .into_iter()
         .map(|(url, events_json, format, secret)| {
             let events: Vec<String> = serde_json::from_str(&events_json).unwrap_or_default();
-            crate::webhook::WebhookConfig { url, events, format, secret }
+            crate::webhook::WebhookConfig {
+                url,
+                events,
+                format,
+                secret,
+            }
         })
         .collect())
 }

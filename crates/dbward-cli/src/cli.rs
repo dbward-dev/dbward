@@ -11,7 +11,6 @@ use crate::oidc_login;
 use crate::self_update;
 use crate::server_client;
 
-
 #[derive(Parser)]
 #[command(name = "dbward", about = "DB operations workflow + approval engine")]
 pub struct Cli {
@@ -312,7 +311,6 @@ fn parse_role(s: &str) -> Result<String, String> {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Auth helper
 // ---------------------------------------------------------------------------
@@ -462,7 +460,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 })
                 .await?;
             if no_store {
-                eprintln!("⚠ --no-store: result will not be persisted. If you disconnect, it cannot be recovered.");
+                eprintln!(
+                    "⚠ --no-store: result will not be persisted. If you disconnect, it cannot be recovered."
+                );
             }
 
             match status.as_str() {
@@ -670,7 +670,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 if let Ok(info) = &req_info {
                     if info["status"].as_str() == Some("running") {
                         eprintln!("⚠ Query is currently executing on the database.");
-                        eprintln!("  Cancelling will kill the running query and roll back any changes.");
+                        eprintln!(
+                            "  Cancelling will kill the running query and roll back any changes."
+                        );
                         eprint!("  Continue? [y/N] ");
                         let mut input = String::new();
                         std::io::stdin().read_line(&mut input).unwrap_or(0);
@@ -917,10 +919,16 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                         total
                     );
                 }
-                println!("id,event_type,event_category,outcome,actor_id,created_at,environment,database_name,operation,client_ip,resource_type,resource_id,request_id,event_hash,reason");
+                println!(
+                    "id,event_type,event_category,outcome,actor_id,created_at,environment,database_name,operation,client_ip,resource_type,resource_id,request_id,event_hash,reason"
+                );
                 for e in entries {
                     let escape = |s: &str| {
-                        if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+                        if s.contains(',')
+                            || s.contains('"')
+                            || s.contains('\n')
+                            || s.contains('\r')
+                        {
                             format!("\"{}\"", s.replace('"', "\"\""))
                         } else {
                             s.to_string()
@@ -1001,7 +1009,6 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         }
     }
 }
-
 
 /// Save result locally. Returns the path where it was saved.
 fn save_result(
@@ -1141,7 +1148,9 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
 
             let conn = rusqlite::Connection::open(data)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
-            if let Some(backup_path) = dbward_server::db::backup_if_migration_needed(&conn, std::path::Path::new(data)) {
+            if let Some(backup_path) =
+                dbward_server::db::backup_if_migration_needed(&conn, std::path::Path::new(data))
+            {
                 eprintln!("Backup created: {}", backup_path.display());
             }
             dbward_server::db::init(&conn)
@@ -1177,8 +1186,9 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 // Seed config-file webhooks to DB, then load all active from DB
                 dbward_server::db::webhook_repo::seed_config_webhooks(&conn, &server_cfg.webhooks)
                     .map_err(|e| dbward_core::Error::Server(format!("webhook seed: {e}")))?;
-                let configs = dbward_server::db::webhook_repo::load_active_webhook_configs(&conn)
-                    .map_err(|e| dbward_core::Error::Server(format!("webhook load: {e}")))?;
+                let configs =
+                    dbward_server::db::webhook_repo::load_active_webhook_configs(&conn)
+                        .map_err(|e| dbward_core::Error::Server(format!("webhook load: {e}")))?;
                 dbward_server::webhook::WebhookDispatcher::new(configs)
             };
             let (oidc, auth_mode) = match server_cfg.auth {
@@ -1191,6 +1201,9 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 }
                 None => (None, "token".to_string()),
             };
+            dbward_server::authz::warmup()
+                .await
+                .map_err(|(_, m)| dbward_core::Error::Server(format!("authz init: {m}")))?;
             let state = dbward_server::AppState {
                 license: dbward_server::license::License::load(),
                 sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
@@ -1202,7 +1215,11 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                 result_channels: std::sync::Arc::new(dbward_server::ResultChannels::new()),
                 retention: server_cfg.retention,
                 request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
-                result_store: match server_cfg.result_storage.as_ref().expect("[result_storage] is required") {
+                result_store: match server_cfg
+                    .result_storage
+                    .as_ref()
+                    .expect("[result_storage] is required")
+                {
                     dbward_server::server_config::ResultStorageConfig::Local { root_dir } => {
                         std::sync::Arc::new(
                             dbward_server::result_storage::ResultStore::new_local(root_dir)
@@ -1213,16 +1230,14 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                         bucket,
                         region,
                         endpoint,
-                    } => {
-                        std::sync::Arc::new(
-                            dbward_server::result_storage::ResultStore::new_s3(
-                                bucket,
-                                region,
-                                endpoint.as_deref(),
-                            )
-                            .expect("result storage init failed"),
+                    } => std::sync::Arc::new(
+                        dbward_server::result_storage::ResultStore::new_s3(
+                            bucket,
+                            region,
+                            endpoint.as_deref(),
                         )
-                    }
+                        .expect("result storage init failed"),
+                    ),
                 },
                 draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 break_glass_roles: server_cfg
@@ -1258,11 +1273,16 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     .unwrap_or(std::path::Path::new("."));
                 let token_signer = dbward_server::token::TokenSigner::load_or_generate(data_path)
                     .map_err(dbward_core::Error::Server)?;
+                dbward_server::authz::warmup()
+                    .await
+                    .map_err(|(_, m)| dbward_core::Error::Server(format!("authz init: {m}")))?;
                 let state = dbward_server::AppState {
                     license: dbward_server::license::License::load(),
                     sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
-                    webhooks: std::sync::Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
+                    webhooks: std::sync::Arc::new(std::sync::RwLock::new(
+                        dbward_server::webhook::WebhookDispatcher::empty(),
+                    )),
                     metrics: std::sync::Arc::new(dbward_server::Metrics::new()),
                     oidc: None,
                     auth_mode: "token".to_string(),
@@ -1271,16 +1291,19 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
                     result_store: std::sync::Arc::new(
                         dbward_server::result_storage::ResultStore::new_local(
-                            &std::env::temp_dir().join("dbward-token-op").to_string_lossy(),
-                        ).expect("result storage init"),
+                            &std::env::temp_dir()
+                                .join("dbward-token-op")
+                                .to_string_lossy(),
+                        )
+                        .expect("result storage init"),
                     ),
                     draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
                     audit_config: Default::default(),
                     trusted_proxies: vec![],
-            update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-                update_check_enabled: false,
-                enforcer: dbward_server::authz::get_enforcer_arc(),
+                    update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+                    update_check_enabled: false,
+                    enforcer: dbward_server::authz::get_enforcer_arc(),
                 };
                 let group_refs: Vec<&str> = groups.iter().map(|s| s.as_str()).collect();
 
@@ -1314,7 +1337,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     let type_label = if *agent { "agent" } else { "user" };
                     let meta = serde_json::json!({
                         "subject_user": user, "role": role, "subject_type": type_label,
-                    }).to_string();
+                    })
+                    .to_string();
                     let mut conn = state.sqlite.lock().await;
                     let _ = dbward_server::db::audit_event_repo::insert_audit_event(
                         &mut conn,
@@ -1326,9 +1350,15 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                             actor_type: "system",
                             resource_type: Some("token"),
                             resource_id: Some(&token_id),
-                            peer_ip: None, client_ip: None, client_ip_source: None,
-                            request_id: None, operation: None, environment: None,
-                            database_name: None, detail_fingerprint: None, detail_raw: None,
+                            peer_ip: None,
+                            client_ip: None,
+                            client_ip_source: None,
+                            request_id: None,
+                            operation: None,
+                            environment: None,
+                            database_name: None,
+                            detail_fingerprint: None,
+                            detail_raw: None,
                             reason: None,
                             metadata_json: &meta,
                         },
@@ -1356,11 +1386,16 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     .unwrap_or(std::path::Path::new("."));
                 let token_signer = dbward_server::token::TokenSigner::load_or_generate(data_path)
                     .map_err(dbward_core::Error::Server)?;
+                dbward_server::authz::warmup()
+                    .await
+                    .map_err(|(_, m)| dbward_core::Error::Server(format!("authz init: {m}")))?;
                 let state = dbward_server::AppState {
                     license: dbward_server::license::License::load(),
                     sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
                     token_signer: std::sync::Arc::new(token_signer),
-                    webhooks: std::sync::Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
+                    webhooks: std::sync::Arc::new(std::sync::RwLock::new(
+                        dbward_server::webhook::WebhookDispatcher::empty(),
+                    )),
                     metrics: std::sync::Arc::new(dbward_server::Metrics::new()),
                     oidc: None,
                     auth_mode: "token".to_string(),
@@ -1369,16 +1404,19 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
                     request_notifier: std::sync::Arc::new(dbward_server::RequestNotifier::new()),
                     result_store: std::sync::Arc::new(
                         dbward_server::result_storage::ResultStore::new_local(
-                            &std::env::temp_dir().join("dbward-token-op").to_string_lossy(),
-                        ).expect("result storage init"),
+                            &std::env::temp_dir()
+                                .join("dbward-token-op")
+                                .to_string_lossy(),
+                        )
+                        .expect("result storage init"),
                     ),
                     draining: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                     break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
                     audit_config: Default::default(),
                     trusted_proxies: vec![],
-            update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
-                update_check_enabled: false,
-                enforcer: dbward_server::authz::get_enforcer_arc(),
+                    update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+                    update_check_enabled: false,
+                    enforcer: dbward_server::authz::get_enforcer_arc(),
                 };
                 dbward_server::auth::revoke_token(&state, id)
                     .await
@@ -1435,11 +1473,16 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
     let token_signer = dbward_server::token::TokenSigner::load_or_generate(&dev_dir)
         .map_err(dbward_core::Error::Server)?;
 
+    dbward_server::authz::warmup()
+        .await
+        .map_err(|(_, m)| dbward_core::Error::Server(format!("authz init: {m}")))?;
     let state = dbward_server::AppState {
         license: dbward_server::license::License::load(),
         sqlite: std::sync::Arc::new(tokio::sync::Mutex::new(conn)),
         token_signer: std::sync::Arc::new(token_signer),
-        webhooks: std::sync::Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
+        webhooks: std::sync::Arc::new(std::sync::RwLock::new(
+            dbward_server::webhook::WebhookDispatcher::empty(),
+        )),
         metrics: std::sync::Arc::new(dbward_server::Metrics::new()),
         oidc: None,
         auth_mode: "token".into(),
@@ -1461,7 +1504,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         trusted_proxies: vec![],
         update_available: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         update_check_enabled: false,
-                enforcer: dbward_server::authz::get_enforcer_arc(),
+        enforcer: dbward_server::authz::get_enforcer_arc(),
     };
 
     // Create tokens

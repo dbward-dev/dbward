@@ -1,7 +1,7 @@
+use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
 use tracing::error;
@@ -40,7 +40,6 @@ where
     Option::<String>::deserialize(deserializer).map(Some)
 }
 
-
 fn default_format() -> String {
     "generic".to_string()
 }
@@ -66,8 +65,7 @@ pub(crate) async fn create_webhook(
 
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
-    let events_json = serde_json::to_string(&body.events)
-        ?;
+    let events_json = serde_json::to_string(&body.events)?;
 
     let conn = state.db().await;
     crate::db::webhook_repo::insert_webhook(
@@ -79,8 +77,7 @@ pub(crate) async fn create_webhook(
         body.secret.as_deref(),
         "api",
         &now,
-    )
-    ?;
+    )?;
     drop(conn);
 
     {
@@ -95,12 +92,22 @@ pub(crate) async fn create_webhook(
                 actor_type: "user",
                 resource_type: Some("webhook"),
                 resource_id: Some(&id),
-                peer_ip: None, client_ip: None, client_ip_source: None,
-                request_id: None, operation: None, environment: None, database_name: None,
-                detail_fingerprint: None, detail_raw: None, reason: None,
-                metadata_json: &serde_json::json!({"url": body.url, "format": body.format}).to_string(),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: None,
+                operation: None,
+                environment: None,
+                database_name: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: None,
+                metadata_json: &serde_json::json!({"url": body.url, "format": body.format})
+                    .to_string(),
             },
-            &headers, &state.audit_config, &state.trusted_proxies,
+            &headers,
+            &state.audit_config,
+            &state.trusted_proxies,
         );
     }
 
@@ -130,14 +137,12 @@ pub(crate) async fn list_webhooks(
     authz::authorize(&user, Action::ManageWebhook, Resource::Global).await?;
 
     let conn = state.db().await;
-    let webhooks = crate::db::webhook_repo::list_webhooks(&conn)
-        ?;
+    let webhooks = crate::db::webhook_repo::list_webhooks(&conn)?;
 
     let items: Vec<serde_json::Value> = webhooks
         .into_iter()
         .map(|w| {
-            let events: Vec<String> =
-                serde_json::from_str(&w.events_json).unwrap_or_default();
+            let events: Vec<String> = serde_json::from_str(&w.events_json).unwrap_or_default();
             json!({
                 "id": w.id,
                 "url": w.url,
@@ -164,8 +169,7 @@ pub(crate) async fn get_webhook(
     authz::authorize(&user, Action::ManageWebhook, Resource::Global).await?;
 
     let conn = state.db().await;
-    let w = crate::db::webhook_repo::get_webhook(&conn, &id)
-        ?
+    let w = crate::db::webhook_repo::get_webhook(&conn, &id)?
         .ok_or_else(|| ApiError::not_found("webhook not found").with_code("webhook_not_found"))?;
 
     let events: Vec<String> = serde_json::from_str(&w.events_json).unwrap_or_default();
@@ -224,15 +228,13 @@ pub(crate) async fn update_webhook(
         body.format.as_deref(),
         secret_param,
         &now,
-    )
-    ?;
+    )?;
 
     if !updated {
         return Err(ApiError::not_found("webhook not found").with_code("webhook_not_found"));
     }
 
-    let w = crate::db::webhook_repo::get_webhook(&conn, &id)
-        ?
+    let w = crate::db::webhook_repo::get_webhook(&conn, &id)?
         .ok_or_else(|| ApiError::internal("webhook disappeared after update"))?;
     drop(conn);
 
@@ -250,12 +252,21 @@ pub(crate) async fn update_webhook(
                 actor_type: "user",
                 resource_type: Some("webhook"),
                 resource_id: Some(&id),
-                peer_ip: None, client_ip: None, client_ip_source: None,
-                request_id: None, operation: None, environment: None, database_name: None,
-                detail_fingerprint: None, detail_raw: None, reason: None,
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: None,
+                operation: None,
+                environment: None,
+                database_name: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: None,
                 metadata_json: &serde_json::json!({"url": w.url}).to_string(),
             },
-            &headers, &state.audit_config, &state.trusted_proxies,
+            &headers,
+            &state.audit_config,
+            &state.trusted_proxies,
         );
     }
 
@@ -282,8 +293,7 @@ pub(crate) async fn delete_webhook(
     authz::authorize(&user, Action::ManageWebhook, Resource::Global).await?;
 
     let conn = state.db().await;
-    let deleted = crate::db::webhook_repo::delete_webhook(&conn, &id)
-        ?;
+    let deleted = crate::db::webhook_repo::delete_webhook(&conn, &id)?;
     drop(conn);
 
     if !deleted {
@@ -304,12 +314,21 @@ pub(crate) async fn delete_webhook(
                 actor_type: "user",
                 resource_type: Some("webhook"),
                 resource_id: Some(&id),
-                peer_ip: None, client_ip: None, client_ip_source: None,
-                request_id: None, operation: None, environment: None, database_name: None,
-                detail_fingerprint: None, detail_raw: None, reason: None,
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: None,
+                operation: None,
+                environment: None,
+                database_name: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: None,
                 metadata_json: "{}",
             },
-            &headers, &state.audit_config, &state.trusted_proxies,
+            &headers,
+            &state.audit_config,
+            &state.trusted_proxies,
         );
     }
 

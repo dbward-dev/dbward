@@ -1,5 +1,5 @@
 //! Adversarial tests for query classification bypass attempts.
-use dbward_core::{classify_query, classify_query_mysql, QueryType};
+use dbward_core::{QueryType, classify_query, classify_query_mysql};
 
 // === Comment-based obfuscation ===
 

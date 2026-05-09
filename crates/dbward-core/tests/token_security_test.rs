@@ -9,7 +9,14 @@ fn gen_keypair() -> (SigningKey, VerifyingKey) {
     (sk, vk)
 }
 
-fn issue(sk: &SigningKey, req_id: &str, op: &str, env: &str, db: &str, detail: &str) -> ExecutionToken {
+fn issue(
+    sk: &SigningKey,
+    req_id: &str,
+    op: &str,
+    env: &str,
+    db: &str,
+    detail: &str,
+) -> ExecutionToken {
     let detail_hash = hash_detail(detail);
     let expires_at = (Utc::now() + Duration::hours(1)).to_rfc3339();
     let msg = token_message(req_id, op, env, db, &detail_hash, &expires_at);
@@ -57,14 +64,34 @@ fn different_detail_at_verify_rejected() {
     let (sk, vk) = gen_keypair();
     let token = issue(&sk, "r1", "execute_query", "prod", "app", "SELECT 1");
     // Agent tries to execute different SQL
-    assert!(verify_token(&token, &vk, "execute_query", "prod", "app", "DELETE FROM users").is_err());
+    assert!(
+        verify_token(
+            &token,
+            &vk,
+            "execute_query",
+            "prod",
+            "app",
+            "DELETE FROM users"
+        )
+        .is_err()
+    );
 }
 
 #[test]
 fn environment_swap_rejected() {
     let (sk, vk) = gen_keypair();
     let token = issue(&sk, "r1", "execute_query", "staging", "app", "SELECT 1");
-    assert!(verify_token(&token, &vk, "execute_query", "production", "app", "SELECT 1").is_err());
+    assert!(
+        verify_token(
+            &token,
+            &vk,
+            "execute_query",
+            "production",
+            "app",
+            "SELECT 1"
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -81,7 +108,14 @@ fn expired_token_rejected() {
     let (sk, vk) = gen_keypair();
     let detail_hash = hash_detail("SELECT 1");
     let expires_at = (Utc::now() - Duration::hours(1)).to_rfc3339();
-    let msg = token_message("r1", "execute_query", "prod", "app", &detail_hash, &expires_at);
+    let msg = token_message(
+        "r1",
+        "execute_query",
+        "prod",
+        "app",
+        &detail_hash,
+        &expires_at,
+    );
     let sig = sk.sign(msg.as_bytes());
     let token = ExecutionToken {
         request_id: "r1".to_string(),

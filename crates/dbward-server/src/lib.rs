@@ -28,8 +28,10 @@ use tracing::{error, info};
 /// Initialize structured logging. Call once before `start()`.
 /// Set `RUST_LOG` for level filter (default: info).
 /// Set `DBWARD_LOG_FORMAT=json` for JSON output (default: compact human-readable).
-pub fn init_logging(config: &server_config::LoggingConfig) -> Option<tracing_appender::non_blocking::WorkerGuard> {
-    use tracing_subscriber::{fmt, EnvFilter};
+pub fn init_logging(
+    config: &server_config::LoggingConfig,
+) -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_subscriber::{EnvFilter, fmt};
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let json = std::env::var("DBWARD_LOG_FORMAT")
@@ -38,15 +40,23 @@ pub fn init_logging(config: &server_config::LoggingConfig) -> Option<tracing_app
 
     match config.output.as_str() {
         "file" => {
-            let path = config.file_path.as_deref().unwrap_or("/var/log/dbward/server.log");
-            let dir = std::path::Path::new(path).parent().unwrap_or(std::path::Path::new("."));
+            let path = config
+                .file_path
+                .as_deref()
+                .unwrap_or("/var/log/dbward/server.log");
+            let dir = std::path::Path::new(path)
+                .parent()
+                .unwrap_or(std::path::Path::new("."));
             let file_name = std::path::Path::new(path)
                 .file_name()
                 .and_then(|f| f.to_str())
                 .unwrap_or("server.log");
 
             if let Err(e) = std::fs::create_dir_all(dir) {
-                eprintln!("FATAL: cannot create log directory {}: {e}. Falling back to stderr.", dir.display());
+                eprintln!(
+                    "FATAL: cannot create log directory {}: {e}. Falling back to stderr.",
+                    dir.display()
+                );
                 if json {
                     fmt()
                         .json()
@@ -109,10 +119,8 @@ pub fn init_logging(config: &server_config::LoggingConfig) -> Option<tracing_app
     }
 }
 
-pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core::Error> {
-    authz::warmup().await.map_err(|(_, message)| {
-        dbward_core::Error::Server(format!("authorization init failed: {message}"))
-    })?;
+pub async fn start(addr: SocketAddr, mut state: AppState) -> Result<(), dbward_core::Error> {
+    state.enforcer = authz::get_enforcer_arc();
 
     // Background task: reclaim expired agent leases every 60s
     let sqlite = state.sqlite.clone();
@@ -223,8 +231,7 @@ pub async fn start(addr: SocketAddr, state: AppState) -> Result<(), dbward_core:
                     }
                     let conn = sqlite2.lock().await;
                     for (request_id, _) in &expired {
-                        let _ =
-                            db::maintenance::delete_expired_result_records(&conn, request_id);
+                        let _ = db::maintenance::delete_expired_result_records(&conn, request_id);
                     }
                     info!(count = expired.len(), "purged expired results");
                 }

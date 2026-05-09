@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::authz::{self, Action, Resource};
 use crate::token::TokenSigner;
-use dbward_core::request_status::{transition, RequestEvent, RequestStatus};
+use dbward_core::request_status::{RequestEvent, RequestStatus, transition};
 pub(crate) fn compute_next_step(
     steps: &[serde_json::Value],
     current_step_index: usize,
@@ -79,9 +79,8 @@ pub(crate) async fn approve_request_inner(
         ctx.workflow_snapshot_json,
     );
 
-    let current = RequestStatus::parse(&status).ok_or_else(|| {
-        crate::api_error::ApiError::internal(format!("unknown status: {status}"))
-    })?;
+    let current = RequestStatus::parse(&status)
+        .ok_or_else(|| crate::api_error::ApiError::internal(format!("unknown status: {status}")))?;
     transition(current, &RequestEvent::Approve).map_err(|_| {
         crate::api_error::ApiError::conflict(format!("request is already {status}"))
             .with_code("request_approve_wrong_status")
@@ -116,12 +115,8 @@ pub(crate) async fn approve_request_inner(
             },
         )?;
         let now = chrono::Utc::now().to_rfc3339();
-        let tx = conn
-            .transaction()
-            ?;
-        if !crate::db::request_repo::mark_approved(&tx, id, &now)
-            ?
-        {
+        let tx = conn.transaction()?;
+        if !crate::db::request_repo::mark_approved(&tx, id, &now)? {
             return Err(crate::api_error::ApiError::conflict(
                 "request state changed during approval",
             )
@@ -136,10 +131,8 @@ pub(crate) async fn approve_request_inner(
             approver.effective_permission(),
             comment,
             &now,
-        )
-        ?;
-        tx.commit()
-            ?;
+        )?;
+        tx.commit()?;
 
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
@@ -172,10 +165,8 @@ pub(crate) async fn approve_request_inner(
         )?;
         stmt.query_map(rusqlite::params![id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })
-        ?
-        .collect::<Result<Vec<_>, _>>()
-        ?
+        })?
+        .collect::<Result<Vec<_>, _>>()?
     };
 
     // Check cross-step distinct approver constraint
@@ -317,9 +308,7 @@ pub(crate) async fn approve_request_inner(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    let tx = conn
-        .transaction()
-        ?;
+    let tx = conn.transaction()?;
     crate::db::request_repo::insert_approval(
         &tx,
         id,
@@ -329,8 +318,7 @@ pub(crate) async fn approve_request_inner(
         &actor_role,
         comment,
         &now,
-    )
-    ?;
+    )?;
 
     let mut updated_approvals = existing_approvals.clone();
     updated_approvals.push((
@@ -347,16 +335,13 @@ pub(crate) async fn approve_request_inner(
             .all(|(i, s)| is_step_satisfied(s, &updated_approvals, i as i64));
 
     if all_satisfied {
-        if !crate::db::request_repo::mark_approved(&tx, id, &now)
-            ?
-        {
+        if !crate::db::request_repo::mark_approved(&tx, id, &now)? {
             return Err(crate::api_error::ApiError::conflict(
                 "request state changed during approval",
             )
             .with_code("request_approve_wrong_status"));
         }
-        tx.commit()
-            ?;
+        tx.commit()?;
 
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
@@ -381,10 +366,8 @@ pub(crate) async fn approve_request_inner(
             }),
         })
     } else {
-        crate::db::request_repo::touch_updated_at(&tx, id, &now)
-            ?;
-        tx.commit()
-            ?;
+        crate::db::request_repo::touch_updated_at(&tx, id, &now)?;
+        tx.commit()?;
 
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, &database_name, &environment);
@@ -488,12 +471,17 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
         let tmp = tempfile::tempdir().unwrap();
-        let store = crate::result_storage::ResultStore::new_local(tmp.path().to_str().unwrap()).unwrap();
+        let store =
+            crate::result_storage::ResultStore::new_local(tmp.path().to_str().unwrap()).unwrap();
         AppState {
-            license: crate::license::License { plan: crate::license::Plan::Pro },
+            license: crate::license::License {
+                plan: crate::license::Plan::Pro,
+            },
             sqlite: Arc::new(tokio::sync::Mutex::new(conn)),
             token_signer: Arc::new(TokenSigner::generate()),
-            webhooks: Arc::new(std::sync::RwLock::new(crate::webhook::WebhookDispatcher::empty())),
+            webhooks: Arc::new(std::sync::RwLock::new(
+                crate::webhook::WebhookDispatcher::empty(),
+            )),
             metrics: Arc::new(crate::Metrics::new()),
             oidc: None,
             auth_mode: "token".to_string(),
@@ -505,8 +493,9 @@ mod tests {
             break_glass_roles: crate::server_config::default_break_glass_roles(),
             audit_config: Default::default(),
             trusted_proxies: vec![],
-        update_available: Arc::new(tokio::sync::Mutex::new(None)),
+            update_available: Arc::new(tokio::sync::Mutex::new(None)),
             update_check_enabled: false,
+            enforcer: crate::authz::get_enforcer_arc(),
         }
     }
 

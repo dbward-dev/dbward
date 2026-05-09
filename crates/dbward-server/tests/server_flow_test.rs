@@ -60,20 +60,28 @@ fn test_state() -> AppState {
         },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
-        webhooks: Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
+        webhooks: Arc::new(std::sync::RwLock::new(
+            dbward_server::webhook::WebhookDispatcher::empty(),
+        )),
         metrics: Arc::new(Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: Arc::new(dbward_server::result_storage::ResultStore::new_local(&std::env::temp_dir().join("dbward-test").to_string_lossy()).unwrap()),
+        result_store: Arc::new(
+            dbward_server::result_storage::ResultStore::new_local(
+                &std::env::temp_dir().join("dbward-test").to_string_lossy(),
+            )
+            .unwrap(),
+        ),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
+        enforcer: dbward_server::authz::get_enforcer_arc(),
     }
 }
 
@@ -135,7 +143,9 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
         },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
-        webhooks: Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
+        webhooks: Arc::new(std::sync::RwLock::new(
+            dbward_server::webhook::WebhookDispatcher::empty(),
+        )),
         metrics: Arc::new(Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),
@@ -149,6 +159,7 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
         trusted_proxies: vec![],
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
+        enforcer: dbward_server::authz::get_enforcer_arc(),
     };
     (state, dir)
 }
@@ -455,8 +466,8 @@ async fn production_requires_approval() {
     assert_eq!(body["step_completed"], 0);
     assert_eq!(body["current_step"], 1);
     assert_eq!(body["total_steps"], 1);
-
-}#[tokio::test]
+}
+#[tokio::test]
 async fn self_approve_rejected() {
     let state = test_state();
     let (_, alice_token) = auth::create_token(&state, "alice", "admin").await.unwrap();
@@ -1891,20 +1902,28 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
-        webhooks: Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
+        webhooks: Arc::new(std::sync::RwLock::new(
+            dbward_server::webhook::WebhookDispatcher::empty(),
+        )),
         metrics: Arc::new(Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: Arc::new(dbward_server::result_storage::ResultStore::new_local(&std::env::temp_dir().join("dbward-test").to_string_lossy()).unwrap()),
+        result_store: Arc::new(
+            dbward_server::result_storage::ResultStore::new_local(
+                &std::env::temp_dir().join("dbward-test").to_string_lossy(),
+            )
+            .unwrap(),
+        ),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
+        enforcer: dbward_server::authz::get_enforcer_arc(),
     };
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")
         .await
@@ -3798,20 +3817,28 @@ fn test_state_multistep() -> AppState {
         },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
-        webhooks: Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
+        webhooks: Arc::new(std::sync::RwLock::new(
+            dbward_server::webhook::WebhookDispatcher::empty(),
+        )),
         metrics: Arc::new(Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: Arc::new(dbward_server::result_storage::ResultStore::new_local(&std::env::temp_dir().join("dbward-test").to_string_lossy()).unwrap()),
+        result_store: Arc::new(
+            dbward_server::result_storage::ResultStore::new_local(
+                &std::env::temp_dir().join("dbward-test").to_string_lossy(),
+            )
+            .unwrap(),
+        ),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
+        enforcer: dbward_server::authz::get_enforcer_arc(),
     }
 }
 
@@ -3866,20 +3893,28 @@ fn test_state_multistep_allow_same() -> AppState {
         },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(TokenSigner::generate()),
-        webhooks: Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
+        webhooks: Arc::new(std::sync::RwLock::new(
+            dbward_server::webhook::WebhookDispatcher::empty(),
+        )),
         metrics: Arc::new(Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),
         result_channels: Arc::new(ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: Arc::new(dbward_server::result_storage::ResultStore::new_local(&std::env::temp_dir().join("dbward-test").to_string_lossy()).unwrap()),
+        result_store: Arc::new(
+            dbward_server::result_storage::ResultStore::new_local(
+                &std::env::temp_dir().join("dbward-test").to_string_lossy(),
+            )
+            .unwrap(),
+        ),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
+        enforcer: dbward_server::authz::get_enforcer_arc(),
     }
 }
 

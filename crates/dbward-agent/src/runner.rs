@@ -1,11 +1,11 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use dbward_core::{AgentConfig, Engine, Error};
 use dbward_migrate::Migrator;
 use tokio::sync::Semaphore;
-use tracing::{error, info, warn, Instrument};
+use tracing::{Instrument, error, info, warn};
 
 use crate::server_client::{ActiveJob, AgentClient, AgentStatus};
 
@@ -44,12 +44,12 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
             &db_config.url,
             Some(config.statement_timeout_secs.unwrap_or(30)),
         )
-            .await
-            .map_err(|e| {
-                Error::Config(format!(
-                    "failed to connect to database '{name}': {e}. Check url in agent config."
-                ))
-            })?;
+        .await
+        .map_err(|e| {
+            Error::Config(format!(
+                "failed to connect to database '{name}': {e}. Check url in agent config."
+            ))
+        })?;
         drop(driver);
     }
 
@@ -175,13 +175,15 @@ async fn poll_once(
         Err(e) => {
             let count = consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1;
             warn!(count, max = MAX_CONSECUTIVE_POLL_FAILURES, %e, "poll failed");
-            if count >= MAX_CONSECUTIVE_POLL_FAILURES
-                && !ready_removed.swap(true, Ordering::SeqCst)
+            if count >= MAX_CONSECUTIVE_POLL_FAILURES && !ready_removed.swap(true, Ordering::SeqCst)
             {
                 if let Err(re) = remove_probe(READY_PROBE_PATH) {
                     warn!(%re, "failed to remove readiness probe");
                 } else {
-                    warn!(count, "readiness probe removed after consecutive poll failures");
+                    warn!(
+                        count,
+                        "readiness probe removed after consecutive poll failures"
+                    );
                 }
             }
             return;
@@ -217,9 +219,7 @@ async fn poll_once(
             async move {
                 let _guard = InFlightGuard(in_flight);
 
-                if let Err(e) =
-                    execute_job(&config, &client, &public_key, &request_id).await
-                {
+                if let Err(e) = execute_job(&config, &client, &public_key, &request_id).await {
                     error!(request_id = %request_id, %e, "job failed");
                 }
 

@@ -143,7 +143,7 @@ pub fn transition(
             return Err(InvalidTransition {
                 current,
                 event: format!("{event:?}"),
-            })
+            });
         }
     };
 
@@ -212,7 +212,11 @@ mod tests {
     #[test]
     fn complete_success() {
         assert_eq!(
-            transition(RequestStatus::Running, &RequestEvent::Complete { success: true }).unwrap(),
+            transition(
+                RequestStatus::Running,
+                &RequestEvent::Complete { success: true }
+            )
+            .unwrap(),
             RequestStatus::Executed
         );
     }
@@ -220,7 +224,11 @@ mod tests {
     #[test]
     fn complete_failure() {
         assert_eq!(
-            transition(RequestStatus::Running, &RequestEvent::Complete { success: false }).unwrap(),
+            transition(
+                RequestStatus::Running,
+                &RequestEvent::Complete { success: false }
+            )
+            .unwrap(),
             RequestStatus::Failed
         );
     }
@@ -300,8 +308,17 @@ mod tests {
     #[test]
     fn parse_all() {
         for s in [
-            "pending", "approved", "auto_approved", "break_glass", "dispatched",
-            "running", "executed", "failed", "rejected", "cancelled", "execution_lost",
+            "pending",
+            "approved",
+            "auto_approved",
+            "break_glass",
+            "dispatched",
+            "running",
+            "executed",
+            "failed",
+            "rejected",
+            "cancelled",
+            "execution_lost",
         ] {
             assert_eq!(RequestStatus::parse(s).unwrap().as_str(), s);
         }

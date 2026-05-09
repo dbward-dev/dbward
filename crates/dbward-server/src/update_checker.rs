@@ -3,8 +3,7 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-const GITHUB_RELEASES_URL: &str =
-    "https://api.github.com/repos/metapox/dbward/releases/latest";
+const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/metapox/dbward/releases/latest";
 const CHECK_INTERVAL_SECS: u64 = 6 * 3600; // 6 hours
 
 /// Spawn background task that periodically checks for updates.

@@ -19,8 +19,7 @@ pub(crate) async fn list_agents(
     authz::authorize_and_audit(&user, Action::ReadMetrics, Resource::Global, &state).await?;
 
     let conn = state.db().await;
-    let agents = crate::db::agent_repo::list_agents(&conn)
-        ?;
+    let agents = crate::db::agent_repo::list_agents(&conn)?;
 
     let now = chrono::Utc::now();
     let items: Vec<serde_json::Value> = agents
@@ -123,7 +122,8 @@ pub(crate) async fn agent_poll(
     .unwrap_or_else(|_| "{}".into());
     // Parse agent status (optional, for observability)
     let agent_status = body["status"].as_object().map(|s| {
-        let active_jobs_json = s.get("active_jobs")
+        let active_jobs_json = s
+            .get("active_jobs")
             .map(|v| {
                 let json = serde_json::to_string(v).unwrap_or_else(|_| "[]".into());
                 if json.len() > 4096 { "[]".into() } else { json }
@@ -131,16 +131,24 @@ pub(crate) async fn agent_poll(
             .unwrap_or_else(|| "[]".into());
         crate::db::agent_repo::AgentStatusReport {
             in_flight: s.get("in_flight").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-            max_concurrent: s.get("max_concurrent").and_then(|v| v.as_u64()).unwrap_or(1) as u32,
+            max_concurrent: s
+                .get("max_concurrent")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1) as u32,
             draining: s.get("draining").and_then(|v| v.as_bool()).unwrap_or(false),
             uptime_secs: s.get("uptime_secs").and_then(|v| v.as_u64()).unwrap_or(0),
             active_jobs_json,
         }
     });
 
-    crate::db::agent_repo::upsert_agent(&conn, &user.user, &user.token_id, &caps_json, agent_status.as_ref()).map_err(
-        |e| crate::api_error::ApiError::internal(format!("agent registration failed: {e}")),
-    )?;
+    crate::db::agent_repo::upsert_agent(
+        &conn,
+        &user.user,
+        &user.token_id,
+        &caps_json,
+        agent_status.as_ref(),
+    )
+    .map_err(|e| crate::api_error::ApiError::internal(format!("agent registration failed: {e}")))?;
     drop(conn);
 
     if !is_existing {
@@ -219,9 +227,7 @@ pub(crate) async fn agent_poll(
          FROM requests WHERE {where_sql} ORDER BY created_at ASC LIMIT {limit}"
     );
 
-    let mut stmt = conn
-        .prepare(&query_sql)
-        ?;
+    let mut stmt = conn.prepare(&query_sql)?;
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map(rusqlite::params_from_iter(&bind_values), |row| {
@@ -230,13 +236,11 @@ pub(crate) async fn agent_poll(
                 "created_by": row.get::<_, String>(1)?,
                 "operation": row.get::<_, String>(2)?,
                 "environment": row.get::<_, String>(3)?,
-                "database_name": row.get::<_, String>(4)?,
+                "database": row.get::<_, String>(4)?,
                 "detail": row.get::<_, String>(5)?,
             }))
-        })
-        ?
-        .collect::<Result<Vec<_>, _>>()
-        ?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Json(json!({"jobs": rows})))
 }
@@ -303,16 +307,14 @@ pub(crate) async fn agent_claim(
     let token = state
         .token_signer
         .issue(&id, &operation, &environment, &database, &detail);
-    let token_json = serde_json::to_string(&token)
-        ?;
+    let token_json = serde_json::to_string(&token)?;
 
     let Some(exec_id) = crate::db::agent_repo::create_execution_and_mark_running(
         &mut conn,
         &id,
         &agent_id,
         &token_json,
-    )
-    ?
+    )?
     else {
         return Err(crate::api_error::ApiError::conflict(
             "request status is no longer dispatched, cannot claim",
@@ -320,32 +322,37 @@ pub(crate) async fn agent_claim(
     };
 
     // Audit: execution_started
-    if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
-    crate::db::audit_event_repo::AuditEvent {
-        event_type: "execution_started",
-        event_category: "execution",
-        outcome: "success",
-        actor_id: &agent_id,
-        actor_type: "agent",
-        resource_type: Some("request"),
-        resource_id: Some(&id),
-        peer_ip: None,
-        client_ip: None,
-        client_ip_source: None,
-        request_id: Some(&id),
-        operation: Some(&operation),
-        environment: Some(&environment),
-        database_name: Some(&database),
-        detail_fingerprint: None,
-        detail_raw: None,
-        reason: None,
-        metadata_json: &serde_json::json!({
-            "execution_id": exec_id,
-        })
-        .to_string(),
-    }, &headers, &state.audit_config, &state.trusted_proxies) {
-                error!(error = %e, "audit write failed");
-            }
+    if let Err(e) = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
+        crate::db::audit_event_repo::AuditEvent {
+            event_type: "execution_started",
+            event_category: "execution",
+            outcome: "success",
+            actor_id: &agent_id,
+            actor_type: "agent",
+            resource_type: Some("request"),
+            resource_id: Some(&id),
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: Some(&id),
+            operation: Some(&operation),
+            environment: Some(&environment),
+            database_name: Some(&database),
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
+            metadata_json: &serde_json::json!({
+                "execution_id": exec_id,
+            })
+            .to_string(),
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    ) {
+        error!(error = %e, "audit write failed");
+    }
 
     Ok(Json(json!({
         "execution_id": exec_id,
@@ -369,13 +376,11 @@ pub(crate) async fn agent_heartbeat(
 
     let conn = state.db().await;
     let new_expires = chrono::Utc::now() + chrono::Duration::seconds(300);
-    let updated = conn
-        .execute(
-            "UPDATE agent_executions SET lease_expires_at = ?1
+    let updated = conn.execute(
+        "UPDATE agent_executions SET lease_expires_at = ?1
          WHERE id = ?2 AND status = 'claimed'",
-            rusqlite::params![new_expires.to_rfc3339(), id],
-        )
-        ?;
+        rusqlite::params![new_expires.to_rfc3339(), id],
+    )?;
 
     if updated == 0 {
         return Err(crate::api_error::ApiError::new(
@@ -410,7 +415,17 @@ pub(crate) async fn agent_result(
     let result = body["result"].clone();
     let error_msg = body["error"].as_str().map(|s| s.to_string());
 
-    let (request_id, req_status, wh_operation, wh_environment, wh_database, wh_detail, wh_requester, wh_agent_id, webhook_ctx) = {
+    let (
+        request_id,
+        req_status,
+        wh_operation,
+        wh_environment,
+        wh_database,
+        wh_detail,
+        wh_requester,
+        wh_agent_id,
+        webhook_ctx,
+    ) = {
         let mut conn = state.db().await;
 
         let exec_ctx = crate::db::agent_repo::get_execution_context(&conn, &id)
@@ -432,8 +447,7 @@ pub(crate) async fn agent_result(
             &mut conn,
         )?;
 
-        let req_ctx = crate::db::request_repo::get_request_context(&conn, &exec_ctx.request_id)
-            ?;
+        let req_ctx = crate::db::request_repo::get_request_context(&conn, &exec_ctx.request_id)?;
 
         let req_status = crate::db::agent_repo::finish_execution(
             &mut conn,
@@ -446,44 +460,48 @@ pub(crate) async fn agent_result(
             &req_ctx.database_name,
             &req_ctx.detail,
             &req_ctx.created_by,
-        )
-        ?;
+        )?;
         state
             .metrics
             .record_agent_execution(if success { "succeeded" } else { "failed" });
 
         // Audit: execution_completed or execution_failed
-        if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
-        crate::db::audit_event_repo::AuditEvent {
-            event_type: if success {
-                "execution_completed"
-            } else {
-                "execution_failed"
+        if let Err(e) = crate::db::audit_event_repo::record_audit_event(
+            &mut conn,
+            crate::db::audit_event_repo::AuditEvent {
+                event_type: if success {
+                    "execution_completed"
+                } else {
+                    "execution_failed"
+                },
+                event_category: "execution",
+                outcome: if success { "success" } else { "failure" },
+                actor_id: &exec_ctx.agent_id,
+                actor_type: "agent",
+                resource_type: Some("request"),
+                resource_id: Some(&exec_ctx.request_id),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: Some(&exec_ctx.request_id),
+                operation: Some(&req_ctx.operation),
+                environment: Some(&req_ctx.environment),
+                database_name: Some(&req_ctx.database_name),
+                detail_fingerprint: None,
+                detail_raw: Some(&req_ctx.detail),
+                reason: None,
+                metadata_json: &serde_json::json!({
+                    "execution_id": id,
+                    "error": error_msg,
+                })
+                .to_string(),
             },
-            event_category: "execution",
-            outcome: if success { "success" } else { "failure" },
-            actor_id: &exec_ctx.agent_id,
-            actor_type: "agent",
-            resource_type: Some("request"),
-            resource_id: Some(&exec_ctx.request_id),
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
-            request_id: Some(&exec_ctx.request_id),
-            operation: Some(&req_ctx.operation),
-            environment: Some(&req_ctx.environment),
-            database_name: Some(&req_ctx.database_name),
-            detail_fingerprint: None,
-            detail_raw: Some(&req_ctx.detail),
-            reason: None,
-            metadata_json: &serde_json::json!({
-                "execution_id": id,
-                "error": error_msg,
-            })
-            .to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies) {
-                    error!(error = %e, "audit write failed");
-                }
+            &headers,
+            &state.audit_config,
+            &state.trusted_proxies,
+        ) {
+            error!(error = %e, "audit write failed");
+        }
 
         let notif_hooks = crate::db::policy_repo::get_notification_webhooks(
             &conn,
@@ -628,19 +646,7 @@ pub(crate) async fn agent_result(
         "request_id": request_id,
     });
 
-    let slot = match state.result_channels.get(&request_id).await {
-        Some(slot) => slot,
-        None => {
-            crate::routes::requests::ensure_result_slot(&state, &request_id).await;
-            state
-                .result_channels
-                .get(&request_id)
-                .await
-                .ok_or_else(|| {
-                    crate::api_error::ApiError::internal("failed to create result relay slot")
-                })?
-        }
-    };
+    let slot = state.result_channels.get_or_insert(&request_id).await;
     let mut r = slot.result.lock().await;
     *r = Some(payload);
     slot.notify.notify_waiters();

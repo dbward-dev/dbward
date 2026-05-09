@@ -1,7 +1,7 @@
+use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::Json;
 use serde::Deserialize;
 use serde_json::json;
 
@@ -52,26 +52,29 @@ pub(crate) async fn create_token(
         );
     }
     if body.subject_type != "user" && body.subject_type != "agent" {
-        return Err(
-            ApiError::bad_request("subject_type must be user or agent")
-                .with_code("validation_error"),
-        );
+        return Err(ApiError::bad_request("subject_type must be user or agent")
+            .with_code("validation_error"));
     }
 
     let group_refs: Vec<&str> = body.groups.iter().map(|s| s.as_str()).collect();
     let expires_at = match (body.expires_in, &body.expires_at) {
         (Some(_), Some(_)) => {
-            return Err(ApiError::bad_request("specify either expires_in or expires_at, not both")
-                .with_code("validation_error"));
+            return Err(
+                ApiError::bad_request("specify either expires_in or expires_at, not both")
+                    .with_code("validation_error"),
+            );
         }
         (Some(secs), None) => {
             Some((chrono::Utc::now() + chrono::Duration::seconds(secs as i64)).to_rfc3339())
         }
         (None, Some(at)) => {
-            let parsed = chrono::DateTime::parse_from_rfc3339(at)
-                .map_err(|_| ApiError::bad_request("expires_at must be valid RFC 3339").with_code("validation_error"))?;
+            let parsed = chrono::DateTime::parse_from_rfc3339(at).map_err(|_| {
+                ApiError::bad_request("expires_at must be valid RFC 3339")
+                    .with_code("validation_error")
+            })?;
             if parsed <= chrono::Utc::now() {
-                return Err(ApiError::bad_request("expires_at must be in the future").with_code("validation_error"));
+                return Err(ApiError::bad_request("expires_at must be in the future")
+                    .with_code("validation_error"));
             }
             Some(parsed.to_utc().to_rfc3339())
         }
@@ -151,8 +154,7 @@ pub(crate) async fn list_tokens(
     authz::authorize(&user, Action::ManageToken, Resource::Global).await?;
 
     let conn = state.db().await;
-    let tokens = crate::db::token_repo::list_tokens(&conn)
-        ?;
+    let tokens = crate::db::token_repo::list_tokens(&conn)?;
 
     let items: Vec<serde_json::Value> = tokens
         .into_iter()
@@ -186,8 +188,7 @@ pub(crate) async fn revoke_token(
     // Allow self-revoke: if the token belongs to the caller, skip admin check
     let is_owner = {
         let conn = state.db().await;
-        crate::db::token_repo::get_token_owner(&conn, &id)
-            ?
+        crate::db::token_repo::get_token_owner(&conn, &id)?
             .map(|owner| owner == user.user)
             .unwrap_or(false)
     };
@@ -197,8 +198,7 @@ pub(crate) async fn revoke_token(
 
     let now = chrono::Utc::now().to_rfc3339();
     let mut conn = state.db().await;
-    let found = crate::db::token_repo::revoke_token(&conn, &id, &now)
-        ?;
+    let found = crate::db::token_repo::revoke_token(&conn, &id, &now)?;
 
     if !found {
         return Err(ApiError::not_found("token not found").with_code("token_not_found"));

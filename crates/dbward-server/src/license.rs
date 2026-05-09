@@ -1,4 +1,4 @@
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::Deserialize;
 
@@ -144,7 +144,10 @@ mod tests {
 
     #[test]
     fn empty_key_returns_free() {
-        assert_eq!(verify_license_key("").unwrap_err().contains("missing"), true);
+        assert_eq!(
+            verify_license_key("").unwrap_err().contains("missing"),
+            true
+        );
     }
 
     #[test]

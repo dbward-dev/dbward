@@ -181,29 +181,31 @@ pub async fn revoke_token(state: &AppState, token_id: &str) -> Result<(), String
         return Err("token not found".to_string());
     }
     // Audit: token_revoked
-    if let Err(e) = crate::db::audit_event_repo::insert_audit_event(&mut conn,
-    &crate::db::audit_event_repo::AuditEvent {
-        event_type: "token_revoked",
-        event_category: "token",
-        outcome: "success",
-        actor_id: "system",
-        actor_type: "system",
-        resource_type: Some("token"),
-        resource_id: Some(token_id),
-        peer_ip: None,
-        client_ip: None,
-        client_ip_source: None,
-        request_id: None,
-        operation: None,
-        environment: None,
-        database_name: None,
-        detail_fingerprint: None,
-        detail_raw: None,
-        reason: None,
-        metadata_json: "{}",
-    },) {
-                error!(error = %e, "audit write failed");
-            }
+    if let Err(e) = crate::db::audit_event_repo::insert_audit_event(
+        &mut conn,
+        &crate::db::audit_event_repo::AuditEvent {
+            event_type: "token_revoked",
+            event_category: "token",
+            outcome: "success",
+            actor_id: "system",
+            actor_type: "system",
+            resource_type: Some("token"),
+            resource_id: Some(token_id),
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
+            metadata_json: "{}",
+        },
+    ) {
+        error!(error = %e, "audit write failed");
+    }
     Ok(())
 }
 
@@ -294,10 +296,7 @@ pub async fn authenticate(
             // Allow agent tokens even in OIDC mode (agents can't do browser flows)
             let user = authenticate_api_token(raw_token, state, headers).await?;
             if user.subject_type != "agent" {
-                return Err((
-                    StatusCode::UNAUTHORIZED,
-                    "invalid token".into(),
-                ));
+                return Err((StatusCode::UNAUTHORIZED, "invalid token".into()));
             }
             Ok(user)
         } else {
@@ -367,12 +366,17 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
         let tmp = tempfile::tempdir().unwrap();
-        let store = crate::result_storage::ResultStore::new_local(tmp.path().to_str().unwrap()).unwrap();
+        let store =
+            crate::result_storage::ResultStore::new_local(tmp.path().to_str().unwrap()).unwrap();
         AppState {
-            license: crate::license::License { plan: crate::license::Plan::Pro },
+            license: crate::license::License {
+                plan: crate::license::Plan::Pro,
+            },
             sqlite: Arc::new(tokio::sync::Mutex::new(conn)),
             token_signer: Arc::new(crate::token::TokenSigner::generate()),
-            webhooks: Arc::new(std::sync::RwLock::new(crate::webhook::WebhookDispatcher::empty())),
+            webhooks: Arc::new(std::sync::RwLock::new(
+                crate::webhook::WebhookDispatcher::empty(),
+            )),
             metrics: Arc::new(crate::Metrics::new()),
             oidc: None,
             auth_mode: "token".to_string(),

@@ -1,10 +1,10 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use dbward_server::AppState;
 use dbward_server::db;
 use dbward_server::license::{License, Plan};
 use dbward_server::routes::router;
 use dbward_server::token::TokenSigner;
-use dbward_server::AppState;
 use rusqlite::Connection;
 use serde_json::json;
 use std::sync::Arc;
@@ -19,28 +19,35 @@ fn free_state() -> AppState {
         license: License { plan: Plan::Free },
         sqlite: Arc::new(Mutex::new(conn)),
         token_signer: Arc::new(signer),
-        webhooks: Arc::new(std::sync::RwLock::new(dbward_server::webhook::WebhookDispatcher::empty())),
+        webhooks: Arc::new(std::sync::RwLock::new(
+            dbward_server::webhook::WebhookDispatcher::empty(),
+        )),
         metrics: Arc::new(dbward_server::Metrics::new()),
         oidc: None,
         auth_mode: "token".to_string(),
         result_channels: Arc::new(dbward_server::ResultChannels::new()),
         retention: Default::default(),
         request_notifier: Arc::new(dbward_server::RequestNotifier::new()),
-        result_store: Arc::new(dbward_server::result_storage::ResultStore::new_local(&std::env::temp_dir().join("dbward-test").to_string_lossy()).unwrap()),
+        result_store: Arc::new(
+            dbward_server::result_storage::ResultStore::new_local(
+                &std::env::temp_dir().join("dbward-test").to_string_lossy(),
+            )
+            .unwrap(),
+        ),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         break_glass_roles: dbward_server::server_config::default_break_glass_roles(),
         audit_config: Default::default(),
         trusted_proxies: vec![],
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
+        enforcer: dbward_server::authz::get_enforcer_arc(),
     }
 }
 
 async fn create_token(state: &AppState) -> String {
-    let (_, raw) =
-        dbward_server::auth::create_token_with_type(state, "admin", "admin", "user")
-            .await
-            .unwrap();
+    let (_, raw) = dbward_server::auth::create_token_with_type(state, "admin", "admin", "user")
+        .await
+        .unwrap();
     raw
 }
 
@@ -75,7 +82,11 @@ async fn free_tier_blocks_workflow_at_limit() {
             &token,
         )
         .await;
-        assert_eq!(resp.status(), StatusCode::CREATED, "workflow {i} should succeed");
+        assert_eq!(
+            resp.status(),
+            StatusCode::CREATED,
+            "workflow {i} should succeed"
+        );
     }
 
     // 6th should fail with 402
@@ -102,7 +113,11 @@ async fn free_tier_blocks_execution_policy_at_limit() {
             &token,
         )
         .await;
-        assert_eq!(resp.status(), StatusCode::CREATED, "policy {i} should succeed");
+        assert_eq!(
+            resp.status(),
+            StatusCode::CREATED,
+            "policy {i} should succeed"
+        );
     }
 
     let resp = post_json(

@@ -45,8 +45,11 @@ pub async fn get_result_content(
                 )
                 .unwrap_or(false);
             if is_no_store {
-                ApiError::new(StatusCode::GONE, "this request was created with --no-store; result was not persisted")
-                    .with_code("result_not_stored")
+                ApiError::new(
+                    StatusCode::GONE,
+                    "this request was created with --no-store; result was not persisted",
+                )
+                .with_code("result_not_stored")
             } else {
                 ApiError::not_found("result not stored for this request")
             }
@@ -75,15 +78,11 @@ pub async fn get_result_content(
 
     // Access control via result_access table
     let selectors: Vec<(String, String)> = {
-        let mut stmt = conn
-            .prepare(
-                "SELECT selector_type, selector_value FROM result_access WHERE request_id = ?1",
-            )
-            ?;
-        stmt.query_map([&request_id], |row| Ok((row.get(0)?, row.get(1)?)))
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?
+        let mut stmt = conn.prepare(
+            "SELECT selector_type, selector_value FROM result_access WHERE request_id = ?1",
+        )?;
+        stmt.query_map([&request_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?
     };
 
     let allowed = selectors
@@ -108,9 +107,12 @@ pub async fn get_result_content(
 
     // Read from storage
     let data = state.result_store.get(&request_id).await.map_err(|e| {
-        ApiError::new(StatusCode::GONE, "result data is no longer available (storage lost)")
-            .with_code("result_data_lost")
-            .with_hint(format!("storage error: {e}"))
+        ApiError::new(
+            StatusCode::GONE,
+            "result data is no longer available (storage lost)",
+        )
+        .with_code("result_data_lost")
+        .with_hint(format!("storage error: {e}"))
     })?;
 
     Ok((
@@ -185,9 +187,7 @@ pub async fn list_results(
     );
     params.push(chrono::Utc::now().to_rfc3339());
 
-    let mut stmt = conn
-        .prepare(&sql)
-        ?;
+    let mut stmt = conn.prepare(&sql)?;
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params
         .iter()
         .map(|p| p as &dyn rusqlite::types::ToSql)
@@ -206,10 +206,8 @@ pub async fn list_results(
                 "stored_at": row.get::<_, String>(7)?,
                 "expires_at": row.get::<_, String>(8)?,
             }))
-        })
-        ?
-        .collect::<Result<Vec<_>, _>>()
-        ?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Json(json!({ "results": results })))
 }

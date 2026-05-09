@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 pub(crate) fn tools_definitions() -> Value {
@@ -161,8 +161,12 @@ pub(crate) async fn handle_resources_read(
 
     let content = match read_resource(uri, client).await {
         Ok(content) => content,
-        Err(ResourceReadError::NotFound(message)) => return crate::mcp::jsonrpc_error(id, -32002, message),
-        Err(ResourceReadError::Internal(message)) => return crate::mcp::jsonrpc_error(id, -32603, message),
+        Err(ResourceReadError::NotFound(message)) => {
+            return crate::mcp::jsonrpc_error(id, -32002, message);
+        }
+        Err(ResourceReadError::Internal(message)) => {
+            return crate::mcp::jsonrpc_error(id, -32603, message);
+        }
     };
 
     json!({
@@ -439,7 +443,11 @@ pub(crate) fn matches_similarity_terms(candidate: &str, terms: &[String]) -> boo
     terms.iter().all(|term| haystack.contains(term))
 }
 
-pub(crate) fn format_approval_progress(request_id: &str, status: &Value, progress: &Value) -> String {
+pub(crate) fn format_approval_progress(
+    request_id: &str,
+    status: &Value,
+    progress: &Value,
+) -> String {
     let current = progress["current_step"].as_u64().unwrap_or(0);
     let total = progress["total_steps"].as_u64().unwrap_or(0);
     let mut out = format!(
@@ -483,13 +491,19 @@ pub(crate) fn format_approval_progress(request_id: &str, status: &Value, progres
     out
 }
 
-pub(crate) fn read_migration_file(migrations_dir: &Path, requested_path: &str) -> Result<String, String> {
+pub(crate) fn read_migration_file(
+    migrations_dir: &Path,
+    requested_path: &str,
+) -> Result<String, String> {
     let full_path = resolve_migration_path(migrations_dir, requested_path)?;
     std::fs::read_to_string(&full_path)
         .map_err(|_| format!("Could not read migration file: {}", full_path.display()))
 }
 
-pub(crate) fn resolve_migration_path(migrations_dir: &Path, requested_path: &str) -> Result<PathBuf, String> {
+pub(crate) fn resolve_migration_path(
+    migrations_dir: &Path,
+    requested_path: &str,
+) -> Result<PathBuf, String> {
     let relative = Path::new(requested_path);
     if relative.is_absolute() {
         return Err("Absolute paths are not allowed".to_string());

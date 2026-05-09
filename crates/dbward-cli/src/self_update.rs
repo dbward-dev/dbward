@@ -30,9 +30,8 @@ pub async fn run_self_update() -> Result<(), Error> {
         .map_err(|e| Error::Server(e.to_string()))?;
 
     // Get release assets
-    let release_url = format!(
-        "https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/v{latest}"
-    );
+    let release_url =
+        format!("https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/v{latest}");
     let release: serde_json::Value = client
         .get(&release_url)
         .send()
@@ -100,11 +99,17 @@ pub async fn run_self_update() -> Result<(), Error> {
     let tmp_dir = tempfile::tempdir().map_err(|e| Error::Server(e.to_string()))?;
     let tar_gz = flate2::read::GzDecoder::new(&binary_bytes[..]);
     let mut archive = tar::Archive::new(tar_gz);
-    for entry in archive.entries().map_err(|e| Error::Server(e.to_string()))? {
+    for entry in archive
+        .entries()
+        .map_err(|e| Error::Server(e.to_string()))?
+    {
         let mut entry = entry.map_err(|e| Error::Server(e.to_string()))?;
         let path = entry.path().map_err(|e| Error::Server(e.to_string()))?;
         // Reject path traversal
-        if path.components().any(|c| c == std::path::Component::ParentDir) {
+        if path
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+        {
             return Err(Error::Server(format!(
                 "archive contains path traversal: {}",
                 path.display()
@@ -117,12 +122,13 @@ pub async fn run_self_update() -> Result<(), Error> {
 
     let extracted_binary = tmp_dir.path().join("dbward");
     if !extracted_binary.exists() {
-        return Err(Error::Server("extracted binary not found in archive".into()));
+        return Err(Error::Server(
+            "extracted binary not found in archive".into(),
+        ));
     }
 
     // Atomic replacement: write to .new, then rename over current
-    let current_exe =
-        std::env::current_exe().map_err(|e| Error::Server(e.to_string()))?;
+    let current_exe = std::env::current_exe().map_err(|e| Error::Server(e.to_string()))?;
     let new_path = current_exe.with_extension("new");
 
     std::fs::copy(&extracted_binary, &new_path)
@@ -155,9 +161,7 @@ async fn check_latest() -> Result<String, Error> {
         .build()
         .map_err(|e| Error::Server(e.to_string()))?;
 
-    let url = format!(
-        "https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
-    );
+    let url = format!("https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest");
     let resp: serde_json::Value = client
         .get(&url)
         .send()
@@ -176,18 +180,28 @@ async fn check_latest() -> Result<String, Error> {
 
 fn get_target() -> &'static str {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    { "aarch64-apple-darwin" }
+    {
+        "aarch64-apple-darwin"
+    }
     #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    { "x86_64-apple-darwin" }
+    {
+        "x86_64-apple-darwin"
+    }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    { "x86_64-unknown-linux-gnu" }
+    {
+        "x86_64-unknown-linux-gnu"
+    }
     #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    { "aarch64-unknown-linux-gnu" }
+    {
+        "aarch64-unknown-linux-gnu"
+    }
     #[cfg(not(any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "macos", target_arch = "x86_64"),
         all(target_os = "linux", target_arch = "x86_64"),
         all(target_os = "linux", target_arch = "aarch64"),
     )))]
-    { "unknown" }
+    {
+        "unknown"
+    }
 }

@@ -39,10 +39,8 @@ pub(crate) async fn list_workflows(
                 "created_at": row.get::<_, String>(8)?,
                 "updated_at": row.get::<_, String>(9)?,
             }))
-        })
-        ?
-        .collect::<Result<Vec<_>, _>>()
-        ?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Json(json!({"workflows": rows})))
 }
@@ -111,9 +109,7 @@ pub(crate) async fn create_workflow(
     let mut conn = state.db().await;
     crate::limits::check_can_create(&conn, crate::limits::Resource::Workflow, &state.license)?;
     {
-        let tx = conn
-            .transaction()
-            ?;
+        let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'api', ?8, ?8)",
@@ -136,35 +132,39 @@ pub(crate) async fn create_workflow(
             }
         })?;
 
-        tx.commit()
-            ?;
+        tx.commit()?;
     }
 
     // Audit: policy_created
     let meta = serde_json::json!({"policy_type": "workflow", "database": database, "environment": environment}).to_string();
-    if let Err(e) = crate::db::audit_event_repo::record_audit_event(&mut conn,
-    crate::db::audit_event_repo::AuditEvent {
-        event_type: "policy_created",
-        event_category: "policy",
-        outcome: "success",
-        actor_id: &user.user,
-        actor_type: "user",
-        resource_type: Some("policy"),
-        resource_id: Some(&id),
-        peer_ip: None,
-        client_ip: None,
-        client_ip_source: None,
-        request_id: None,
-        operation: None,
-        environment: Some(environment),
-        database_name: Some(database),
-        detail_fingerprint: None,
-        detail_raw: None,
-        reason: None,
-        metadata_json: &meta,
-    }, &headers, &state.audit_config, &state.trusted_proxies) {
-                error!(error = %e, "audit write failed");
-            }
+    if let Err(e) = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
+        crate::db::audit_event_repo::AuditEvent {
+            event_type: "policy_created",
+            event_category: "policy",
+            outcome: "success",
+            actor_id: &user.user,
+            actor_type: "user",
+            resource_type: Some("policy"),
+            resource_id: Some(&id),
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: Some(environment),
+            database_name: Some(database),
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
+            metadata_json: &meta,
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    ) {
+        error!(error = %e, "audit write failed");
+    }
 
     Ok((
         StatusCode::CREATED,
@@ -207,9 +207,7 @@ pub(crate) async fn update_workflow(
     }
 
     {
-        let tx = conn
-            .transaction()
-            ?;
+        let tx = conn.transaction()?;
         if let Some(steps) = body.get("steps") {
             tx.execute(
                 "UPDATE workflows SET steps_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
@@ -242,11 +240,11 @@ pub(crate) async fn update_workflow(
             ?;
         }
 
-        tx.commit()
-            ?;
+        tx.commit()?;
     }
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_updated",
             event_category: "policy",
@@ -255,11 +253,22 @@ pub(crate) async fn update_workflow(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "workflow"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok(Json(json!({"id": id, "updated": true})))
 }
@@ -289,22 +298,18 @@ pub(crate) async fn delete_workflow(
     }
 
     {
-        let tx = conn
-            .transaction()
-            ?;
-        let changes = tx
-            .execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id])
-            ?;
+        let tx = conn.transaction()?;
+        let changes = tx.execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id])?;
 
         if changes == 0 {
             return Err(crate::api_error::ApiError::not_found("workflow not found"));
         }
 
-        tx.commit()
-            ?;
+        tx.commit()?;
     }
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_deleted",
             event_category: "policy",
@@ -313,11 +318,22 @@ pub(crate) async fn delete_workflow(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "workflow"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }
@@ -351,10 +367,8 @@ pub(crate) async fn list_execution_policies(
                 "created_at": row.get::<_, String>(7)?,
                 "updated_at": row.get::<_, String>(8)?,
             }))
-        })
-        ?
-        .collect::<Result<Vec<_>, _>>()
-        ?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Json(json!({"execution_policies": rows})))
 }
@@ -419,9 +433,7 @@ pub(crate) async fn create_execution_policy(
         &state.license,
     )?;
     {
-        let tx = conn
-            .transaction()
-            ?;
+        let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
@@ -435,11 +447,11 @@ pub(crate) async fn create_execution_policy(
             }
         })?;
 
-        tx.commit()
-            ?;
+        tx.commit()?;
     }
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_created",
             event_category: "policy",
@@ -448,11 +460,22 @@ pub(crate) async fn create_execution_policy(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "execution"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok((
         StatusCode::CREATED,
@@ -480,9 +503,7 @@ pub(crate) async fn update_execution_policy(
     .map_err(|_| (StatusCode::NOT_FOUND, "execution policy not found".into()))?;
 
     {
-        let tx = conn
-            .transaction()
-            ?;
+        let tx = conn.transaction()?;
         if let Some(v) = body.get("max_executions").and_then(|v| v.as_i64()) {
             tx.execute(
                 "UPDATE execution_policies SET max_executions = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
@@ -502,11 +523,11 @@ pub(crate) async fn update_execution_policy(
             )?;
         }
 
-        tx.commit()
-            ?;
+        tx.commit()?;
     }
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_updated",
             event_category: "policy",
@@ -515,11 +536,22 @@ pub(crate) async fn update_execution_policy(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "execution"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok(Json(json!({"id": id, "updated": true})))
 }
@@ -534,15 +566,11 @@ pub(crate) async fn delete_execution_policy(
 
     let mut conn = state.db().await;
     {
-        let tx = conn
-            .transaction()
-            ?;
-        let changes = tx
-            .execute(
-                "DELETE FROM execution_policies WHERE id = ?1",
-                rusqlite::params![id],
-            )
-            ?;
+        let tx = conn.transaction()?;
+        let changes = tx.execute(
+            "DELETE FROM execution_policies WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
 
         if changes == 0 {
             return Err(crate::api_error::ApiError::not_found(
@@ -550,11 +578,11 @@ pub(crate) async fn delete_execution_policy(
             ));
         }
 
-        tx.commit()
-            ?;
+        tx.commit()?;
     }
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_deleted",
             event_category: "policy",
@@ -563,11 +591,22 @@ pub(crate) async fn delete_execution_policy(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "execution"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }
@@ -605,10 +644,8 @@ pub(crate) async fn list_result_policies(
                 "created_at": row.get::<_, String>(7)?,
                 "updated_at": row.get::<_, String>(8)?,
             }))
-        })
-        ?
-        .collect::<Result<Vec<_>, _>>()
-        ?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Json(json!({"result_policies": rows})))
 }
@@ -673,9 +710,7 @@ pub(crate) async fn create_result_policy(
 
     let mut conn = state.db().await;
     {
-        let tx = conn
-            .transaction()
-            ?;
+        let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO result_policies (id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
@@ -689,11 +724,11 @@ pub(crate) async fn create_result_policy(
             }
         })?;
 
-        tx.commit()
-            ?;
+        tx.commit()?;
     }
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_created",
             event_category: "policy",
@@ -702,11 +737,22 @@ pub(crate) async fn create_result_policy(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "result"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok((
         StatusCode::CREATED,
@@ -735,9 +781,7 @@ pub(crate) async fn update_result_policy(
     .map_err(|_| (StatusCode::NOT_FOUND, "result policy not found".into()))?;
 
     {
-        let tx = conn
-            .transaction()
-            ?;
+        let tx = conn.transaction()?;
         if let Some(v) = body.get("delivery_mode").and_then(|v| v.as_str()) {
             tx.execute(
                 "UPDATE result_policies SET delivery_mode = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
@@ -757,11 +801,11 @@ pub(crate) async fn update_result_policy(
             )?;
         }
 
-        tx.commit()
-            ?;
+        tx.commit()?;
     }
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_updated",
             event_category: "policy",
@@ -770,11 +814,22 @@ pub(crate) async fn update_result_policy(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "result"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok(Json(json!({"id": id, "updated": true})))
 }
@@ -789,15 +844,11 @@ pub(crate) async fn delete_result_policy(
 
     let mut conn = state.db().await;
     {
-        let tx = conn
-            .transaction()
-            ?;
-        let changes = tx
-            .execute(
-                "DELETE FROM result_policies WHERE id = ?1",
-                rusqlite::params![id],
-            )
-            ?;
+        let tx = conn.transaction()?;
+        let changes = tx.execute(
+            "DELETE FROM result_policies WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
 
         if changes == 0 {
             return Err(crate::api_error::ApiError::not_found(
@@ -805,11 +856,11 @@ pub(crate) async fn delete_result_policy(
             ));
         }
 
-        tx.commit()
-            ?;
+        tx.commit()?;
     }
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_deleted",
             event_category: "policy",
@@ -818,11 +869,22 @@ pub(crate) async fn delete_result_policy(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "result"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }
@@ -856,10 +918,8 @@ pub(crate) async fn list_notification_policies(
                 "created_at": row.get::<_, String>(5)?,
                 "updated_at": row.get::<_, String>(6)?,
             }))
-        })
-        ?
-        .collect::<Result<Vec<_>, _>>()
-        ?;
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Json(json!({"notification_policies": rows})))
 }
@@ -918,9 +978,7 @@ pub(crate) async fn create_notification_policy(
 
     let mut conn = state.db().await;
     {
-        let tx = conn
-            .transaction()
-            ?;
+        let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, 'api', ?5, ?5)",
@@ -934,11 +992,11 @@ pub(crate) async fn create_notification_policy(
             }
         })?;
 
-        tx.commit()
-            ?;
+        tx.commit()?;
     }
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_created",
             event_category: "policy",
@@ -947,11 +1005,22 @@ pub(crate) async fn create_notification_policy(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "notification"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok((
         StatusCode::CREATED,
@@ -985,9 +1054,7 @@ pub(crate) async fn update_notification_policy(
     })?;
 
     {
-        let tx = conn
-            .transaction()
-            ?;
+        let tx = conn.transaction()?;
         if let Some(v) = body.get("webhooks") {
             tx.execute(
                 "UPDATE notification_policies SET webhooks_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
@@ -995,11 +1062,11 @@ pub(crate) async fn update_notification_policy(
             )?;
         }
 
-        tx.commit()
-            ?;
+        tx.commit()?;
     }
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_updated",
             event_category: "policy",
@@ -1008,11 +1075,22 @@ pub(crate) async fn update_notification_policy(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "notification"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok(Json(json!({"id": id, "updated": true})))
 }
@@ -1027,15 +1105,11 @@ pub(crate) async fn delete_notification_policy(
 
     let mut conn = state.db().await;
     {
-        let tx = conn
-            .transaction()
-            ?;
-        let changes = tx
-            .execute(
-                "DELETE FROM notification_policies WHERE id = ?1",
-                rusqlite::params![id],
-            )
-            ?;
+        let tx = conn.transaction()?;
+        let changes = tx.execute(
+            "DELETE FROM notification_policies WHERE id = ?1",
+            rusqlite::params![id],
+        )?;
 
         if changes == 0 {
             return Err(crate::api_error::ApiError::not_found(
@@ -1043,11 +1117,11 @@ pub(crate) async fn delete_notification_policy(
             ));
         }
 
-        tx.commit()
-            ?;
+        tx.commit()?;
     }
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_deleted",
             event_category: "policy",
@@ -1056,11 +1130,22 @@ pub(crate) async fn delete_notification_policy(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "notification"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }
@@ -1142,7 +1227,8 @@ pub(crate) async fn create_access_policy(
         }
     })?;
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_created",
             event_category: "policy",
@@ -1151,11 +1237,22 @@ pub(crate) async fn create_access_policy(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "access"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok((
         StatusCode::CREATED,
@@ -1172,18 +1269,19 @@ pub(crate) async fn delete_access_policy(
     authz::authorize_and_audit(&user, Action::DeletePolicy, Resource::PolicyObject, &state).await?;
 
     let mut conn = state.db().await;
-    let deleted = conn
-        .execute(
-            "DELETE FROM access_policies WHERE id = ?1",
-            rusqlite::params![id],
-        )
-        ?;
+    let deleted = conn.execute(
+        "DELETE FROM access_policies WHERE id = ?1",
+        rusqlite::params![id],
+    )?;
 
     if deleted == 0 {
-        return Err(crate::api_error::ApiError::not_found("access policy not found"));
+        return Err(crate::api_error::ApiError::not_found(
+            "access policy not found",
+        ));
     }
 
-    let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
+    let _ = crate::db::audit_event_repo::record_audit_event(
+        &mut conn,
         crate::db::audit_event_repo::AuditEvent {
             event_type: "policy_deleted",
             event_category: "policy",
@@ -1192,11 +1290,22 @@ pub(crate) async fn delete_access_policy(
             actor_type: "user",
             resource_type: Some("policy"),
             resource_id: Some(&id),
-            peer_ip: None, client_ip: None, client_ip_source: None,
-            request_id: None, operation: None, environment: None, database_name: None,
-            detail_fingerprint: None, detail_raw: None, reason: None,
+            peer_ip: None,
+            client_ip: None,
+            client_ip_source: None,
+            request_id: None,
+            operation: None,
+            environment: None,
+            database_name: None,
+            detail_fingerprint: None,
+            detail_raw: None,
+            reason: None,
             metadata_json: &serde_json::json!({"policy_type": "access"}).to_string(),
-        }, &headers, &state.audit_config, &state.trusted_proxies);
+        },
+        &headers,
+        &state.audit_config,
+        &state.trusted_proxies,
+    );
 
     Ok(Json(json!({"id": id, "deleted": true})))
 }

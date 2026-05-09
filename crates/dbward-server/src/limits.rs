@@ -50,7 +50,9 @@ impl Resource {
             Self::Workflow => "SELECT COUNT(*) FROM workflows",
             Self::ExecutionPolicy => "SELECT COUNT(*) FROM execution_policies",
             Self::Agent => "SELECT COUNT(*) FROM agents",
-            Self::Database => "SELECT COUNT(DISTINCT j.value) FROM agents, json_each(json_extract(capabilities_json, '$.databases')) AS j",
+            Self::Database => {
+                "SELECT COUNT(DISTINCT j.value) FROM agents, json_each(json_extract(capabilities_json, '$.databases')) AS j"
+            }
             Self::Token => "SELECT COUNT(*) FROM tokens WHERE revoked_at IS NULL",
         }
     }
@@ -214,17 +216,20 @@ pub fn apply_free_limits(mut config: ServerConfig) -> ServerConfig {
     config
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn free_license() -> License {
-        License { plan: crate::license::Plan::Free }
+        License {
+            plan: crate::license::Plan::Free,
+        }
     }
 
     fn pro_license() -> License {
-        License { plan: crate::license::Plan::Pro }
+        License {
+            plan: crate::license::Plan::Pro,
+        }
     }
 
     // --- validate_config ---
@@ -256,7 +261,13 @@ mod tests {
             })
             .collect();
         let warnings = validate_config(&config, &free_license());
-        assert!(warnings.iter().any(|w| matches!(w, ConfigWarning::Truncated { resource: "workflows", .. })));
+        assert!(warnings.iter().any(|w| matches!(
+            w,
+            ConfigWarning::Truncated {
+                resource: "workflows",
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -275,7 +286,11 @@ mod tests {
             break_glass_roles: vec![],
         });
         let warnings = validate_config(&config, &free_license());
-        assert!(warnings.iter().any(|w| matches!(w, ConfigWarning::HardBlock("OIDC/SSO"))));
+        assert!(
+            warnings
+                .iter()
+                .any(|w| matches!(w, ConfigWarning::HardBlock("OIDC/SSO")))
+        );
     }
 
     // --- apply_free_limits ---

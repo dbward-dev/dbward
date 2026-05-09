@@ -13,7 +13,10 @@ pub const LATEST_SCHEMA_VERSION: i64 = 8;
 
 /// Backup SQLite DB before schema migration if needed.
 /// Returns the backup path if a backup was created.
-pub fn backup_if_migration_needed(conn: &Connection, db_path: &std::path::Path) -> Option<std::path::PathBuf> {
+pub fn backup_if_migration_needed(
+    conn: &Connection,
+    db_path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
     let current_version: i64 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap_or(0);

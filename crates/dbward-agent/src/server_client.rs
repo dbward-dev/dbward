@@ -89,7 +89,11 @@ impl AgentClient {
         Ok(poll_resp.jobs)
     }
 
-    pub async fn claim(&self, request_id: &str, agent_id: &str) -> Result<dbward_api_types::agent::ClaimResponse, Error> {
+    pub async fn claim(
+        &self,
+        request_id: &str,
+        agent_id: &str,
+    ) -> Result<dbward_api_types::agent::ClaimResponse, Error> {
         let resp = self
             .client
             .post(format!(

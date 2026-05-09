@@ -171,10 +171,8 @@ impl ServerClient {
 
         let body = self.parse_response(resp, "create request").await?;
 
-        let cr: dbward_api_types::requests::CreateRequestResponse =
-            serde_json::from_value(body).map_err(|e| {
-                Error::Server(format!("create request: invalid response: {e}"))
-            })?;
+        let cr: dbward_api_types::requests::CreateRequestResponse = serde_json::from_value(body)
+            .map_err(|e| Error::Server(format!("create request: invalid response: {e}")))?;
         let id = cr.id;
         let status = cr.status.as_str().to_string();
         let token = cr
@@ -311,7 +309,9 @@ impl ServerClient {
                 let req = match tokio::time::timeout(
                     std::time::Duration::from_secs(5),
                     progress_client.get_request(&progress_id),
-                ).await {
+                )
+                .await
+                {
                     Ok(Ok(r)) => r,
                     _ => continue,
                 };

@@ -339,7 +339,6 @@ impl ServerConfig {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,12 +356,16 @@ mod tests {
     #[test]
     fn load_parses_minimal_toml() {
         let mut f = NamedTempFile::new().unwrap();
-        writeln!(f, r#"listen = "0.0.0.0:9000"
+        writeln!(
+            f,
+            r#"listen = "0.0.0.0:9000"
 
 [result_storage]
 backend = "local"
 root_dir = "/tmp/dbward-test"
-"#).unwrap();
+"#
+        )
+        .unwrap();
         let config = ServerConfig::load(f.path()).unwrap();
         assert_eq!(config.listen, "0.0.0.0:9000");
         assert_eq!(config.data, "dbward.db"); // default preserved

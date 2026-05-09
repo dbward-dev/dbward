@@ -122,13 +122,15 @@ pub fn match_workflow(
     for row in rows {
         let operations: Vec<String> = serde_json::from_str(&row.operations_json).map_err(|e| {
             PolicyEvalError::CorruptedConfig(format!(
-                "invalid operations_json in workflow '{}': {e}", row.id
+                "invalid operations_json in workflow '{}': {e}",
+                row.id
             ))
         })?;
-        let steps: Vec<crate::server_config::WorkflowStep> =
-            serde_json::from_str(&row.steps_json).map_err(|e| {
+        let steps: Vec<crate::server_config::WorkflowStep> = serde_json::from_str(&row.steps_json)
+            .map_err(|e| {
                 PolicyEvalError::CorruptedConfig(format!(
-                    "invalid steps_json in workflow '{}': {e}", row.id
+                    "invalid steps_json in workflow '{}': {e}",
+                    row.id
                 ))
             })?;
         if operations.is_empty() {
@@ -365,8 +367,12 @@ pub fn check_access_policy(
         return Ok(());
     }
 
-    let role_match = allowed_roles.iter().any(|r| user.roles.iter().any(|ur| ur == r));
-    let group_match = allowed_groups.iter().any(|g| user.groups.iter().any(|ug| ug == g));
+    let role_match = allowed_roles
+        .iter()
+        .any(|r| user.roles.iter().any(|ur| ur == r));
+    let group_match = allowed_groups
+        .iter()
+        .any(|g| user.groups.iter().any(|ug| ug == g));
 
     if role_match || group_match {
         Ok(())

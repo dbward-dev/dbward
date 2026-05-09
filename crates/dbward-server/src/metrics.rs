@@ -526,7 +526,6 @@ fn format_seconds(sum_micros: u64) -> String {
     format!("{:.6}", sum_micros as f64 / 1_000_000.0)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
