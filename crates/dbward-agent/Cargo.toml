@@ -9,6 +9,7 @@ description = "dbward agent — executes approved DB operations"
 
 [dependencies]
 dbward-core = { path = "../dbward-core", version = "0.1.0" }
+dbward-api-types = { path = "../dbward-api-types" }
 dbward-migrate = { path = "../dbward-migrate", version = "0.1.0" }
 tokio.workspace = true
 serde.workspace = true

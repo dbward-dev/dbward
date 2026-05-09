@@ -677,6 +677,7 @@ dependencies = [
  "chrono",
  "clap",
  "dbward-agent",
+ "dbward-api-types",
  "dbward-core",
  "dbward-migrate",
  "dbward-server",
@@ -702,6 +703,7 @@ name = "dbward-agent"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "dbward-api-types",
  "dbward-core",
  "dbward-migrate",
  "ed25519-dalek",
@@ -714,6 +716,15 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "dbward-api-types"
+version = "0.1.0"
+dependencies = [
+ "dbward-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -764,6 +775,7 @@ dependencies = [
  "base64 0.22.1",
  "casbin",
  "chrono",
+ "dbward-api-types",
  "dbward-core",
  "ed25519-dalek",
  "hex",
