@@ -98,7 +98,24 @@ pub(crate) async fn agent_poll(
         "operations": operations,
     }))
     .unwrap_or_else(|_| "{}".into());
-    crate::db::agent_repo::upsert_agent(&conn, &user.user, &user.token_id, &caps_json).map_err(
+    // Parse agent status (optional, for observability)
+    let agent_status = body["status"].as_object().map(|s| {
+        let active_jobs_json = s.get("active_jobs")
+            .map(|v| {
+                let json = serde_json::to_string(v).unwrap_or_else(|_| "[]".into());
+                if json.len() > 4096 { "[]".into() } else { json }
+            })
+            .unwrap_or_else(|| "[]".into());
+        crate::db::agent_repo::AgentStatusReport {
+            in_flight: s.get("in_flight").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            max_concurrent: s.get("max_concurrent").and_then(|v| v.as_u64()).unwrap_or(1) as u32,
+            draining: s.get("draining").and_then(|v| v.as_bool()).unwrap_or(false),
+            uptime_secs: s.get("uptime_secs").and_then(|v| v.as_u64()).unwrap_or(0),
+            active_jobs_json,
+        }
+    });
+
+    crate::db::agent_repo::upsert_agent(&conn, &user.user, &user.token_id, &caps_json, agent_status.as_ref()).map_err(
         |e| crate::api_error::ApiError::internal(format!("agent registration failed: {e}")),
     )?;
     drop(conn);

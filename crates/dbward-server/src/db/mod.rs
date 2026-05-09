@@ -9,7 +9,7 @@ pub mod webhook_repo;
 use rusqlite::Connection;
 
 /// Latest schema version. Increment when adding migrations.
-pub const LATEST_SCHEMA_VERSION: i64 = 7;
+pub const LATEST_SCHEMA_VERSION: i64 = 8;
 
 /// Backup SQLite DB before schema migration if needed.
 /// Returns the backup path if a backup was created.
@@ -242,6 +242,26 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Erro
                     UNIQUE(database_name, environment)
                 )",
             )?;
+            Ok(())
+        }
+        8 => {
+            // agents table may not exist in test DBs created at old versions
+            let has_agents: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agents')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            if has_agents && !has_column(conn, "agents", "in_flight")? {
+                conn.execute_batch(
+                    "ALTER TABLE agents ADD COLUMN in_flight INTEGER NOT NULL DEFAULT 0;
+                     ALTER TABLE agents ADD COLUMN max_concurrent INTEGER NOT NULL DEFAULT 1;
+                     ALTER TABLE agents ADD COLUMN draining INTEGER NOT NULL DEFAULT 0;
+                     ALTER TABLE agents ADD COLUMN uptime_secs INTEGER NOT NULL DEFAULT 0;
+                     ALTER TABLE agents ADD COLUMN active_jobs_json TEXT NOT NULL DEFAULT '[]';",
+                )?;
+            }
             Ok(())
         }
         _ => Ok(()),

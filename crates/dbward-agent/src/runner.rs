@@ -7,7 +7,7 @@ use dbward_migrate::Migrator;
 use tokio::sync::Semaphore;
 use tracing::{error, info, warn, Instrument};
 
-use crate::server_client::AgentClient;
+use crate::server_client::{ActiveJob, AgentClient, AgentStatus};
 
 const ALIVE_PROBE_PATH: &str = "/tmp/dbward-agent-alive";
 const READY_PROBE_PATH: &str = "/tmp/dbward-agent-ready";
@@ -20,6 +20,9 @@ impl Drop for InFlightGuard {
     }
 }
 
+/// Shared tracker for active jobs (for status reporting).
+type ActiveJobs = Arc<tokio::sync::Mutex<Vec<ActiveJob>>>;
+
 /// Run the agent poll loop. Blocks until interrupted.
 pub async fn run(config: AgentConfig) -> Result<(), Error> {
     let client = AgentClient::new(&config.server.url, &config.server.agent_token);
@@ -28,6 +31,8 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
     let in_flight = Arc::new(AtomicUsize::new(0));
     let max_concurrent = config.max_concurrent_tasks.max(1) as usize;
     let semaphore = Arc::new(Semaphore::new(max_concurrent));
+    let active_jobs: ActiveJobs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let started_at = std::time::Instant::now();
 
     // Fetch server's public key for token verification
     let public_key = client.get_public_key().await?;
@@ -51,7 +56,7 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
     // Verify server connectivity and agent token validity
     let cap = &config.capabilities;
     client
-        .poll(&cap.databases, &cap.environments, &cap.operations, 1)
+        .poll(&cap.databases, &cap.environments, &cap.operations, 1, None)
         .await
         .map_err(|e| Error::Config(format!("server connection check failed: {e}")))?;
 
@@ -101,6 +106,10 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
             &public_key,
             &in_flight,
             &semaphore,
+            &active_jobs,
+            &draining,
+            max_concurrent,
+            started_at.elapsed().as_secs(),
             &consecutive_failures,
             &ready_removed,
         )
@@ -117,6 +126,10 @@ async fn poll_once(
     public_key: &ed25519_dalek::VerifyingKey,
     in_flight: &Arc<AtomicUsize>,
     semaphore: &Arc<Semaphore>,
+    active_jobs: &ActiveJobs,
+    draining: &Arc<AtomicBool>,
+    max_concurrent: usize,
+    uptime_secs: u64,
     consecutive_failures: &AtomicUsize,
     ready_removed: &AtomicBool,
 ) {
@@ -126,12 +139,24 @@ async fn poll_once(
         return;
     }
 
+    let status = {
+        let jobs = active_jobs.lock().await;
+        AgentStatus {
+            in_flight: in_flight.load(Ordering::SeqCst) as u32,
+            max_concurrent: max_concurrent as u32,
+            draining: draining.load(Ordering::SeqCst),
+            uptime_secs,
+            active_jobs: jobs.clone(),
+        }
+    };
+
     let jobs = match client
         .poll(
             &config.capabilities.databases,
             &config.capabilities.environments,
             &config.capabilities.operations,
             available,
+            Some(&status),
         )
         .await
     {
@@ -181,8 +206,18 @@ async fn poll_once(
         let client = client.clone();
         let public_key = *public_key;
         let in_flight = in_flight.clone();
+        let active_jobs = active_jobs.clone();
 
         in_flight.fetch_add(1, Ordering::SeqCst);
+
+        // Track active job
+        let active_job = ActiveJob {
+            request_id: request_id.clone(),
+            operation: job["operation"].as_str().unwrap_or("").to_string(),
+            started_at: chrono::Utc::now().to_rfc3339(),
+        };
+        active_jobs.lock().await.push(active_job);
+
         let span = tracing::info_span!("job", request_id = %request_id);
         tokio::spawn(
             async move {
@@ -193,6 +228,10 @@ async fn poll_once(
                 {
                     error!(request_id = %request_id, %e, "job failed");
                 }
+
+                // Remove from active jobs
+                let mut jobs = active_jobs.lock().await;
+                jobs.retain(|j| j.request_id != request_id);
 
                 drop(permit);
             }

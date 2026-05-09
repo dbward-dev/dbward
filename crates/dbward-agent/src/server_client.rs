@@ -1,6 +1,23 @@
 use dbward_core::Error;
 use reqwest::Client;
-use serde_json::Value;
+use serde_json::{Value, json};
+
+/// Agent status reported to server on each poll.
+#[derive(Clone, Debug)]
+pub struct AgentStatus {
+    pub in_flight: u32,
+    pub max_concurrent: u32,
+    pub draining: bool,
+    pub uptime_secs: u64,
+    pub active_jobs: Vec<ActiveJob>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ActiveJob {
+    pub request_id: String,
+    pub operation: String,
+    pub started_at: String,
+}
 
 #[derive(Clone)]
 pub struct AgentClient {
@@ -28,17 +45,32 @@ impl AgentClient {
         environments: &[String],
         operations: &[String],
         limit: u32,
+        status: Option<&AgentStatus>,
     ) -> Result<Vec<Value>, Error> {
+        let mut body = json!({
+            "databases": databases,
+            "environments": environments,
+            "operations": operations,
+            "limit": limit,
+        });
+        if let Some(s) = status {
+            body["status"] = json!({
+                "in_flight": s.in_flight,
+                "max_concurrent": s.max_concurrent,
+                "draining": s.draining,
+                "uptime_secs": s.uptime_secs,
+                "active_jobs": s.active_jobs.iter().map(|j| json!({
+                    "request_id": j.request_id,
+                    "operation": j.operation,
+                    "started_at": j.started_at,
+                })).collect::<Vec<_>>(),
+            });
+        }
         let resp = self
             .client
             .post(format!("{}/api/agent/poll", self.base_url))
             .bearer_auth(&self.agent_token)
-            .json(&serde_json::json!({
-                "databases": databases,
-                "environments": environments,
-                "operations": operations,
-                "limit": limit,
-            }))
+            .json(&body)
             .send()
             .await
             .map_err(|e| Error::Server(format!("poll failed: {e}")))?;
