@@ -1,7 +1,7 @@
 agent_id = "agent-dev"
 poll_interval_ms = 1000
 lease_duration_secs = 300
-max_concurrent_tasks = 2
+max_concurrent_tasks = 4
 
 [server]
 url = "http://dbward-server:3000"

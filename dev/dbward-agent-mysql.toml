@@ -1,16 +1,10 @@
-agent_id = "agent-mysql"
+agent_id = "mysql-agent-1"
 poll_interval_ms = 1000
-lease_duration_secs = 300
-max_concurrent_tasks = 2
+max_concurrent_tasks = 4
 
 [server]
 url = "http://dbward-server:3000"
 agent_token = "__DBWARD_AGENT_TOKEN__"
-
-[capabilities]
-environments = ["development", "staging", "production"]
-databases = ["mysql_dev"]
-operations = ["execute_query", "migrate_up", "migrate_down", "migrate_status"]
 
 [databases.mysql_dev]
 url = "mysql://dbward:dbward@mysql:3306/dbward_dev"

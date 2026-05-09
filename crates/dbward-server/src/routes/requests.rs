@@ -700,7 +700,7 @@ pub(crate) async fn create_request(
     }
 
     // Approver-only roles cannot create requests
-    if user.effective_permission() == "approver" {
+    if user.effective_permission() == dbward_core::role::APPROVER {
         return Err(crate::api_error::ApiError::forbidden(
             "approver-only roles cannot create requests",
         )

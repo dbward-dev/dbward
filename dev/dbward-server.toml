@@ -56,3 +56,10 @@ events = ["request_created", "request_approved", "request_auto_approved", "reque
 [result_storage]
 backend = "local"
 root_dir = "/data/results"
+
+[retention]
+request_ttl_days = 7
+audit_ttl_days = 30
+result_ttl_days = 1
+approval_ttl_secs = 60
+
