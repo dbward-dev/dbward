@@ -1,0 +1,82 @@
+use serde::{Deserialize, Serialize};
+
+/// POST /api/agent/poll — request body
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PollRequest {
+    pub databases: Vec<String>,
+    pub environments: Vec<String>,
+    pub operations: Vec<String>,
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<AgentStatusReport>,
+}
+
+fn default_limit() -> u32 {
+    1
+}
+
+/// POST /api/agent/poll — response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PollResponse {
+    pub jobs: Vec<Job>,
+}
+
+/// A job returned from poll.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Job {
+    pub id: String,
+    pub database: String,
+    pub environment: String,
+    pub operation: String,
+}
+
+/// POST /api/agent/jobs/{id}/claim — response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ClaimResponse {
+    pub execution_id: String,
+    pub request_id: String,
+    pub operation: String,
+    pub environment: String,
+    pub database: String,
+    pub detail: serde_json::Value,
+    pub execution_token: serde_json::Value,
+}
+
+/// POST /api/agent/jobs/{id}/heartbeat — response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HeartbeatResponse {
+    pub cancelled: bool,
+}
+
+/// POST /api/agent/jobs/{id}/result — request body
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ResultBody {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Agent status report sent with each poll.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStatusReport {
+    pub in_flight: u32,
+    pub max_concurrent: u32,
+    #[serde(default)]
+    pub draining: bool,
+    #[serde(default)]
+    pub uptime_secs: u64,
+    #[serde(default)]
+    pub active_jobs: Vec<ActiveJob>,
+}
+
+/// An active job reported by the agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActiveJob {
+    pub request_id: String,
+    pub operation: String,
+    #[serde(default)]
+    pub elapsed_secs: u64,
+}
