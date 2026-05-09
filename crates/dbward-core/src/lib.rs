@@ -6,6 +6,7 @@ pub mod env_expand;
 mod error;
 mod query;
 mod rbac;
+pub mod request_status;
 pub mod token;
 mod types;
 
