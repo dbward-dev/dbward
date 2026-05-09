@@ -22,16 +22,39 @@ pub(crate) async fn list_agents(
     let agents = crate::db::agent_repo::list_agents(&conn)
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
+    let now = chrono::Utc::now();
     let items: Vec<serde_json::Value> = agents
         .into_iter()
-        .map(|(id, caps_json, last_seen, created)| {
+        .map(|a| {
             let caps: serde_json::Value =
-                serde_json::from_str(&caps_json).unwrap_or(json!({}));
+                serde_json::from_str(&a.capabilities_json).unwrap_or(json!({}));
+            let active_jobs: serde_json::Value =
+                serde_json::from_str(&a.active_jobs_json).unwrap_or(json!([]));
+            let last_poll_ago_secs = chrono::DateTime::parse_from_rfc3339(&a.last_seen_at)
+                .map(|t| now.signed_duration_since(t).num_seconds().max(0))
+                .unwrap_or(9999);
+            let status = if a.draining {
+                "draining"
+            } else if last_poll_ago_secs > 60 {
+                "offline"
+            } else if a.in_flight >= a.max_concurrent {
+                "saturated"
+            } else {
+                "healthy"
+            };
             json!({
-                "id": id,
+                "id": a.id,
+                "status": status,
                 "capabilities": caps,
-                "last_seen_at": last_seen,
-                "created_at": created,
+                "last_seen_at": a.last_seen_at,
+                "last_poll_ago_secs": last_poll_ago_secs,
+                "in_flight": a.in_flight,
+                "max_concurrent": a.max_concurrent,
+                "available": (a.max_concurrent - a.in_flight).max(0),
+                "draining": a.draining,
+                "uptime_secs": a.uptime_secs,
+                "active_jobs": active_jobs,
+                "created_at": a.created_at,
             })
         })
         .collect();
@@ -98,7 +121,24 @@ pub(crate) async fn agent_poll(
         "operations": operations,
     }))
     .unwrap_or_else(|_| "{}".into());
-    crate::db::agent_repo::upsert_agent(&conn, &user.user, &user.token_id, &caps_json).map_err(
+    // Parse agent status (optional, for observability)
+    let agent_status = body["status"].as_object().map(|s| {
+        let active_jobs_json = s.get("active_jobs")
+            .map(|v| {
+                let json = serde_json::to_string(v).unwrap_or_else(|_| "[]".into());
+                if json.len() > 4096 { "[]".into() } else { json }
+            })
+            .unwrap_or_else(|| "[]".into());
+        crate::db::agent_repo::AgentStatusReport {
+            in_flight: s.get("in_flight").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            max_concurrent: s.get("max_concurrent").and_then(|v| v.as_u64()).unwrap_or(1) as u32,
+            draining: s.get("draining").and_then(|v| v.as_bool()).unwrap_or(false),
+            uptime_secs: s.get("uptime_secs").and_then(|v| v.as_u64()).unwrap_or(0),
+            active_jobs_json,
+        }
+    });
+
+    crate::db::agent_repo::upsert_agent(&conn, &user.user, &user.token_id, &caps_json, agent_status.as_ref()).map_err(
         |e| crate::api_error::ApiError::internal(format!("agent registration failed: {e}")),
     )?;
     drop(conn);

@@ -250,6 +250,22 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Erro
                     "ALTER TABLE requests ADD COLUMN no_store INTEGER NOT NULL DEFAULT 0",
                 )?;
             }
+            let has_agents: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agents')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(false);
+            if has_agents && !has_column(conn, "agents", "in_flight")? {
+                conn.execute_batch(
+                    "ALTER TABLE agents ADD COLUMN in_flight INTEGER NOT NULL DEFAULT 0;
+                     ALTER TABLE agents ADD COLUMN max_concurrent INTEGER NOT NULL DEFAULT 1;
+                     ALTER TABLE agents ADD COLUMN draining INTEGER NOT NULL DEFAULT 0;
+                     ALTER TABLE agents ADD COLUMN uptime_secs INTEGER NOT NULL DEFAULT 0;
+                     ALTER TABLE agents ADD COLUMN active_jobs_json TEXT NOT NULL DEFAULT '[]';",
+                )?;
+            }
             Ok(())
         }
         _ => Ok(()),

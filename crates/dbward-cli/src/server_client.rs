@@ -68,6 +68,7 @@ impl ServerError {
     }
 }
 
+#[derive(Clone)]
 pub struct ServerClient {
     base_url: String,
     api_token: String,
@@ -300,27 +301,68 @@ impl ServerClient {
     pub async fn wait_for_result(&self, request_id: &str) -> Result<Value, Error> {
         eprintln!("Waiting for agent to execute...");
 
-        loop {
+        // Progress display task: poll status every 3s
+        let progress_client = self.clone();
+        let progress_id = request_id.to_string();
+        let progress_handle = tokio::spawn(async move {
+            let mut last_status = String::new();
+            let start = std::time::Instant::now();
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let req = match tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    progress_client.get_request(&progress_id),
+                ).await {
+                    Ok(Ok(r)) => r,
+                    _ => continue,
+                };
+                let status = req["status"].as_str().unwrap_or("").to_string();
+                let elapsed = start.elapsed().as_secs();
+                if status != last_status {
+                    match status.as_str() {
+                        "dispatched" => eprintln!("  → queued (waiting for agent)  [{}s]", elapsed),
+                        "executing" | "running" => {
+                            let agent = req["claimed_by"].as_str().unwrap_or("agent");
+                            eprintln!("  → executing by {}  [{}s]", agent, elapsed);
+                        }
+                        "execution_lost" => {
+                            eprintln!("  → execution_lost (agent disconnected)");
+                            break;
+                        }
+                        "approved" => {
+                            eprintln!("  → dispatch expired (no agent picked up)");
+                            break;
+                        }
+                        _ => {}
+                    }
+                    last_status = status;
+                }
+            }
+        });
+
+        let result = loop {
             let result = tokio::select! {
                 result = self.stream_result(request_id) => Some(result),
                 _ = tokio::signal::ctrl_c() => None,
             };
 
             match result {
-                Some(Ok(v)) => return Ok(v),
+                Some(Ok(v)) => break Ok(v),
                 Some(Err(_)) => {
-                    // Relay can disappear during fast auto-dispatch / claim. Follow status until terminal.
                     if let Some(v) = self.get_request_result_fallback(request_id).await? {
-                        return Ok(v);
+                        break Ok(v);
                     }
                 }
                 None => {
                     eprintln!("\nInterrupted. Request {request_id} is still in progress.");
                     eprintln!("Run: dbward request resume {request_id}");
-                    return Err(Error::Server("interrupted".into()));
+                    break Err(Error::Server("interrupted".into()));
                 }
             }
-        }
+        };
+
+        progress_handle.abort();
+        result
     }
 
     pub async fn get_terminal_result(&self, request_id: &str) -> Result<Value, Error> {
