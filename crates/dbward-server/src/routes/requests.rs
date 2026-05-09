@@ -799,6 +799,7 @@ pub(crate) async fn create_request(
     let id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
+    conn.execute_batch("BEGIN")?;
     match crate::db::request_repo::insert_request(
         &conn,
         &crate::db::request_repo::NewRequest {
@@ -822,6 +823,7 @@ pub(crate) async fn create_request(
     ) {
         Ok(()) => {}
         Err(err) if is_unique_idempotency_key_violation(&err) => {
+            let _ = conn.execute_batch("ROLLBACK");
             if let Some(ref key) = idempotency_key
                 && let Some(existing) = crate::db::request_repo::find_by_idempotency_key(&conn, key)
                     ?
@@ -840,13 +842,16 @@ pub(crate) async fn create_request(
                     .with_code("duplicate_idempotency_key"),
             );
         }
-        Err(err) => return Err(crate::api_error::ApiError::internal(err.to_string())),
+        Err(err) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(crate::api_error::ApiError::internal(err.to_string()));
+        }
     }
 
-    if status == "auto_approved" {
-        crate::db::request_repo::mark_dispatched(&conn, &id, &now)
-            ?;
+    if status == "auto_approved" || emergency {
+        crate::db::request_repo::mark_dispatched(&conn, &id, &now)?;
     }
+    conn.execute_batch("COMMIT")?;
 
     state
         .metrics
@@ -892,8 +897,6 @@ pub(crate) async fn create_request(
     }
 
     if emergency {
-        crate::db::request_repo::mark_dispatched(&conn, &id, &now)
-            ?;
         state.metrics.record_break_glass();
         let token = state
             .token_signer
