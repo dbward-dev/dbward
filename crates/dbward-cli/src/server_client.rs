@@ -171,17 +171,16 @@ impl ServerClient {
 
         let body = self.parse_response(resp, "create request").await?;
 
-        let id = body["id"].as_str().unwrap_or("").to_string();
-        let status = body["status"].as_str().unwrap_or("").to_string();
-        let token = serde_json::from_value(body["execution_token"].clone()).ok();
-        let approvers: Vec<String> = body["approvers"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let cr: dbward_api_types::requests::CreateRequestResponse =
+            serde_json::from_value(body).map_err(|e| {
+                Error::Server(format!("create request: invalid response: {e}"))
+            })?;
+        let id = cr.id;
+        let status = cr.status.as_str().to_string();
+        let token = cr
+            .execution_token
+            .and_then(|v| serde_json::from_value(v).ok());
+        let approvers = cr.approvers;
 
         Ok((id, status, token, approvers))
     }

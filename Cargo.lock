@@ -677,6 +677,7 @@ dependencies = [
  "chrono",
  "clap",
  "dbward-agent",
+ "dbward-api-types",
  "dbward-core",
  "dbward-migrate",
  "dbward-server",
