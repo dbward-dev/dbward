@@ -15,7 +15,7 @@ pub async fn get_result_content(
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let user = authenticate(&headers, &state).await?;
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
 
     let request_id = super::requests::resolve_id(&conn, &id)?;
 
@@ -125,7 +125,7 @@ pub async fn list_results(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let user = authenticate(&headers, &state).await?;
-    let conn = state.sqlite.lock().await;
+    let conn = state.db().await;
 
     // Build WHERE clause for result_access
     let mut conditions = vec![];

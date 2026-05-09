@@ -521,7 +521,7 @@ mod tests {
     }
 
     async fn insert_pending_request(state: &AppState, id: &str, workflow_snapshot_json: &str) {
-        let conn = state.sqlite.lock().await;
+        let conn = state.db().await;
         db::request_repo::insert_request(
             &conn,
             &NewRequest {
@@ -553,7 +553,7 @@ mod tests {
         database: &str,
         environment: &str,
     ) {
-        let conn = state.sqlite.lock().await;
+        let conn = state.db().await;
         conn.execute(
             "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, '[]', '[]', 0, ?4, 'api', 't1', 't1')",
@@ -591,7 +591,7 @@ mod tests {
 
         assert_eq!(result.response["status"], "approved");
 
-        let conn = state.sqlite.lock().await;
+        let conn = state.db().await;
         let rows = db::request_repo::get_approvals(&conn, request_id).unwrap();
         assert_eq!(rows, vec![(0, "bob".into(), "group:prod-approvers".into())]);
     }

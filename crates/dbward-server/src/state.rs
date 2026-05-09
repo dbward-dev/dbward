@@ -141,6 +141,12 @@ pub struct AppState {
     pub update_check_enabled: bool,
 }
 
+impl AppState {
+    pub async fn db(&self) -> tokio::sync::MutexGuard<'_, Connection> {
+        self.sqlite.lock().await
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub token_id: String,
