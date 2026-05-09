@@ -139,6 +139,7 @@ pub struct AppState {
     pub trusted_proxies: Vec<String>,
     pub update_available: Arc<Mutex<Option<String>>>,
     pub update_check_enabled: bool,
+    pub enforcer: Arc<std::sync::RwLock<casbin::Enforcer>>,
 }
 
 impl AppState {
@@ -179,6 +180,7 @@ impl AppState {
             trusted_proxies: vec![],
             update_available: Arc::new(Mutex::new(None)),
             update_check_enabled: false,
+            enforcer: crate::authz::get_enforcer_arc(),
         }
     }
 }

@@ -3,7 +3,7 @@ use casbin::function_map::OperatorFunction;
 use casbin::rhai::Dynamic;
 use casbin::{CoreApi, DefaultModel, Enforcer, StringAdapter};
 use serde::{Deserialize, Serialize};
-use tokio::sync::OnceCell;
+use std::sync::{Arc, OnceLock, RwLock};
 use tracing::{error, warn};
 
 use crate::state::{AppState, AuthUser};
@@ -62,7 +62,15 @@ p, user, admin, Global, ManageWebhook
 p, user, admin, Global, ReadMetrics
 "#;
 
-static ENFORCER: OnceCell<Result<Enforcer, (StatusCode, String)>> = OnceCell::const_new();
+static ENFORCER: OnceLock<Arc<RwLock<Enforcer>>> = OnceLock::new();
+
+/// Returns the shared Enforcer Arc (for AppState initialization).
+pub fn get_enforcer_arc() -> Arc<RwLock<Enforcer>> {
+    ENFORCER
+        .get()
+        .expect("authz::warmup() must be called before get_enforcer_arc()")
+        .clone()
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Action {
@@ -170,7 +178,6 @@ pub async fn authorize(
     action: Action,
     resource: Resource,
 ) -> std::result::Result<(), (StatusCode, String)> {
-    enforcer().await?;
     authorize_sync(principal, action, resource)
 }
 
@@ -180,7 +187,6 @@ pub async fn authorize_and_audit(
     resource: Resource,
     state: &AppState,
 ) -> std::result::Result<(), (StatusCode, String)> {
-    enforcer().await?;
     let resource_json = serde_json::to_value(&resource).unwrap_or(serde_json::Value::Null);
     let result = authorize_sync(principal, action, resource);
     if result.is_err() {
@@ -229,11 +235,12 @@ pub fn authorize_sync(
     let principal = Principal::from(principal);
     let principal_json = serde_json::to_string(&principal).map_err(internal_error)?;
     let resource_json = serde_json::to_string(&resource).map_err(internal_error)?;
-    let enforcer = ENFORCER
+    let enforcer_arc = ENFORCER
         .get()
-        .ok_or_else(|| internal_error("casbin enforcer is not initialized"))?
-        .as_ref()
-        .map_err(Clone::clone)?;
+        .ok_or_else(|| internal_error("casbin enforcer is not initialized"))?;
+    let enforcer = enforcer_arc
+        .read()
+        .map_err(|e| internal_error(format!("enforcer lock poisoned: {e}")))?;
     let allowed = enforcer
         .enforce((principal_json, resource_json, action.as_str()))
         .map_err(internal_error)?;
@@ -289,26 +296,18 @@ pub fn authorize_with_audit(
 }
 
 pub async fn warmup() -> std::result::Result<(), (StatusCode, String)> {
-    enforcer().await?;
-    Ok(())
-}
-
-async fn enforcer() -> std::result::Result<&'static Enforcer, (StatusCode, String)> {
-    ENFORCER
-        .get_or_init(|| async {
-            let model = DefaultModel::from_str(MODEL)
-                .await
-                .map_err(internal_error)?;
-            let adapter = StringAdapter::new(POLICY);
-            let mut enforcer = Enforcer::new(model, adapter)
-                .await
-                .map_err(internal_error)?;
-            enforcer.add_function("authz_match", OperatorFunction::Arg6(authz_match));
-            Ok(enforcer)
-        })
+    let model = DefaultModel::from_str(MODEL)
         .await
-        .as_ref()
-        .map_err(Clone::clone)
+        .map_err(internal_error)?;
+    let adapter = StringAdapter::new(POLICY);
+    let mut enforcer = Enforcer::new(model, adapter)
+        .await
+        .map_err(internal_error)?;
+    enforcer.add_function("authz_match", OperatorFunction::Arg6(authz_match));
+    ENFORCER
+        .set(Arc::new(RwLock::new(enforcer)))
+        .map_err(|_| internal_error("enforcer already initialized"))?;
+    Ok(())
 }
 
 fn authz_match(
