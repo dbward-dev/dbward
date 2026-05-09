@@ -19,7 +19,7 @@ pub(crate) async fn list_workflows(
     let conn = state.db().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at FROM workflows ORDER BY database_name, environment")
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
@@ -40,9 +40,9 @@ pub(crate) async fn list_workflows(
                 "updated_at": row.get::<_, String>(9)?,
             }))
         })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        ?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     Ok(Json(json!({"workflows": rows})))
 }
@@ -113,7 +113,7 @@ pub(crate) async fn create_workflow(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         tx.execute(
             "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_same_approver_across_steps, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'api', ?8, ?8)",
@@ -137,7 +137,7 @@ pub(crate) async fn create_workflow(
         })?;
 
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     // Audit: policy_created
@@ -209,27 +209,27 @@ pub(crate) async fn update_workflow(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         if let Some(steps) = body.get("steps") {
             tx.execute(
                 "UPDATE workflows SET steps_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![steps.to_string(), now, id],
             )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         }
         if let Some(ops) = body.get("operations") {
             tx.execute(
                 "UPDATE workflows SET operations_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![ops.to_string(), now, id],
             )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         }
         if let Some(v) = body.get("require_reason").and_then(|v| v.as_bool()) {
             tx.execute(
                 "UPDATE workflows SET require_reason = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v, now, id],
             )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         }
         if let Some(v) = body
             .get("allow_same_approver_across_steps")
@@ -239,11 +239,11 @@ pub(crate) async fn update_workflow(
                 "UPDATE workflows SET allow_same_approver_across_steps = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v, now, id],
             )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         }
 
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
@@ -291,17 +291,17 @@ pub(crate) async fn delete_workflow(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         let changes = tx
             .execute("DELETE FROM workflows WHERE id = ?1", rusqlite::params![id])
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
 
         if changes == 0 {
             return Err(crate::api_error::ApiError::not_found("workflow not found"));
         }
 
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
@@ -336,7 +336,7 @@ pub(crate) async fn list_execution_policies(
     let conn = state.db().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at FROM execution_policies ORDER BY database_name, environment")
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
@@ -352,9 +352,9 @@ pub(crate) async fn list_execution_policies(
                 "updated_at": row.get::<_, String>(8)?,
             }))
         })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        ?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     Ok(Json(json!({"execution_policies": rows})))
 }
@@ -421,7 +421,7 @@ pub(crate) async fn create_execution_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         tx.execute(
             "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
@@ -436,7 +436,7 @@ pub(crate) async fn create_execution_policy(
         })?;
 
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
@@ -482,28 +482,28 @@ pub(crate) async fn update_execution_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         if let Some(v) = body.get("max_executions").and_then(|v| v.as_i64()) {
             tx.execute(
                 "UPDATE execution_policies SET max_executions = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v, now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            )?;
         }
         if let Some(v) = body.get("execution_window_secs").and_then(|v| v.as_i64()) {
             tx.execute(
                 "UPDATE execution_policies SET execution_window_secs = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v, now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            )?;
         }
         if let Some(v) = body.get("retry_on_failure").and_then(|v| v.as_bool()) {
             tx.execute(
                 "UPDATE execution_policies SET retry_on_failure = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v, now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            )?;
         }
 
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
@@ -536,13 +536,13 @@ pub(crate) async fn delete_execution_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         let changes = tx
             .execute(
                 "DELETE FROM execution_policies WHERE id = ?1",
                 rusqlite::params![id],
             )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
 
         if changes == 0 {
             return Err(crate::api_error::ApiError::not_found(
@@ -551,7 +551,7 @@ pub(crate) async fn delete_execution_policy(
         }
 
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
@@ -586,7 +586,7 @@ pub(crate) async fn list_result_policies(
     let conn = state.db().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at FROM result_policies ORDER BY database_name, environment")
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
@@ -606,9 +606,9 @@ pub(crate) async fn list_result_policies(
                 "updated_at": row.get::<_, String>(8)?,
             }))
         })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        ?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     Ok(Json(json!({"result_policies": rows})))
 }
@@ -675,7 +675,7 @@ pub(crate) async fn create_result_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         tx.execute(
             "INSERT INTO result_policies (id, database_name, environment, delivery_mode, storage_config_json, access_json, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'api', ?7, ?7)",
@@ -690,7 +690,7 @@ pub(crate) async fn create_result_policy(
         })?;
 
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
@@ -737,28 +737,28 @@ pub(crate) async fn update_result_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         if let Some(v) = body.get("delivery_mode").and_then(|v| v.as_str()) {
             tx.execute(
                 "UPDATE result_policies SET delivery_mode = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v, now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            )?;
         }
         if let Some(v) = body.get("storage_config") {
             tx.execute(
                 "UPDATE result_policies SET storage_config_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v.to_string(), now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            )?;
         }
         if let Some(v) = body.get("access") {
             tx.execute(
                 "UPDATE result_policies SET access_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v.to_string(), now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            )?;
         }
 
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
@@ -791,13 +791,13 @@ pub(crate) async fn delete_result_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         let changes = tx
             .execute(
                 "DELETE FROM result_policies WHERE id = ?1",
                 rusqlite::params![id],
             )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
 
         if changes == 0 {
             return Err(crate::api_error::ApiError::not_found(
@@ -806,7 +806,7 @@ pub(crate) async fn delete_result_policy(
         }
 
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
@@ -841,7 +841,7 @@ pub(crate) async fn list_notification_policies(
     let conn = state.db().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, webhooks_json, source, created_at, updated_at FROM notification_policies ORDER BY database_name, environment")
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
@@ -857,9 +857,9 @@ pub(crate) async fn list_notification_policies(
                 "updated_at": row.get::<_, String>(6)?,
             }))
         })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        ?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     Ok(Json(json!({"notification_policies": rows})))
 }
@@ -920,7 +920,7 @@ pub(crate) async fn create_notification_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         tx.execute(
             "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, source, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, 'api', ?5, ?5)",
@@ -935,7 +935,7 @@ pub(crate) async fn create_notification_policy(
         })?;
 
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
@@ -987,16 +987,16 @@ pub(crate) async fn update_notification_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         if let Some(v) = body.get("webhooks") {
             tx.execute(
                 "UPDATE notification_policies SET webhooks_json = ?1, source = 'api', updated_at = ?2 WHERE id = ?3",
                 rusqlite::params![v.to_string(), now, id],
-            ).map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            )?;
         }
 
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
@@ -1029,13 +1029,13 @@ pub(crate) async fn delete_notification_policy(
     {
         let tx = conn
             .transaction()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
         let changes = tx
             .execute(
                 "DELETE FROM notification_policies WHERE id = ?1",
                 rusqlite::params![id],
             )
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
 
         if changes == 0 {
             return Err(crate::api_error::ApiError::not_found(
@@ -1044,7 +1044,7 @@ pub(crate) async fn delete_notification_policy(
         }
 
         tx.commit()
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
     }
 
     let _ = crate::db::audit_event_repo::record_audit_event(&mut conn,
@@ -1077,7 +1077,7 @@ pub(crate) async fn list_access_policies(
     let conn = state.db().await;
     let mut stmt = conn
         .prepare("SELECT id, database_name, environment, allowed_roles_json, allowed_groups_json, source, created_at FROM access_policies ORDER BY database_name, environment")
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
     let rows: Vec<serde_json::Value> = stmt
         .query_map([], |row| {
             let roles: String = row.get(3)?;
@@ -1092,9 +1092,9 @@ pub(crate) async fn list_access_policies(
                 "created_at": row.get::<_, String>(6)?,
             }))
         })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        ?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     Ok(Json(json!({"access_policies": rows})))
 }
@@ -1177,7 +1177,7 @@ pub(crate) async fn delete_access_policy(
             "DELETE FROM access_policies WHERE id = ?1",
             rusqlite::params![id],
         )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     if deleted == 0 {
         return Err(crate::api_error::ApiError::not_found("access policy not found"));

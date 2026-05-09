@@ -20,7 +20,7 @@ pub(crate) async fn list_agents(
 
     let conn = state.db().await;
     let agents = crate::db::agent_repo::list_agents(&conn)
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     let now = chrono::Utc::now();
     let items: Vec<serde_json::Value> = agents
@@ -221,7 +221,7 @@ pub(crate) async fn agent_poll(
 
     let mut stmt = conn
         .prepare(&query_sql)
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     let rows: Vec<serde_json::Value> = stmt
         .query_map(rusqlite::params_from_iter(&bind_values), |row| {
@@ -234,9 +234,9 @@ pub(crate) async fn agent_poll(
                 "detail": row.get::<_, String>(5)?,
             }))
         })
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+        ?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     Ok(Json(json!({"jobs": rows})))
 }
@@ -304,7 +304,7 @@ pub(crate) async fn agent_claim(
         .token_signer
         .issue(&id, &operation, &environment, &database, &detail);
     let token_json = serde_json::to_string(&token)
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     let Some(exec_id) = crate::db::agent_repo::create_execution_and_mark_running(
         &mut conn,
@@ -312,7 +312,7 @@ pub(crate) async fn agent_claim(
         &agent_id,
         &token_json,
     )
-    .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?
+    ?
     else {
         return Err(crate::api_error::ApiError::conflict(
             "request status is no longer dispatched, cannot claim",
@@ -375,7 +375,7 @@ pub(crate) async fn agent_heartbeat(
          WHERE id = ?2 AND status = 'claimed'",
             rusqlite::params![new_expires.to_rfc3339(), id],
         )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
 
     if updated == 0 {
         return Err(crate::api_error::ApiError::new(
@@ -433,7 +433,7 @@ pub(crate) async fn agent_result(
         )?;
 
         let req_ctx = crate::db::request_repo::get_request_context(&conn, &exec_ctx.request_id)
-            .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+            ?;
 
         let req_status = crate::db::agent_repo::finish_execution(
             &mut conn,
@@ -447,7 +447,7 @@ pub(crate) async fn agent_result(
             &req_ctx.detail,
             &req_ctx.created_by,
         )
-        .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
+        ?;
         state
             .metrics
             .record_agent_execution(if success { "succeeded" } else { "failed" });

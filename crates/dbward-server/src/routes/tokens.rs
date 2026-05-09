@@ -152,7 +152,7 @@ pub(crate) async fn list_tokens(
 
     let conn = state.db().await;
     let tokens = crate::db::token_repo::list_tokens(&conn)
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        ?;
 
     let items: Vec<serde_json::Value> = tokens
         .into_iter()
@@ -187,7 +187,7 @@ pub(crate) async fn revoke_token(
     let is_owner = {
         let conn = state.db().await;
         crate::db::token_repo::get_token_owner(&conn, &id)
-            .map_err(|e| ApiError::internal(e.to_string()))?
+            ?
             .map(|owner| owner == user.user)
             .unwrap_or(false)
     };
@@ -198,7 +198,7 @@ pub(crate) async fn revoke_token(
     let now = chrono::Utc::now().to_rfc3339();
     let mut conn = state.db().await;
     let found = crate::db::token_repo::revoke_token(&conn, &id, &now)
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+        ?;
 
     if !found {
         return Err(ApiError::not_found("token not found").with_code("token_not_found"));
