@@ -181,13 +181,14 @@ where
     Ok(())
 }
 
-/// Mark a pending request as dispatched after approval, recording resolution time.
-pub fn mark_approved_dispatched<C>(conn: &C, id: &str, now: &str) -> Result<bool, rusqlite::Error>
+/// Mark a pending request as approved, recording resolution time.
+/// The request remains dormant until a client explicitly dispatches it.
+pub fn mark_approved<C>(conn: &C, id: &str, now: &str) -> Result<bool, rusqlite::Error>
 where
     C: Deref<Target = Connection> + ?Sized,
 {
     let rows = conn.execute(
-        "UPDATE requests SET status = 'dispatched', updated_at = ?1, resolved_at = ?2 WHERE id = ?3 AND status = 'pending'",
+        "UPDATE requests SET status = 'approved', updated_at = ?1, resolved_at = ?2 WHERE id = ?3 AND status = 'pending'",
         rusqlite::params![now, now, id],
     )?;
     Ok(rows > 0)

@@ -709,7 +709,16 @@ async fn get_result(
         .map_err(|e| e.to_string())?;
     let status = resp["status"].as_str().unwrap_or("unknown");
     match status {
-        "approved" | "auto_approved" | "dispatched" | "break_glass" | "running" => {
+        "approved" | "auto_approved" | "break_glass" => {
+            // Dispatch first, then wait for result
+            let _ = client.dispatch(request_id).await;
+            let result = client
+                .wait_for_result(request_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            format_result(&result)
+        }
+        "dispatched" | "running" => {
             let result = client
                 .wait_for_result(request_id)
                 .await

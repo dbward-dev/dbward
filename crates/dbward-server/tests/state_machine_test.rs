@@ -143,7 +143,7 @@ async fn pending_can_be_approved_and_dispatched() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    assert_eq!(get_status(&app, &dev_token, &id).await, "dispatched");
+    assert_eq!(get_status(&app, &dev_token, &id).await, "approved");
 }
 
 #[tokio::test]

@@ -450,21 +450,13 @@ async fn production_requires_approval() {
 
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "dispatched");
+    assert_eq!(body["status"], "approved");
     assert_eq!(body["approved_by"], "bob");
     assert_eq!(body["step_completed"], 0);
     assert_eq!(body["current_step"], 1);
     assert_eq!(body["total_steps"], 1);
-    assert!(body["execution_token"].is_object());
 
-    // Verify the token is valid
-    let token: dbward_core::token::ExecutionToken =
-        serde_json::from_value(body["execution_token"].clone()).unwrap();
-    assert_eq!(token.operation, "execute_query");
-    assert_eq!(token.environment, "production");
-}
-
-#[tokio::test]
+}#[tokio::test]
 async fn self_approve_rejected() {
     let state = test_state();
     let (_, alice_token) = auth::create_token(&state, "alice", "admin").await.unwrap();
@@ -975,7 +967,7 @@ async fn group_approver_can_execute_and_read_group_shared_result() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "dispatched");
+    assert_eq!(body["status"], "approved");
 
     let resp = app
         .clone()
@@ -3965,12 +3957,11 @@ async fn multi_step_approval_team_lead_then_dba() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "dispatched");
+    assert_eq!(body["status"], "approved");
     assert_eq!(body["approved_by"], "dba1");
     assert_eq!(body["step_completed"], 1);
     assert_eq!(body["current_step"], 2);
     assert_eq!(body["total_steps"], 2);
-    assert!(body["execution_token"].is_object());
 }
 
 #[tokio::test]
@@ -4097,9 +4088,8 @@ async fn allow_same_approver_across_steps_true_allows_second_step() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "dispatched");
+    assert_eq!(body["status"], "approved");
     assert_eq!(body["approved_by"], "admin1");
-    assert!(body["execution_token"].is_object());
 }
 
 #[tokio::test]
@@ -4139,12 +4129,11 @@ async fn mode_any_either_role_can_approve() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let body = body_json(resp).await;
-    assert_eq!(body["status"], "dispatched");
+    assert_eq!(body["status"], "approved");
     assert_eq!(body["approved_by"], "dba1");
     assert_eq!(body["step_completed"], 0);
     assert_eq!(body["current_step"], 1);
     assert_eq!(body["total_steps"], 1);
-    assert!(body["execution_token"].is_object());
 }
 
 #[tokio::test]
