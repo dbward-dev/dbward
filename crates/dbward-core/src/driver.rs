@@ -87,6 +87,42 @@ pub async fn connect_with_timeout(
     }
 }
 
+// ── Shared type conversion ───────────────────────────────────
+
+#[derive(Debug, Clone, Copy)]
+enum JsonMapping {
+    Integer,
+    Float,
+    Bool,
+    Json,
+    Binary,
+    Text,
+}
+
+fn text_to_json(text: &str, mapping: JsonMapping) -> serde_json::Value {
+    match mapping {
+        JsonMapping::Integer => text
+            .parse::<i64>()
+            .map(Into::into)
+            .unwrap_or_else(|_| serde_json::Value::String(text.to_owned())),
+        JsonMapping::Float => match text {
+            "NaN" | "Infinity" | "-Infinity" => serde_json::Value::String(text.to_owned()),
+            _ => text
+                .parse::<f64>()
+                .ok()
+                .and_then(serde_json::Number::from_f64)
+                .map(serde_json::Value::Number)
+                .unwrap_or_else(|| serde_json::Value::String(text.to_owned())),
+        },
+        JsonMapping::Bool => serde_json::Value::Bool(text == "t" || text == "true" || text == "1"),
+        JsonMapping::Json => {
+            serde_json::from_str(text).unwrap_or(serde_json::Value::String(text.to_owned()))
+        }
+        JsonMapping::Binary => serde_json::Value::String("(binary data)".into()),
+        JsonMapping::Text => serde_json::Value::String(text.to_owned()),
+    }
+}
+
 // ── PostgreSQL ──────────────────────────────────────────────
 
 pub struct PostgresDriver {
@@ -97,7 +133,7 @@ pub struct PostgresDriver {
 impl DatabaseDriver for PostgresDriver {
     async fn query(&self, sql: &str) -> Result<QueryOutput, Error> {
         use futures::TryStreamExt;
-        let mut stream = sqlx::query(sql).fetch(&self.pool);
+        let mut stream = sqlx::raw_sql(sql).fetch(&self.pool);
         let mut rows = Vec::new();
         let mut total_bytes: usize = 0;
         let mut truncated = false;
@@ -107,7 +143,7 @@ impl DatabaseDriver for PostgresDriver {
             .await
             .map_err(|e| Error::Database(e.to_string()))?
         {
-            let json = pg_row_to_json(&row);
+            let json = pg_row_to_json_text(&row);
             total_bytes += serde_json::to_string(&json).unwrap_or_default().len();
             rows.push(json);
             if rows.len() >= DEFAULT_MAX_RESULT_ROWS {
@@ -197,53 +233,36 @@ impl DatabaseDriver for PostgresDriver {
     }
 }
 
-fn pg_row_to_json(row: &sqlx::postgres::PgRow) -> serde_json::Value {
-    use sqlx::{Column, Row, TypeInfo};
+fn pg_row_to_json_text(row: &sqlx::postgres::PgRow) -> serde_json::Value {
+    use sqlx::{Column, Row, TypeInfo, ValueRef};
     let mut map = serde_json::Map::new();
     for col in row.columns() {
         let name = col.name();
-        let val: serde_json::Value = match col.type_info().name() {
-            "BOOL" => row
-                .try_get::<bool, _>(name)
-                .map(Into::into)
-                .unwrap_or(serde_json::Value::Null),
-            "INT2" => row
-                .try_get::<i16, _>(name)
-                .map(|v| v.into())
-                .unwrap_or(serde_json::Value::Null),
-            "INT4" => row
-                .try_get::<i32, _>(name)
-                .map(Into::into)
-                .unwrap_or(serde_json::Value::Null),
-            "INT8" => row
-                .try_get::<i64, _>(name)
-                .map(Into::into)
-                .unwrap_or(serde_json::Value::Null),
-            "FLOAT4" => row
-                .try_get::<f32, _>(name)
-                .map(|v| v.into())
-                .unwrap_or(serde_json::Value::Null),
-            "FLOAT8" => row
-                .try_get::<f64, _>(name)
-                .map(Into::into)
-                .unwrap_or(serde_json::Value::Null),
-            "JSONB" | "JSON" => row
-                .try_get::<String, _>(name)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or(serde_json::Value::Null),
-            // TIMESTAMPTZ, TIMESTAMP, DATE, UUID, NUMERIC → string via fallback
-            _ => row
-                .try_get::<Option<String>, _>(name)
-                .map(|opt| opt.map(Into::into).unwrap_or(serde_json::Value::Null))
-                .unwrap_or_else(|_| {
-                    // Binary types (BYTEA, etc.) can't be read as String
-                    serde_json::Value::String("(binary data)".into())
-                }),
+        let raw = row
+            .try_get_raw(col.ordinal())
+            .expect("column ordinal from row.columns() must be valid");
+        let val = if raw.is_null() {
+            serde_json::Value::Null
+        } else {
+            match raw.as_str() {
+                Ok(text) => text_to_json(text, pg_type_mapping(col.type_info().name())),
+                Err(_) => serde_json::Value::String("(binary data)".into()),
+            }
         };
         map.insert(name.to_string(), val);
     }
     serde_json::Value::Object(map)
+}
+
+fn pg_type_mapping(type_name: &str) -> JsonMapping {
+    match type_name {
+        "INT2" | "INT4" | "INT8" => JsonMapping::Integer,
+        "FLOAT4" | "FLOAT8" => JsonMapping::Float,
+        "BOOL" => JsonMapping::Bool,
+        "JSON" | "JSONB" => JsonMapping::Json,
+        "BYTEA" => JsonMapping::Binary,
+        _ => JsonMapping::Text,
+    }
 }
 
 // ── MySQL ───────────────────────────────────────────────────
@@ -266,7 +285,7 @@ impl DatabaseDriver for MysqlDriver {
             .await
             .map_err(|e| Error::Database(e.to_string()))?
         {
-            let json = mysql_row_to_json(&row);
+            let json = mysql_row_to_json_text(&row);
             total_bytes += serde_json::to_string(&json).unwrap_or_default().len();
             rows.push(json);
             if rows.len() >= DEFAULT_MAX_RESULT_ROWS {
@@ -379,43 +398,36 @@ impl DatabaseDriver for MysqlDriver {
     }
 }
 
-fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
+fn mysql_row_to_json_text(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
     use sqlx::{Column, Row, TypeInfo};
     let mut map = serde_json::Map::new();
     for col in row.columns() {
         let name = col.name();
-        let val: serde_json::Value = match col.type_info().name() {
-            "BOOLEAN" | "TINYINT(1)" => row
-                .try_get::<bool, _>(name)
-                .map(Into::into)
-                .unwrap_or(serde_json::Value::Null),
-            "SMALLINT" | "TINYINT" => row
-                .try_get::<i16, _>(name)
-                .map(|v| v.into())
-                .unwrap_or(serde_json::Value::Null),
-            "INT" | "MEDIUMINT" => row
-                .try_get::<i32, _>(name)
-                .map(Into::into)
-                .unwrap_or(serde_json::Value::Null),
-            "BIGINT" => row
+        let mapping = mysql_type_mapping(col.type_info().name());
+        let val: serde_json::Value = match mapping {
+            JsonMapping::Integer => row
                 .try_get::<i64, _>(name)
                 .map(Into::into)
                 .unwrap_or(serde_json::Value::Null),
-            "FLOAT" => row
-                .try_get::<f32, _>(name)
-                .map(|v| v.into())
-                .unwrap_or(serde_json::Value::Null),
-            "DOUBLE" => row
+            JsonMapping::Float => row
                 .try_get::<f64, _>(name)
+                .map(|v| {
+                    serde_json::Number::from_f64(v)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::String(v.to_string()))
+                })
+                .unwrap_or(serde_json::Value::Null),
+            JsonMapping::Bool => row
+                .try_get::<bool, _>(name)
                 .map(Into::into)
                 .unwrap_or(serde_json::Value::Null),
-            "JSON" => row
+            JsonMapping::Json => row
                 .try_get::<String, _>(name)
                 .ok()
                 .and_then(|s| serde_json::from_str(&s).ok())
                 .unwrap_or(serde_json::Value::Null),
-            // TIMESTAMP, DATETIME, DATE, DECIMAL → string via fallback
-            _ => row
+            JsonMapping::Binary => serde_json::Value::String("(binary data)".into()),
+            JsonMapping::Text => row
                 .try_get::<Option<String>, _>(name)
                 .map(|opt| opt.map(Into::into).unwrap_or(serde_json::Value::Null))
                 .unwrap_or_else(|_| serde_json::Value::String("(binary data)".into())),
@@ -423,4 +435,19 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
         map.insert(name.to_string(), val);
     }
     serde_json::Value::Object(map)
+}
+
+fn mysql_type_mapping(type_name: &str) -> JsonMapping {
+    match type_name {
+        "TINYINT" | "TINYINT UNSIGNED" | "SMALLINT" | "SMALLINT UNSIGNED" | "INT"
+        | "INT UNSIGNED" | "MEDIUMINT" | "MEDIUMINT UNSIGNED" | "BIGINT"
+        | "BIGINT UNSIGNED" => JsonMapping::Integer,
+        "FLOAT" | "DOUBLE" => JsonMapping::Float,
+        "BOOLEAN" => JsonMapping::Bool,
+        "JSON" => JsonMapping::Json,
+        "BLOB" | "BINARY" | "VARBINARY" | "LONGBLOB" | "MEDIUMBLOB" | "TINYBLOB" => {
+            JsonMapping::Binary
+        }
+        _ => JsonMapping::Text,
+    }
 }
