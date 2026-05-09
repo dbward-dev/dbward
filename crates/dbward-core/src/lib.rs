@@ -7,7 +7,7 @@ mod error;
 mod query;
 mod rbac;
 pub mod request_status;
-pub mod token;
+pub mod role;pub mod token;
 mod types;
 
 pub use audit::AuditLogger;

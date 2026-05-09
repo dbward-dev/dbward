@@ -196,16 +196,7 @@ impl AuthUser {
     /// Returns the effective permission level:
     /// "admin" > "developer" > "readonly" > "approver" (custom roles can only approve).
     pub fn effective_permission(&self) -> &str {
-        if self.roles.iter().any(|r| r == "admin") {
-            return "admin";
-        }
-        if self.roles.iter().any(|r| r == "developer") {
-            return "developer";
-        }
-        if self.roles.iter().any(|r| r == "readonly") {
-            return "readonly";
-        }
-        "approver"
+        dbward_core::role::effective_permission(&self.roles)
     }
 
     pub fn has_role(&self, role: &str) -> bool {

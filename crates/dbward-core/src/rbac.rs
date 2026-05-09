@@ -1,24 +1,8 @@
 use crate::{Error, Operation};
 
 /// Check whether `role` (effective permission level) is allowed to perform `operation`.
-///
-/// Matrix:
-///   - "admin": all operations
-///   - "developer": all except audit_search
-///   - "readonly": migrate_status, audit_search, execute_query (SELECT only — caller enforces query type)
-///   - "approver" (custom roles): no operations (they exist only to approve requests)
 pub fn check_permission(role: &str, operation: &Operation) -> Result<(), Error> {
-    let allowed = match role {
-        "admin" => true,
-        "developer" => !matches!(operation, Operation::AuditSearch),
-        "readonly" => matches!(
-            operation,
-            Operation::MigrateStatus | Operation::AuditSearch | Operation::ExecuteQuery
-        ),
-        _ => false,
-    };
-
-    if allowed {
+    if crate::role::is_operation_allowed(role, operation) {
         Ok(())
     } else {
         Err(Error::PermissionDenied {
