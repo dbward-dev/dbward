@@ -1,5 +1,6 @@
 mod agent;
 mod audit;
+mod health;
 mod policies;
 pub(crate) mod requests;
 pub(crate) mod results;
@@ -15,16 +16,17 @@ use axum::routing::{delete, get};
 use std::time::Instant;
 
 use crate::state::AppState;
+use health::{get_public_key, health, metrics, ready};
 use requests::{
-    approve_request, cancel_request, create_request, dispatch_request, get_public_key, get_request,
-    health, list_requests, ready, reject_request, stream_result,
+    approve_request, cancel_request, create_request, dispatch_request, get_request,
+    list_requests, reject_request, stream_result,
 };
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
-        .route("/metrics", get(requests::metrics))
+        .route("/metrics", get(metrics))
         .route("/api/requests", get(list_requests).post(create_request))
         .route("/api/requests/{id}", get(get_request))
         .route(
