@@ -157,6 +157,8 @@ enum Command {
     },
     /// Update dbward to the latest version
     SelfUpdate,
+    /// Show agent status (admin only)
+    Agents,
 }
 
 #[derive(Subcommand)]
@@ -1053,6 +1055,15 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         | Command::Agent { .. }
         | Command::Dev { .. }
         | Command::SelfUpdate => unreachable!(),
+        Command::Agents => {
+            let body = sc.get_json("/api/agents").await?;
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&body)?);
+            } else {
+                print_agents_status(&body);
+            }
+            Ok(())
+        }
     }
 }
 
@@ -1410,6 +1421,88 @@ fn render_result_table(rows: &[serde_json::Value]) -> Vec<String> {
         if rows.len() == 1 { "row" } else { "rows" }
     ));
     lines
+}
+
+fn print_agents_status(body: &serde_json::Value) {
+    let agents = match body["agents"].as_array() {
+        Some(a) => a,
+        None => {
+            eprintln!("No agents registered.");
+            return;
+        }
+    };
+    if agents.is_empty() {
+        eprintln!("No agents registered.");
+        return;
+    }
+
+    println!(
+        "{:<20} {:<10} {:<7} {:<12} {:<10}",
+        "AGENT", "STATUS", "LOAD", "LAST SEEN", "UPTIME"
+    );
+    for a in agents {
+        let id = a["id"].as_str().unwrap_or("?");
+        let status = a["status"].as_str().unwrap_or("?");
+        let in_flight = a["in_flight"].as_i64().unwrap_or(0);
+        let max_concurrent = a["max_concurrent"].as_i64().unwrap_or(1);
+        let ago = a["last_poll_ago_secs"].as_i64().unwrap_or(9999);
+        let uptime = a["uptime_secs"].as_i64().unwrap_or(0);
+
+        let load = format!("{}/{}", in_flight, max_concurrent);
+        let last_seen = format_duration_ago(ago);
+        let uptime_str = format_duration_short(uptime);
+
+        println!("{:<20} {:<10} {:<7} {:<12} {:<10}", id, status, load, last_seen, uptime_str);
+    }
+
+    // Print active jobs if any
+    let has_active: Vec<_> = agents
+        .iter()
+        .filter(|a| {
+            a["active_jobs"]
+                .as_array()
+                .map(|j| !j.is_empty())
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if !has_active.is_empty() {
+        println!("\nActive jobs:");
+        for a in has_active {
+            let id = a["id"].as_str().unwrap_or("?");
+            println!("  {}:", id);
+            if let Some(jobs) = a["active_jobs"].as_array() {
+                for j in jobs {
+                    let req_id = j["request_id"].as_str().unwrap_or("?");
+                    let op = j["operation"].as_str().unwrap_or("?");
+                    let short_id: String = req_id.chars().take(8).collect();
+                    println!("    {}  {}", short_id, op);
+                }
+            }
+        }
+    }
+}
+
+fn format_duration_ago(secs: i64) -> String {
+    if secs < 60 {
+        format!("{}s ago", secs)
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else {
+        format!("{}h ago", secs / 3600)
+    }
+}
+
+fn format_duration_short(secs: i64) -> String {
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h", secs / 3600)
+    } else {
+        format!("{}d", secs / 86400)
+    }
 }
 
 /// Save result locally. Returns the path where it was saved.

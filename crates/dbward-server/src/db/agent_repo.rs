@@ -52,13 +52,36 @@ pub fn get_agent_capabilities(conn: &Connection, agent_id: &str) -> Option<Strin
 }
 
 /// List all known agents with their last_seen_at and capabilities.
-pub fn list_agents(conn: &Connection) -> Result<Vec<(String, String, String, String)>, rusqlite::Error> {
+/// Agent info returned by list_agents.
+pub struct AgentInfo {
+    pub id: String,
+    pub capabilities_json: String,
+    pub last_seen_at: String,
+    pub created_at: String,
+    pub in_flight: i64,
+    pub max_concurrent: i64,
+    pub draining: bool,
+    pub uptime_secs: i64,
+    pub active_jobs_json: String,
+}
+
+pub fn list_agents(conn: &Connection) -> Result<Vec<AgentInfo>, rusqlite::Error> {
     let mut stmt = conn.prepare(
-        "SELECT id, capabilities_json, last_seen_at, created_at FROM agents ORDER BY last_seen_at DESC",
+        "SELECT id, capabilities_json, last_seen_at, created_at, in_flight, max_concurrent, draining, uptime_secs, active_jobs_json FROM agents ORDER BY last_seen_at DESC",
     )?;
     let rows = stmt
         .query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok(AgentInfo {
+                id: row.get(0)?,
+                capabilities_json: row.get(1)?,
+                last_seen_at: row.get(2)?,
+                created_at: row.get(3)?,
+                in_flight: row.get(4)?,
+                max_concurrent: row.get(5)?,
+                draining: row.get::<_, i64>(6)? != 0,
+                uptime_secs: row.get(7)?,
+                active_jobs_json: row.get(8)?,
+            })
         })?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)

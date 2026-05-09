@@ -22,16 +22,39 @@ pub(crate) async fn list_agents(
     let agents = crate::db::agent_repo::list_agents(&conn)
         .map_err(|e| crate::api_error::ApiError::internal(e.to_string()))?;
 
+    let now = chrono::Utc::now();
     let items: Vec<serde_json::Value> = agents
         .into_iter()
-        .map(|(id, caps_json, last_seen, created)| {
+        .map(|a| {
             let caps: serde_json::Value =
-                serde_json::from_str(&caps_json).unwrap_or(json!({}));
+                serde_json::from_str(&a.capabilities_json).unwrap_or(json!({}));
+            let active_jobs: serde_json::Value =
+                serde_json::from_str(&a.active_jobs_json).unwrap_or(json!([]));
+            let last_poll_ago_secs = chrono::DateTime::parse_from_rfc3339(&a.last_seen_at)
+                .map(|t| now.signed_duration_since(t).num_seconds().max(0))
+                .unwrap_or(9999);
+            let status = if a.draining {
+                "draining"
+            } else if last_poll_ago_secs > 60 {
+                "offline"
+            } else if a.in_flight >= a.max_concurrent {
+                "saturated"
+            } else {
+                "healthy"
+            };
             json!({
-                "id": id,
+                "id": a.id,
+                "status": status,
                 "capabilities": caps,
-                "last_seen_at": last_seen,
-                "created_at": created,
+                "last_seen_at": a.last_seen_at,
+                "last_poll_ago_secs": last_poll_ago_secs,
+                "in_flight": a.in_flight,
+                "max_concurrent": a.max_concurrent,
+                "available": (a.max_concurrent - a.in_flight).max(0),
+                "draining": a.draining,
+                "uptime_secs": a.uptime_secs,
+                "active_jobs": active_jobs,
+                "created_at": a.created_at,
             })
         })
         .collect();
