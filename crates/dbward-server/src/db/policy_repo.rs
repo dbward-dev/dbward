@@ -85,41 +85,62 @@ pub fn evaluate_workflow(
         let mut stmt = conn
             .prepare("SELECT id, operations_json, steps_json, require_reason FROM workflows WHERE database_name = ?1 AND environment = ?2 ORDER BY id ASC")?;
         let rows = stmt.query_map(rusqlite::params![db_name, env_name], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok(WorkflowRow {
+                id: row.get(0)?,
+                operations_json: row.get(1)?,
+                steps_json: row.get(2)?,
+                require_reason: row.get(3)?,
+            })
         })?;
-        let rows: Vec<(String, String, String, bool)> = rows.collect::<Result<Vec<_>, _>>()?;
+        let rows: Vec<WorkflowRow> = rows.collect::<Result<Vec<_>, _>>()?;
 
-        let mut exact_match: Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> = None;
-        let mut catchall_match: Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> =
-            None;
-
-        for (id, operations_json, steps_json, require_reason) in &rows {
-            let operations: Vec<String> = serde_json::from_str(operations_json).map_err(|e| {
-                PolicyEvalError::CorruptedConfig(format!(
-                    "invalid operations_json in workflow '{id}': {e}"
-                ))
-            })?;
-            let steps: Vec<crate::server_config::WorkflowStep> = serde_json::from_str(steps_json)
-                .map_err(|e| {
-                PolicyEvalError::CorruptedConfig(format!(
-                    "invalid steps_json in workflow '{id}': {e}"
-                ))
-            })?;
-            if operations.is_empty() {
-                if catchall_match.is_none() {
-                    catchall_match = Some((id.clone(), steps, *require_reason));
-                }
-            } else if operations.iter().any(|op| op == operation) && exact_match.is_none() {
-                exact_match = Some((id.clone(), steps, *require_reason));
-            }
-        }
-
-        if let Some(m) = exact_match.or(catchall_match) {
+        if let Some(m) = match_workflow(&rows, operation)? {
             return Ok(Some(m));
         }
     }
 
     Ok(None)
+}
+
+/// A row from the workflows table (used for matching).
+pub struct WorkflowRow {
+    pub id: String,
+    pub operations_json: String,
+    pub steps_json: String,
+    pub require_reason: bool,
+}
+
+/// Pure matching logic: given a list of workflow rows, find the best match for an operation.
+/// Prefers exact operation match over catchall (empty operations list).
+pub fn match_workflow(
+    rows: &[WorkflowRow],
+    operation: &str,
+) -> Result<Option<(String, Vec<crate::server_config::WorkflowStep>, bool)>, PolicyEvalError> {
+    let mut exact_match: Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> = None;
+    let mut catchall_match: Option<(String, Vec<crate::server_config::WorkflowStep>, bool)> = None;
+
+    for row in rows {
+        let operations: Vec<String> = serde_json::from_str(&row.operations_json).map_err(|e| {
+            PolicyEvalError::CorruptedConfig(format!(
+                "invalid operations_json in workflow '{}': {e}", row.id
+            ))
+        })?;
+        let steps: Vec<crate::server_config::WorkflowStep> =
+            serde_json::from_str(&row.steps_json).map_err(|e| {
+                PolicyEvalError::CorruptedConfig(format!(
+                    "invalid steps_json in workflow '{}': {e}", row.id
+                ))
+            })?;
+        if operations.is_empty() {
+            if catchall_match.is_none() {
+                catchall_match = Some((row.id.clone(), steps, row.require_reason));
+            }
+        } else if operations.iter().any(|op| op == operation) && exact_match.is_none() {
+            exact_match = Some((row.id.clone(), steps, row.require_reason));
+        }
+    }
+
+    Ok(exact_match.or(catchall_match))
 }
 
 // --- TOML sync ---
@@ -424,6 +445,45 @@ pub fn get_notification_webhooks(
 mod tests {
     use super::*;
     use crate::db;
+
+    #[test]
+    fn match_workflow_prefers_exact_operation() {
+        let rows = vec![
+            WorkflowRow {
+                id: "catchall".into(),
+                operations_json: "[]".into(),
+                steps_json: "[]".into(),
+                require_reason: false,
+            },
+            WorkflowRow {
+                id: "exact".into(),
+                operations_json: r#"["execute_query"]"#.into(),
+                steps_json: r#"[{"type":"approval","mode":"all","approvers":[]}]"#.into(),
+                require_reason: true,
+            },
+        ];
+        let result = match_workflow(&rows, "execute_query").unwrap().unwrap();
+        assert_eq!(result.0, "exact");
+        assert!(result.2); // require_reason
+    }
+
+    #[test]
+    fn match_workflow_falls_back_to_catchall() {
+        let rows = vec![WorkflowRow {
+            id: "catchall".into(),
+            operations_json: "[]".into(),
+            steps_json: "[]".into(),
+            require_reason: false,
+        }];
+        let result = match_workflow(&rows, "migrate_up").unwrap().unwrap();
+        assert_eq!(result.0, "catchall");
+    }
+
+    #[test]
+    fn match_workflow_returns_none_when_empty() {
+        let result = match_workflow(&[], "execute_query").unwrap();
+        assert!(result.is_none());
+    }
 
     #[test]
     fn sync_workflows_only_deletes_toml_rows() {
