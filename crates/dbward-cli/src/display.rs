@@ -178,7 +178,7 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
     let op = body["operation"].as_str().unwrap_or("?");
     let detail = body["detail"].as_str().unwrap_or("");
     let env = body["environment"].as_str().unwrap_or("?");
-    let db = body["database_name"].as_str().unwrap_or("?");
+    let db = body["database"].as_str().unwrap_or("?");
     let user = body["created_by"].as_str().unwrap_or("?");
     let created = body["created_at"].as_str().unwrap_or("?");
     let updated = body["updated_at"].as_str().unwrap_or("?");
