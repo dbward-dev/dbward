@@ -334,8 +334,32 @@ async fn authenticate_api_token(
             }
             Ok(AuthUser {
                 token_id: row.id,
-                user: row.subject_id,
-                roles: vec![row.role],
+                user: row.subject_id.clone(),
+                roles: {
+                    // Look up users table for latest role
+                    let user_role = match crate::db::user_repo::get_user(&conn, &row.subject_type, &row.subject_id) {
+                        Ok(Some(u)) => {
+                            if u.disabled {
+                                drop(conn);
+                                record_auth_failure(state, headers, "api_token", "user_disabled");
+                                return Err((StatusCode::UNAUTHORIZED, "user is disabled".into()));
+                            }
+                            u.role
+                        }
+                        Ok(None) => {
+                            // Auto-create user record on first auth
+                            tracing::warn!(
+                                subject_type = %row.subject_type,
+                                subject_id = %row.subject_id,
+                                "auto-creating user record from token (first auth)"
+                            );
+                            let _ = crate::db::user_repo::upsert_user(&conn, &row.subject_type, &row.subject_id, &row.role);
+                            row.role.clone()
+                        }
+                        Err(_) => row.role.clone(),
+                    };
+                    vec![user_role]
+                },
                 groups: row.groups,
                 subject_type: row.subject_type,
             })
