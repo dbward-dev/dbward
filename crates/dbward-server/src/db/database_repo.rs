@@ -81,7 +81,18 @@ pub fn register_databases(
 }
 
 /// Check if a (database, environment) pair is registered.
+/// Returns true if the databases table is empty (no registry configured = allow all).
 pub fn database_exists(conn: &Connection, name: &str, environment: &str) -> bool {
+    let has_any: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM databases)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+    if !has_any {
+        return true; // No registry configured = allow all (backward compat)
+    }
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM databases WHERE name = ?1 AND environment = ?2)",
         params![name, environment],

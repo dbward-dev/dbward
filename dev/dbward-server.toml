@@ -6,6 +6,10 @@ mode = "token"
 name = "app"
 environments = ["development", "staging", "production"]
 
+[[databases]]
+name = "mysql-dev"
+environments = ["development"]
+
 # Workflow definitions (synced to SQLite on startup)
 
 # Development: auto-approve everything
