@@ -164,6 +164,8 @@ mod tests {
             issued_at: Utc::now().to_rfc3339(),
             expires_at: expires_str,
             signature: hex::encode(sig.to_bytes()),
+            requester_role: String::new(),
+            requester_subject_id: String::new(),
         }
     }
 

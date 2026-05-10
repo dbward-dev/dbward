@@ -53,7 +53,6 @@ fn test_state() -> AppState {
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
         enforcer: dbward_server::authz::get_enforcer_arc(),
-        enforcer: dbward_server::authz::get_enforcer_arc(),
     }
 }
 
@@ -206,7 +205,7 @@ async fn api_token_rejected_when_mode_is_oidc_only() {
 #[tokio::test]
 async fn execution_token_has_correct_fields() {
     let signer = TokenSigner::generate();
-    let token = signer.issue("req-123", "execute_query", "production", "mydb", "SELECT 1");
+    let token = signer.issue("req-123", "execute_query", "production", "mydb", "SELECT 1", "developer", "alice");
 
     assert_eq!(token.request_id, "req-123");
     assert_eq!(token.operation, "execute_query");
@@ -228,6 +227,8 @@ async fn execution_token_tampered_signature_rejected() {
         "development",
         "default",
         "SELECT 1",
+        "developer",
+        "alice",
     );
 
     // Tamper signature
@@ -258,6 +259,8 @@ async fn execution_token_wrong_environment_rejected() {
         "development",
         "default",
         "SELECT 1",
+        "developer",
+        "alice",
     );
 
     let verifying_key = signer.verifying_key();
@@ -284,6 +287,8 @@ async fn execution_token_wrong_detail_hash_rejected() {
         "development",
         "default",
         "SELECT 1",
+        "developer",
+        "alice",
     );
 
     let verifying_key = signer.verifying_key();

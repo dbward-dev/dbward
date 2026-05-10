@@ -322,7 +322,7 @@ async fn execute_job(
         }
     });
 
-    let (result_value, success) = match execute_operation(&resolved, env, operation, detail).await {
+    let (result_value, success) = match execute_operation(&resolved, env, operation, detail, &token.requester_role, &token.requester_subject_id).await {
         Ok(text) => {
             let val: serde_json::Value =
                 serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
@@ -454,11 +454,13 @@ async fn execute_operation(
     env: dbward_core::Environment,
     operation: &str,
     detail: &str,
+    requester_role: &str,
+    requester_subject_id: &str,
 ) -> Result<String, Error> {
     match operation {
         "execute_query" => {
             let mut engine = Engine::new(resolved, env).await?;
-            let result = engine.execute_query("agent", "developer", detail).await?;
+            let result = engine.execute_query(requester_subject_id, requester_role, detail).await?;
             let output = build_execute_output(&result);
             if result.truncated {
                 // Keep truncated/truncation_reason already set above
@@ -616,6 +618,8 @@ mod tests {
             issued_at: "2026-01-01T00:00:00+00:00".into(),
             expires_at,
             signature: hex::encode(signature.to_bytes()),
+            requester_role: String::new(),
+            requester_subject_id: String::new(),
         };
 
         std::fs::write(&path, "-- migrate:up\nSELECT 2;\n").unwrap();

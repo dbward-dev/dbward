@@ -117,6 +117,8 @@ mod tests {
             "production",
             "default",
             "20260501_create_users.sql",
+            "developer",
+            "alice",
         );
 
         let result = verify_token(
@@ -149,7 +151,7 @@ mod tests {
     #[test]
     fn rejects_wrong_environment() {
         let signer = TokenSigner::generate();
-        let token = signer.issue("req_1", "migrate_up", "staging", "default", "test.sql");
+        let token = signer.issue("req_1", "migrate_up", "staging", "default", "test.sql", "developer", "alice");
 
         let result = verify_token(
             &token,
@@ -165,7 +167,7 @@ mod tests {
     #[test]
     fn rejects_tampered_signature() {
         let signer = TokenSigner::generate();
-        let mut token = signer.issue("req_1", "migrate_up", "production", "default", "test.sql");
+        let mut token = signer.issue("req_1", "migrate_up", "production", "default", "test.sql", "developer", "alice");
         token.operation = "execute_query".to_string();
 
         let result = verify_token(

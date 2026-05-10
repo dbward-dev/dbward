@@ -53,7 +53,6 @@ fn test_state() -> AppState {
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
         enforcer: dbward_server::authz::get_enforcer_arc(),
-        enforcer: dbward_server::authz::get_enforcer_arc(),
     }
 }
 

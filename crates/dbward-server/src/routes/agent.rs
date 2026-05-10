@@ -336,7 +336,7 @@ pub(crate) async fn agent_claim(
         .ok()
         .flatten()
         .map(|u| u.role)
-        .unwrap_or_else(|| "developer".to_string());
+        .unwrap_or_else(|| "readonly".to_string());
 
     let token = state
         .token_signer
