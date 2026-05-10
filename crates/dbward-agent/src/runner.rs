@@ -500,25 +500,29 @@ async fn execute_operation(
         "migrate_down" => {
             let engine = Engine::new(resolved, env).await?;
             engine.driver().ensure_migrations_table().await?;
+            let detail_json: serde_json::Value = serde_json::from_str(detail)
+                .map_err(|e| Error::Server(format!("invalid migrate_down detail: {e}")))?;
             let detail_parsed = dbward_migrate::MigrationDetail::parse(detail)?;
+            let max_count = detail_json["max_count"].as_u64().unwrap_or(1) as usize;
+
+            // Find applied versions that have down migrations available
             let applied = engine.driver().applied_versions().await?;
-            for v in &detail_parsed.versions {
-                if !applied.contains(v) {
-                    return Err(Error::Server(format!(
-                        "migration state changed: version '{v}' is not applied"
-                    )));
-                }
-            }
+            let available_down: Vec<&dbward_migrate::MigrationEntry> = detail_parsed.migrations
+                .iter()
+                .filter(|m| applied.contains(&m.version))
+                .collect();
+
+            // Revert the last N applied (in reverse order)
+            let to_revert: Vec<_> = available_down.into_iter().rev().take(max_count).collect();
             let mut rolled_back = Vec::new();
-            for entry in &detail_parsed.migrations {
+            for entry in &to_revert {
                 engine.driver().revert_migration(&entry.sql, &entry.version).await?;
                 rolled_back.push(entry.version.clone());
             }
-            if rolled_back.is_empty() {
-                Ok("Nothing to rollback.".into())
-            } else {
-                Ok(format!("Rolled back:\n{}", rolled_back.join("\n")))
-            }
+
+            Ok(serde_json::json!({
+                "rolled_back": rolled_back,
+            }).to_string())
         }
         "migrate_status" => {
             let engine = Engine::new(resolved, env).await?;

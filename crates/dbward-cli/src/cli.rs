@@ -509,17 +509,22 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         Command::Migrate { ref action } => {
             let (operation, detail, metadata, idempotency_key, migrate_share_with) = match action {
                 MigrateAction::Up {
-                    count: _,
+                    count,
                     ticket,
                     repo,
                     idempotency_key,
                     share_with,
                 } => {
                     let migrations_dir = config.migrations_dir_for(&db_name);
-                    let detail_obj = dbward_migrate::build_migrate_up_detail(
+                    let mut detail_obj = dbward_migrate::build_migrate_up_detail(
                         &migrations_dir,
                         &[], // Send all files; agent determines pending
                     )?;
+                    // Include count hint for agent to limit applied migrations
+                    if let Some(c) = count {
+                        detail_obj.versions = detail_obj.versions.into_iter().take(*c).collect();
+                        detail_obj.migrations = detail_obj.migrations.into_iter().take(*c).collect();
+                    }
                     (
                         "migrate_up",
                         detail_obj.to_detail_string()?,
@@ -535,17 +540,18 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     idempotency_key,
                 } => {
                     let migrations_dir = config.migrations_dir_for(&db_name);
-                    // For down, we need to know which versions to revert
-                    // Read all down files and send the last N (count)
+                    // Send all down files; agent reverts the last N applied
                     let all_down = dbward_migrate::list_down_versions(&migrations_dir)?;
-                    let to_revert: Vec<String> = all_down.into_iter().rev().take(*count).collect();
                     let detail_obj = dbward_migrate::build_migrate_down_detail(
                         &migrations_dir,
-                        &to_revert,
+                        &all_down,
                     )?;
+                    // Store count in detail for agent to use
+                    let mut detail_json: serde_json::Value = serde_json::from_str(&detail_obj.to_detail_string()?)?;
+                    detail_json["max_count"] = serde_json::json!(*count);
                     (
                         "migrate_down",
-                        detail_obj.to_detail_string()?,
+                        serde_json::to_string(&detail_json)?,
                         build_request_metadata(ticket.as_deref(), repo.as_deref()),
                         idempotency_key.as_deref(),
                         &vec![],
