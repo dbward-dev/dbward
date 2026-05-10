@@ -1,6 +1,11 @@
 [auth]
 mode = "token"
 
+# Database registry
+[[databases]]
+name = "app"
+environments = ["development", "staging", "production"]
+
 # Workflow definitions (synced to SQLite on startup)
 
 # Development: auto-approve everything

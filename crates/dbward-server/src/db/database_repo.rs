@@ -22,7 +22,7 @@ fn validate_name(name: &str, field: &str) -> Result<(), String> {
 }
 
 /// Sync database definitions from config into SQLite.
-/// Config is the source of truth; this replaces all existing entries.
+/// Uses diff-based sync: insert new entries, delete removed ones, preserve existing.
 pub fn register_databases(
     conn: &Connection,
     defs: &[DatabaseDef],
@@ -38,20 +38,42 @@ pub fn register_databases(
         .unchecked_transaction()
         .map_err(|e| format!("failed to begin transaction: {e}"))?;
 
-    tx.execute("DELETE FROM databases", [])
-        .map_err(|e| format!("failed to clear databases: {e}"))?;
-
-    let mut stmt = tx
+    // Insert new entries (existing ones are preserved with their created_at)
+    let mut insert_stmt = tx
         .prepare("INSERT OR IGNORE INTO databases (name, environment) VALUES (?1, ?2)")
         .map_err(|e| format!("failed to prepare insert: {e}"))?;
 
+    let mut expected: Vec<(String, String)> = Vec::new();
     for def in defs {
         for env in &def.environments {
-            stmt.execute(params![&def.name, env])
+            insert_stmt.execute(params![&def.name, env])
                 .map_err(|e| format!("failed to register database '{}' env '{}': {e}", def.name, env))?;
+            expected.push((def.name.clone(), env.clone()));
         }
     }
-    drop(stmt);
+    drop(insert_stmt);
+
+    // Delete entries that are no longer in config
+    if expected.is_empty() {
+        tx.execute("DELETE FROM databases", [])
+            .map_err(|e| format!("failed to clear databases: {e}"))?;
+    } else {
+        let conditions: Vec<String> = expected
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("(name = ?{} AND environment = ?{})", i * 2 + 1, i * 2 + 2))
+            .collect();
+        let sql = format!(
+            "DELETE FROM databases WHERE NOT ({})",
+            conditions.join(" OR ")
+        );
+        let params: Vec<&dyn rusqlite::ToSql> = expected
+            .iter()
+            .flat_map(|(n, e)| vec![n as &dyn rusqlite::ToSql, e as &dyn rusqlite::ToSql])
+            .collect();
+        tx.execute(&sql, params.as_slice())
+            .map_err(|e| format!("failed to remove stale databases: {e}"))?;
+    }
 
     tx.commit()
         .map_err(|e| format!("failed to commit database registration: {e}"))?;
