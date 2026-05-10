@@ -82,7 +82,6 @@ fn test_state() -> AppState {
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
         enforcer: dbward_server::authz::get_enforcer_arc(),
-        enforcer: dbward_server::authz::get_enforcer_arc(),
     }
 }
 
@@ -160,7 +159,6 @@ fn test_state_group_approval_with_store() -> (AppState, TempDir) {
         trusted_proxies: vec![],
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
-        enforcer: dbward_server::authz::get_enforcer_arc(),
         enforcer: dbward_server::authz::get_enforcer_arc(),
     };
     (state, dir)
@@ -1925,7 +1923,6 @@ async fn create_request_falls_back_to_static_policy_when_no_workflow_matches() {
         trusted_proxies: vec![],
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
-        enforcer: dbward_server::authz::get_enforcer_arc(),
         enforcer: dbward_server::authz::get_enforcer_arc(),
     };
     let (_, alice_token) = auth::create_token(&state, "alice", "developer")
@@ -3842,7 +3839,6 @@ fn test_state_multistep() -> AppState {
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
         enforcer: dbward_server::authz::get_enforcer_arc(),
-        enforcer: dbward_server::authz::get_enforcer_arc(),
     }
 }
 
@@ -3918,7 +3914,6 @@ fn test_state_multistep_allow_same() -> AppState {
         trusted_proxies: vec![],
         update_available: Arc::new(Mutex::new(None)),
         update_check_enabled: false,
-        enforcer: dbward_server::authz::get_enforcer_arc(),
         enforcer: dbward_server::authz::get_enforcer_arc(),
     }
 }
@@ -4512,3 +4507,4 @@ async fn stream_result_works_with_short_id() {
     let body = body_json(resp).await;
     assert_eq!(body["success"], true);
 }
+

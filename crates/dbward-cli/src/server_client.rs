@@ -761,4 +761,57 @@ mod tests {
         assert_eq!(payload["success"], true);
         assert!(payload["result"].is_null());
     }
+
+    #[tokio::test]
+    async fn wait_for_result_fallback_on_stream_failure() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 4096];
+                let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await;
+                let req_str = String::from_utf8_lossy(&buf);
+
+                let response = if req_str.contains("/result/stream") {
+                    "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n"
+                        .to_string()
+                } else if req_str.contains("GET") && req_str.contains("/api/requests/") {
+                    let body = serde_json::json!({
+                        "id": "test-req", "status": "executed",
+                        "operation": "execute_query", "environment": "dev",
+                        "database": "app", "detail": "SELECT 1",
+                        "created_by": "alice", "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "resolved_at": null, "reason": null,
+                        "metadata": {}, "idempotency_key": null, "expires_at": null,
+                    })
+                    .to_string();
+                    format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                } else {
+                    "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n".to_string()
+                };
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let client = ServerClient::new(&format!("http://{addr}"), "test-token");
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client.wait_for_result("test-req"),
+        )
+        .await;
+
+        server.abort();
+        // Must complete within timeout (not hang)
+        assert!(result.is_ok(), "wait_for_result should not hang on stream failure");
+    }
 }

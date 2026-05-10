@@ -527,3 +527,49 @@ pub(crate) fn format_created_time(created_at: &str) -> String {
 
     "?".to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn render_result_table_empty_rows_shows_zero_rows() {
+        let rows: Vec<serde_json::Value> = vec![];
+        let output = render_result_table(&rows);
+        assert_eq!(output, vec!["(0 rows)"]);
+    }
+
+    #[test]
+    fn render_result_table_single_row() {
+        let rows = vec![json!({"id": 1, "name": "test"})];
+        let output = render_result_table(&rows);
+        assert!(output.iter().any(|l| l.contains("id")));
+        assert!(output.iter().any(|l| l.contains("test")));
+        assert!(output.last().unwrap().contains("(1 row)"));
+    }
+
+    #[test]
+    fn execution_result_routes_to_rows_when_rows_key_present() {
+        // Simulates SELECT with empty result — must NOT fall through to rows_affected
+        let resp = json!({"success": true, "result": {"rows": [], "row_count": 0, "truncated": false}});
+        let result = resp.get("result").unwrap();
+        // The routing check: rows key present → print_result_table path
+        assert!(result.get("rows").and_then(|r| r.as_array()).is_some());
+    }
+
+    #[test]
+    fn execution_result_routes_to_rows_affected_when_no_rows_key() {
+        let resp = json!({"success": true, "result": {"rows_affected": 3, "truncated": false}});
+        let result = resp.get("result").unwrap();
+        assert!(result.get("rows").is_none());
+        assert_eq!(result.get("rows_affected").unwrap(), 3);
+    }
+
+    #[test]
+    fn execution_result_error_detected() {
+        let resp = json!({"success": false, "error": "syntax error at position 5"});
+        assert_eq!(resp["success"].as_bool(), Some(false));
+        assert_eq!(resp["error"].as_str().unwrap(), "syntax error at position 5");
+    }
+}

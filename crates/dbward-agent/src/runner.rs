@@ -459,23 +459,7 @@ async fn execute_operation(
         "execute_query" => {
             let mut engine = Engine::new(resolved, env).await?;
             let result = engine.execute_query("agent", "developer", detail).await?;
-            let output = if result.query_type == dbward_core::QueryType::Select {
-                serde_json::json!({
-                    "rows": result.rows,
-                    "row_count": result.rows.len(),
-                    "truncated": result.truncated,
-                    "truncation_reason": result.truncation_reason,
-                })
-            } else if result.rows.is_empty() {
-                serde_json::json!({"rows_affected": result.rows_affected, "truncated": false})
-            } else {
-                serde_json::json!({
-                    "rows": result.rows,
-                    "row_count": result.rows.len(),
-                    "truncated": result.truncated,
-                    "truncation_reason": result.truncation_reason,
-                })
-            };
+            let output = build_execute_output(&result);
             if result.truncated {
                 // Keep truncated/truncation_reason already set above
             }
@@ -544,6 +528,26 @@ async fn execute_operation(
             Ok(serde_json::json!({"applied": applied, "database": resolved.name}).to_string())
         }
         _ => Err(Error::Server(format!("unsupported operation: {operation}"))),
+    }
+}
+
+fn build_execute_output(result: &dbward_core::QueryResult) -> serde_json::Value {
+    if result.query_type == dbward_core::QueryType::Select {
+        serde_json::json!({
+            "rows": result.rows,
+            "row_count": result.rows.len(),
+            "truncated": result.truncated,
+            "truncation_reason": result.truncation_reason,
+        })
+    } else if result.rows.is_empty() {
+        serde_json::json!({"rows_affected": result.rows_affected, "truncated": false})
+    } else {
+        serde_json::json!({
+            "rows": result.rows,
+            "row_count": result.rows.len(),
+            "truncated": result.truncated,
+            "truncation_reason": result.truncation_reason,
+        })
     }
 }
 
@@ -629,5 +633,63 @@ mod tests {
 
         assert!(err.to_string().contains("detail_hash mismatch"));
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn select_empty_returns_rows_array() {
+        let result = dbward_core::QueryResult {
+            query_type: dbward_core::QueryType::Select,
+            rows: vec![],
+            rows_affected: 0,
+            truncated: false,
+            truncation_reason: None,
+        };
+        let output = build_execute_output(&result);
+        assert!(output.get("rows").unwrap().as_array().unwrap().is_empty());
+        assert!(output.get("rows_affected").is_none());
+        assert_eq!(output["row_count"], 0);
+    }
+
+    #[test]
+    fn select_with_rows_returns_rows_and_count() {
+        let result = dbward_core::QueryResult {
+            query_type: dbward_core::QueryType::Select,
+            rows: vec![serde_json::json!({"id": 1}), serde_json::json!({"id": 2})],
+            rows_affected: 0,
+            truncated: false,
+            truncation_reason: None,
+        };
+        let output = build_execute_output(&result);
+        assert_eq!(output["rows"].as_array().unwrap().len(), 2);
+        assert_eq!(output["row_count"], 2);
+        assert!(output.get("rows_affected").is_none());
+    }
+
+    #[test]
+    fn dml_empty_rows_returns_rows_affected() {
+        let result = dbward_core::QueryResult {
+            query_type: dbward_core::QueryType::Insert,
+            rows: vec![],
+            rows_affected: 5,
+            truncated: false,
+            truncation_reason: None,
+        };
+        let output = build_execute_output(&result);
+        assert_eq!(output["rows_affected"], 5);
+        assert!(output.get("rows").is_none());
+    }
+
+    #[test]
+    fn dml_with_returning_rows_returns_rows() {
+        let result = dbward_core::QueryResult {
+            query_type: dbward_core::QueryType::Insert,
+            rows: vec![serde_json::json!({"id": 10})],
+            rows_affected: 1,
+            truncated: false,
+            truncation_reason: None,
+        };
+        let output = build_execute_output(&result);
+        assert_eq!(output["rows"].as_array().unwrap().len(), 1);
+        assert_eq!(output["row_count"], 1);
     }
 }
