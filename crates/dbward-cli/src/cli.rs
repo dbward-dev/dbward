@@ -507,36 +507,48 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         Command::Migrate { ref action } => {
             let (operation, detail, metadata, idempotency_key, migrate_share_with) = match action {
                 MigrateAction::Up {
-                    count,
+                    count: _,
                     ticket,
                     repo,
                     idempotency_key,
                     share_with,
-                } => (
-                    "migrate_up",
-                    dbward_migrate::build_migration_approval_detail(
-                        &config.migrations_dir_for(&db_name),
-                        count.unwrap_or(0),
-                    )?,
-                    build_request_metadata(ticket.as_deref(), repo.as_deref()),
-                    idempotency_key.as_deref(),
-                    share_with,
-                ),
+                } => {
+                    let migrations_dir = config.migrations_dir_for(&db_name);
+                    let detail_obj = dbward_migrate::build_migrate_up_detail(
+                        &migrations_dir,
+                        &[], // Send all files; agent determines pending
+                    )?;
+                    (
+                        "migrate_up",
+                        detail_obj.to_detail_string()?,
+                        build_request_metadata(ticket.as_deref(), repo.as_deref()),
+                        idempotency_key.as_deref(),
+                        share_with,
+                    )
+                }
                 MigrateAction::Down {
                     count,
                     ticket,
                     repo,
                     idempotency_key,
-                } => (
-                    "migrate_down",
-                    dbward_migrate::build_migration_approval_detail(
-                        &config.migrations_dir_for(&db_name),
-                        *count,
-                    )?,
-                    build_request_metadata(ticket.as_deref(), repo.as_deref()),
-                    idempotency_key.as_deref(),
-                    &vec![],
-                ),
+                } => {
+                    let migrations_dir = config.migrations_dir_for(&db_name);
+                    // For down, we need to know which versions to revert
+                    // Read all down files and send the last N (count)
+                    let all_down = dbward_migrate::list_down_versions(&migrations_dir)?;
+                    let to_revert: Vec<String> = all_down.into_iter().rev().take(*count).collect();
+                    let detail_obj = dbward_migrate::build_migrate_down_detail(
+                        &migrations_dir,
+                        &to_revert,
+                    )?;
+                    (
+                        "migrate_down",
+                        detail_obj.to_detail_string()?,
+                        build_request_metadata(ticket.as_deref(), repo.as_deref()),
+                        idempotency_key.as_deref(),
+                        &vec![],
+                    )
+                }
                 MigrateAction::Status {
                     ticket,
                     repo,

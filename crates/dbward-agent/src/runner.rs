@@ -269,6 +269,10 @@ async fn execute_job(
     // Resolve DB and execute
     let resolved = config.resolve_database(database, environment)?;
     let expected_detail = match operation {
+        "migrate_up" | "migrate_down" if detail.starts_with('{') => {
+            // v2 JSON detail: canonicalize by re-serializing
+            dbward_migrate::canonicalize_migration_detail(detail)?
+        }
         "migrate_up" | "migrate_down" => dbward_migrate::canonicalize_migration_approval_detail(
             &resolved.migrations_dir,
             detail,
@@ -475,27 +479,23 @@ async fn execute_operation(
             engine.driver().ensure_migrations_table().await?;
             let detail_parsed = dbward_migrate::MigrationDetail::parse(detail)?;
             let applied = engine.driver().applied_versions().await?;
-            for v in &detail_parsed.versions {
-                if applied.contains(v) {
-                    return Err(Error::Server(format!(
-                        "migration state changed: version '{v}' is already applied"
-                    )));
-                }
-            }
+
+            // Apply only pending migrations (skip already applied)
             let mut applied_versions = Vec::new();
+            let mut skipped = Vec::new();
             for entry in &detail_parsed.migrations {
+                if applied.contains(&entry.version) {
+                    skipped.push(entry.version.clone());
+                    continue;
+                }
                 engine.driver().apply_migration(&entry.sql, &entry.version).await?;
                 applied_versions.push(entry.version.clone());
             }
-            if applied_versions.is_empty() {
-                Ok("No pending migrations.".into())
-            } else {
-                Ok(format!(
-                    "Applied {} migration(s):\n{}",
-                    applied_versions.len(),
-                    applied_versions.join("\n")
-                ))
-            }
+
+            Ok(serde_json::json!({
+                "applied": applied_versions,
+                "skipped": skipped,
+            }).to_string())
         }
         "migrate_down" => {
             let engine = Engine::new(resolved, env).await?;

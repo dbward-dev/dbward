@@ -109,6 +109,12 @@ pub fn build_migrate_down_detail(
     })
 }
 
+/// List all available down migration versions (sorted).
+pub fn list_down_versions(dir: &Path) -> Result<Vec<String>, Error> {
+    let files = list_migration_files(dir, "down")?;
+    Ok(files.into_iter().map(|(v, _)| v).collect())
+}
+
 /// Canonicalize: re-read files and rebuild detail to verify integrity.
 /// Used by agent to verify the detail matches current file state.
 pub fn canonicalize_migration_detail(detail: &str) -> Result<String, Error> {
