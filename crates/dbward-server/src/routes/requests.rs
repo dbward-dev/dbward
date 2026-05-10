@@ -627,6 +627,35 @@ pub(crate) async fn create_request(
     let detail = body["detail"].as_str().unwrap_or("");
     let database_name = body["database"].as_str().unwrap_or("default");
 
+    // Readonly role restrictions
+    if user.effective_permission() == dbward_core::role::READONLY {
+        if operation != "execute_query" {
+            return Err(crate::api_error::ApiError::forbidden(
+                "readonly role can only create execute_query requests",
+            ));
+        }
+        if !detail.is_empty() {
+            if dbward_core::classify_query(detail)
+                .map(|qt| qt != dbward_core::QueryType::Select)
+                .unwrap_or(true)
+            {
+                return Err(crate::api_error::ApiError::forbidden(
+                    "readonly role can only execute SELECT queries",
+                ));
+            }
+        }
+        if body.get("share_with").and_then(|v| v.as_array()).is_some() {
+            return Err(crate::api_error::ApiError::forbidden(
+                "readonly role cannot use share_with",
+            ));
+        }
+        if body["emergency"].as_bool().unwrap_or(false) {
+            return Err(crate::api_error::ApiError::forbidden(
+                "readonly role cannot use emergency mode",
+            ));
+        }
+    }
+
     // Validate database+environment against registry
     {
         let conn = state.db().await;

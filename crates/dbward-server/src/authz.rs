@@ -380,7 +380,7 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
             is_admin(principal) || principal.user == *requester_id
         }
         ("CreateRequest", Resource::Global) | ("CreateRequest", Resource::Request { .. }) => {
-            role_allows(&principal.permission, dbward_core::role::DEVELOPER)
+            role_allows(&principal.permission, dbward_core::role::READONLY)
         }
         ("GetRequest", Resource::Request { requester_id, .. }) => {
             is_admin(principal) || principal.user == *requester_id
@@ -444,11 +444,14 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
             if is_admin(principal) {
                 return true;
             }
-            principal.permission == dbward_core::role::DEVELOPER
-                && requested_user
+            if role_allows(&principal.permission, dbward_core::role::READONLY) {
+                // Non-admin can only see own audit events
+                return requested_user
                     .as_ref()
                     .map(|requested| requested == &principal.user)
-                    .unwrap_or(true)
+                    .unwrap_or(principal.permission == dbward_core::role::DEVELOPER);
+            }
+            false
         }
         ("AgentPoll", Resource::Global) => true,
         ("AgentClaim", Resource::Global) | ("AgentClaim", Resource::AgentExecution { .. }) => true,
