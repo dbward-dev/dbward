@@ -412,15 +412,15 @@ mod tests {
             [server]
             url = "http://localhost:3000"
             agent_token = "agt_secret"
-            [databases.app]
+            [databases.app.development]
             url = "postgres://localhost/app"
         "#,
         )
         .unwrap();
         assert_eq!(config.agent_id, "agent-1");
-        let r = config.resolve_database("app").unwrap();
+        let r = config.resolve_database("app", "development").unwrap();
         assert_eq!(r.url, "postgres://localhost/app");
-        assert_eq!(r.migrations_dir, PathBuf::from("db/migrations"));
+        assert_eq!(r.migrations_dir, PathBuf::from("db/migrations/app"));
     }
 
     #[test]
@@ -431,12 +431,13 @@ mod tests {
             [server]
             url = "http://localhost:3000"
             agent_token = "agt_secret"
-            [databases.app]
+            [databases.app.development]
             url = "postgres://localhost/app"
         "#,
         )
         .unwrap();
-        assert!(config.resolve_database("unknown").is_err());
+        assert!(config.resolve_database("unknown", "development").is_err());
+        assert!(config.resolve_database("app", "production").is_err());
     }
 
     #[test]
@@ -447,15 +448,15 @@ mod tests {
             [server]
             url = "http://localhost:3000"
             agent_token = "agt_secret"
-            [databases.primary]
+            [databases.primary.production]
             url = "postgres://localhost/app"
-            [databases.analytics]
+            [databases.analytics.production]
             url = "postgres://localhost/analytics"
         "#,
         )
         .unwrap();
         assert_eq!(
-            config.resolve_database("analytics").unwrap().migrations_dir,
+            config.resolve_database("analytics", "production").unwrap().migrations_dir,
             PathBuf::from("db/migrations/analytics")
         );
     }
@@ -468,7 +469,7 @@ mod tests {
             [server]
             url = "http://localhost:3000"
             agent_token = "agt_secret"
-            [databases.app]
+            [databases.app.development]
             url = "postgres://localhost/app"
             migrations_dir = "db/custom"
         "#,
@@ -476,7 +477,7 @@ mod tests {
         .unwrap();
         config.resolve_relative_paths(Path::new("/workspace/infra"));
         assert_eq!(
-            config.resolve_database("app").unwrap().migrations_dir,
+            config.resolve_database("app", "development").unwrap().migrations_dir,
             PathBuf::from("/workspace/infra/db/custom")
         );
     }

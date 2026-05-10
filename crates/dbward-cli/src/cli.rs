@@ -1553,13 +1553,15 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
 
     // Build agent config
     let mut databases = std::collections::BTreeMap::new();
-    databases.insert(
-        "app".into(),
-        dbward_core::AgentDatabaseConfig {
+    let mut dev_envs = std::collections::BTreeMap::new();
+    dev_envs.insert(
+        "development".into(),
+        dbward_core::AgentDatabaseEnvConfig {
             url: database_url.to_string(),
             migrations_dir: None,
         },
     );
+    databases.insert("app".into(), dev_envs);
     let agent_config = dbward_core::AgentConfig {
         agent_id: "dev-agent".into(),
         poll_interval_ms: 500,
@@ -1572,9 +1574,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
             agent_token: agent_token.clone(),
         },
         capabilities: dbward_core::AgentCapabilities {
-            databases: vec!["app".into()],
-            environments: vec!["*".into()],
-            operations: vec!["*".into()],
+            operations: vec![],
         },
         databases,
     };
