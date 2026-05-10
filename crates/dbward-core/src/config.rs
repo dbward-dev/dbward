@@ -123,7 +123,7 @@ pub struct AgentConfig {
     pub server: AgentServerConfig,
     #[serde(default)]
     pub capabilities: AgentCapabilities,
-    pub databases: BTreeMap<String, AgentDatabaseConfig>,
+    pub databases: BTreeMap<String, BTreeMap<String, AgentDatabaseEnvConfig>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,16 +135,13 @@ pub struct AgentServerConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AgentCapabilities {
     #[serde(default)]
-    pub environments: Vec<String>,
-    #[serde(default)]
-    pub databases: Vec<String>,
-    #[serde(default)]
     pub operations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentDatabaseConfig {
+pub struct AgentDatabaseEnvConfig {
     pub url: String,
+    #[serde(default)]
     pub migrations_dir: Option<PathBuf>,
 }
 
@@ -158,6 +155,13 @@ pub struct ResolvedDatabaseConfig {
 }
 
 impl AgentConfig {
+    /// Infer capabilities from database config keys.
+    pub fn inferred_db_env_pairs(&self) -> Vec<(String, String)> {
+        self.databases
+            .iter()
+            .flat_map(|(db, envs)| envs.keys().map(move |env| (db.clone(), env.clone())))
+            .collect()
+    }
     pub fn validate(&self) -> Result<(), Error> {
         if self.agent_id.trim().is_empty() {
             return Err(Error::Config("agent_id must not be empty".into()));
@@ -173,13 +177,14 @@ impl AgentConfig {
         }
         if self.databases.is_empty() {
             return Err(Error::Config(
-                "at least one [databases.*] section must be configured".into(),
+                "at least one [databases.*.*] section must be configured".into(),
             ));
         }
-        for cap_db in &self.capabilities.databases {
-            if !self.databases.contains_key(cap_db) {
+        // Verify at least one environment is configured per database
+        for (db_name, envs) in &self.databases {
+            if envs.is_empty() {
                 return Err(Error::Config(format!(
-                    "capabilities.databases contains '{cap_db}' but no [databases.{cap_db}] section exists"
+                    "database '{db_name}' has no environment configured (e.g. [databases.{db_name}.development])"
                 )));
             }
         }
@@ -187,28 +192,31 @@ impl AgentConfig {
     }
 
     pub fn resolve_relative_paths(&mut self, base_dir: &Path) {
-        for db in self.databases.values_mut() {
-            if let Some(path) = db.migrations_dir.as_mut() {
-                *path = resolve_relative_path(base_dir, path);
+        for envs in self.databases.values_mut() {
+            for env_config in envs.values_mut() {
+                if let Some(path) = env_config.migrations_dir.as_mut() {
+                    *path = resolve_relative_path(base_dir, path);
+                }
             }
         }
     }
 
-    pub fn resolve_database(&self, name: &str) -> Result<ResolvedDatabaseConfig, Error> {
-        let db = self
+    pub fn resolve_database(&self, name: &str, environment: &str) -> Result<ResolvedDatabaseConfig, Error> {
+        let envs = self
             .databases
             .get(name)
             .ok_or_else(|| Error::Config(format!("database '{name}' not configured in agent")))?;
-        let migrations_dir = db.migrations_dir.clone().unwrap_or_else(|| {
-            if self.databases.len() <= 1 {
-                PathBuf::from("db/migrations")
-            } else {
-                PathBuf::from("db/migrations").join(name)
-            }
+        let env_config = envs
+            .get(environment)
+            .ok_or_else(|| Error::Config(format!(
+                "no connection for database '{name}' environment '{environment}'"
+            )))?;
+        let migrations_dir = env_config.migrations_dir.clone().unwrap_or_else(|| {
+            PathBuf::from("db/migrations").join(name)
         });
         Ok(ResolvedDatabaseConfig {
             name: name.to_string(),
-            url: db.url.clone(),
+            url: env_config.url.clone(),
             migrations_dir,
             statement_timeout_secs: self.statement_timeout_secs.or(Some(30)),
         })
@@ -404,15 +412,15 @@ mod tests {
             [server]
             url = "http://localhost:3000"
             agent_token = "agt_secret"
-            [databases.app]
+            [databases.app.development]
             url = "postgres://localhost/app"
         "#,
         )
         .unwrap();
         assert_eq!(config.agent_id, "agent-1");
-        let r = config.resolve_database("app").unwrap();
+        let r = config.resolve_database("app", "development").unwrap();
         assert_eq!(r.url, "postgres://localhost/app");
-        assert_eq!(r.migrations_dir, PathBuf::from("db/migrations"));
+        assert_eq!(r.migrations_dir, PathBuf::from("db/migrations/app"));
     }
 
     #[test]
@@ -423,12 +431,13 @@ mod tests {
             [server]
             url = "http://localhost:3000"
             agent_token = "agt_secret"
-            [databases.app]
+            [databases.app.development]
             url = "postgres://localhost/app"
         "#,
         )
         .unwrap();
-        assert!(config.resolve_database("unknown").is_err());
+        assert!(config.resolve_database("unknown", "development").is_err());
+        assert!(config.resolve_database("app", "production").is_err());
     }
 
     #[test]
@@ -439,15 +448,15 @@ mod tests {
             [server]
             url = "http://localhost:3000"
             agent_token = "agt_secret"
-            [databases.primary]
+            [databases.primary.production]
             url = "postgres://localhost/app"
-            [databases.analytics]
+            [databases.analytics.production]
             url = "postgres://localhost/analytics"
         "#,
         )
         .unwrap();
         assert_eq!(
-            config.resolve_database("analytics").unwrap().migrations_dir,
+            config.resolve_database("analytics", "production").unwrap().migrations_dir,
             PathBuf::from("db/migrations/analytics")
         );
     }
@@ -460,7 +469,7 @@ mod tests {
             [server]
             url = "http://localhost:3000"
             agent_token = "agt_secret"
-            [databases.app]
+            [databases.app.development]
             url = "postgres://localhost/app"
             migrations_dir = "db/custom"
         "#,
@@ -468,7 +477,7 @@ mod tests {
         .unwrap();
         config.resolve_relative_paths(Path::new("/workspace/infra"));
         assert_eq!(
-            config.resolve_database("app").unwrap().migrations_dir,
+            config.resolve_database("app", "development").unwrap().migrations_dir,
             PathBuf::from("/workspace/infra/db/custom")
         );
     }

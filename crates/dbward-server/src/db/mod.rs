@@ -1,5 +1,6 @@
 pub(crate) mod agent_repo;
 pub mod audit_event_repo;
+pub mod database_repo;
 pub mod maintenance;
 pub mod policy_repo;
 pub(crate) mod request_repo;
@@ -9,7 +10,7 @@ pub mod webhook_repo;
 use rusqlite::Connection;
 
 /// Latest schema version. Increment when adding migrations.
-pub const LATEST_SCHEMA_VERSION: i64 = 8;
+pub const LATEST_SCHEMA_VERSION: i64 = 9;
 
 /// Backup SQLite DB before schema migration if needed.
 /// Returns the backup path if a backup was created.
@@ -271,6 +272,19 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Erro
             }
             Ok(())
         }
+        9 => {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS databases (
+                    name TEXT NOT NULL,
+                    environment TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    PRIMARY KEY (name, environment)
+                );
+                CREATE INDEX IF NOT EXISTS idx_requests_dispatch
+                    ON requests(status, database_name, environment);",
+            )?;
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -485,6 +499,15 @@ fn create_schema_v1(conn: &Connection) -> Result<(), rusqlite::Error> {
             ON result_access(request_id);
         CREATE INDEX IF NOT EXISTS idx_result_access_lookup
             ON result_access(selector_type, selector_value);
+
+        CREATE TABLE IF NOT EXISTS databases (
+            name TEXT NOT NULL,
+            environment TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (name, environment)
+        );
+        CREATE INDEX IF NOT EXISTS idx_requests_dispatch
+            ON requests(status, database_name, environment);
         ",
     )
 }

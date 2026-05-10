@@ -1,6 +1,6 @@
 use dbward_core::Error;
 use reqwest::Client;
-use serde_json::{Value, json};
+use serde_json::json;
 
 /// Agent status reported to server on each poll.
 #[derive(Clone, Debug)]
@@ -39,17 +39,19 @@ impl AgentClient {
         }
     }
 
-    pub async fn poll(
+    pub async fn poll_pairs(
         &self,
-        databases: &[String],
-        environments: &[String],
+        pairs: &[(String, String)],
         operations: &[String],
         limit: u32,
         status: Option<&AgentStatus>,
     ) -> Result<Vec<dbward_api_types::agent::Job>, Error> {
+        let db_envs: Vec<serde_json::Value> = pairs
+            .iter()
+            .map(|(db, env)| json!([db, env]))
+            .collect();
         let mut body = json!({
-            "databases": databases,
-            "environments": environments,
+            "database_environments": db_envs,
             "operations": operations,
             "limit": limit,
         });
@@ -75,10 +77,10 @@ impl AgentClient {
             .await
             .map_err(|e| Error::Server(format!("poll failed: {e}")))?;
 
-        let status = resp.status();
-        if !status.is_success() {
+        let status_code = resp.status();
+        if !status_code.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(Error::Server(format!("poll failed ({status}): {body}")));
+            return Err(Error::Server(format!("poll failed ({status_code}): {body}")));
         }
 
         let poll_resp: dbward_api_types::agent::PollResponse = resp

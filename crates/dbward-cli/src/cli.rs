@@ -118,6 +118,8 @@ enum Command {
     },
     /// Start MCP stdio server
     Mcp,
+    /// List registered databases
+    Databases,
     /// Start the dbward HTTP server
     Server {
         #[command(subcommand)]
@@ -512,31 +514,43 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     repo,
                     idempotency_key,
                     share_with,
-                } => (
-                    "migrate_up",
-                    dbward_migrate::build_migration_approval_detail(
-                        &config.migrations_dir_for(&db_name),
-                        count.unwrap_or(0),
-                    )?,
-                    build_request_metadata(ticket.as_deref(), repo.as_deref()),
-                    idempotency_key.as_deref(),
-                    share_with,
-                ),
+                } => {
+                    let migrations_dir = config.migrations_dir_for(&db_name);
+                    let mut detail_obj = dbward_migrate::build_migrate_up_detail(
+                        &migrations_dir,
+                        &[], // Send all files; agent determines pending
+                    )?;
+                    detail_obj.max_count = count.map(|c| c);
+                    (
+                        "migrate_up",
+                        detail_obj.to_detail_string()?,
+                        build_request_metadata(ticket.as_deref(), repo.as_deref()),
+                        idempotency_key.as_deref(),
+                        share_with,
+                    )
+                }
                 MigrateAction::Down {
                     count,
                     ticket,
                     repo,
                     idempotency_key,
-                } => (
-                    "migrate_down",
-                    dbward_migrate::build_migration_approval_detail(
-                        &config.migrations_dir_for(&db_name),
-                        *count,
-                    )?,
-                    build_request_metadata(ticket.as_deref(), repo.as_deref()),
-                    idempotency_key.as_deref(),
-                    &vec![],
-                ),
+                } => {
+                    let migrations_dir = config.migrations_dir_for(&db_name);
+                    // Send all down files; agent reverts the last N applied
+                    let all_down = dbward_migrate::list_down_versions(&migrations_dir)?;
+                    let mut detail_obj = dbward_migrate::build_migrate_down_detail(
+                        &migrations_dir,
+                        &all_down,
+                    )?;
+                    detail_obj.max_count = Some(*count);
+                    (
+                        "migrate_down",
+                        detail_obj.to_detail_string()?,
+                        build_request_metadata(ticket.as_deref(), repo.as_deref()),
+                        idempotency_key.as_deref(),
+                        &vec![],
+                    )
+                }
                 MigrateAction::Status {
                     ticket,
                     repo,
@@ -853,6 +867,26 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 Ok(())
             }
         },
+        Command::Databases => {
+            let resp = sc.get_json("/api/databases").await?;
+            if let Some(dbs) = resp["databases"].as_array() {
+                if dbs.is_empty() {
+                    eprintln!("No databases registered.");
+                } else {
+                    println!("{:<20} ENVIRONMENTS", "NAME");
+                    println!("{:<20} {}", "----", "------------");
+                    for db in dbs {
+                        let name = db["name"].as_str().unwrap_or("");
+                        let envs: Vec<&str> = db["environments"]
+                            .as_array()
+                            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                            .unwrap_or_default();
+                        println!("{:<20} {}", name, envs.join(", "));
+                    }
+                }
+            }
+            Ok(())
+        }
         Command::Mcp => mcp::run_stdio(config, cli.database.as_deref(), sc).await,
         Command::Audit {
             ref limit,
@@ -1155,6 +1189,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
             }
             dbward_server::db::init(&conn)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+            dbward_server::db::database_repo::register_databases(&conn, &server_cfg.databases)
+                .map_err(dbward_core::Error::Server)?;
             dbward_server::db::policy_repo::sync_workflows(&conn, &server_cfg.workflows)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
             dbward_server::db::policy_repo::sync_execution_policies(
@@ -1467,6 +1503,14 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         allow_same_approver_across_steps: false,
         allow_self_approve: false,
     }];
+    dbward_server::db::database_repo::register_databases(
+        &conn,
+        &[dbward_server::server_config::DatabaseDef {
+            name: "app".into(),
+            environments: vec!["development".into()],
+        }],
+    )
+    .map_err(dbward_core::Error::Server)?;
     dbward_server::db::policy_repo::sync_workflows(&conn, &workflows)
         .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
 
@@ -1551,13 +1595,15 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
 
     // Build agent config
     let mut databases = std::collections::BTreeMap::new();
-    databases.insert(
-        "app".into(),
-        dbward_core::AgentDatabaseConfig {
+    let mut dev_envs = std::collections::BTreeMap::new();
+    dev_envs.insert(
+        "development".into(),
+        dbward_core::AgentDatabaseEnvConfig {
             url: database_url.to_string(),
             migrations_dir: None,
         },
     );
+    databases.insert("app".into(), dev_envs);
     let agent_config = dbward_core::AgentConfig {
         agent_id: "dev-agent".into(),
         poll_interval_ms: 500,
@@ -1570,9 +1616,7 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
             agent_token: agent_token.clone(),
         },
         capabilities: dbward_core::AgentCapabilities {
-            databases: vec!["app".into()],
-            environments: vec!["*".into()],
-            operations: vec!["*".into()],
+            operations: vec![],
         },
         databases,
     };

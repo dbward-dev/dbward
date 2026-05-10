@@ -13,7 +13,7 @@ mod types;
 
 pub use audit::AuditLogger;
 pub use config::{
-    AgentCapabilities, AgentConfig, AgentDatabaseConfig, AgentServerConfig, ClientConfig,
+    AgentCapabilities, AgentConfig, AgentDatabaseEnvConfig, AgentServerConfig, ClientConfig,
     ClientDatabaseConfig, ClientOidcConfig, ResolvedDatabaseConfig, ServerConfig,
 };
 pub use engine::Engine;

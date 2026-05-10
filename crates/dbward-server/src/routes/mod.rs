@@ -1,5 +1,6 @@
 mod agent;
 mod audit;
+mod databases;
 mod health;
 mod policies;
 pub(crate) mod requests;
@@ -69,6 +70,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/audit", get(audit::list_audit))
         .route("/api/audit/events", get(audit::list_audit_events))
         .route("/api/audit/verify", get(audit::verify_audit_chain))
+        .route("/api/databases", get(databases::list_databases))
         .route("/api/public-key", get(get_public_key))
         .route(
             "/api/workflows",

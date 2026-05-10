@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use dbward_core::{AgentConfig, Engine, Error};
-use dbward_migrate::Migrator;
+
 use tokio::sync::Semaphore;
 use tracing::{Instrument, error, info, warn};
 
@@ -37,26 +37,33 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
     // Fetch server's public key for token verification
     let public_key = client.get_public_key().await?;
 
-    // Verify DB connectivity for all configured databases
-    for (name, db_config) in &config.databases {
-        info!(database = %name, "verifying database connection");
-        let driver = dbward_core::driver::connect_with_timeout(
-            &db_config.url,
-            Some(config.statement_timeout_secs.unwrap_or(30)),
-        )
-        .await
-        .map_err(|e| {
-            Error::Config(format!(
-                "failed to connect to database '{name}': {e}. Check url in agent config."
-            ))
-        })?;
-        drop(driver);
+    // Verify DB connectivity for all configured (database, environment) pairs
+    for (db_name, envs) in &config.databases {
+        for (env_name, env_config) in envs {
+            info!(database = %db_name, environment = %env_name, "verifying database connection");
+            let driver = dbward_core::driver::connect_with_timeout(
+                &env_config.url,
+                Some(config.statement_timeout_secs.unwrap_or(30)),
+            )
+            .await
+            .map_err(|e| {
+                Error::Config(format!(
+                    "failed to connect to database '{db_name}/{env_name}': {e}. Check url in agent config."
+                ))
+            })?;
+            drop(driver);
+        }
     }
 
     // Verify server connectivity and agent token validity
-    let cap = &config.capabilities;
+    let pairs = config.inferred_db_env_pairs();
+    let operations = if config.capabilities.operations.is_empty() {
+        vec!["execute_query".into(), "migrate_up".into(), "migrate_down".into(), "migrate_status".into()]
+    } else {
+        config.capabilities.operations.clone()
+    };
     client
-        .poll(&cap.databases, &cap.environments, &cap.operations, 1, None)
+        .poll_pairs(&pairs, &operations, 1, None)
         .await
         .map_err(|e| Error::Config(format!("server connection check failed: {e}")))?;
 
@@ -151,10 +158,13 @@ async fn poll_once(
     };
 
     let jobs = match client
-        .poll(
-            &config.capabilities.databases,
-            &config.capabilities.environments,
-            &config.capabilities.operations,
+        .poll_pairs(
+            &config.inferred_db_env_pairs(),
+            &if config.capabilities.operations.is_empty() {
+                vec!["execute_query".into(), "migrate_up".into(), "migrate_down".into(), "migrate_status".into()]
+            } else {
+                config.capabilities.operations.clone()
+            },
             available,
             Some(&status),
         )
@@ -257,8 +267,12 @@ async fn execute_job(
             .map_err(|e| Error::Server(format!("invalid execution_token: {e}")))?;
 
     // Resolve DB and execute
-    let resolved = config.resolve_database(database)?;
+    let resolved = config.resolve_database(database, environment)?;
     let expected_detail = match operation {
+        "migrate_up" | "migrate_down" if detail.starts_with('{') => {
+            // v2 JSON detail: canonicalize by re-serializing
+            dbward_migrate::canonicalize_migration_detail(detail)?
+        }
         "migrate_up" | "migrate_down" => dbward_migrate::canonicalize_migration_approval_detail(
             &resolved.migrations_dir,
             detail,
@@ -445,7 +459,7 @@ async fn execute_operation(
         "execute_query" => {
             let mut engine = Engine::new(resolved, env).await?;
             let result = engine.execute_query("agent", "developer", detail).await?;
-            let mut output = if result.rows.is_empty() {
+            let output = if result.rows.is_empty() {
                 serde_json::json!({"rows_affected": result.rows_affected, "truncated": false})
             } else {
                 serde_json::json!({
@@ -462,48 +476,65 @@ async fn execute_operation(
         }
         "migrate_up" => {
             let engine = Engine::new(resolved, env).await?;
-            let migrator = Migrator::new(engine.driver().clone(), resolved.migrations_dir.clone());
-            let parsed = dbward_migrate::MigrationApprovalDetail::parse(detail)?;
-            let count = Some(parsed.count);
-            let count = if count == Some(0) { None } else { count };
-            let r = migrator.up(count).await?;
-            if r.applied.is_empty() {
-                Ok("No pending migrations.".into())
-            } else {
-                Ok(format!(
-                    "Applied {} migration(s):\n{}",
-                    r.applied.len(),
-                    r.applied.join("\n")
-                ))
+            engine.driver().ensure_migrations_table().await?;
+            let detail_parsed = dbward_migrate::MigrationDetail::parse(detail)?;
+            let max_count = detail_parsed.max_count;
+            let applied = engine.driver().applied_versions().await?;
+
+            // Filter to pending only, then apply max_count limit
+            let pending: Vec<_> = detail_parsed.migrations
+                .iter()
+                .filter(|m| !applied.contains(&m.version))
+                .collect();
+            let to_apply: Vec<_> = match max_count {
+                Some(n) => pending.into_iter().take(n).collect(),
+                None => pending,
+            };
+
+            let mut applied_versions = Vec::new();
+            for entry in &to_apply {
+                engine.driver().apply_migration(&entry.sql, &entry.version).await?;
+                applied_versions.push(entry.version.clone());
             }
+
+            Ok(serde_json::json!({
+                "applied": applied_versions,
+                "skipped": detail_parsed.migrations.iter()
+                    .filter(|m| applied.contains(&m.version))
+                    .map(|m| m.version.clone())
+                    .collect::<Vec<_>>(),
+            }).to_string())
         }
         "migrate_down" => {
             let engine = Engine::new(resolved, env).await?;
-            let migrator = Migrator::new(engine.driver().clone(), resolved.migrations_dir.clone());
-            let count = Some(dbward_migrate::MigrationApprovalDetail::parse(detail)?.count);
-            let r = migrator.down(count).await?;
-            if r.rolled_back.is_empty() {
-                Ok("Nothing to rollback.".into())
-            } else {
-                Ok(format!("Rolled back:\n{}", r.rolled_back.join("\n")))
+            engine.driver().ensure_migrations_table().await?;
+            let detail_parsed = dbward_migrate::MigrationDetail::parse(detail)?;
+            let max_count = detail_parsed.max_count.unwrap_or(1);
+
+            // Find applied versions that have down migrations available
+            let applied = engine.driver().applied_versions().await?;
+            let available_down: Vec<&dbward_migrate::MigrationEntry> = detail_parsed.migrations
+                .iter()
+                .filter(|m| applied.contains(&m.version))
+                .collect();
+
+            // Revert the last N applied (in reverse order)
+            let to_revert: Vec<_> = available_down.into_iter().rev().take(max_count).collect();
+            let mut rolled_back = Vec::new();
+            for entry in &to_revert {
+                engine.driver().revert_migration(&entry.sql, &entry.version).await?;
+                rolled_back.push(entry.version.clone());
             }
+
+            Ok(serde_json::json!({
+                "rolled_back": rolled_back,
+            }).to_string())
         }
         "migrate_status" => {
             let engine = Engine::new(resolved, env).await?;
-            let migrator = Migrator::new(engine.driver().clone(), resolved.migrations_dir.clone());
-            let statuses = migrator.status().await?;
-            if statuses.is_empty() {
-                Ok("No migration files found.".into())
-            } else {
-                Ok(statuses
-                    .iter()
-                    .map(|s| {
-                        let mark = if s.applied { "[x]" } else { "[ ]" };
-                        format!("{mark} {}_{}", s.version, s.name)
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n"))
-            }
+            engine.driver().ensure_migrations_table().await?;
+            let applied = engine.driver().applied_versions().await?;
+            Ok(serde_json::json!({"applied": applied, "database": resolved.name}).to_string())
         }
         _ => Err(Error::Server(format!("unsupported operation: {operation}"))),
     }
