@@ -118,6 +118,8 @@ enum Command {
     },
     /// Start MCP stdio server
     Mcp,
+    /// List registered databases
+    Databases,
     /// Start the dbward HTTP server
     Server {
         #[command(subcommand)]
@@ -865,6 +867,26 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                 Ok(())
             }
         },
+        Command::Databases => {
+            let resp = sc.get_json("/api/databases").await?;
+            if let Some(dbs) = resp["databases"].as_array() {
+                if dbs.is_empty() {
+                    eprintln!("No databases registered.");
+                } else {
+                    println!("{:<20} ENVIRONMENTS", "NAME");
+                    println!("{:<20} {}", "----", "------------");
+                    for db in dbs {
+                        let name = db["name"].as_str().unwrap_or("");
+                        let envs: Vec<&str> = db["environments"]
+                            .as_array()
+                            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                            .unwrap_or_default();
+                        println!("{:<20} {}", name, envs.join(", "));
+                    }
+                }
+            }
+            Ok(())
+        }
         Command::Mcp => mcp::run_stdio(config, cli.database.as_deref(), sc).await,
         Command::Audit {
             ref limit,
@@ -1481,6 +1503,14 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
         allow_same_approver_across_steps: false,
         allow_self_approve: false,
     }];
+    dbward_server::db::database_repo::register_databases(
+        &conn,
+        &[dbward_server::server_config::DatabaseDef {
+            name: "app".into(),
+            environments: vec!["development".into()],
+        }],
+    )
+    .map_err(dbward_core::Error::Server)?;
     dbward_server::db::policy_repo::sync_workflows(&conn, &workflows)
         .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
 
