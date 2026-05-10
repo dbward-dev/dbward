@@ -86,6 +86,13 @@ impl Default for RetentionConfig {
     }
 }
 
+/// Database definition from TOML config.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DatabaseDef {
+    pub name: String,
+    pub environments: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ServerConfig {
     #[serde(default = "default_listen")]
@@ -97,6 +104,8 @@ pub struct ServerConfig {
     pub auth: Option<AuthConfig>,
     #[serde(default)]
     pub retention: RetentionConfig,
+    #[serde(default)]
+    pub databases: Vec<DatabaseDef>,
     #[serde(default)]
     pub workflows: Vec<WorkflowDef>,
     #[serde(default)]
