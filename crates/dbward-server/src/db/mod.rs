@@ -5,12 +5,13 @@ pub mod maintenance;
 pub mod policy_repo;
 pub(crate) mod request_repo;
 pub(crate) mod token_repo;
+pub(crate) mod user_repo;
 pub mod webhook_repo;
 
 use rusqlite::Connection;
 
 /// Latest schema version. Increment when adding migrations.
-pub const LATEST_SCHEMA_VERSION: i64 = 9;
+pub const LATEST_SCHEMA_VERSION: i64 = 10;
 
 /// Backup SQLite DB before schema migration if needed.
 /// Returns the backup path if a backup was created.
@@ -282,6 +283,20 @@ fn apply_migration(conn: &Connection, version: i64) -> Result<(), rusqlite::Erro
                 );
                 CREATE INDEX IF NOT EXISTS idx_requests_dispatch
                     ON requests(status, database_name, environment);",
+            )?;
+            Ok(())
+        }
+        10 => {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS users (
+                    subject_type TEXT NOT NULL CHECK(subject_type IN ('user', 'agent')),
+                    subject_id TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('admin', 'developer', 'readonly')),
+                    disabled INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    PRIMARY KEY (subject_type, subject_id)
+                );",
             )?;
             Ok(())
         }
