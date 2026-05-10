@@ -459,7 +459,14 @@ async fn execute_operation(
         "execute_query" => {
             let mut engine = Engine::new(resolved, env).await?;
             let result = engine.execute_query("agent", "developer", detail).await?;
-            let output = if result.rows.is_empty() {
+            let output = if result.query_type == dbward_core::QueryType::Select {
+                serde_json::json!({
+                    "rows": result.rows,
+                    "row_count": result.rows.len(),
+                    "truncated": result.truncated,
+                    "truncation_reason": result.truncation_reason,
+                })
+            } else if result.rows.is_empty() {
                 serde_json::json!({"rows_affected": result.rows_affected, "truncated": false})
             } else {
                 serde_json::json!({
