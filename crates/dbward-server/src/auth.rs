@@ -280,11 +280,9 @@ pub async fn authenticate(
                             if u.disabled {
                                 return Err((StatusCode::UNAUTHORIZED, "user is disabled".into()));
                             }
-                            // Use users table role as primary, keep OIDC roles for group/approver matching
-                            let mut r = roles.clone();
-                            if !r.contains(&u.role) {
-                                r.insert(0, u.role);
-                            }
+                            // Users table role is source of truth; keep only non-builtin IdP roles for group matching
+                            let mut r = vec![u.role];
+                            r.extend(roles.iter().filter(|role| dbward_core::role::rank(role) == 0).cloned());
                             r
                         }
                         Ok(None) => {

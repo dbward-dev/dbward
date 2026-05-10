@@ -736,8 +736,9 @@ pub(crate) async fn create_request(
         .with_code("approver_cannot_create_request"));
     }
 
-    // Check access policy (DB-level access control)
+    // Check access policy (DB-level access control) — break-glass bypasses
     let mut conn = state.db().await;
+    if !emergency {
     if let Err(e) = crate::db::policy_repo::check_access_policy(
         &conn,
         database_name,
@@ -779,6 +780,7 @@ pub(crate) async fn create_request(
         );
         return Err(e);
     }
+    } // !emergency
 
     // Evaluate workflow policy
     let decision = crate::db::policy_repo::evaluate_approval_policy(
@@ -1435,7 +1437,7 @@ pub(crate) async fn get_request(
                 .ok()
                 .flatten()
                 .map(|u| u.role)
-                .unwrap_or_else(|| "readonly".to_string());
+                .unwrap_or_else(|| "developer".to_string());
             let token =
                 state
                     .token_signer
