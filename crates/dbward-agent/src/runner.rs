@@ -478,32 +478,38 @@ async fn execute_operation(
             let engine = Engine::new(resolved, env).await?;
             engine.driver().ensure_migrations_table().await?;
             let detail_parsed = dbward_migrate::MigrationDetail::parse(detail)?;
+            let max_count = detail_parsed.max_count;
             let applied = engine.driver().applied_versions().await?;
 
-            // Apply only pending migrations (skip already applied)
+            // Filter to pending only, then apply max_count limit
+            let pending: Vec<_> = detail_parsed.migrations
+                .iter()
+                .filter(|m| !applied.contains(&m.version))
+                .collect();
+            let to_apply: Vec<_> = match max_count {
+                Some(n) => pending.into_iter().take(n).collect(),
+                None => pending,
+            };
+
             let mut applied_versions = Vec::new();
-            let mut skipped = Vec::new();
-            for entry in &detail_parsed.migrations {
-                if applied.contains(&entry.version) {
-                    skipped.push(entry.version.clone());
-                    continue;
-                }
+            for entry in &to_apply {
                 engine.driver().apply_migration(&entry.sql, &entry.version).await?;
                 applied_versions.push(entry.version.clone());
             }
 
             Ok(serde_json::json!({
                 "applied": applied_versions,
-                "skipped": skipped,
+                "skipped": detail_parsed.migrations.iter()
+                    .filter(|m| applied.contains(&m.version))
+                    .map(|m| m.version.clone())
+                    .collect::<Vec<_>>(),
             }).to_string())
         }
         "migrate_down" => {
             let engine = Engine::new(resolved, env).await?;
             engine.driver().ensure_migrations_table().await?;
-            let detail_json: serde_json::Value = serde_json::from_str(detail)
-                .map_err(|e| Error::Server(format!("invalid migrate_down detail: {e}")))?;
             let detail_parsed = dbward_migrate::MigrationDetail::parse(detail)?;
-            let max_count = detail_json["max_count"].as_u64().unwrap_or(1) as usize;
+            let max_count = detail_parsed.max_count.unwrap_or(1);
 
             // Find applied versions that have down migrations available
             let applied = engine.driver().applied_versions().await?;

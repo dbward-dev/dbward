@@ -12,6 +12,8 @@ pub struct MigrationDetail {
     pub versions: Vec<String>,
     pub migrations: Vec<MigrationEntry>,
     pub dir_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_count: Option<usize>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -50,6 +52,7 @@ pub fn build_migrate_up_detail(
             versions: vec![],
             migrations: vec![],
             dir_sha256: hash_migrations_dir(dir)?,
+        max_count: None,
         });
     }
 
@@ -72,6 +75,7 @@ pub fn build_migrate_up_detail(
         versions,
         migrations,
         dir_sha256: hash_migrations_dir(dir)?,
+        max_count: None,
     })
 }
 
@@ -106,6 +110,7 @@ pub fn build_migrate_down_detail(
         versions,
         migrations,
         dir_sha256: hash_migrations_dir(dir)?,
+        max_count: None,
     })
 }
 

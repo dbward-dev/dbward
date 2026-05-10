@@ -1,11 +1,14 @@
 use axum::{extract::State, Json};
+use axum::http::HeaderMap;
 use serde_json::json;
 
 use crate::state::AppState;
 
 pub(crate) async fn list_databases(
     State(state): State<AppState>,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
+    crate::auth::authenticate(&headers, &state).await?;
     let conn = state.db().await;
     let databases = crate::db::database_repo::list_databases(&conn)
         .map_err(|e| crate::api_error::ApiError::internal(format!("list databases: {e}")))?;

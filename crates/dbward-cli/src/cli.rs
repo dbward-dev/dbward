@@ -520,11 +520,7 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                         &migrations_dir,
                         &[], // Send all files; agent determines pending
                     )?;
-                    // Include count hint for agent to limit applied migrations
-                    if let Some(c) = count {
-                        detail_obj.versions = detail_obj.versions.into_iter().take(*c).collect();
-                        detail_obj.migrations = detail_obj.migrations.into_iter().take(*c).collect();
-                    }
+                    detail_obj.max_count = count.map(|c| c);
                     (
                         "migrate_up",
                         detail_obj.to_detail_string()?,
@@ -542,16 +538,14 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
                     let migrations_dir = config.migrations_dir_for(&db_name);
                     // Send all down files; agent reverts the last N applied
                     let all_down = dbward_migrate::list_down_versions(&migrations_dir)?;
-                    let detail_obj = dbward_migrate::build_migrate_down_detail(
+                    let mut detail_obj = dbward_migrate::build_migrate_down_detail(
                         &migrations_dir,
                         &all_down,
                     )?;
-                    // Store count in detail for agent to use
-                    let mut detail_json: serde_json::Value = serde_json::from_str(&detail_obj.to_detail_string()?)?;
-                    detail_json["max_count"] = serde_json::json!(*count);
+                    detail_obj.max_count = Some(*count);
                     (
                         "migrate_down",
-                        serde_json::to_string(&detail_json)?,
+                        detail_obj.to_detail_string()?,
                         build_request_metadata(ticket.as_deref(), repo.as_deref()),
                         idempotency_key.as_deref(),
                         &vec![],
