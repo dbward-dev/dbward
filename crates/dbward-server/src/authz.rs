@@ -30,6 +30,8 @@ p, user, approver, Request, GetRequest
 p, user, approver, ApprovalStep, GetRequest
 p, user, developer, Global, CreateRequest
 p, user, developer, Request, CreateRequest
+p, user, readonly, Global, CreateRequest
+p, user, readonly, Request, CreateRequest
 p, user, approver, Global, ApproveRequest
 p, user, approver, ApprovalStep, ApproveRequest
 p, user, approver, Global, RejectRequest
@@ -42,6 +44,8 @@ p, user, approver, Global, ReadResult
 p, user, approver, Result, ReadResult
 p, user, developer, Global, ListAudit
 p, user, developer, AuditQuery, ListAudit
+p, user, readonly, Global, ListAudit
+p, user, readonly, AuditQuery, ListAudit
 p, agent, admin, Global, AgentPoll
 p, agent, admin, Global, AgentClaim
 p, agent, admin, AgentExecution, AgentClaim
@@ -59,6 +63,7 @@ p, user, admin, Global, DeletePolicy
 p, user, admin, PolicyObject, DeletePolicy
 p, user, admin, Global, ManageToken
 p, user, admin, Global, ManageWebhook
+p, user, admin, Global, ManageUsers
 p, user, admin, Global, ReadMetrics
 "#;
 

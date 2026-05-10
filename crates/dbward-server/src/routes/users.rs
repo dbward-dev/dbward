@@ -98,7 +98,11 @@ pub(crate) async fn disable_user(
         return Err(ApiError::not_found("user not found or already disabled"));
     }
 
-    let cancelled = crate::db::user_repo::cancel_user_requests(&conn, &subject_id)?;
+    let cancelled = if subject_type == "user" {
+        crate::db::user_repo::cancel_user_requests(&conn, &subject_id)?
+    } else {
+        0 // Agents don't create requests
+    };
 
     crate::db::audit_event_repo::insert_audit_event(
         &mut conn,

@@ -272,10 +272,35 @@ pub async fn authenticate(
                         headers,
                     );
                 }
+                // Look up users table for OIDC users too
+                let final_roles = {
+                    let conn = state.db().await;
+                    match crate::db::user_repo::get_user(&conn, "user", &identity) {
+                        Ok(Some(u)) => {
+                            if u.disabled {
+                                return Err((StatusCode::UNAUTHORIZED, "user is disabled".into()));
+                            }
+                            // Use users table role as primary, keep OIDC roles for group/approver matching
+                            let mut r = roles.clone();
+                            if !r.contains(&u.role) {
+                                r.insert(0, u.role);
+                            }
+                            r
+                        }
+                        Ok(None) => {
+                            let default_role = dbward_core::role::effective_permission(&roles);
+                            let _ = crate::db::user_repo::upsert_user(&conn, "user", &identity, default_role);
+                            roles.clone()
+                        }
+                        Err(_) => {
+                            return Err((StatusCode::INTERNAL_SERVER_ERROR, "user lookup failed".into()));
+                        }
+                    }
+                };
                 Ok(AuthUser {
                     token_id: format!("oidc:{identity}"),
                     user: identity,
-                    roles,
+                    roles: final_roles,
                     groups,
                     subject_type: "user".into(),
                 })
