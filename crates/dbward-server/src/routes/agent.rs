@@ -255,11 +255,14 @@ pub(crate) async fn agent_claim(
     State(state): State<AppState>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
-    Json(_body): Json<serde_json::Value>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, crate::api_error::ApiError> {
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::AgentClaim, Resource::Global, &state).await?;
-    let agent_id = user.user.clone();
+    let agent_id = body["agent_id"]
+        .as_str()
+        .unwrap_or(&user.user)
+        .to_string();
 
     let mut conn = state.db().await;
 

@@ -1490,6 +1490,20 @@ pub(crate) async fn get_request(
             }
         }
 
+        // Include claimed_by (agent_id) for running requests
+        if status == "running" {
+            let agent_id: Option<String> = conn
+                .query_row(
+                    "SELECT agent_id FROM agent_executions WHERE request_id = ?1 ORDER BY created_at DESC LIMIT 1",
+                    rusqlite::params![id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(None);
+            if agent_id.is_some() {
+                resp["claimed_by"] = json!(agent_id);
+            }
+        }
+
         // B22: Include reject reason for rejected requests
         if status == "rejected" {
             let reject_comment: Option<String> = conn
