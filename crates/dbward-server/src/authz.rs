@@ -91,6 +91,7 @@ pub enum Action {
     AgentPoll,
     AgentClaim,
     AgentSubmitResult,
+    ManageUsers,
     ListPolicy,
     GetPolicy,
     CreatePolicy,
@@ -116,6 +117,7 @@ impl Action {
             Self::AgentPoll => "AgentPoll",
             Self::AgentClaim => "AgentClaim",
             Self::AgentSubmitResult => "AgentSubmitResult",
+            Self::ManageUsers => "ManageUsers",
             Self::ListPolicy => "ListPolicy",
             Self::GetPolicy => "GetPolicy",
             Self::CreatePolicy => "CreatePolicy",
@@ -453,6 +455,7 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
             }
             false
         }
+        ("ManageUsers", Resource::Global) => is_admin(principal),
         ("AgentPoll", Resource::Global) => true,
         ("AgentClaim", Resource::Global) | ("AgentClaim", Resource::AgentExecution { .. }) => true,
         ("AgentSubmitResult", Resource::Global) => true,
@@ -521,6 +524,7 @@ fn deny_message(action: Action) -> String {
         Action::AgentPoll => "agent poll is not allowed".into(),
         Action::AgentClaim => "agent claim is not allowed".into(),
         Action::AgentSubmitResult => "agent result submission is not allowed".into(),
+        Action::ManageUsers => "user management is not allowed".into(),
         Action::ListPolicy
         | Action::GetPolicy
         | Action::CreatePolicy

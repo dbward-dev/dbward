@@ -56,6 +56,14 @@ pub(crate) async fn create_token(
             .with_code("validation_error"));
     }
 
+    // Reject token creation for disabled users
+    {
+        let conn = state.db().await;
+        if crate::db::user_repo::is_user_disabled(&conn, &body.subject_type, &body.subject_id)? {
+            return Err(ApiError::forbidden("cannot create token for disabled user"));
+        }
+    }
+
     let group_refs: Vec<&str> = body.groups.iter().map(|s| s.as_str()).collect();
     let expires_at = match (body.expires_in, &body.expires_at) {
         (Some(_), Some(_)) => {
