@@ -12,9 +12,9 @@ echo "=== E2E Security Tests ==="
 echo ""
 
 # Create tokens via docker compose exec (tokens live in Docker volume, not host filesystem)
-ADMIN_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user alice --role admin --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-DEV_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user bob --role developer --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-READONLY_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user carol --role readonly --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+ADMIN_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user e2e-admin --role admin --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+DEV_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user e2e-dev --role developer --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+READONLY_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user e2e-readonly --role readonly --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
 AGENT_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user agent1 --role admin --agent --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
 
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
@@ -73,13 +73,17 @@ if [ -n "$DEV_TOKEN" ]; then
 fi
 
 if [ -n "${READONLY_TOKEN:-}" ]; then
-  # Readonly cannot create request
-  STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" -d '{"operation":"execute_query","environment":"development","detail":"SELECT 1"}')
-  [ "$STATUS" = "403" ] && pass "Readonly cannot create request" || fail "Readonly create" "got $STATUS"
+  # Readonly can create SELECT request
+  STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1"}')
+  [ "$STATUS" = "201" ] && pass "Readonly can create SELECT request" || fail "Readonly create SELECT" "got $STATUS"
 
-  # Readonly cannot read audit
-  STATUS=$(api_status GET /api/audit "$READONLY_TOKEN")
-  [ "$STATUS" = "403" ] && pass "Readonly cannot read audit" || fail "Readonly audit" "got $STATUS"
+  # Readonly cannot create DML request
+  STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" -d '{"operation":"execute_query","environment":"development","database":"app","detail":"DELETE FROM users"}')
+  [ "$STATUS" = "403" ] && pass "Readonly cannot create DML request" || fail "Readonly create DML" "got $STATUS"
+
+  # Readonly can read own audit
+  STATUS=$(api_status GET "/api/audit?user=e2e-readonly" "$READONLY_TOKEN")
+  [ "$STATUS" = "200" ] && pass "Readonly can read own audit" || fail "Readonly audit" "got $STATUS"
 fi
 
 if [ -n "${AGENT_TOKEN:-}" ]; then

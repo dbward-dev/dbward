@@ -6,6 +6,7 @@ mod policies;
 pub(crate) mod requests;
 pub(crate) mod results;
 mod tokens;
+mod users;
 mod webhooks;
 
 use axum::Router;
@@ -13,7 +14,7 @@ use axum::extract::MatchedPath;
 use axum::http::Request;
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::{delete, get};
+use axum::routing::{delete, get, put};
 use std::time::Instant;
 
 use crate::state::AppState;
@@ -71,6 +72,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/audit/events", get(audit::list_audit_events))
         .route("/api/audit/verify", get(audit::verify_audit_chain))
         .route("/api/databases", get(databases::list_databases))
+        .route("/api/users", get(users::list_users))
+        .route(
+            "/api/users/{subject_type}/{subject_id}",
+            put(users::update_user).delete(users::disable_user),
+        )
         .route("/api/public-key", get(get_public_key))
         .route(
             "/api/workflows",

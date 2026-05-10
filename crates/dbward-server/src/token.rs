@@ -3,7 +3,7 @@ use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use std::path::Path;
 use tracing::info;
 
-pub use dbward_core::token::{ExecutionToken, hash_detail, token_message, verify_token};
+pub use dbward_core::token::{ExecutionToken, hash_detail, token_message, token_message_v2, verify_token};
 
 pub struct TokenSigner {
     signing_key: SigningKey,
@@ -70,18 +70,22 @@ impl TokenSigner {
         environment: &str,
         database: &str,
         detail: &str,
+        requester_role: &str,
+        requester_subject_id: &str,
     ) -> ExecutionToken {
         let detail_hash = hash_detail(detail);
         let issued_at = Utc::now().to_rfc3339();
         let expires_at = (Utc::now() + Duration::hours(1)).to_rfc3339();
 
-        let message = token_message(
+        let message = token_message_v2(
             request_id,
             operation,
             environment,
             database,
             &detail_hash,
             &expires_at,
+            requester_role,
+            requester_subject_id,
         );
         let signature = self.signing_key.sign(message.as_bytes());
 
@@ -94,6 +98,8 @@ impl TokenSigner {
             issued_at,
             expires_at,
             signature: hex::encode(signature.to_bytes()),
+            requester_role: requester_role.to_string(),
+            requester_subject_id: requester_subject_id.to_string(),
         }
     }
 }
@@ -111,6 +117,8 @@ mod tests {
             "production",
             "default",
             "20260501_create_users.sql",
+            "developer",
+            "alice",
         );
 
         let result = verify_token(
@@ -127,7 +135,7 @@ mod tests {
     #[test]
     fn rejects_wrong_detail() {
         let signer = TokenSigner::generate();
-        let token = signer.issue("req_1", "execute_query", "staging", "default", "SELECT 1");
+        let token = signer.issue("req_1", "execute_query", "staging", "default", "SELECT 1", "developer", "alice");
 
         let result = verify_token(
             &token,
@@ -143,7 +151,7 @@ mod tests {
     #[test]
     fn rejects_wrong_environment() {
         let signer = TokenSigner::generate();
-        let token = signer.issue("req_1", "migrate_up", "staging", "default", "test.sql");
+        let token = signer.issue("req_1", "migrate_up", "staging", "default", "test.sql", "developer", "alice");
 
         let result = verify_token(
             &token,
@@ -159,7 +167,7 @@ mod tests {
     #[test]
     fn rejects_tampered_signature() {
         let signer = TokenSigner::generate();
-        let mut token = signer.issue("req_1", "migrate_up", "production", "default", "test.sql");
+        let mut token = signer.issue("req_1", "migrate_up", "production", "default", "test.sql", "developer", "alice");
         token.operation = "execute_query".to_string();
 
         let result = verify_token(

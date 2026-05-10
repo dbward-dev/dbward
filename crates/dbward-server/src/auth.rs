@@ -272,10 +272,35 @@ pub async fn authenticate(
                         headers,
                     );
                 }
+                // Look up users table for OIDC users too
+                let final_roles = {
+                    let conn = state.db().await;
+                    match crate::db::user_repo::get_user(&conn, "user", &identity) {
+                        Ok(Some(u)) => {
+                            if u.disabled {
+                                return Err((StatusCode::UNAUTHORIZED, "user is disabled".into()));
+                            }
+                            // Use users table role as primary, keep OIDC roles for group/approver matching
+                            let mut r = roles.clone();
+                            if !r.contains(&u.role) {
+                                r.insert(0, u.role);
+                            }
+                            r
+                        }
+                        Ok(None) => {
+                            let default_role = dbward_core::role::effective_permission(&roles);
+                            let _ = crate::db::user_repo::upsert_user(&conn, "user", &identity, default_role);
+                            roles.clone()
+                        }
+                        Err(_) => {
+                            return Err((StatusCode::INTERNAL_SERVER_ERROR, "user lookup failed".into()));
+                        }
+                    }
+                };
                 Ok(AuthUser {
                     token_id: format!("oidc:{identity}"),
                     user: identity,
-                    roles,
+                    roles: final_roles,
                     groups,
                     subject_type: "user".into(),
                 })
@@ -334,8 +359,32 @@ async fn authenticate_api_token(
             }
             Ok(AuthUser {
                 token_id: row.id,
-                user: row.subject_id,
-                roles: vec![row.role],
+                user: row.subject_id.clone(),
+                roles: {
+                    // Look up users table for latest role
+                    let user_role = match crate::db::user_repo::get_user(&conn, &row.subject_type, &row.subject_id) {
+                        Ok(Some(u)) => {
+                            if u.disabled {
+                                drop(conn);
+                                record_auth_failure(state, headers, "api_token", "user_disabled");
+                                return Err((StatusCode::UNAUTHORIZED, "user is disabled".into()));
+                            }
+                            u.role
+                        }
+                        Ok(None) => {
+                            // Auto-create user record on first auth
+                            tracing::warn!(
+                                subject_type = %row.subject_type,
+                                subject_id = %row.subject_id,
+                                "auto-creating user record from token (first auth)"
+                            );
+                            let _ = crate::db::user_repo::upsert_user(&conn, &row.subject_type, &row.subject_id, &row.role);
+                            row.role.clone()
+                        }
+                        Err(_) => row.role.clone(),
+                    };
+                    vec![user_role]
+                },
                 groups: row.groups,
                 subject_type: row.subject_type,
             })

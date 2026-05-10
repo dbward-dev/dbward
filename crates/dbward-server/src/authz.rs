@@ -30,6 +30,8 @@ p, user, approver, Request, GetRequest
 p, user, approver, ApprovalStep, GetRequest
 p, user, developer, Global, CreateRequest
 p, user, developer, Request, CreateRequest
+p, user, readonly, Global, CreateRequest
+p, user, readonly, Request, CreateRequest
 p, user, approver, Global, ApproveRequest
 p, user, approver, ApprovalStep, ApproveRequest
 p, user, approver, Global, RejectRequest
@@ -42,6 +44,8 @@ p, user, approver, Global, ReadResult
 p, user, approver, Result, ReadResult
 p, user, developer, Global, ListAudit
 p, user, developer, AuditQuery, ListAudit
+p, user, readonly, Global, ListAudit
+p, user, readonly, AuditQuery, ListAudit
 p, agent, admin, Global, AgentPoll
 p, agent, admin, Global, AgentClaim
 p, agent, admin, AgentExecution, AgentClaim
@@ -59,6 +63,7 @@ p, user, admin, Global, DeletePolicy
 p, user, admin, PolicyObject, DeletePolicy
 p, user, admin, Global, ManageToken
 p, user, admin, Global, ManageWebhook
+p, user, admin, Global, ManageUsers
 p, user, admin, Global, ReadMetrics
 "#;
 
@@ -91,6 +96,7 @@ pub enum Action {
     AgentPoll,
     AgentClaim,
     AgentSubmitResult,
+    ManageUsers,
     ListPolicy,
     GetPolicy,
     CreatePolicy,
@@ -116,6 +122,7 @@ impl Action {
             Self::AgentPoll => "AgentPoll",
             Self::AgentClaim => "AgentClaim",
             Self::AgentSubmitResult => "AgentSubmitResult",
+            Self::ManageUsers => "ManageUsers",
             Self::ListPolicy => "ListPolicy",
             Self::GetPolicy => "GetPolicy",
             Self::CreatePolicy => "CreatePolicy",
@@ -380,7 +387,7 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
             is_admin(principal) || principal.user == *requester_id
         }
         ("CreateRequest", Resource::Global) | ("CreateRequest", Resource::Request { .. }) => {
-            role_allows(&principal.permission, dbward_core::role::DEVELOPER)
+            role_allows(&principal.permission, dbward_core::role::READONLY)
         }
         ("GetRequest", Resource::Request { requester_id, .. }) => {
             is_admin(principal) || principal.user == *requester_id
@@ -444,12 +451,16 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
             if is_admin(principal) {
                 return true;
             }
-            principal.permission == dbward_core::role::DEVELOPER
-                && requested_user
+            if role_allows(&principal.permission, dbward_core::role::READONLY) {
+                // Non-admin can only see own audit events
+                return requested_user
                     .as_ref()
                     .map(|requested| requested == &principal.user)
-                    .unwrap_or(true)
+                    .unwrap_or(principal.permission == dbward_core::role::DEVELOPER);
+            }
+            false
         }
+        ("ManageUsers", Resource::Global) => is_admin(principal),
         ("AgentPoll", Resource::Global) => true,
         ("AgentClaim", Resource::Global) | ("AgentClaim", Resource::AgentExecution { .. }) => true,
         ("AgentSubmitResult", Resource::Global) => true,
@@ -518,6 +529,7 @@ fn deny_message(action: Action) -> String {
         Action::AgentPoll => "agent poll is not allowed".into(),
         Action::AgentClaim => "agent claim is not allowed".into(),
         Action::AgentSubmitResult => "agent result submission is not allowed".into(),
+        Action::ManageUsers => "user management is not allowed".into(),
         Action::ListPolicy
         | Action::GetPolicy
         | Action::CreatePolicy

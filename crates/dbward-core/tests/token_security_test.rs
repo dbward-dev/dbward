@@ -30,6 +30,8 @@ fn issue(
         issued_at: Utc::now().to_rfc3339(),
         expires_at,
         signature: hex::encode(sig.to_bytes()),
+        requester_role: String::new(),
+        requester_subject_id: String::new(),
     }
 }
 
@@ -126,6 +128,8 @@ fn expired_token_rejected() {
         issued_at: (Utc::now() - Duration::hours(2)).to_rfc3339(),
         expires_at,
         signature: hex::encode(sig.to_bytes()),
+        requester_role: String::new(),
+        requester_subject_id: String::new(),
     };
     assert!(verify_token(&token, &vk, "execute_query", "prod", "app", "SELECT 1").is_err());
 }

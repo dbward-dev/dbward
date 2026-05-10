@@ -627,6 +627,35 @@ pub(crate) async fn create_request(
     let detail = body["detail"].as_str().unwrap_or("");
     let database_name = body["database"].as_str().unwrap_or("default");
 
+    // Readonly role restrictions
+    if user.effective_permission() == dbward_core::role::READONLY {
+        if operation != "execute_query" {
+            return Err(crate::api_error::ApiError::forbidden(
+                "readonly role can only create execute_query requests",
+            ));
+        }
+        if !detail.is_empty() {
+            if dbward_core::classify_query(detail)
+                .map(|qt| qt != dbward_core::QueryType::Select)
+                .unwrap_or(true)
+            {
+                return Err(crate::api_error::ApiError::forbidden(
+                    "readonly role can only execute SELECT queries",
+                ));
+            }
+        }
+        if body.get("share_with").and_then(|v| v.as_array()).is_some() {
+            return Err(crate::api_error::ApiError::forbidden(
+                "readonly role cannot use share_with",
+            ));
+        }
+        if body["emergency"].as_bool().unwrap_or(false) {
+            return Err(crate::api_error::ApiError::forbidden(
+                "readonly role cannot use emergency mode",
+            ));
+        }
+    }
+
     // Validate database+environment against registry
     {
         let conn = state.db().await;
@@ -906,7 +935,7 @@ pub(crate) async fn create_request(
         state.metrics.record_break_glass();
         let token = state
             .token_signer
-            .issue(&id, operation, environment, database_name, detail);
+            .issue(&id, operation, environment, database_name, detail, user.effective_permission(), &user.user);
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
         drop(conn);
@@ -975,7 +1004,7 @@ pub(crate) async fn create_request(
     } else {
         let token = state
             .token_signer
-            .issue(&id, operation, environment, database_name, detail);
+            .issue(&id, operation, environment, database_name, detail, user.effective_permission(), &user.user);
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
         drop(conn);
@@ -1402,10 +1431,15 @@ pub(crate) async fn get_request(
         });
 
         if status == "approved" || status == "auto_approved" || status == "break_glass" {
+            let created_by_role = crate::db::user_repo::get_user(conn, "user", &created_by)
+                .ok()
+                .flatten()
+                .map(|u| u.role)
+                .unwrap_or_else(|| "readonly".to_string());
             let token =
                 state
                     .token_signer
-                    .issue(id, &operation, &environment, &database_name, &detail);
+                    .issue(id, &operation, &environment, &database_name, &detail, &created_by_role, &created_by);
             resp["execution_token"] = serde_json::to_value(token)?;
         }
 
