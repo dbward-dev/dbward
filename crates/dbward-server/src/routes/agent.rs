@@ -333,6 +333,27 @@ pub(crate) async fn agent_claim(
         .issue(&id, &operation, &environment, &database, &detail);
     let token_json = serde_json::to_string(&token)?;
 
+    // Prevent concurrent migrations on the same (database, environment)
+    if operation.starts_with("migrate_") && operation != "migrate_status" {
+        let has_running: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM requests
+                 WHERE database_name = ?1 AND environment = ?2
+                   AND operation IN ('migrate_up', 'migrate_down')
+                   AND status = 'running' AND id != ?3)",
+                rusqlite::params![&database, &environment, &id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if has_running {
+            return Err(crate::api_error::ApiError::new(
+                axum::http::StatusCode::CONFLICT,
+                "migration already running for this database",
+            )
+            .with_code("migration_conflict"));
+        }
+    }
+
     let Some(exec_id) = crate::db::agent_repo::create_execution_and_mark_running(
         &mut conn,
         &id,
