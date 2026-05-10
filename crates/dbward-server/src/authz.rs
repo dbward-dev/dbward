@@ -453,7 +453,7 @@ fn resource_allows(principal: &Principal, resource: &Resource, action: &str) -> 
         ("AgentPoll", Resource::Global) => true,
         ("AgentClaim", Resource::Global) | ("AgentClaim", Resource::AgentExecution { .. }) => true,
         ("AgentSubmitResult", Resource::Global) => true,
-        ("AgentSubmitResult", Resource::AgentExecution { agent_id }) => principal.user == *agent_id,
+        ("AgentSubmitResult", Resource::AgentExecution { .. }) => is_admin(principal),
         ("ListPolicy", Resource::Global)
         | ("ListPolicy", Resource::PolicyObject)
         | ("GetPolicy", Resource::Global)
