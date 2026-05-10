@@ -906,7 +906,7 @@ pub(crate) async fn create_request(
         state.metrics.record_break_glass();
         let token = state
             .token_signer
-            .issue(&id, operation, environment, database_name, detail);
+            .issue(&id, operation, environment, database_name, detail, user.effective_permission(), &user.user);
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
         drop(conn);
@@ -975,7 +975,7 @@ pub(crate) async fn create_request(
     } else {
         let token = state
             .token_signer
-            .issue(&id, operation, environment, database_name, detail);
+            .issue(&id, operation, environment, database_name, detail, user.effective_permission(), &user.user);
         let notif_hooks =
             crate::db::policy_repo::get_notification_webhooks(&conn, database_name, environment);
         drop(conn);
@@ -1402,10 +1402,15 @@ pub(crate) async fn get_request(
         });
 
         if status == "approved" || status == "auto_approved" || status == "break_glass" {
+            let created_by_role = crate::db::user_repo::get_user(conn, "user", &created_by)
+                .ok()
+                .flatten()
+                .map(|u| u.role)
+                .unwrap_or_else(|| "developer".to_string());
             let token =
                 state
                     .token_signer
-                    .issue(id, &operation, &environment, &database_name, &detail);
+                    .issue(id, &operation, &environment, &database_name, &detail, &created_by_role, &created_by);
             resp["execution_token"] = serde_json::to_value(token)?;
         }
 

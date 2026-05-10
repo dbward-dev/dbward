@@ -332,9 +332,15 @@ pub(crate) async fn agent_claim(
         }
     }
 
+    let requester_role = crate::db::user_repo::get_user(&conn, "user", &ctx.created_by)
+        .ok()
+        .flatten()
+        .map(|u| u.role)
+        .unwrap_or_else(|| "developer".to_string());
+
     let token = state
         .token_signer
-        .issue(&id, &operation, &environment, &database, &detail);
+        .issue(&id, &operation, &environment, &database, &detail, &requester_role, &ctx.created_by);
     let token_json = serde_json::to_string(&token)?;
 
     // Prevent concurrent migrations on the same (database, environment)

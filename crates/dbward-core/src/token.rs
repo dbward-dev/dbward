@@ -15,6 +15,10 @@ pub struct ExecutionToken {
     pub issued_at: String,
     pub expires_at: String,
     pub signature: String,
+    #[serde(default)]
+    pub requester_role: String,
+    #[serde(default)]
+    pub requester_subject_id: String,
 }
 
 pub fn hash_detail(detail: &str) -> String {
@@ -32,6 +36,19 @@ pub fn token_message(
     expires_at: &str,
 ) -> String {
     format!("{request_id}|{operation}|{environment}|{database}|{detail_hash}|{expires_at}")
+}
+
+pub fn token_message_v2(
+    request_id: &str,
+    operation: &str,
+    environment: &str,
+    database: &str,
+    detail_hash: &str,
+    expires_at: &str,
+    requester_role: &str,
+    requester_subject_id: &str,
+) -> String {
+    format!("{request_id}|{operation}|{environment}|{database}|{detail_hash}|{expires_at}|{requester_role}|{requester_subject_id}")
 }
 
 /// Verify an execution token using the server's public key.
@@ -76,14 +93,27 @@ pub fn verify_token(
         ));
     }
 
-    let message = token_message(
-        &token.request_id,
-        &token.operation,
-        &token.environment,
-        &token.database,
-        &token.detail_hash,
-        &token.expires_at,
-    );
+    let message = if token.requester_role.is_empty() {
+        token_message(
+            &token.request_id,
+            &token.operation,
+            &token.environment,
+            &token.database,
+            &token.detail_hash,
+            &token.expires_at,
+        )
+    } else {
+        token_message_v2(
+            &token.request_id,
+            &token.operation,
+            &token.environment,
+            &token.database,
+            &token.detail_hash,
+            &token.expires_at,
+            &token.requester_role,
+            &token.requester_subject_id,
+        )
+    };
     let sig_bytes = hex::decode(&token.signature)
         .map_err(|e| Error::Token(format!("invalid signature: {e}")))?;
     let signature = ed25519_dalek::Signature::from_bytes(
