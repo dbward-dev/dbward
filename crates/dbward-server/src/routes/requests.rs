@@ -626,6 +626,25 @@ pub(crate) async fn create_request(
         .ok_or((StatusCode::BAD_REQUEST, "environment required".into()))?;
     let detail = body["detail"].as_str().unwrap_or("");
     let database_name = body["database"].as_str().unwrap_or("default");
+
+    // Validate database+environment against registry
+    {
+        let conn = state.db().await;
+        if !crate::db::database_repo::database_exists(&conn, database_name, environment) {
+            return Err(crate::api_error::ApiError::bad_request(format!(
+                "database '{database_name}' is not registered for environment '{environment}'"
+            ))
+            .with_code("database_not_registered")
+            .with_hint("Run `dbward databases` to see available databases"));
+        }
+    }
+
+    // Validate detail size (5MB limit)
+    if detail.len() > 5 * 1024 * 1024 {
+        return Err(crate::api_error::ApiError::bad_request("detail exceeds 5MB limit")
+            .with_code("detail_too_large"));
+    }
+
     match operation {
         "execute_query" if detail.trim().is_empty() => {
             return Err(crate::api_error::ApiError::bad_request(

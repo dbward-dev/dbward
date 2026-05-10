@@ -1155,6 +1155,8 @@ async fn run_server_command(action: &ServerAction) -> Result<(), dbward_core::Er
             }
             dbward_server::db::init(&conn)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
+            dbward_server::db::database_repo::register_databases(&conn, &server_cfg.databases)
+                .map_err(dbward_core::Error::Server)?;
             dbward_server::db::policy_repo::sync_workflows(&conn, &server_cfg.workflows)
                 .map_err(|e| dbward_core::Error::Server(e.to_string()))?;
             dbward_server::db::policy_repo::sync_execution_policies(
