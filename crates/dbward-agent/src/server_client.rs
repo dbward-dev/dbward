@@ -89,6 +89,59 @@ impl AgentClient {
         Ok(poll_resp.jobs)
     }
 
+
+    pub async fn poll_pairs(
+        &self,
+        pairs: &[(String, String)],
+        operations: &[String],
+        limit: u32,
+        status: Option<&AgentStatus>,
+    ) -> Result<Vec<dbward_api_types::agent::Job>, Error> {
+        let db_envs: Vec<serde_json::Value> = pairs
+            .iter()
+            .map(|(db, env)| json!([db, env]))
+            .collect();
+        let mut body = json!({
+            "database_environments": db_envs,
+            "operations": operations,
+            "limit": limit,
+        });
+        if let Some(s) = status {
+            body["status"] = json!({
+                "in_flight": s.in_flight,
+                "max_concurrent": s.max_concurrent,
+                "draining": s.draining,
+                "uptime_secs": s.uptime_secs,
+                "active_jobs": s.active_jobs.iter().map(|j| json!({
+                    "request_id": j.request_id,
+                    "operation": j.operation,
+                    "started_at": j.started_at,
+                })).collect::<Vec<_>>(),
+            });
+        }
+        let resp = self
+            .client
+            .post(format!("{}/api/agent/poll", self.base_url))
+            .bearer_auth(&self.agent_token)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| Error::Server(format!("poll failed: {e}")))?;
+
+        let status_code = resp.status();
+        if !status_code.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(Error::Server(format!("poll failed ({status_code}): {body}")));
+        }
+
+        let poll_resp: dbward_api_types::agent::PollResponse = resp
+            .json()
+            .await
+            .map_err(|e| Error::Server(format!("poll parse failed: {e}")))?;
+
+        Ok(poll_resp.jobs)
+    }
+
     pub async fn claim(
         &self,
         request_id: &str,

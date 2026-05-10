@@ -37,26 +37,33 @@ pub async fn run(config: AgentConfig) -> Result<(), Error> {
     // Fetch server's public key for token verification
     let public_key = client.get_public_key().await?;
 
-    // Verify DB connectivity for all configured databases
-    for (name, db_config) in &config.databases {
-        info!(database = %name, "verifying database connection");
-        let driver = dbward_core::driver::connect_with_timeout(
-            &db_config.url,
-            Some(config.statement_timeout_secs.unwrap_or(30)),
-        )
-        .await
-        .map_err(|e| {
-            Error::Config(format!(
-                "failed to connect to database '{name}': {e}. Check url in agent config."
-            ))
-        })?;
-        drop(driver);
+    // Verify DB connectivity for all configured (database, environment) pairs
+    for (db_name, envs) in &config.databases {
+        for (env_name, env_config) in envs {
+            info!(database = %db_name, environment = %env_name, "verifying database connection");
+            let driver = dbward_core::driver::connect_with_timeout(
+                &env_config.url,
+                Some(config.statement_timeout_secs.unwrap_or(30)),
+            )
+            .await
+            .map_err(|e| {
+                Error::Config(format!(
+                    "failed to connect to database '{db_name}/{env_name}': {e}. Check url in agent config."
+                ))
+            })?;
+            drop(driver);
+        }
     }
 
     // Verify server connectivity and agent token validity
-    let cap = &config.capabilities;
+    let pairs = config.inferred_db_env_pairs();
+    let operations = if config.capabilities.operations.is_empty() {
+        vec!["execute_query".into(), "migrate_up".into(), "migrate_down".into(), "migrate_status".into()]
+    } else {
+        config.capabilities.operations.clone()
+    };
     client
-        .poll(&cap.databases, &cap.environments, &cap.operations, 1, None)
+        .poll_pairs(&pairs, &operations, 1, None)
         .await
         .map_err(|e| Error::Config(format!("server connection check failed: {e}")))?;
 
@@ -151,10 +158,13 @@ async fn poll_once(
     };
 
     let jobs = match client
-        .poll(
-            &config.capabilities.databases,
-            &config.capabilities.environments,
-            &config.capabilities.operations,
+        .poll_pairs(
+            &config.inferred_db_env_pairs(),
+            &if config.capabilities.operations.is_empty() {
+                vec!["execute_query".into(), "migrate_up".into(), "migrate_down".into(), "migrate_status".into()]
+            } else {
+                config.capabilities.operations.clone()
+            },
             available,
             Some(&status),
         )
@@ -257,7 +267,7 @@ async fn execute_job(
             .map_err(|e| Error::Server(format!("invalid execution_token: {e}")))?;
 
     // Resolve DB and execute
-    let resolved = config.resolve_database(database)?;
+    let resolved = config.resolve_database(database, environment)?;
     let expected_detail = match operation {
         "migrate_up" | "migrate_down" => dbward_migrate::canonicalize_migration_approval_detail(
             &resolved.migrations_dir,
