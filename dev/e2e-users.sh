@@ -17,7 +17,7 @@ ADMIN_TOKEN=$(cat dev/tokens/bob.token)
 echo "--- Readonly user ---"
 READONLY_TOKEN=$(curl -s -X POST "http://localhost:13000/api/tokens" \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"subject_id":"um-ro-$TS","role":"readonly","subject_type":"user"}' \
+  -d '{"subject_id":"um-ro-'"$TS"'","role":"readonly","subject_type":"user"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 [ -n "$READONLY_TOKEN" ] && pass "Created readonly token" || fail "Token creation failed"
 
@@ -61,7 +61,7 @@ echo "--- Role change ---"
 # Create a developer user
 DEV_TOKEN=$(curl -s -X POST "http://localhost:13000/api/tokens" \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"subject_id":"um-dv-$TS","role":"developer","subject_type":"user"}' \
+  -d '{"subject_id":"um-dv-'"$TS"'","role":"developer","subject_type":"user"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 
 # Trigger auto-create by using the token once
@@ -85,7 +85,7 @@ echo "--- Disable user ---"
 # Create a user to disable
 DISABLE_TOKEN=$(curl -s -X POST "http://localhost:13000/api/tokens" \
   -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"subject_id":"um-dis-$TS","role":"developer","subject_type":"user"}' \
+  -d '{"subject_id":"um-dis-'"$TS"'","role":"developer","subject_type":"user"}' \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 
 # Trigger auto-create
@@ -105,14 +105,14 @@ STATUS=$(api_status GET /api/requests "$DISABLE_TOKEN")
 echo ""
 echo "--- Token for disabled user ---"
 STATUS=$(api_status POST /api/tokens "$ADMIN_TOKEN" \
-  -d '{"subject_id":"um-dis-$TS","role":"developer","subject_type":"user"}')
+  -d '{"subject_id":"um-dis-'"$TS"'","role":"developer","subject_type":"user"}')
 [ "$STATUS" = "403" ] && pass "Cannot create token for disabled user (403)" || fail "Disabled token" "got $STATUS"
 
 # --- 10. Role mismatch token creation ---
 echo ""
 echo "--- Role mismatch token ---"
 STATUS=$(api_status POST /api/tokens "$ADMIN_TOKEN" \
-  -d '{"subject_id":"um-ro-$TS","role":"admin","subject_type":"user"}')
+  -d '{"subject_id":"um-ro-'"$TS"'","role":"admin","subject_type":"user"}')
 [ "$STATUS" = "409" ] && pass "Role mismatch rejected (409)" || fail "Role mismatch" "got $STATUS"
 
 # --- 11. GET /api/users ---

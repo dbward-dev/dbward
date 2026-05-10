@@ -332,11 +332,12 @@ pub(crate) async fn agent_claim(
         }
     }
 
+    // Pre-v10 requests have no users row; they were created by developer+ (readonly can't create dispatchable requests)
     let requester_role = crate::db::user_repo::get_user(&conn, "user", &ctx.created_by)
         .ok()
         .flatten()
         .map(|u| u.role)
-        .unwrap_or_else(|| "readonly".to_string());
+        .unwrap_or_else(|| "developer".to_string());
 
     let token = state
         .token_signer
