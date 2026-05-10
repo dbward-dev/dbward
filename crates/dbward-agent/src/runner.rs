@@ -472,48 +472,59 @@ async fn execute_operation(
         }
         "migrate_up" => {
             let engine = Engine::new(resolved, env).await?;
-            let migrator = Migrator::new(engine.driver().clone(), resolved.migrations_dir.clone());
-            let parsed = dbward_migrate::MigrationApprovalDetail::parse(detail)?;
-            let count = Some(parsed.count);
-            let count = if count == Some(0) { None } else { count };
-            let r = migrator.up(count).await?;
-            if r.applied.is_empty() {
+            engine.driver().ensure_migrations_table().await?;
+            let detail_parsed = dbward_migrate::MigrationDetail::parse(detail)?;
+            let applied = engine.driver().applied_versions().await?;
+            for v in &detail_parsed.versions {
+                if applied.contains(v) {
+                    return Err(Error::Server(format!(
+                        "migration state changed: version '{v}' is already applied"
+                    )));
+                }
+            }
+            let mut applied_versions = Vec::new();
+            for entry in &detail_parsed.migrations {
+                engine.driver().apply_migration(&entry.sql, &entry.version).await?;
+                applied_versions.push(entry.version.clone());
+            }
+            if applied_versions.is_empty() {
                 Ok("No pending migrations.".into())
             } else {
                 Ok(format!(
                     "Applied {} migration(s):\n{}",
-                    r.applied.len(),
-                    r.applied.join("\n")
+                    applied_versions.len(),
+                    applied_versions.join("\n")
                 ))
             }
         }
         "migrate_down" => {
             let engine = Engine::new(resolved, env).await?;
-            let migrator = Migrator::new(engine.driver().clone(), resolved.migrations_dir.clone());
-            let count = Some(dbward_migrate::MigrationApprovalDetail::parse(detail)?.count);
-            let r = migrator.down(count).await?;
-            if r.rolled_back.is_empty() {
+            engine.driver().ensure_migrations_table().await?;
+            let detail_parsed = dbward_migrate::MigrationDetail::parse(detail)?;
+            let applied = engine.driver().applied_versions().await?;
+            for v in &detail_parsed.versions {
+                if !applied.contains(v) {
+                    return Err(Error::Server(format!(
+                        "migration state changed: version '{v}' is not applied"
+                    )));
+                }
+            }
+            let mut rolled_back = Vec::new();
+            for entry in &detail_parsed.migrations {
+                engine.driver().revert_migration(&entry.sql, &entry.version).await?;
+                rolled_back.push(entry.version.clone());
+            }
+            if rolled_back.is_empty() {
                 Ok("Nothing to rollback.".into())
             } else {
-                Ok(format!("Rolled back:\n{}", r.rolled_back.join("\n")))
+                Ok(format!("Rolled back:\n{}", rolled_back.join("\n")))
             }
         }
         "migrate_status" => {
             let engine = Engine::new(resolved, env).await?;
-            let migrator = Migrator::new(engine.driver().clone(), resolved.migrations_dir.clone());
-            let statuses = migrator.status().await?;
-            if statuses.is_empty() {
-                Ok("No migration files found.".into())
-            } else {
-                Ok(statuses
-                    .iter()
-                    .map(|s| {
-                        let mark = if s.applied { "[x]" } else { "[ ]" };
-                        format!("{mark} {}_{}", s.version, s.name)
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n"))
-            }
+            engine.driver().ensure_migrations_table().await?;
+            let applied = engine.driver().applied_versions().await?;
+            Ok(serde_json::json!({"applied": applied, "database": resolved.name}).to_string())
         }
         _ => Err(Error::Server(format!("unsupported operation: {operation}"))),
     }
