@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use dbward_core::{AgentConfig, Engine, Error};
-use dbward_migrate::Migrator;
+
 use tokio::sync::Semaphore;
 use tracing::{Instrument, error, info, warn};
 
@@ -459,7 +459,7 @@ async fn execute_operation(
         "execute_query" => {
             let mut engine = Engine::new(resolved, env).await?;
             let result = engine.execute_query("agent", "developer", detail).await?;
-            let mut output = if result.rows.is_empty() {
+            let output = if result.rows.is_empty() {
                 serde_json::json!({"rows_affected": result.rows_affected, "truncated": false})
             } else {
                 serde_json::json!({

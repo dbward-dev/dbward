@@ -1,6 +1,6 @@
 use dbward_core::Error;
 use reqwest::Client;
-use serde_json::{Value, json};
+use serde_json::json;
 
 /// Agent status reported to server on each poll.
 #[derive(Clone, Debug)]
@@ -38,57 +38,6 @@ impl AgentClient {
                 .expect("failed to build HTTP client"),
         }
     }
-
-    pub async fn poll(
-        &self,
-        databases: &[String],
-        environments: &[String],
-        operations: &[String],
-        limit: u32,
-        status: Option<&AgentStatus>,
-    ) -> Result<Vec<dbward_api_types::agent::Job>, Error> {
-        let mut body = json!({
-            "databases": databases,
-            "environments": environments,
-            "operations": operations,
-            "limit": limit,
-        });
-        if let Some(s) = status {
-            body["status"] = json!({
-                "in_flight": s.in_flight,
-                "max_concurrent": s.max_concurrent,
-                "draining": s.draining,
-                "uptime_secs": s.uptime_secs,
-                "active_jobs": s.active_jobs.iter().map(|j| json!({
-                    "request_id": j.request_id,
-                    "operation": j.operation,
-                    "started_at": j.started_at,
-                })).collect::<Vec<_>>(),
-            });
-        }
-        let resp = self
-            .client
-            .post(format!("{}/api/agent/poll", self.base_url))
-            .bearer_auth(&self.agent_token)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| Error::Server(format!("poll failed: {e}")))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(Error::Server(format!("poll failed ({status}): {body}")));
-        }
-
-        let poll_resp: dbward_api_types::agent::PollResponse = resp
-            .json()
-            .await
-            .map_err(|e| Error::Server(format!("poll parse failed: {e}")))?;
-
-        Ok(poll_resp.jobs)
-    }
-
 
     pub async fn poll_pairs(
         &self,

@@ -5,8 +5,8 @@ use axum::response::IntoResponse;
 use dbward_core::request_status::{self, RequestEvent, RequestStatus};
 use serde_json::json;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Instant;
+
+
 use tracing::error;
 
 use crate::auth;
