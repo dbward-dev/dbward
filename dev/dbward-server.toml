@@ -7,8 +7,37 @@ name = "app"
 environments = ["development", "staging", "production"]
 
 [[databases]]
-name = "mysql-dev"
+name = "mysql_dev"
 environments = ["development"]
+
+# E2E test databases
+[[databases]]
+name = "default"
+environments = ["development", "staging", "production"]
+
+[[databases]]
+name = "primary"
+environments = ["development", "staging", "production"]
+
+[[databases]]
+name = "e2edb"
+environments = ["development", "staging", "production"]
+
+[[databases]]
+name = "dupdb"
+environments = ["development", "staging", "production", "prod"]
+
+[[databases]]
+name = "x"
+environments = ["development", "staging", "production", "y"]
+
+[[databases]]
+name = "corrupt_db"
+environments = ["production"]
+
+[[databases]]
+name = "corrupt_ops_db"
+environments = ["production"]
 
 # Workflow definitions (synced to SQLite on startup)
 

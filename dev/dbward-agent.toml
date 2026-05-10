@@ -8,5 +8,10 @@ url = "http://dbward-server:3000"
 agent_token = "__DBWARD_AGENT_TOKEN__"
 
 [databases.app.development]
-url = "postgres://${DB_USER:-dbward}:${DB_PASS:-dbward}@postgres:5432/dbward_dev"
-migrations_dir = "/workspace/db/migrations/app"
+url = "postgres://dbward:dbward@postgres:5432/dbward_dev"
+
+[databases.app.production]
+url = "postgres://dbward:dbward@postgres:5432/dbward_dev"
+
+[databases.app.staging]
+url = "postgres://dbward:dbward@postgres:5432/dbward_dev"
