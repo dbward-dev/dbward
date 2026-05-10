@@ -203,6 +203,7 @@ pub(crate) async fn approve_request_inner(
         .unwrap_or(false);
 
     if !allow_same
+        && approver.effective_permission() != dbward_core::role::ADMIN
         && existing_approvals
             .iter()
             .any(|(_, aid, _)| aid == &approver.user)
@@ -284,7 +285,16 @@ pub(crate) async fn approve_request_inner(
             }
             None
         });
-        found.ok_or_else(|| {
+        found
+            .or_else(|| {
+                // Admin can approve any step regardless of group/role constraints
+                if approver.effective_permission() == dbward_core::role::ADMIN {
+                    Some("role:admin".to_string())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
             crate::api_error::ApiError::forbidden(
                 "you do not have a matching role or group for this step",
             )
@@ -443,24 +453,19 @@ pub(crate) fn is_step_satisfied(
         .filter(|(si, _, _)| *si == step_index)
         .collect();
 
+    let count_for_key = |key: &str| -> usize {
+        step_approvals
+            .iter()
+            .filter(|(_, _, role)| *role == key || *role == "role:admin")
+            .count()
+    };
+
     match step.mode.as_str() {
         "any" => step.approvers.iter().any(|g| {
-            approver_key(g).is_some_and(|key| {
-                step_approvals
-                    .iter()
-                    .filter(|(_, _, role)| *role == key)
-                    .count()
-                    >= g.min as usize
-            })
+            approver_key(g).is_some_and(|key| count_for_key(&key) >= g.min as usize)
         }),
         _ => step.approvers.iter().all(|g| {
-            approver_key(g).is_some_and(|key| {
-                step_approvals
-                    .iter()
-                    .filter(|(_, _, role)| *role == key)
-                    .count()
-                    >= g.min as usize
-            })
+            approver_key(g).is_some_and(|key| count_for_key(&key) >= g.min as usize)
         }),
     }
 }
