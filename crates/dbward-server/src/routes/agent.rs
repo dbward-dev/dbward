@@ -74,22 +74,31 @@ pub(crate) async fn agent_poll(
     let user = auth::authenticate(&headers, &state).await?;
     authz::authorize_and_audit(&user, Action::AgentPoll, Resource::Global, &state).await?;
 
-    let databases: Vec<String> = body["databases"]
+    // Parse capabilities: prefer new pair-based format, fall back to legacy independent lists
+    let db_env_pairs: Vec<(String, String)> = body["database_environments"]
         .as_array()
         .map(|a| {
             a.iter()
-                .filter_map(|v| v.as_str().map(String::from))
+                .filter_map(|v| {
+                    let arr = v.as_array()?;
+                    Some((arr.first()?.as_str()?.to_string(), arr.get(1)?.as_str()?.to_string()))
+                })
                 .collect()
         })
-        .unwrap_or_default();
-    let environments: Vec<String> = body["environments"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(String::from))
+        .unwrap_or_else(|| {
+            // Legacy: independent lists → cross product
+            let databases: Vec<String> = body["databases"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            let environments: Vec<String> = body["environments"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            databases.iter()
+                .flat_map(|db| environments.iter().map(move |env| (db.clone(), env.clone())))
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     let operations: Vec<String> = body["operations"]
         .as_array()
         .map(|a| {
@@ -113,10 +122,11 @@ pub(crate) async fn agent_poll(
         crate::limits::check_can_create(&conn, crate::limits::Resource::Agent, &state.license)?;
     }
 
-    // Record agent capabilities for claim-time verification
+    // Record agent capabilities for claim-time verification (new format)
+    let unique_databases: Vec<String> = db_env_pairs.iter().map(|(db, _)| db.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
     let caps_json = serde_json::to_string(&json!({
-        "databases": databases,
-        "environments": environments,
+        "targets": db_env_pairs.iter().map(|(db, env)| json!({"database": db, "environment": env})).collect::<Vec<_>>(),
+        "databases": unique_databases,
         "operations": operations,
     }))
     .unwrap_or_else(|_| "{}".into());
@@ -184,7 +194,7 @@ pub(crate) async fn agent_poll(
     let conn = state.db().await;
 
     // Free tier: check total unique database connections across all agents
-    if !databases.is_empty() {
+    if !db_env_pairs.is_empty() {
         crate::limits::check_database_limit(&conn, &state.license)?;
     }
 
@@ -192,24 +202,19 @@ pub(crate) async fn agent_poll(
     let mut where_clauses = vec!["status = 'dispatched'".to_string()];
     let mut bind_values: Vec<String> = Vec::new();
 
-    if super::requests::should_filter_capability(&databases) {
-        let placeholders: Vec<String> = databases
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("?{}", bind_values.len() + i + 1))
-            .collect();
-        where_clauses.push(format!("database_name IN ({})", placeholders.join(",")));
-        bind_values.extend(databases.clone());
+    // Filter by (database, environment) pairs — no wildcards in pair-based format
+    if !db_env_pairs.is_empty() {
+        let mut pair_conditions: Vec<String> = Vec::new();
+        for (db, env) in &db_env_pairs {
+            let db_idx = bind_values.len() + 1;
+            let env_idx = bind_values.len() + 2;
+            pair_conditions.push(format!("(database_name = ?{db_idx} AND environment = ?{env_idx})"));
+            bind_values.push(db.clone());
+            bind_values.push(env.clone());
+        }
+        where_clauses.push(format!("({})", pair_conditions.join(" OR ")));
     }
-    if super::requests::should_filter_capability(&environments) {
-        let placeholders: Vec<String> = environments
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("?{}", bind_values.len() + i + 1))
-            .collect();
-        where_clauses.push(format!("environment IN ({})", placeholders.join(",")));
-        bind_values.extend(environments.clone());
-    }
+
     if super::requests::should_filter_capability(&operations) {
         let placeholders: Vec<String> = operations
             .iter()
@@ -287,17 +292,36 @@ pub(crate) async fn agent_claim(
     if let Some(caps_json) = crate::db::agent_repo::get_agent_capabilities(&conn, &agent_id)
         && let Ok(caps) = serde_json::from_str::<serde_json::Value>(&caps_json)
     {
-        let matches = |arr: &serde_json::Value, val: &str| -> bool {
-            arr.as_array().is_none_or(|a| {
+        // New format: targets array of {database, environment} pairs
+        let target_match = if let Some(targets) = caps["targets"].as_array() {
+            targets.is_empty()
+                || targets.iter().any(|t| {
+                    t["database"].as_str() == Some(&database)
+                        && t["environment"].as_str() == Some(&environment)
+                })
+        } else {
+            // Legacy format: independent databases/environments arrays
+            let matches = |arr: &serde_json::Value, val: &str| -> bool {
+                arr.as_array().is_none_or(|a| {
+                    a.is_empty()
+                        || a.iter()
+                            .any(|v| v.as_str() == Some(val) || v.as_str() == Some("*"))
+                })
+            };
+            matches(&caps["databases"], &database)
+                && matches(&caps["environments"], &environment)
+        };
+
+        let op_match = {
+            let ops = &caps["operations"];
+            ops.as_array().is_none_or(|a| {
                 a.is_empty()
                     || a.iter()
-                        .any(|v| v.as_str() == Some(val) || v.as_str() == Some("*"))
+                        .any(|v| v.as_str() == Some(&operation) || v.as_str() == Some("*"))
             })
         };
-        if !matches(&caps["databases"], &database)
-            || !matches(&caps["environments"], &environment)
-            || !matches(&caps["operations"], &operation)
-        {
+
+        if !target_match || !op_match {
             return Err(crate::api_error::ApiError::forbidden(
                 "agent lacks capability for this job",
             ));
