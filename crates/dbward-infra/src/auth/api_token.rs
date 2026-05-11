@@ -4,22 +4,22 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 use dbward_app::error::AuthError;
-use dbward_app::ports::{RoleResolver, TokenRepo, TokenVerifier, UserRepo};
-use dbward_domain::auth::AuthUser;
+use dbward_app::ports::{PolicyRepo, TokenRepo, TokenVerifier, UserRepo};
+use dbward_domain::auth::{AuthUser, ResolvedRole};
 
 pub struct ApiTokenVerifier {
     token_repo: Arc<dyn TokenRepo>,
     user_repo: Arc<dyn UserRepo>,
-    role_resolver: Arc<dyn RoleResolver>,
+    policy_repo: Arc<dyn PolicyRepo>,
 }
 
 impl ApiTokenVerifier {
     pub fn new(
         token_repo: Arc<dyn TokenRepo>,
         user_repo: Arc<dyn UserRepo>,
-        role_resolver: Arc<dyn RoleResolver>,
+        policy_repo: Arc<dyn PolicyRepo>,
     ) -> Self {
-        Self { token_repo, user_repo, role_resolver }
+        Self { token_repo, user_repo, policy_repo }
     }
 }
 
@@ -45,21 +45,33 @@ impl TokenVerifier for ApiTokenVerifier {
             }
         }
 
-        // fail-closed: propagate DB errors (not unwrap_or)
+        // fail-closed: propagate DB errors
         let suspended = self.user_repo.is_suspended(&token.subject_id)
             .map_err(|e| AuthError::Internal(e.to_string()))?;
         if suspended {
             return Err(AuthError::UserSuspended);
         }
 
-        // Resolve roles using token.roles directly (not RoleResolver).
-        // API tokens have fixed roles at creation time — this is the source of truth.
-        let roles = self.role_resolver
-            .resolve(&token.subject_id, token.subject_type, &token.roles)
+        // Resolve roles from token.roles by looking up role definitions
+        // Token.roles stores role NAMES fixed at creation time (source of truth)
+        let all_roles = self.policy_repo.list_roles()
             .map_err(|e| AuthError::Internal(e.to_string()))?;
 
+        let roles: Vec<ResolvedRole> = token.roles.iter().filter_map(|role_name| {
+            all_roles.iter().find(|rd| rd.name == *role_name).map(|rd| {
+                ResolvedRole {
+                    name: rd.name.clone(),
+                    permissions: rd.permissions.iter().cloned().collect(),
+                    databases: rd.databases.clone(),
+                    environments: rd.environments.clone(),
+                }
+            })
+        }).collect();
+
         if roles.is_empty() {
-            return Err(AuthError::Internal("no roles resolved for token".into()));
+            return Err(AuthError::Internal(
+                format!("no matching role definitions for token roles: {:?}", token.roles)
+            ));
         }
 
         Ok(AuthUser {
