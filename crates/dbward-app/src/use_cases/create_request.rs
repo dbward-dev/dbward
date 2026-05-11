@@ -130,7 +130,10 @@ impl CreateRequest {
 
         // 9. Auto-dispatch for auto_approved / break_glass (ADR-004)
         let final_status = if matches!(status, RequestStatus::AutoApproved | RequestStatus::BreakGlass) {
-            self.request_repo.mark_dispatched(&id, now)?;
+            let ok = self.request_repo.mark_dispatched(&id, now)?;
+            if !ok {
+                return Err(AppError::Internal("failed to auto-dispatch".into()));
+            }
             let dispatch_result = status_machine::transition(
                 status,
                 &RequestTrigger::Dispatch,

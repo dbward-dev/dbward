@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Execution, ExecutionStatus};
-use dbward_domain::services::status_machine::{self, RequestEvent};
+use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 use dbward_domain::values::Operation;
 
 use crate::error::AppError;
@@ -16,6 +16,7 @@ pub struct AgentClaim {
     pub agent_repo: Arc<dyn AgentRepo>,
     pub policy: Arc<dyn PolicyEvaluator>,
     pub token_signer: Arc<dyn TokenSigner>,
+    pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
 }
@@ -49,8 +50,22 @@ impl AgentClaim {
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
         // 3. Status check: must be dispatched → running
-        status_machine::transition_simple(request.status, &RequestEvent::Claim)
-            .map_err(|e| AppError::Conflict(e.to_string()))?;
+        let now = self.clock.now();
+        let execution_id = self.id_gen.generate();
+        let result = status_machine::transition(
+            request.status,
+            &RequestTrigger::Claim,
+            TransitionContext {
+                request_id: request.id.clone(),
+                actor_id: user.subject_id.clone(),
+                actor_type: user.subject_type,
+                database: request.database.clone(),
+                environment: request.environment.clone(),
+                operation: request.operation,
+                timestamp: now,
+                metadata: EventMetadata::Claimed { execution_id: execution_id.clone(), agent_id: input.agent_id.clone() },
+            },
+        ).map_err(|e| AppError::Conflict(e.to_string()))?;
 
         // 4. Capability verification: agent must support (database, environment)
         let has_capability = input.agent_databases.iter().any(|cap| {
@@ -92,8 +107,6 @@ impl AgentClaim {
         let exec_policy = self.policy.get_execution_policy(&request.database, &request.environment);
 
         // 9. Create execution record
-        let now = self.clock.now();
-        let execution_id = self.id_gen.generate();
         let lease_expires_at = now + chrono::Duration::seconds(300);
 
         // 10. Sign execution token (SHA-256 for detail_hash)
@@ -123,6 +136,8 @@ impl AgentClaim {
 
         // 11. Mark request as running
         self.request_repo.mark_running(&request.id, now)?;
+
+        result.commit(&*self.event_dispatcher);
 
         Ok(AgentClaimOutput {
             execution_id,

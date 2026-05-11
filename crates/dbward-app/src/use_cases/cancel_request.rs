@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::RequestStatus;
-use dbward_domain::services::status_machine::{self, RequestEvent};
+use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -26,62 +26,63 @@ pub struct CancelRequestOutput {
 
 impl CancelRequest {
     pub fn execute(&self, input: CancelRequestInput, user: &AuthUser) -> Result<CancelRequestOutput, AppError> {
-        // 0. Input validation
         if let Some(ref r) = input.reason {
             if r.len() > 1024 {
                 return Err(AppError::Validation("reason too long (max 1024 bytes)".into()));
             }
         }
 
-        // 1. Get request
         let request = self.request_repo.get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
-        // 2. Authorization: requester or admin (scoped)
         self.authorizer.authorize_scoped(
-            user,
-            Permission::RequestCancel,
-            &request.database,
-            &request.environment,
+            user, Permission::RequestCancel,
+            &request.database, &request.environment,
             &ResourceContext::Request { requester_id: request.requester.clone() },
         ).map_err(AppError::Forbidden)?;
 
-        // 3. Status check via status_machine
-        status_machine::transition_simple(request.status, &RequestEvent::Cancel)
-            .map_err(|e| AppError::Conflict(e.to_string()))?;
-
-        // 4. Mark cancelled
         let now = self.clock.now();
+        let result = status_machine::transition(
+            request.status,
+            &RequestTrigger::Cancel,
+            TransitionContext {
+                request_id: request.id.clone(),
+                actor_id: user.subject_id.clone(),
+                actor_type: user.subject_type,
+                database: request.database.clone(),
+                environment: request.environment.clone(),
+                operation: request.operation,
+                timestamp: now,
+                metadata: EventMetadata::Cancelled { reason: input.reason.clone() },
+            },
+        ).map_err(|e| AppError::Conflict(e.to_string()))?;
+
         let ok = self.request_repo.mark_cancelled(
-            &request.id,
-            &user.subject_id,
-            input.reason.as_deref(),
-            now,
+            &request.id, &user.subject_id, input.reason.as_deref(), now,
         )?;
         if !ok {
             return Err(AppError::Conflict("concurrent status change".into()));
         }
 
-        Ok(CancelRequestOutput {
-            id: request.id,
-            status: RequestStatus::Cancelled,
-        })
+        result.commit(&*self.event_dispatcher);
+
+        Ok(CancelRequestOutput { id: request.id, status: RequestStatus::Cancelled })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
-    struct NoopDispatcher;
-    impl EventDispatcher for NoopDispatcher { fn dispatch(&self, _: TransitionEvent) {} }
-    use dbward_domain::auth::{ResolvedRole, SubjectType};
+    use dbward_domain::auth::{SubjectType};
+    use dbward_domain::services::status_machine::TransitionEvent;
     use dbward_domain::entities::Request;
     use dbward_domain::values::{DatabaseName, Environment, Operation};
     use chrono::{DateTime, Utc};
     use std::sync::Mutex;
     use crate::error::AuthzError;
 
+    struct NoopDispatcher;
+    impl EventDispatcher for NoopDispatcher { fn dispatch(&self, _: TransitionEvent) {} }
     struct AllowAll;
     impl Authorizer for AllowAll {
         fn authorize_scoped(&self, _: &AuthUser, _: Permission, _: &DatabaseName, _: &Environment, _: &ResourceContext) -> Result<(), AuthzError> { Ok(()) }
@@ -96,10 +97,6 @@ mod tests {
             Err(AuthzError::Forbidden { permission: p, reason: "denied".into() })
         }
     }
-    struct FakeAudit;
-    impl AuditLogger for FakeAudit { fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> { Ok(()) } }
-    struct FakeNotifier;
-    impl Notifier for FakeNotifier { fn dispatch(&self, _: WebhookEvent) {} }
     struct FakeClock;
     impl Clock for FakeClock { fn now(&self) -> DateTime<Utc> { Utc::now() } }
 
@@ -115,9 +112,9 @@ mod tests {
         fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: DateTime<Utc>) -> Result<bool, AppError> { *self.cancelled.lock().unwrap() = true; Ok(true) }
         fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn mark_running(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn mark_executed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn mark_running(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn mark_executed(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn mark_failed(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
     }
 
     fn make_request(status: RequestStatus) -> Request {
@@ -138,7 +135,6 @@ mod tests {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::Pending))), cancelled: Mutex::new(false) });
         let uc = CancelRequest { authorizer: Arc::new(AllowAll), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
-
         let out = uc.execute(CancelRequestInput { request_id: "req-001".into(), reason: Some("changed mind".into()) }, &user).unwrap();
         assert_eq!(out.status, RequestStatus::Cancelled);
         assert!(*repo.cancelled.lock().unwrap());
@@ -149,7 +145,6 @@ mod tests {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::Rejected))), cancelled: Mutex::new(false) });
         let uc = CancelRequest { authorizer: Arc::new(AllowAll), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
-
         assert!(matches!(uc.execute(CancelRequestInput { request_id: "req-001".into(), reason: None }, &user), Err(AppError::Conflict(_))));
     }
 
@@ -158,7 +153,6 @@ mod tests {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::Pending))), cancelled: Mutex::new(false) });
         let uc = CancelRequest { authorizer: Arc::new(DenyAll), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "bob".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
-
         assert!(matches!(uc.execute(CancelRequestInput { request_id: "req-001".into(), reason: None }, &user), Err(AppError::Forbidden(_))));
     }
 }

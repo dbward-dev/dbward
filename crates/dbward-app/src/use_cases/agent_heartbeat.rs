@@ -10,6 +10,7 @@ pub struct AgentHeartbeat {
     pub authorizer: Arc<dyn Authorizer>,
     pub agent_repo: Arc<dyn AgentRepo>,
     pub request_repo: Arc<dyn RequestRepo>,
+    pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
 }
 

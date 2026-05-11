@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{ExecutionStatus, RequestStatus};
-use dbward_domain::services::status_machine::{self, RequestEvent};
+use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -58,16 +58,25 @@ impl AgentSubmitResult {
         let request = self.request_repo.get(&execution.request_id)?
             .ok_or_else(|| AppError::Internal("request not found for execution".into()))?;
 
-        // 6. Determine final status
-        // Special case: cancelled request still accepts failed results (agent-design §4.3)
-        let new_request_status = if request.status == RequestStatus::Cancelled {
-            // Request stays cancelled; only execution transitions to Failed
-            RequestStatus::Cancelled
-        } else {
-            let event = RequestEvent::Complete { success: input.success };
-            status_machine::transition_simple(request.status, &event)
-                .map_err(|e| AppError::Conflict(e.to_string()))?
-        };
+        // 6. Determine final status via status_machine
+        // (Cancelled, Complete) → Cancelled is handled by status_machine (ADR-003/004)
+        let now = self.clock.now();
+        let result = status_machine::transition(
+            request.status,
+            &RequestTrigger::Complete { success: input.success },
+            TransitionContext {
+                request_id: request.id.clone(),
+                actor_id: user.subject_id.clone(),
+                actor_type: user.subject_type,
+                database: request.database.clone(),
+                environment: request.environment.clone(),
+                operation: request.operation,
+                timestamp: now,
+                metadata: EventMetadata::Completed { success: input.success, execution_id: execution.id.clone() },
+            },
+        ).map_err(|e| AppError::Conflict(e.to_string()))?;
+
+        let new_request_status = result.status();
 
         // 7. Save result to external storage (if success and not no_store)
         if input.success && !request.no_store {
@@ -90,6 +99,8 @@ impl AgentSubmitResult {
                 _ => {}
             }
         }
+
+        result.commit(&*self.event_dispatcher);
 
         Ok(AgentSubmitResultOutput {
             request_id: execution.request_id,

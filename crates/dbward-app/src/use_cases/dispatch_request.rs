@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::RequestStatus;
-use dbward_domain::services::status_machine::{self, RequestEvent};
+use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -40,8 +40,21 @@ impl DispatchRequest {
         ).map_err(AppError::Forbidden)?;
 
         // 3. Status check via status_machine
-        status_machine::transition_simple(request.status, &RequestEvent::Dispatch)
-            .map_err(|e| AppError::Conflict(e.to_string()))?;
+        let now = self.clock.now();
+        let result = status_machine::transition(
+            request.status,
+            &RequestTrigger::Dispatch,
+            TransitionContext {
+                request_id: request.id.clone(),
+                actor_id: user.subject_id.clone(),
+                actor_type: user.subject_type,
+                database: request.database.clone(),
+                environment: request.environment.clone(),
+                operation: request.operation,
+                timestamp: now,
+                metadata: EventMetadata::Dispatched,
+            },
+        ).map_err(|e| AppError::Conflict(e.to_string()))?;
 
         // 4. Approval TTL check (based on resolved_at = when approval was granted)
         if let Some(resolved_at) = request.resolved_at {
@@ -80,11 +93,12 @@ impl DispatchRequest {
         }
 
         // 6. Mark dispatched
-        let now = self.clock.now();
         let ok = self.request_repo.mark_dispatched(&request.id, now)?;
         if !ok {
             return Err(AppError::Conflict("concurrent status change".into()));
         }
+
+        result.commit(&*self.event_dispatcher);
 
         Ok(DispatchRequestOutput {
             id: request.id,

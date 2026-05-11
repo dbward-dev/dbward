@@ -685,6 +685,7 @@ fn agent_full_flow_poll_claim_heartbeat() {
         policy: h.policy.clone(),
         agent_repo: agent_repo.clone(),
         token_signer: Arc::new(FakeTokenSigner),
+        event_dispatcher: h.event_dispatcher.clone(),
         clock: h.clock.clone(),
         id_gen: h.id_gen.clone(),
     };
@@ -704,6 +705,7 @@ fn agent_full_flow_poll_claim_heartbeat() {
         authorizer: h.authorizer.clone(),
         agent_repo: agent_repo.clone(),
         request_repo: h.repo.clone(),
+        event_dispatcher: h.event_dispatcher.clone(),
         clock: h.clock.clone(),
     };
     let hb_result = hb_uc.execute(
@@ -737,6 +739,7 @@ fn heartbeat_detects_cancelled_request() {
         policy: h.policy.clone(),
         agent_repo: agent_repo.clone(),
         token_signer: Arc::new(FakeTokenSigner),
+        event_dispatcher: h.event_dispatcher.clone(),
         clock: h.clock.clone(),
         id_gen: h.id_gen.clone(),
     };
@@ -754,6 +757,7 @@ fn heartbeat_detects_cancelled_request() {
         authorizer: h.authorizer.clone(),
         agent_repo: agent_repo.clone(),
         request_repo: h.repo.clone(),
+        event_dispatcher: h.event_dispatcher.clone(),
         clock: h.clock.clone(),
     };
     let hb_result = hb_uc.execute(
