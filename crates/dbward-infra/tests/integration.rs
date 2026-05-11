@@ -605,3 +605,508 @@ fn database_registry_exists_and_list() {
     assert_eq!(list[0].0.as_str(), "app");
     assert_eq!(list[0].1.as_str(), "production");
 }
+
+// --- 13. complete_execution: success case ---
+
+#[test]
+fn complete_execution_success() {
+    let conn = setup();
+    register_db(&conn);
+
+    let agent_repo = SqliteAgentRepo::new(conn.clone());
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    let req = Request {
+        id: "req-ce-ok".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "UPDATE t SET x=1".into(),
+        status: RequestStatus::Running,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    let execution = Execution {
+        id: "exec-ce-ok".into(),
+        request_id: "req-ce-ok".into(),
+        agent_id: "agent-1".into(),
+        status: ExecutionStatus::Running,
+        token: "tok".into(),
+        lease_expires_at: Utc::now() + chrono::Duration::minutes(5),
+        started_at: Some(Utc::now()),
+        finished_at: None,
+        error_message: None,
+        created_at: Utc::now(),
+    };
+    agent_repo.create_execution(&execution).unwrap();
+
+    let now = Utc::now();
+    let result = agent_repo.complete_execution("exec-ce-ok", "req-ce-ok", true, now).unwrap();
+    assert!(result);
+
+    let fetched_exec = agent_repo.get_execution("exec-ce-ok").unwrap().unwrap();
+    assert_eq!(fetched_exec.status, ExecutionStatus::Completed);
+    assert!(fetched_exec.finished_at.is_some());
+
+    let fetched_req = request_repo.get("req-ce-ok").unwrap().unwrap();
+    assert_eq!(fetched_req.status, RequestStatus::Executed);
+}
+
+// --- 14. complete_execution: failure case ---
+
+#[test]
+fn complete_execution_failure() {
+    let conn = setup();
+    register_db(&conn);
+
+    let agent_repo = SqliteAgentRepo::new(conn.clone());
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    let req = Request {
+        id: "req-ce-fail".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "UPDATE t SET x=1".into(),
+        status: RequestStatus::Running,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    let execution = Execution {
+        id: "exec-ce-fail".into(),
+        request_id: "req-ce-fail".into(),
+        agent_id: "agent-1".into(),
+        status: ExecutionStatus::Running,
+        token: "tok".into(),
+        lease_expires_at: Utc::now() + chrono::Duration::minutes(5),
+        started_at: Some(Utc::now()),
+        finished_at: None,
+        error_message: None,
+        created_at: Utc::now(),
+    };
+    agent_repo.create_execution(&execution).unwrap();
+
+    let now = Utc::now();
+    let result = agent_repo.complete_execution("exec-ce-fail", "req-ce-fail", false, now).unwrap();
+    assert!(result);
+
+    let fetched_exec = agent_repo.get_execution("exec-ce-fail").unwrap().unwrap();
+    assert_eq!(fetched_exec.status, ExecutionStatus::Failed);
+
+    let fetched_req = request_repo.get("req-ce-fail").unwrap().unwrap();
+    assert_eq!(fetched_req.status, RequestStatus::Failed);
+}
+
+// --- 15. complete_execution: cancelled request stays cancelled ---
+
+#[test]
+fn complete_execution_cancelled_request() {
+    let conn = setup();
+    register_db(&conn);
+
+    let agent_repo = SqliteAgentRepo::new(conn.clone());
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    let req = Request {
+        id: "req-ce-cancel".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "UPDATE t SET x=1".into(),
+        status: RequestStatus::Cancelled,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: Some("user cancelled".into()),
+        cancelled_by: Some("alice".into()),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: Some(Utc::now()),
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    let execution = Execution {
+        id: "exec-ce-cancel".into(),
+        request_id: "req-ce-cancel".into(),
+        agent_id: "agent-1".into(),
+        status: ExecutionStatus::Running,
+        token: "tok".into(),
+        lease_expires_at: Utc::now() + chrono::Duration::minutes(5),
+        started_at: Some(Utc::now()),
+        finished_at: None,
+        error_message: None,
+        created_at: Utc::now(),
+    };
+    agent_repo.create_execution(&execution).unwrap();
+
+    let now = Utc::now();
+    let result = agent_repo.complete_execution("exec-ce-cancel", "req-ce-cancel", true, now).unwrap();
+    assert!(!result);
+
+    // Execution is still updated
+    let fetched_exec = agent_repo.get_execution("exec-ce-cancel").unwrap().unwrap();
+    assert_eq!(fetched_exec.status, ExecutionStatus::Completed);
+
+    // Request stays cancelled
+    let fetched_req = request_repo.get("req-ce-cancel").unwrap().unwrap();
+    assert_eq!(fetched_req.status, RequestStatus::Cancelled);
+}
+
+// --- 16. complete_execution: already completed (not running) ---
+
+#[test]
+fn complete_execution_already_completed() {
+    let conn = setup();
+    register_db(&conn);
+
+    let agent_repo = SqliteAgentRepo::new(conn.clone());
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    let req = Request {
+        id: "req-ce-done".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "UPDATE t SET x=1".into(),
+        status: RequestStatus::Executed,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: Some(Utc::now()),
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    let execution = Execution {
+        id: "exec-ce-done".into(),
+        request_id: "req-ce-done".into(),
+        agent_id: "agent-1".into(),
+        status: ExecutionStatus::Running,
+        token: "tok".into(),
+        lease_expires_at: Utc::now() + chrono::Duration::minutes(5),
+        started_at: Some(Utc::now()),
+        finished_at: None,
+        error_message: None,
+        created_at: Utc::now(),
+    };
+    agent_repo.create_execution(&execution).unwrap();
+
+    let now = Utc::now();
+    let result = agent_repo.complete_execution("exec-ce-done", "req-ce-done", true, now).unwrap();
+    assert!(!result);
+
+    // Execution still updated
+    let fetched_exec = agent_repo.get_execution("exec-ce-done").unwrap().unwrap();
+    assert_eq!(fetched_exec.status, ExecutionStatus::Completed);
+}
+
+// --- 17. create_and_dispatch: success ---
+
+#[test]
+fn create_and_dispatch_success() {
+    let conn = setup();
+    register_db(&conn);
+
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    let req = Request {
+        id: "req-cad".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteSelect,
+        detail: "SELECT 1".into(),
+        status: RequestStatus::Pending,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
+    };
+    request_repo.create_and_dispatch(&req).unwrap();
+
+    let fetched = request_repo.get("req-cad").unwrap().unwrap();
+    assert_eq!(fetched.status, RequestStatus::Dispatched);
+    assert_eq!(fetched.requester, "alice");
+    assert_eq!(fetched.detail, "SELECT 1");
+}
+
+// --- 18. reject_and_record: success ---
+
+#[test]
+fn reject_and_record_success() {
+    let conn = setup();
+    register_db(&conn);
+
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    let req = Request {
+        id: "req-rej".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "DELETE FROM t".into(),
+        status: RequestStatus::Pending,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    let approval = Approval {
+        id: "apr-rej".into(),
+        request_id: "req-rej".into(),
+        action: ApprovalAction::Reject,
+        actor_id: "admin-1".into(),
+        matched_selector: "role:admin".into(),
+        step_index: 0,
+        comment: Some("too dangerous".into()),
+        created_at: Utc::now(),
+    };
+
+    let now = Utc::now();
+    let result = request_repo.reject_and_record("req-rej", &approval, now).unwrap();
+    assert!(result);
+
+    let fetched = request_repo.get("req-rej").unwrap().unwrap();
+    assert_eq!(fetched.status, RequestStatus::Rejected);
+
+    let approvals = request_repo.get_approvals("req-rej").unwrap();
+    assert_eq!(approvals.len(), 1);
+    assert_eq!(approvals[0].actor_id, "admin-1");
+    assert_eq!(approvals[0].comment.as_deref(), Some("too dangerous"));
+}
+
+// --- 19. reject_and_record: already rejected (optimistic lock) ---
+
+#[test]
+fn reject_and_record_already_rejected() {
+    let conn = setup();
+    register_db(&conn);
+
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    let req = Request {
+        id: "req-rej2".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "DELETE FROM t".into(),
+        status: RequestStatus::Rejected,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: Some(Utc::now()),
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    let approval = Approval {
+        id: "apr-rej2".into(),
+        request_id: "req-rej2".into(),
+        action: ApprovalAction::Reject,
+        actor_id: "admin-2".into(),
+        matched_selector: "role:admin".into(),
+        step_index: 0,
+        comment: None,
+        created_at: Utc::now(),
+    };
+
+    let result = request_repo.reject_and_record("req-rej2", &approval, Utc::now()).unwrap();
+    assert!(!result);
+
+    // No approval record inserted on failure
+    let approvals = request_repo.get_approvals("req-rej2").unwrap();
+    assert_eq!(approvals.len(), 0);
+}
+
+// --- 20. claim_and_mark_running: success ---
+
+#[test]
+fn claim_and_mark_running_success() {
+    let conn = setup();
+    register_db(&conn);
+
+    let agent_repo = SqliteAgentRepo::new(conn.clone());
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    let req = Request {
+        id: "req-claim".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "UPDATE t SET x=1".into(),
+        status: RequestStatus::Dispatched,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    let execution = Execution {
+        id: "exec-claim".into(),
+        request_id: "req-claim".into(),
+        agent_id: "agent-1".into(),
+        status: ExecutionStatus::Claimed,
+        token: "signed-tok".into(),
+        lease_expires_at: Utc::now() + chrono::Duration::minutes(5),
+        started_at: None,
+        finished_at: None,
+        error_message: None,
+        created_at: Utc::now(),
+    };
+
+    let now = Utc::now();
+    let result = agent_repo.claim_and_mark_running(&execution, "req-claim", now).unwrap();
+    assert!(result);
+
+    let fetched_exec = agent_repo.get_execution("exec-claim").unwrap().unwrap();
+    assert_eq!(fetched_exec.status, ExecutionStatus::Claimed);
+    assert_eq!(fetched_exec.agent_id, "agent-1");
+
+    let fetched_req = request_repo.get("req-claim").unwrap().unwrap();
+    assert_eq!(fetched_req.status, RequestStatus::Running);
+}
+
+// --- 21. claim_and_mark_running: request not dispatched → rollback ---
+
+#[test]
+fn claim_and_mark_running_not_dispatched_rollback() {
+    let conn = setup();
+    register_db(&conn);
+
+    let agent_repo = SqliteAgentRepo::new(conn.clone());
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    // Request is 'running', not 'dispatched'
+    let req = Request {
+        id: "req-claim-fail".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "UPDATE t SET x=1".into(),
+        status: RequestStatus::Running,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    let execution = Execution {
+        id: "exec-claim-fail".into(),
+        request_id: "req-claim-fail".into(),
+        agent_id: "agent-1".into(),
+        status: ExecutionStatus::Claimed,
+        token: "signed-tok".into(),
+        lease_expires_at: Utc::now() + chrono::Duration::minutes(5),
+        started_at: None,
+        finished_at: None,
+        error_message: None,
+        created_at: Utc::now(),
+    };
+
+    let now = Utc::now();
+    let result = agent_repo.claim_and_mark_running(&execution, "req-claim-fail", now).unwrap();
+    assert!(!result);
+
+    // Verify NO orphan execution was created (rollback worked)
+    let fetched_exec = agent_repo.get_execution("exec-claim-fail").unwrap();
+    assert!(fetched_exec.is_none());
+
+    // Request status unchanged
+    let fetched_req = request_repo.get("req-claim-fail").unwrap().unwrap();
+    assert_eq!(fetched_req.status, RequestStatus::Running);
+}
