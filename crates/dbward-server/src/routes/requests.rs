@@ -101,28 +101,39 @@ pub async fn list(
 
 pub async fn get(
     State(state): State<AppState>,
-    Extension(_user): Extension<AuthUser>,
+    Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> ApiResult {
-    match state.request_repo.get(&id) {
-        Ok(Some(req)) => Ok((StatusCode::OK, Json(json!({
-            "id": req.id,
-            "requester": req.requester,
-            "database": req.database,
-            "environment": req.environment,
-            "operation": req.operation.as_str(),
-            "detail": req.detail,
-            "status": req.status.as_str(),
-            "emergency": req.emergency,
-            "reason": req.reason,
-            "share_with": req.share_with,
-            "no_store": req.no_store,
-            "created_at": req.created_at,
-            "updated_at": req.updated_at,
-        })))),
-        Ok(None) => Err(map_error(AppError::NotFound("request not found".into()))),
-        Err(e) => Err(map_error(e)),
-    }
+    let req = match state.request_repo.get(&id) {
+        Ok(Some(r)) => r,
+        Ok(None) => return Err(map_error(AppError::NotFound("request not found".into()))),
+        Err(e) => return Err(map_error(e)),
+    };
+
+    use dbward_domain::auth::{Permission, ResourceContext};
+    state.authorizer.authorize_scoped(
+        &user,
+        Permission::RequestView,
+        &req.database,
+        &req.environment,
+        &ResourceContext::Request { requester_id: req.requester.clone() },
+    ).map_err(|e| map_error(AppError::Forbidden(e)))?;
+
+    Ok((StatusCode::OK, Json(json!({
+        "id": req.id,
+        "requester": req.requester,
+        "database": req.database,
+        "environment": req.environment,
+        "operation": req.operation.as_str(),
+        "detail": req.detail,
+        "status": req.status.as_str(),
+        "emergency": req.emergency,
+        "reason": req.reason,
+        "share_with": req.share_with,
+        "no_store": req.no_store,
+        "created_at": req.created_at,
+        "updated_at": req.updated_at,
+    }))))
 }
 
 pub async fn approve(

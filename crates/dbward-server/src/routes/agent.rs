@@ -9,12 +9,19 @@ use dbward_app::use_cases::{
     agent_poll::{AgentPoll, AgentPollInput},
     agent_submit_result::{AgentSubmitResult, AgentSubmitResultInput},
 };
-use dbward_domain::auth::AuthUser;
+use dbward_domain::auth::{AuthUser, SubjectType};
 use serde::Deserialize;
 
 use crate::state::AppState;
 
 use super::map_error;
+
+fn require_agent(user: &AuthUser) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if user.subject_type != SubjectType::Agent {
+        return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "agent token required", "code": "forbidden"}))));
+    }
+    Ok(())
+}
 
 #[derive(Deserialize)]
 pub struct PollBody {
@@ -37,6 +44,7 @@ pub async fn poll(
     Extension(user): Extension<AuthUser>,
     Json(body): Json<PollBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    require_agent(&user)?;
     let uc = AgentPoll {
         authorizer: state.authorizer.clone(),
         agent_repo: state.agent_repo.clone(),
@@ -68,6 +76,7 @@ pub async fn claim(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    require_agent(&user)?;
     let uc = AgentClaim {
         authorizer: state.authorizer.clone(),
         request_repo: state.request_repo.clone(),
@@ -105,6 +114,7 @@ pub async fn heartbeat(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    require_agent(&user)?;
     let uc = AgentHeartbeat {
         authorizer: state.authorizer.clone(),
         agent_repo: state.agent_repo.clone(),
@@ -131,6 +141,7 @@ pub async fn submit_result(
     Path(id): Path<String>,
     Json(body): Json<SubmitResultBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    require_agent(&user)?;
     let uc = AgentSubmitResult {
         authorizer: state.authorizer.clone(),
         agent_repo: state.agent_repo.clone(),
