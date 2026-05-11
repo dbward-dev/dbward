@@ -32,8 +32,8 @@ pub fn spawn_background_tasks(
                 for (exec_id, req_id) in expired {
                     if let Ok(true) = state.agent_repo.mark_execution_lost(&exec_id, &req_id, &now_str) {
                         info!(execution_id = %exec_id, request_id = %req_id, "lease expired, marked execution_lost");
-                        emit_audit(&state, "request.execution_lost", &req_id);
-                        emit_webhook(&state, "request.execution_lost", &req_id);
+                        emit_audit(&state, "execution_lost", EventCategory::Agent, &req_id);
+                        emit_webhook(&state, "execution_lost", &req_id);
                     }
                 }
             }
@@ -43,8 +43,8 @@ pub fn spawn_background_tasks(
                 for id in ids {
                     if let Ok(true) = state.request_repo.mark_expired(&id, &now_str) {
                         info!(request_id = %id, "approval TTL expired");
-                        emit_audit(&state, "request.expired", &id);
-                        emit_webhook(&state, "request.expired", &id);
+                        emit_audit(&state, "request_expired", EventCategory::Approval, &id);
+                        emit_webhook(&state, "request_expired", &id);
                     }
                 }
             }
@@ -54,8 +54,8 @@ pub fn spawn_background_tasks(
                 for id in ids {
                     if let Ok(true) = state.request_repo.mark_expired(&id, &now_str) {
                         info!(request_id = %id, "pending TTL expired");
-                        emit_audit(&state, "request.expired", &id);
-                        emit_webhook(&state, "request.expired", &id);
+                        emit_audit(&state, "request_expired", EventCategory::Approval, &id);
+                        emit_webhook(&state, "request_expired", &id);
                     }
                 }
             }
@@ -65,7 +65,7 @@ pub fn spawn_background_tasks(
                 for id in ids {
                     if let Ok(true) = state.request_repo.mark_approved_from_dispatched(&id, &now_str) {
                         info!(request_id = %id, "dispatch timeout, reverted to approved");
-                        emit_audit(&state, "request.dispatch_timeout", &id);
+                        emit_audit(&state, "dispatch_timeout", EventCategory::Approval, &id);
                     }
                 }
             }
@@ -101,12 +101,12 @@ pub fn spawn_background_tasks(
     })
 }
 
-fn emit_audit(state: &AppState, event_type: &str, request_id: &str) {
+fn emit_audit(state: &AppState, event_type: &str, category: EventCategory, request_id: &str) {
     let mut event = AuditEvent::simple(event_type, "approval", "system", Some(request_id));
     event.actor_type = ActorType::System;
     event.request_id = Some(request_id.to_string());
     event.outcome = EventOutcome::Success;
-    event.event_category = EventCategory::Approval;
+    event.event_category = category;
     let _ = state.audit_logger.record(&event);
 }
 
