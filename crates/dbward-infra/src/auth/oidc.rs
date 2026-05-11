@@ -84,6 +84,7 @@ impl OidcVerifier {
         let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
         validation.set_audience(&[&self.client_id]);
         validation.set_issuer(&[&self.issuer]);
+        validation.leeway = 30;
 
         let mut last_err = String::new();
         let mut had_non_signature_error = false;

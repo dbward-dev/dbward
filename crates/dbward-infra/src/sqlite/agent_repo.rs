@@ -293,6 +293,35 @@ impl AgentRepo for SqliteAgentRepo {
         tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(updated > 0)
     }
+
+    fn find_expired_leases(&self, now: &str) -> Result<Vec<(String, String)>, AppError> {
+        let conn = self.conn.blocking_lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, request_id FROM executions WHERE status IN ('claimed', 'running') AND lease_expires_at < datetime(?1)"
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        let rows = stmt.query_map(rusqlite::params![now], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }).map_err(|e| AppError::Internal(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| AppError::Internal(e.to_string()))
+    }
+
+    fn mark_execution_lost(&self, execution_id: &str, request_id: &str, now: &str) -> Result<bool, AppError> {
+        let conn = self.conn.blocking_lock();
+        let tx = conn.unchecked_transaction().map_err(|e| AppError::Internal(e.to_string()))?;
+        let n1 = tx.execute(
+            "UPDATE executions SET status = 'failed', finished_at = ?2 WHERE id = ?1 AND status IN ('claimed', 'running')",
+            rusqlite::params![execution_id, now],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        if n1 == 0 {
+            return Ok(false);
+        }
+        tx.execute(
+            "UPDATE requests SET status = 'execution_lost', updated_at = ?2 WHERE id = ?1 AND status IN ('dispatched', 'running')",
+            rusqlite::params![request_id, now],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(true)
+    }
 }
 
 // --- helpers ---

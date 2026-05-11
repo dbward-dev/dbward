@@ -79,4 +79,11 @@ impl ResultChannel for InMemoryResultChannel {
             Ok(None)
         }
     }
+
+    async fn notify_all(&self) {
+        let slots = self.slots.lock().await;
+        for slot in slots.values() {
+            slot.notify.notify_waiters();
+        }
+    }
 }

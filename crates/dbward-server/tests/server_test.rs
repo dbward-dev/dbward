@@ -83,6 +83,14 @@ impl RequestRepo for StubRequestRepo {
     fn mark_executed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn cancel_all_for_user(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError> { Ok(0) }
+    fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+    fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+    fn find_stale_dispatched(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+    fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+    fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+    fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+    fn count_by_status(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+    fn wal_checkpoint(&self) -> Result<(), AppError> { Ok(()) }
 }
 
 struct StubAgentRepo;
@@ -99,6 +107,8 @@ impl AgentRepo for StubAgentRepo {
     fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> { Ok(vec![]) }
     fn claim_and_mark_running(&self, _: &Execution, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn complete_execution(&self, _: &str, _: &str, _: bool, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+    fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
+    fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
 }
 
 struct StubUserRepo;
@@ -120,6 +130,7 @@ impl TokenRepo for StubTokenRepo {
     fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn revoke_all_for_user(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError> { Ok(0) }
     fn count_active(&self) -> Result<u32, AppError> { Ok(0) }
+    fn purge_revoked(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
 }
 
 struct StubWebhookRepo;
@@ -166,6 +177,7 @@ impl AuditRepo for StubAuditRepo {
     fn verify_chain(&self) -> Result<AuditVerifyResult, AppError> {
         Ok(AuditVerifyResult { total_events: 0, first_broken_id: None })
     }
+    fn purge_old(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
 }
 
 struct StubPolicyEvaluator;
@@ -188,6 +200,7 @@ impl ResultChannel for StubResultChannel {
     async fn create_slot(&self, _: &str) {}
     async fn publish(&self, _: &str, _: ResultSummary) {}
     async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> { Ok(None) }
+    async fn notify_all(&self) {}
 }
 
 struct StubTokenSigner;
@@ -254,6 +267,7 @@ fn test_state() -> AppState {
         license_checker: Arc::new(StubLicenseChecker),
         clock: Arc::new(StubClock),
         id_generator: Arc::new(StubIdGenerator),
+        draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }
 }
 

@@ -214,6 +214,15 @@ impl AuditRepo for SqliteAuditRepo {
 
         Ok(AuditVerifyResult { total_events: total, first_broken_id: None })
     }
+
+    fn purge_old(&self, before: &str) -> Result<u32, AppError> {
+        let conn = self.conn.blocking_lock();
+        let n = conn.execute(
+            "DELETE FROM audit_events WHERE created_at < ?1",
+            rusqlite::params![before],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(n as u32)
+    }
 }
 
 fn category_str(c: EventCategory) -> &'static str {

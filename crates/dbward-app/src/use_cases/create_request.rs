@@ -264,6 +264,14 @@ mod tests {
         fn mark_executed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn cancel_all_for_user(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError> { Ok(0) }
+        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn find_stale_dispatched(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+        fn count_by_status(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+        fn wal_checkpoint(&self) -> Result<(), AppError> { Ok(()) }
     }
 
     struct FakeDbRegistry;

@@ -31,6 +31,12 @@ fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
     (status, Json(serde_json::json!({"error": message, "code": code})))
 }
 
+async fn version_header(response: axum::response::Response) -> axum::response::Response {
+    let mut response = response;
+    response.headers_mut().insert("x-dbward-version", "0.1.0".parse().unwrap());
+    response
+}
+
 pub fn build_router(state: AppState) -> Router {
     let authed = Router::new()
         // Requests
@@ -81,4 +87,5 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state);
 
     public.merge(authed)
+        .layer(middleware::map_response(version_header))
 }

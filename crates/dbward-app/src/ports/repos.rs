@@ -30,6 +30,16 @@ pub trait RequestRepo: Send + Sync {
     fn mark_executed(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_failed(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn cancel_all_for_user(&self, user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError>;
+
+    // Background task methods
+    fn find_expired_approved(&self, now: &str) -> Result<Vec<String>, AppError>;
+    fn find_expired_pending(&self, now: &str) -> Result<Vec<String>, AppError>;
+    fn find_stale_dispatched(&self, threshold: &str) -> Result<Vec<String>, AppError>;
+    fn mark_expired(&self, id: &str, now: &str) -> Result<bool, AppError>;
+    fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError>;
+    fn purge_old_requests(&self, before: &str) -> Result<u32, AppError>;
+    fn count_by_status(&self, status: &str) -> Result<u32, AppError>;
+    fn wal_checkpoint(&self) -> Result<(), AppError>;
 }
 
 // --- AgentRepo ---
@@ -62,6 +72,10 @@ pub trait AgentRepo: Send + Sync {
         success: bool,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError>;
+
+    // Background task methods
+    fn find_expired_leases(&self, now: &str) -> Result<Vec<(String, String)>, AppError>;
+    fn mark_execution_lost(&self, execution_id: &str, request_id: &str, now: &str) -> Result<bool, AppError>;
 }
 
 // --- UserRepo ---
@@ -85,6 +99,7 @@ pub trait TokenRepo: Send + Sync {
     fn revoke(&self, token_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn revoke_all_for_user(&self, subject_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError>;
     fn count_active(&self) -> Result<u32, AppError>;
+    fn purge_revoked(&self, before: &str) -> Result<u32, AppError>;
 }
 
 // --- WebhookRepo ---
@@ -115,6 +130,7 @@ pub trait AuditLogger: Send + Sync {
 pub trait AuditRepo: Send + Sync {
     fn list(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, AppError>;
     fn verify_chain(&self) -> Result<AuditVerifyResult, AppError>;
+    fn purge_old(&self, before: &str) -> Result<u32, AppError>;
 }
 
 pub struct AuditFilter {
@@ -173,6 +189,7 @@ pub trait ResultChannel: Send + Sync {
     async fn create_slot(&self, request_id: &str);
     async fn publish(&self, request_id: &str, summary: ResultSummary);
     async fn subscribe(&self, request_id: &str, timeout_secs: u64) -> Result<Option<ResultSummary>, AppError>;
+    async fn notify_all(&self);
 }
 
 // --- SsrfValidator (UC-15 webhook URL validation) ---

@@ -40,6 +40,10 @@ pub async fn create(
     Extension(user): Extension<AuthUser>,
     Json(body): Json<serde_json::Value>,
 ) -> ApiResult {
+    if state.draining.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "server_shutting_down", "code": "service_unavailable"}))));
+    }
+
     let database = body["database"].as_str().unwrap_or_default();
     let environment = body["environment"].as_str().unwrap_or_default();
     let detail = body["detail"].as_str().unwrap_or_default();
@@ -253,6 +257,7 @@ pub async fn dispatch(
         authorizer: state.authorizer.clone(),
         policy: state.policy_evaluator.clone(),
         request_repo: state.request_repo.clone(),
+        result_channel: state.result_channel.clone(),
         event_dispatcher: state.event_dispatcher.clone(),
         clock: state.clock.clone(),
     };

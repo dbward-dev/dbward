@@ -97,6 +97,15 @@ impl TokenRepo for SqliteTokenRepo {
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(count)
     }
+
+    fn purge_revoked(&self, before: &str) -> Result<u32, AppError> {
+        let conn = self.conn.blocking_lock();
+        let n = conn.execute(
+            "DELETE FROM tokens WHERE status = 'revoked' AND revoked_at < ?1",
+            rusqlite::params![before],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(n as u32)
+    }
 }
 
 fn subject_type_str(s: SubjectType) -> &'static str {

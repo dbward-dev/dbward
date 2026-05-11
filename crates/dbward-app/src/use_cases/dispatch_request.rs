@@ -11,6 +11,7 @@ pub struct DispatchRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub policy: Arc<dyn PolicyEvaluator>,
     pub request_repo: Arc<dyn RequestRepo>,
+    pub result_channel: Arc<dyn ResultChannel>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
 }
@@ -98,6 +99,13 @@ impl DispatchRequest {
             return Err(AppError::Conflict("concurrent status change".into()));
         }
 
+        // Pre-create result slot so subscribers can wait before agent completes
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let rc = self.result_channel.clone();
+            let rid = request.id.clone();
+            handle.spawn(async move { rc.create_slot(&rid).await });
+        }
+
         result.commit(&*self.event_dispatcher);
 
         Ok(DispatchRequestOutput {
@@ -119,6 +127,7 @@ mod tests {
     use chrono::{DateTime, Utc};
     use std::sync::Mutex;
     use crate::error::AuthzError;
+    use async_trait::async_trait;
 
     struct AllowAll;
     impl Authorizer for AllowAll {
@@ -132,6 +141,15 @@ mod tests {
     impl PolicyEvaluator for FakePolicy {
         fn evaluate_workflow(&self, _: &DatabaseName, _: &Environment, _: Operation) -> Result<Option<dbward_domain::policies::Workflow>, AppError> { Ok(None) }
         fn get_execution_policy(&self, _: &DatabaseName, _: &Environment) -> dbward_domain::policies::ExecutionPolicy { Default::default() }
+    }
+
+    struct FakeResultChannel;
+    #[async_trait]
+    impl ResultChannel for FakeResultChannel {
+        async fn create_slot(&self, _: &str) {}
+        async fn publish(&self, _: &str, _: dbward_domain::values::ResultSummary) {}
+        async fn subscribe(&self, _: &str, _: u64) -> Result<Option<dbward_domain::values::ResultSummary>, AppError> { Ok(None) }
+        async fn notify_all(&self) {}
     }
 
     struct FakeRepo { request: Mutex<Option<Request>>, dispatched: Mutex<bool> }
@@ -153,6 +171,14 @@ mod tests {
         fn mark_executed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn cancel_all_for_user(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError> { Ok(0) }
+        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn find_stale_dispatched(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+        fn count_by_status(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+        fn wal_checkpoint(&self) -> Result<(), AppError> { Ok(()) }
     }
 
     fn make_request(status: RequestStatus) -> Request {
@@ -171,7 +197,7 @@ mod tests {
     #[test]
     fn dispatch_approved_succeeds() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::Approved))), dispatched: Mutex::new(false) });
-        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
+        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), result_channel: Arc::new(FakeResultChannel), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         let out = uc.execute(DispatchRequestInput { request_id: "req-001".into() }, &user).unwrap();
@@ -182,7 +208,7 @@ mod tests {
     #[test]
     fn dispatch_pending_fails() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::Pending))), dispatched: Mutex::new(false) });
-        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
+        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), result_channel: Arc::new(FakeResultChannel), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         assert!(matches!(uc.execute(DispatchRequestInput { request_id: "req-001".into() }, &user), Err(AppError::Conflict(_))));
@@ -191,7 +217,7 @@ mod tests {
     #[test]
     fn dispatch_break_glass_succeeds() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::BreakGlass))), dispatched: Mutex::new(false) });
-        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
+        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), result_channel: Arc::new(FakeResultChannel), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         let out = uc.execute(DispatchRequestInput { request_id: "req-001".into() }, &user).unwrap();

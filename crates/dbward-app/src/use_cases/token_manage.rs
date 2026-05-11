@@ -187,6 +187,7 @@ mod tests {
         fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn revoke_all_for_user(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError> { Ok(0) }
         fn count_active(&self) -> Result<u32, AppError> { Ok(self.count) }
+        fn purge_revoked(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
     }
     struct FakeUserRepo;
     impl UserRepo for FakeUserRepo {

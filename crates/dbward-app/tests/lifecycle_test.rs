@@ -2,6 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 
 use dbward_domain::auth::{AuthUser, Permission, ResolvedRole, ResourceContext, SubjectType};
@@ -148,6 +149,14 @@ impl RequestRepo for SharedRepo {
         }
     }
     fn cancel_all_for_user(&self, _: &str, _: DateTime<Utc>) -> Result<u32, AppError> { Ok(0) }
+    fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+    fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+    fn find_stale_dispatched(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+    fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+    fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+    fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+    fn count_by_status(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+    fn wal_checkpoint(&self) -> Result<(), AppError> { Ok(()) }
 }
 
 struct AllowAll;
@@ -295,6 +304,15 @@ impl EventDispatcher for RecordingDispatcher {
     }
 }
 
+struct FakeResultChannel;
+#[async_trait]
+impl ResultChannel for FakeResultChannel {
+    async fn create_slot(&self, _: &str) {}
+    async fn publish(&self, _: &str, _: ResultSummary) {}
+    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> { Ok(None) }
+    async fn notify_all(&self) {}
+}
+
 struct TestHarness {
     repo: Arc<SharedRepo>,
     clock: Arc<FakeClock>,
@@ -303,6 +321,7 @@ struct TestHarness {
     policy: Arc<FakePolicy>,
     event_dispatcher: Arc<RecordingDispatcher>,
     db_registry: Arc<dyn DatabaseRegistry>,
+    result_channel: Arc<dyn ResultChannel>,
 }
 
 impl TestHarness {
@@ -315,6 +334,7 @@ impl TestHarness {
             policy: Arc::new(FakePolicy { workflow, exec_policy: ExecutionPolicy::default() }),
             event_dispatcher: Arc::new(RecordingDispatcher::new()),
             db_registry: Arc::new(FakeDbRegistry),
+            result_channel: Arc::new(FakeResultChannel),
         }
     }
 
@@ -369,6 +389,7 @@ impl TestHarness {
             authorizer: self.authorizer.clone(),
             policy: self.policy.clone(),
             request_repo: self.repo.clone(),
+            result_channel: self.result_channel.clone(),
             event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
         }
@@ -687,6 +708,8 @@ impl AgentRepo for SharedAgentRepo {
             Ok(false)
         }
     }
+    fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
+    fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
 }
 
 struct FakeTokenSigner;

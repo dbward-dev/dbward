@@ -44,6 +44,10 @@ pub async fn poll(
     Extension(user): Extension<AuthUser>,
     Json(body): Json<PollBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    if state.draining.load(std::sync::atomic::Ordering::SeqCst) {
+        return Ok((StatusCode::OK, Json(serde_json::json!({"jobs": []}))));
+    }
+
     require_agent(&user)?;
     let uc = AgentPoll {
         authorizer: state.authorizer.clone(),
@@ -77,6 +81,10 @@ pub async fn claim(
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
+
+    if state.draining.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err((StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": "server_shutting_down"}))));
+    }
 
     // Fetch agent's registered capabilities
     let agent = state.agent_repo.get(&user.subject_id)

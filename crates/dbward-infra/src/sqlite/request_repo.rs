@@ -455,6 +455,76 @@ impl RequestRepo for SqliteRequestRepo {
             .map_err(map_err)?;
         Ok(affected as u32)
     }
+
+    fn find_expired_approved(&self, now: &str) -> Result<Vec<String>, AppError> {
+        let conn = self.conn.blocking_lock();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM requests WHERE status = 'approved' AND datetime(updated_at, '+86400 seconds') < datetime(?1)"
+        ).map_err(map_err)?;
+        let rows = stmt.query_map(params![now], |row| row.get(0)).map_err(map_err)?;
+        rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
+    }
+
+    fn find_expired_pending(&self, now: &str) -> Result<Vec<String>, AppError> {
+        let conn = self.conn.blocking_lock();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM requests WHERE status = 'pending' AND datetime(created_at, '+604800 seconds') < datetime(?1)"
+        ).map_err(map_err)?;
+        let rows = stmt.query_map(params![now], |row| row.get(0)).map_err(map_err)?;
+        rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
+    }
+
+    fn find_stale_dispatched(&self, threshold: &str) -> Result<Vec<String>, AppError> {
+        let conn = self.conn.blocking_lock();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM requests WHERE status = 'dispatched' AND datetime(updated_at, '+300 seconds') < datetime(?1)"
+        ).map_err(map_err)?;
+        let rows = stmt.query_map(params![threshold], |row| row.get(0)).map_err(map_err)?;
+        rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
+    }
+
+    fn mark_expired(&self, id: &str, now: &str) -> Result<bool, AppError> {
+        let conn = self.conn.blocking_lock();
+        let n = conn.execute(
+            "UPDATE requests SET status = 'expired', updated_at = ?2 WHERE id = ?1 AND status IN ('approved', 'pending')",
+            params![id, now],
+        ).map_err(map_err)?;
+        Ok(n > 0)
+    }
+
+    fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError> {
+        let conn = self.conn.blocking_lock();
+        let n = conn.execute(
+            "UPDATE requests SET status = 'approved', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
+            params![id, now],
+        ).map_err(map_err)?;
+        Ok(n > 0)
+    }
+
+    fn purge_old_requests(&self, before: &str) -> Result<u32, AppError> {
+        let conn = self.conn.blocking_lock();
+        let n = conn.execute(
+            "DELETE FROM requests WHERE status IN ('executed', 'failed', 'expired', 'cancelled') AND updated_at < ?1",
+            params![before],
+        ).map_err(map_err)?;
+        Ok(n as u32)
+    }
+
+    fn count_by_status(&self, status: &str) -> Result<u32, AppError> {
+        let conn = self.conn.blocking_lock();
+        let count: u32 = conn.query_row(
+            "SELECT COUNT(*) FROM requests WHERE status = ?1",
+            params![status],
+            |row| row.get(0),
+        ).map_err(map_err)?;
+        Ok(count)
+    }
+
+    fn wal_checkpoint(&self) -> Result<(), AppError> {
+        let conn = self.conn.blocking_lock();
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").map_err(map_err)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

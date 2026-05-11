@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use dbward_app::ports::{
     AgentRepo, AuditLogger, AuditRepo, Authorizer, Clock, DatabaseRegistry, EventDispatcher,
@@ -34,4 +35,6 @@ pub struct AppState {
     pub license_checker: Arc<dyn LicenseChecker>,
     pub clock: Arc<dyn Clock>,
     pub id_generator: Arc<dyn IdGenerator>,
+    // Shutdown
+    pub draining: Arc<AtomicBool>,
 }
