@@ -9,7 +9,9 @@ use crate::ports::*;
 pub struct GetResult {
     pub authorizer: Arc<dyn Authorizer>,
     pub request_repo: Arc<dyn RequestRepo>,
+    pub agent_repo: Arc<dyn AgentRepo>,
     pub result_store: Arc<dyn ResultStore>,
+    pub clock: Arc<dyn Clock>,
 }
 
 pub struct GetResultInput {
@@ -35,7 +37,7 @@ impl GetResult {
             return Err(AppError::Gone("result was not stored (no_store)".into()));
         }
 
-        // Authorization: scoped to DB+env, resource context for access control
+        // Authorization: scoped to DB+env
         self.authorizer.authorize_scoped(
             user,
             Permission::ResultView,
@@ -47,8 +49,23 @@ impl GetResult {
             },
         ).map_err(AppError::Forbidden)?;
 
+        // Find latest execution for this request
+        let executions = self.agent_repo.find_executions_for_request(&input.request_id)?;
+        let execution = executions.into_iter()
+            .filter(|e| e.status == dbward_domain::entities::ExecutionStatus::Completed)
+            .last()
+            .ok_or_else(|| AppError::NotFound("no completed execution found".into()))?;
+
+        // Retention check (30 days default)
+        if let Some(expires_at) = execution.finished_at {
+            let retention = chrono::Duration::days(30);
+            if self.clock.now() > expires_at + retention {
+                return Err(AppError::Gone("result expired (retention period exceeded)".into()));
+            }
+        }
+
         // Fetch from store
-        let key = format!("results/{}.json", input.request_id);
+        let key = format!("results/{}/{}", input.request_id, execution.id);
         let data = self.result_store.get(&key).await
             .map_err(|_| AppError::NotFound("result not found in storage".into()))?;
 

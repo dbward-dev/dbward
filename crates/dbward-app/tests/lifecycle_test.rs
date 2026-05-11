@@ -631,6 +631,9 @@ impl AgentRepo for SharedAgentRepo {
     fn has_running_migration(&self, _: &DatabaseName, _: &Environment, _: &str) -> Result<bool, AppError> {
         Ok(false)
     }
+    fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> {
+        Ok(vec![])
+    }
 }
 
 struct FakeTokenSigner;

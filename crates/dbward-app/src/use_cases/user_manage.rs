@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission};
-use dbward_domain::entities::RequestStatus;
+use dbward_domain::entities::{AuditEvent, RequestStatus};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -55,6 +55,9 @@ impl UserManage {
 
         // Cancel pending/approved/dispatched requests
         let cancelled_requests = self.request_repo.cancel_all_for_user(&input.user_id, now)?;
+
+        // Audit
+        self.audit.record(&AuditEvent::simple("user_disabled", "identity", &user.subject_id, Some(&input.user_id)))?;
 
         Ok(UserSuspendOutput {
             id: input.user_id,

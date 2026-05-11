@@ -37,6 +37,7 @@ pub trait AgentRepo: Send + Sync {
     fn extend_lease(&self, execution_id: &str, new_expiry: chrono::DateTime<chrono::Utc>) -> Result<(), AppError>;
     fn find_dispatched_jobs(&self, databases: &[(DatabaseName, Environment)]) -> Result<Vec<Request>, AppError>;
     fn has_running_migration(&self, db: &DatabaseName, env: &Environment, exclude_request_id: &str) -> Result<bool, AppError>;
+    fn find_executions_for_request(&self, request_id: &str) -> Result<Vec<Execution>, AppError>;
 }
 
 // --- UserRepo ---
@@ -145,6 +146,12 @@ pub trait LicenseChecker: Send + Sync {
 #[async_trait]
 pub trait ResultChannel: Send + Sync {
     async fn subscribe(&self, request_id: &str, timeout_secs: u64) -> Result<Option<Vec<u8>>, AppError>;
+}
+
+// --- SsrfValidator (UC-15 webhook URL validation) ---
+
+pub trait SsrfValidator: Send + Sync {
+    fn validate_url(&self, url: &str) -> Result<(), AppError>;
 }
 
 // --- ResultStore ---

@@ -110,6 +110,11 @@ impl TokenManage {
         };
         self.token_repo.create(&token)?;
 
+        // Audit
+        self.audit.record(&dbward_domain::entities::AuditEvent::simple(
+            "token_created", "token", &user.subject_id, Some(&id),
+        ))?;
+
         Ok(TokenCreateOutput { id, token: raw, prefix, subject_id: input.subject_id })
     }
 
@@ -124,14 +129,22 @@ impl TokenManage {
         let token = self.token_repo.get(&input.token_id)?
             .ok_or_else(|| AppError::NotFound("token not found".into()))?;
 
-        // Owner can revoke own token; otherwise need TokenManage
-        if token.subject_id != user.subject_id {
+        // Owner can revoke own token with token.revoke_own; otherwise need TokenManage
+        if token.subject_id == user.subject_id {
+            self.authorizer.authorize_global(user, Permission::TokenRevokeOwn)
+                .map_err(AppError::Forbidden)?;
+        } else {
             self.authorizer.authorize_global(user, Permission::TokenManage)
                 .map_err(AppError::Forbidden)?;
         }
 
         let now = self.clock.now();
         self.token_repo.revoke(&input.token_id, now)?;
+
+        // Audit
+        self.audit.record(&dbward_domain::entities::AuditEvent::simple(
+            "token_revoked", "token", &user.subject_id, Some(&input.token_id),
+        ))?;
 
         Ok(TokenRevokeOutput { id: input.token_id, revoked_at: now })
     }

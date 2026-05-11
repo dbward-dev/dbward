@@ -39,7 +39,15 @@ impl AuditQuery {
             filter.actor_id = Some(user.subject_id.clone());
         }
 
-        let events = self.audit_repo.list(&filter)?;
+        let mut events = self.audit_repo.list(&filter)?;
+
+        // Redact detail_raw for non-admin viewers
+        if !has_view_all {
+            for event in &mut events {
+                event.detail_raw = None;
+            }
+        }
+
         Ok(AuditListOutput { events })
     }
 

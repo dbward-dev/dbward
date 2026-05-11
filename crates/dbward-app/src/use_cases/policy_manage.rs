@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, RoleDefinition};
+use dbward_domain::entities::AuditEvent;
 use dbward_domain::policies::{ExecutionPolicy, Workflow};
 
 use crate::error::AppError;
@@ -24,6 +25,7 @@ impl PolicyManage {
             return Err(AppError::PlanLimit("workflow limit reached".into()));
         }
         self.policy_repo.create_workflow(&wf)?;
+        self.audit.record(&AuditEvent::simple("policy_created", "policy", &user.subject_id, Some(&wf.id)))?;
         Ok(wf)
     }
 
@@ -40,6 +42,7 @@ impl PolicyManage {
         if !deleted {
             return Err(AppError::NotFound("workflow not found".into()));
         }
+        self.audit.record(&AuditEvent::simple("policy_deleted", "policy", &user.subject_id, Some(id)))?;
         Ok(())
     }
 
@@ -49,6 +52,7 @@ impl PolicyManage {
         self.authorizer.authorize_global(user, Permission::PolicyManage)
             .map_err(AppError::Forbidden)?;
         self.policy_repo.create_execution_policy(&ep)?;
+        self.audit.record(&AuditEvent::simple("policy_created", "policy", &user.subject_id, None))?;
         Ok(ep)
     }
 
@@ -81,6 +85,7 @@ impl PolicyManage {
             return Err(AppError::PlanLimit("role limit reached".into()));
         }
         self.policy_repo.create_role(&role)?;
+        self.audit.record(&AuditEvent::simple("policy_created", "policy", &user.subject_id, Some(&role.name)))?;
         Ok(role)
     }
 
