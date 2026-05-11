@@ -177,7 +177,6 @@ impl CreateRequest {
 mod tests {
     use super::*;
     use dbward_domain::auth::{ResolvedRole, SubjectType};
-    use std::collections::HashSet;
 
     struct AllowAll;
     impl Authorizer for AllowAll {

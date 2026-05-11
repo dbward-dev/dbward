@@ -166,10 +166,8 @@ impl TokenManage {
 mod tests {
     use super::*;
     use dbward_domain::auth::{Permission, RoleDefinition, SubjectType};
-    use dbward_domain::entities::{Token, TokenStatus};
-    use dbward_domain::services::status_machine::TransitionEvent;
+    use dbward_domain::entities::Token;
     use crate::error::AuthzError;
-    use std::sync::Mutex;
 
     struct AllowAll;
     impl Authorizer for AllowAll {

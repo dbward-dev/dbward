@@ -5,6 +5,7 @@ use dbward_domain::entities::{Approval, ApprovalAction, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
 use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 
+#[allow(unused_imports)]
 use crate::error::{AppError, AuthzError};
 use crate::ports::*;
 
@@ -146,7 +147,7 @@ mod tests {
     use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
     struct NoopDispatcher;
     impl EventDispatcher for NoopDispatcher { fn dispatch(&self, _: TransitionEvent) {} }
-    use dbward_domain::auth::{ResolvedRole, SubjectType};
+    use dbward_domain::auth::SubjectType;
     use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
     use dbward_domain::entities::Request;
     use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};

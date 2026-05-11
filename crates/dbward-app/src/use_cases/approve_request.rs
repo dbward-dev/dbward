@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
-use dbward_domain::entities::{Approval, ApprovalAction, Request, RequestStatus};
+use dbward_domain::entities::{Approval, ApprovalAction, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
 use dbward_domain::services::{approval_checker, workflow_matcher};
 use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
@@ -211,6 +211,7 @@ fn find_matched_selector(user: &AuthUser, approvers: &[dbward_domain::policies::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dbward_domain::entities::Request;
     use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
     struct NoopDispatcher;
     impl EventDispatcher for NoopDispatcher { fn dispatch(&self, _: TransitionEvent) {} }
@@ -218,7 +219,6 @@ mod tests {
     use dbward_domain::auth::{ResolvedRole, SubjectType};
     use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
     use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
-    use std::collections::HashSet;
     use std::sync::Mutex;
 
     struct AllowAll;

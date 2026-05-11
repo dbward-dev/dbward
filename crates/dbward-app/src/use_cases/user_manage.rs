@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission};
-use dbward_domain::entities::{AuditEvent, RequestStatus};
+use dbward_domain::entities::AuditEvent;
 
 use crate::error::AppError;
 use crate::ports::*;
