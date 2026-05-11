@@ -49,11 +49,11 @@ impl GetResult {
             },
         ).map_err(AppError::Forbidden)?;
 
-        // Find latest execution for this request
+        // Find latest completed execution (port contract: ordered by created_at ASC)
         let executions = self.agent_repo.find_executions_for_request(&input.request_id)?;
         let execution = executions.into_iter()
-            .filter(|e| e.status == dbward_domain::entities::ExecutionStatus::Completed)
-            .last()
+            .rev() // latest first
+            .find(|e| e.status == dbward_domain::entities::ExecutionStatus::Completed)
             .ok_or_else(|| AppError::NotFound("no completed execution found".into()))?;
 
         // Retention check (30 days default)

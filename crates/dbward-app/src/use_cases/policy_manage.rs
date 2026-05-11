@@ -51,6 +51,10 @@ impl PolicyManage {
     pub fn create_execution_policy(&self, ep: ExecutionPolicy, user: &AuthUser) -> Result<ExecutionPolicy, AppError> {
         self.authorizer.authorize_global(user, Permission::PolicyManage)
             .map_err(AppError::Forbidden)?;
+        let count = self.policy_repo.list_execution_policies()?.len() as u32;
+        if count >= 3 {
+            return Err(AppError::PlanLimit("execution policy limit reached".into()));
+        }
         self.policy_repo.create_execution_policy(&ep)?;
         self.audit.record(&AuditEvent::simple("policy_created", "policy", &user.subject_id, None))?;
         Ok(ep)

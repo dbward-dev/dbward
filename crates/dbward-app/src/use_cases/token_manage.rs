@@ -13,6 +13,7 @@ pub struct TokenManage {
     pub authorizer: Arc<dyn Authorizer>,
     pub token_repo: Arc<dyn TokenRepo>,
     pub user_repo: Arc<dyn UserRepo>,
+    pub policy_repo: Arc<dyn PolicyRepo>,
     pub license: Arc<dyn LicenseChecker>,
     pub audit: Arc<dyn AuditLogger>,
     pub clock: Arc<dyn Clock>,
@@ -75,6 +76,17 @@ impl TokenManage {
         // Suspended user check
         if self.user_repo.is_suspended(&input.subject_id)? {
             return Err(AppError::Conflict("cannot create token for suspended user".into()));
+        }
+
+        // Validate roles exist
+        if !input.roles.is_empty() {
+            let known_roles = self.policy_repo.list_roles()?;
+            let known_names: Vec<&str> = known_roles.iter().map(|r| r.name.as_str()).collect();
+            for role in &input.roles {
+                if !known_names.contains(&role.as_str()) && !matches!(role.as_str(), "admin" | "agent-default") {
+                    return Err(AppError::Validation(format!("unknown role: {}", role)));
+                }
+            }
         }
 
         // Free tier limit
@@ -147,5 +159,125 @@ impl TokenManage {
         ))?;
 
         Ok(TokenRevokeOutput { id: input.token_id, revoked_at: now })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dbward_domain::auth::{Permission, RoleDefinition, SubjectType};
+    use dbward_domain::entities::{Token, TokenStatus};
+    use dbward_domain::services::status_machine::TransitionEvent;
+    use crate::error::AuthzError;
+    use std::sync::Mutex;
+
+    struct AllowAll;
+    impl Authorizer for AllowAll {
+        fn authorize_scoped(&self, _: &dbward_domain::auth::AuthUser, _: Permission, _: &dbward_domain::values::DatabaseName, _: &dbward_domain::values::Environment, _: &dbward_domain::auth::ResourceContext) -> Result<(), AuthzError> { Ok(()) }
+        fn authorize_global(&self, _: &dbward_domain::auth::AuthUser, _: Permission) -> Result<(), AuthzError> { Ok(()) }
+    }
+    struct FakeClock;
+    impl Clock for FakeClock { fn now(&self) -> chrono::DateTime<chrono::Utc> { chrono::Utc::now() } }
+    struct FakeIdGen;
+    impl IdGenerator for FakeIdGen { fn generate(&self) -> String { "tok-1".into() } }
+    struct FakeTokenRepo { count: u32 }
+    impl TokenRepo for FakeTokenRepo {
+        fn create(&self, _: &Token) -> Result<(), AppError> { Ok(()) }
+        fn verify(&self, _: &str, _: &str) -> Result<Option<Token>, AppError> { Ok(None) }
+        fn list(&self) -> Result<Vec<Token>, AppError> { Ok(vec![]) }
+        fn get(&self, _: &str) -> Result<Option<Token>, AppError> { Ok(None) }
+        fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn revoke_all_for_user(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError> { Ok(0) }
+        fn count_active(&self) -> Result<u32, AppError> { Ok(self.count) }
+    }
+    struct FakeUserRepo;
+    impl UserRepo for FakeUserRepo {
+        fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> { Ok(None) }
+        fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> { Ok(()) }
+        fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> { Ok(vec![]) }
+        fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn activate(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn is_suspended(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+    }
+    struct FakePolicyRepo { roles: Vec<RoleDefinition> }
+    impl PolicyRepo for FakePolicyRepo {
+        fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> { Ok(()) }
+        fn get_workflow(&self, _: &str) -> Result<Option<dbward_domain::policies::Workflow>, AppError> { Ok(None) }
+        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError> { Ok(vec![]) }
+        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn count_workflows(&self) -> Result<u32, AppError> { Ok(0) }
+        fn create_execution_policy(&self, _: &dbward_domain::policies::ExecutionPolicy) -> Result<(), AppError> { Ok(()) }
+        fn get_execution_policy(&self, _: &str) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(None) }
+        fn list_execution_policies(&self) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(vec![]) }
+        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn create_role(&self, _: &RoleDefinition) -> Result<(), AppError> { Ok(()) }
+        fn list_roles(&self) -> Result<Vec<RoleDefinition>, AppError> { Ok(self.roles.clone()) }
+        fn delete_role(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn count_roles(&self) -> Result<u32, AppError> { Ok(0) }
+    }
+    struct FakeLicense;
+    impl LicenseChecker for FakeLicense {
+        fn max_tokens(&self) -> u32 { 10 }
+        fn max_workflows(&self) -> u32 { 5 }
+        fn max_webhooks(&self) -> u32 { 3 }
+        fn max_roles(&self) -> u32 { 8 }
+        fn is_pro(&self) -> bool { false }
+    }
+    struct FakeAudit;
+    impl AuditLogger for FakeAudit {
+        fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> { Ok(()) }
+    }
+
+    fn make_user() -> dbward_domain::auth::AuthUser {
+        dbward_domain::auth::AuthUser {
+            subject_id: "alice".into(),
+            subject_type: SubjectType::User,
+            roles: vec![],
+            groups: vec![],
+            token_id: None,
+        }
+    }
+
+    fn make_uc(roles: Vec<RoleDefinition>, token_count: u32) -> TokenManage {
+        TokenManage {
+            authorizer: Arc::new(AllowAll),
+            token_repo: Arc::new(FakeTokenRepo { count: token_count }),
+            user_repo: Arc::new(FakeUserRepo),
+            policy_repo: Arc::new(FakePolicyRepo { roles }),
+            license: Arc::new(FakeLicense),
+            audit: Arc::new(FakeAudit),
+            clock: Arc::new(FakeClock),
+            id_gen: Arc::new(FakeIdGen),
+        }
+    }
+
+    #[test]
+    fn create_rejects_unknown_role() {
+        let uc = make_uc(vec![RoleDefinition { name: "dba".into(), permissions: vec![], databases: vec![], environments: vec![] }], 0);
+        let result = uc.create(TokenCreateInput {
+            subject_id: "bob".into(), subject_type: "user".into(),
+            name: None, roles: vec!["nonexistent".into()], groups: vec![], expires_at: None,
+        }, &make_user());
+        assert!(matches!(result, Err(AppError::Validation(_))));
+    }
+
+    #[test]
+    fn create_accepts_known_role() {
+        let uc = make_uc(vec![RoleDefinition { name: "dba".into(), permissions: vec![], databases: vec![], environments: vec![] }], 0);
+        let result = uc.create(TokenCreateInput {
+            subject_id: "bob".into(), subject_type: "user".into(),
+            name: None, roles: vec!["dba".into()], groups: vec![], expires_at: None,
+        }, &make_user());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn create_rejects_at_free_limit() {
+        let uc = make_uc(vec![], 10); // already at limit
+        let result = uc.create(TokenCreateInput {
+            subject_id: "bob".into(), subject_type: "user".into(),
+            name: None, roles: vec![], groups: vec![], expires_at: None,
+        }, &make_user());
+        assert!(matches!(result, Err(AppError::PlanLimit(_))));
     }
 }

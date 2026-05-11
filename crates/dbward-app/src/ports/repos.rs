@@ -37,6 +37,7 @@ pub trait AgentRepo: Send + Sync {
     fn extend_lease(&self, execution_id: &str, new_expiry: chrono::DateTime<chrono::Utc>) -> Result<(), AppError>;
     fn find_dispatched_jobs(&self, databases: &[(DatabaseName, Environment)]) -> Result<Vec<Request>, AppError>;
     fn has_running_migration(&self, db: &DatabaseName, env: &Environment, exclude_request_id: &str) -> Result<bool, AppError>;
+    /// Returns executions ordered by created_at ASC (oldest first).
     fn find_executions_for_request(&self, request_id: &str) -> Result<Vec<Execution>, AppError>;
 }
 
