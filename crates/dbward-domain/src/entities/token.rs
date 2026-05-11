@@ -1,14 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::values::Role;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SubjectType {
-    User,
-    Agent,
-}
+use crate::auth::SubjectType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -24,7 +17,7 @@ pub struct Token {
     pub subject_id: String,
     pub token_hash: String,
     pub token_prefix: String,
-    pub role: Role,
+    pub roles: Vec<String>,
     pub groups: Vec<String>,
     pub name: Option<String>,
     pub status: TokenStatus,

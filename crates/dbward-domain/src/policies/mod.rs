@@ -1,10 +1,8 @@
-mod access;
 mod execution;
 mod notification;
 mod result;
-mod workflow;
+pub mod workflow;
 
-pub use access::AccessPolicy;
 pub use execution::ExecutionPolicy;
 pub use notification::NotificationPolicy;
 pub use result::ResultPolicy;

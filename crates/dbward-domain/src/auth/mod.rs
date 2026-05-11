@@ -1,15 +1,40 @@
+pub mod permission;
+pub mod resolved_role;
+pub mod resource_context;
+pub mod role_definition;
+
 use serde::{Deserialize, Serialize};
 
-use crate::values::Role;
+pub use permission::Permission;
+pub use resolved_role::ResolvedRole;
+pub use resource_context::ResourceContext;
+pub use role_definition::RoleDefinition;
 
-/// Authenticated principal. Constructed after token/OIDC verification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Authenticated principal. Constructed by middleware after token/OIDC verification + role resolution.
+#[derive(Debug, Clone)]
 pub struct AuthUser {
     pub subject_id: String,
     pub subject_type: SubjectType,
-    pub role: Role,
+    pub roles: Vec<ResolvedRole>,
     pub groups: Vec<String>,
     pub token_id: Option<String>,
+}
+
+impl AuthUser {
+    /// Whether any of the user's roles grants the given permission on the given db+env.
+    pub fn has_scoped_permission(
+        &self,
+        perm: Permission,
+        db: &crate::values::DatabaseName,
+        env: &crate::values::Environment,
+    ) -> bool {
+        self.roles.iter().any(|r| r.allows(perm, db, env))
+    }
+
+    /// Whether any of the user's roles grants the given permission (ignoring scope).
+    pub fn has_permission(&self, perm: Permission) -> bool {
+        self.roles.iter().any(|r| r.has_permission(perm))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,48 +42,4 @@ pub struct AuthUser {
 pub enum SubjectType {
     User,
     Agent,
-}
-
-/// What the user is trying to do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Action {
-    CreateRequest,
-    ApproveRequest,
-    RejectRequest,
-    DispatchRequest,
-    CancelRequest,
-    ReadResult,
-    AgentPoll,
-    AgentClaim,
-    AgentSubmitResult,
-    ManageToken,
-    ManageUsers,
-    ManageWebhook,
-    CreatePolicy,
-    UpdatePolicy,
-    DeletePolicy,
-    ListAudit,
-    ListRequests,
-}
-
-/// The resource being acted upon.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Resource {
-    Global,
-    Request {
-        requester_id: String,
-    },
-    ApprovalStep {
-        request_id: String,
-        step_index: u32,
-    },
-    AgentExecution {
-        agent_id: String,
-    },
-    Result {
-        requester_id: String,
-    },
-    AuditQuery {
-        actor_id: Option<String>,
-    },
 }

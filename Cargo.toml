@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/dbward-domain",
+    "crates/dbward-app",
     "crates/dbward-core",
     "crates/dbward-api-types",
     "crates/dbward-migrate",
