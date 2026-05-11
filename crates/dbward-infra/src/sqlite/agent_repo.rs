@@ -297,7 +297,7 @@ impl AgentRepo for SqliteAgentRepo {
     fn find_expired_leases(&self, now: &str) -> Result<Vec<(String, String)>, AppError> {
         let conn = self.conn.blocking_lock();
         let mut stmt = conn.prepare(
-            "SELECT id, request_id FROM executions WHERE status IN ('claimed', 'running') AND lease_expires_at < datetime(?1)"
+            "SELECT id, request_id FROM executions WHERE status IN ('claimed', 'running') AND datetime(lease_expires_at) < datetime(?1)"
         ).map_err(|e| AppError::Internal(e.to_string()))?;
         let rows = stmt.query_map(rusqlite::params![now], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))

@@ -5,6 +5,9 @@ use chrono::Duration;
 use tokio::time::{interval, Duration as TokioDuration};
 use tracing::info;
 
+use dbward_app::ports::WebhookEvent;
+use dbward_domain::entities::{ActorType, AuditEvent, EventCategory, EventOutcome};
+
 use crate::state::AppState;
 
 pub fn spawn_background_tasks(
@@ -29,6 +32,8 @@ pub fn spawn_background_tasks(
                 for (exec_id, req_id) in expired {
                     if let Ok(true) = state.agent_repo.mark_execution_lost(&exec_id, &req_id, &now_str) {
                         info!(execution_id = %exec_id, request_id = %req_id, "lease expired, marked execution_lost");
+                        emit_audit(&state, "request.execution_lost", &req_id);
+                        emit_webhook(&state, "request.execution_lost", &req_id);
                     }
                 }
             }
@@ -38,6 +43,8 @@ pub fn spawn_background_tasks(
                 for id in ids {
                     if let Ok(true) = state.request_repo.mark_expired(&id, &now_str) {
                         info!(request_id = %id, "approval TTL expired");
+                        emit_audit(&state, "request.expired", &id);
+                        emit_webhook(&state, "request.expired", &id);
                     }
                 }
             }
@@ -47,6 +54,8 @@ pub fn spawn_background_tasks(
                 for id in ids {
                     if let Ok(true) = state.request_repo.mark_expired(&id, &now_str) {
                         info!(request_id = %id, "pending TTL expired");
+                        emit_audit(&state, "request.expired", &id);
+                        emit_webhook(&state, "request.expired", &id);
                     }
                 }
             }
@@ -56,6 +65,7 @@ pub fn spawn_background_tasks(
                 for id in ids {
                     if let Ok(true) = state.request_repo.mark_approved_from_dispatched(&id, &now_str) {
                         info!(request_id = %id, "dispatch timeout, reverted to approved");
+                        emit_audit(&state, "request.dispatch_timeout", &id);
                     }
                 }
             }
@@ -86,9 +96,27 @@ pub fn spawn_background_tasks(
                 if let Err(e) = state.request_repo.wal_checkpoint() {
                     tracing::warn!(error = %e, "WAL checkpoint failed");
                 }
-
-                // TODO: result store expiry (requires list/delete-expired on ResultStore)
             }
         }
     })
+}
+
+fn emit_audit(state: &AppState, event_type: &str, request_id: &str) {
+    let mut event = AuditEvent::simple(event_type, "approval", "system", Some(request_id));
+    event.actor_type = ActorType::System;
+    event.request_id = Some(request_id.to_string());
+    event.outcome = EventOutcome::Success;
+    event.event_category = EventCategory::Approval;
+    let _ = state.audit_logger.record(&event);
+}
+
+fn emit_webhook(state: &AppState, event_type: &str, request_id: &str) {
+    state.notifier.dispatch(WebhookEvent {
+        event_type: event_type.to_string(),
+        request_id: Some(request_id.to_string()),
+        database: None,
+        environment: None,
+        actor: Some("system".to_string()),
+        detail: None,
+    });
 }

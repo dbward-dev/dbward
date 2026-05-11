@@ -459,7 +459,8 @@ impl RequestRepo for SqliteRequestRepo {
     fn find_expired_approved(&self, now: &str) -> Result<Vec<String>, AppError> {
         let conn = self.conn.blocking_lock();
         let mut stmt = conn.prepare(
-            "SELECT id FROM requests WHERE status = 'approved' AND datetime(updated_at, '+86400 seconds') < datetime(?1)"
+            "SELECT id FROM requests WHERE status = 'approved' \
+             AND datetime(updated_at, '+' || COALESCE(json_extract(workflow_snapshot_json, '$.approval_ttl_secs'), 86400) || ' seconds') < datetime(?1)"
         ).map_err(map_err)?;
         let rows = stmt.query_map(params![now], |row| row.get(0)).map_err(map_err)?;
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
@@ -468,7 +469,10 @@ impl RequestRepo for SqliteRequestRepo {
     fn find_expired_pending(&self, now: &str) -> Result<Vec<String>, AppError> {
         let conn = self.conn.blocking_lock();
         let mut stmt = conn.prepare(
-            "SELECT id FROM requests WHERE status = 'pending' AND datetime(created_at, '+604800 seconds') < datetime(?1)"
+            "SELECT id FROM requests WHERE status = 'pending' \
+             AND workflow_snapshot_json IS NOT NULL \
+             AND json_extract(workflow_snapshot_json, '$.pending_ttl_secs') IS NOT NULL \
+             AND datetime(created_at, '+' || json_extract(workflow_snapshot_json, '$.pending_ttl_secs') || ' seconds') < datetime(?1)"
         ).map_err(map_err)?;
         let rows = stmt.query_map(params![now], |row| row.get(0)).map_err(map_err)?;
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)

@@ -1110,3 +1110,209 @@ fn claim_and_mark_running_not_dispatched_rollback() {
     let fetched_req = request_repo.get("req-claim-fail").unwrap().unwrap();
     assert_eq!(fetched_req.status, RequestStatus::Running);
 }
+
+// --- 22. find_expired_approved: workflow-specific approval_ttl_secs ---
+
+#[test]
+fn find_expired_approved_with_workflow_ttl() {
+    let conn = setup();
+    register_db(&conn);
+
+    let repo = SqliteRequestRepo::new(conn.clone());
+    let two_min_ago = Utc::now() - chrono::Duration::seconds(120);
+    let req = Request {
+        id: "req-exp-appr".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteSelect,
+        detail: "SELECT 1".into(),
+        status: RequestStatus::Approved,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: Some(r#"{"approval_ttl_secs":60}"#.into()),
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: two_min_ago,
+        updated_at: two_min_ago,
+        resolved_at: None,
+        expires_at: None,
+    };
+    repo.insert(&req).unwrap();
+
+    let now = Utc::now().to_rfc3339();
+    let expired = repo.find_expired_approved(&now).unwrap();
+    assert!(expired.contains(&"req-exp-appr".to_string()));
+}
+
+// --- 23. find_expired_pending: workflow-specific pending_ttl_secs ---
+
+#[test]
+fn find_expired_pending_with_workflow_ttl() {
+    let conn = setup();
+    register_db(&conn);
+
+    let repo = SqliteRequestRepo::new(conn.clone());
+    let two_min_ago = Utc::now() - chrono::Duration::seconds(120);
+    let req = Request {
+        id: "req-exp-pend".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteSelect,
+        detail: "SELECT 1".into(),
+        status: RequestStatus::Pending,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: Some(r#"{"pending_ttl_secs":60}"#.into()),
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: two_min_ago,
+        updated_at: two_min_ago,
+        resolved_at: None,
+        expires_at: None,
+    };
+    repo.insert(&req).unwrap();
+
+    let now = Utc::now().to_rfc3339();
+    let expired = repo.find_expired_pending(&now).unwrap();
+    assert!(expired.contains(&"req-exp-pend".to_string()));
+}
+
+// --- 24. find_expired_pending: no pending_ttl → infinite (not expired) ---
+
+#[test]
+fn find_expired_pending_no_ttl_means_infinite() {
+    let conn = setup();
+    register_db(&conn);
+
+    let repo = SqliteRequestRepo::new(conn.clone());
+    let old = Utc::now() - chrono::Duration::days(30);
+    let req = Request {
+        id: "req-no-ttl".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteSelect,
+        detail: "SELECT 1".into(),
+        status: RequestStatus::Pending,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: Some(r#"{"require_reason":true}"#.into()),
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: old,
+        updated_at: old,
+        resolved_at: None,
+        expires_at: None,
+    };
+    repo.insert(&req).unwrap();
+
+    let now = Utc::now().to_rfc3339();
+    let expired = repo.find_expired_pending(&now).unwrap();
+    assert!(!expired.contains(&"req-no-ttl".to_string()));
+}
+
+// --- 25. find_stale_dispatched: dispatched > 300s ago ---
+
+#[test]
+fn find_stale_dispatched_timeout() {
+    let conn = setup();
+    register_db(&conn);
+
+    let repo = SqliteRequestRepo::new(conn.clone());
+    let six_min_ago = Utc::now() - chrono::Duration::seconds(360);
+    let req = Request {
+        id: "req-stale-disp".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteSelect,
+        detail: "SELECT 1".into(),
+        status: RequestStatus::Dispatched,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: six_min_ago,
+        updated_at: six_min_ago,
+        resolved_at: None,
+        expires_at: None,
+    };
+    repo.insert(&req).unwrap();
+
+    let now = Utc::now().to_rfc3339();
+    let stale = repo.find_stale_dispatched(&now).unwrap();
+    assert!(stale.contains(&"req-stale-disp".to_string()));
+}
+
+// --- 26. find_expired_leases: lease_expires_at in the past ---
+
+#[test]
+fn find_expired_leases_past() {
+    let conn = setup();
+    register_db(&conn);
+
+    let agent_repo = SqliteAgentRepo::new(conn.clone());
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    let req = Request {
+        id: "req-lease-exp".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "UPDATE t SET x=1".into(),
+        status: RequestStatus::Running,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    let expired_lease = Utc::now() - chrono::Duration::seconds(60);
+    let execution = Execution {
+        id: "exec-lease-exp".into(),
+        request_id: "req-lease-exp".into(),
+        agent_id: "agent-1".into(),
+        status: ExecutionStatus::Running,
+        token: "tok".into(),
+        lease_expires_at: expired_lease,
+        started_at: Some(Utc::now() - chrono::Duration::seconds(120)),
+        finished_at: None,
+        error_message: None,
+        created_at: Utc::now() - chrono::Duration::seconds(120),
+    };
+    agent_repo.create_execution(&execution).unwrap();
+
+    let now = Utc::now().to_rfc3339();
+    let expired = agent_repo.find_expired_leases(&now).unwrap();
+    assert!(expired.iter().any(|(eid, _)| eid == "exec-lease-exp"));
+}
