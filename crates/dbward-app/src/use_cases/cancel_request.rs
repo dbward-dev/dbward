@@ -123,6 +123,7 @@ mod tests {
         fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
         fn find_stale_dispatched(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
         fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn mark_expired_and_record(&self, _: &str, _: &dbward_domain::entities::AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
         fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
         fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
         fn count_by_status(&self, _: &str) -> Result<u32, AppError> { Ok(0) }

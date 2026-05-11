@@ -136,6 +136,7 @@ impl EventDispatcher for CompositeEventDispatcher {
 
         let (event_type, category) = match &event.metadata {
             EventMetadata::Created { emergency: true, .. } => ("break_glass", "approval"),
+            EventMetadata::Created { .. } if event.new_status == dbward_domain::entities::RequestStatus::AutoApproved => ("request_auto_approved", "approval"),
             EventMetadata::Created { .. } => ("request_created", "approval"),
             EventMetadata::StepApproved { .. } => ("step_approved", "approval"),
             EventMetadata::Approved { .. } => ("request_approved", "approval"),
@@ -143,8 +144,8 @@ impl EventDispatcher for CompositeEventDispatcher {
             EventMetadata::Cancelled { .. } => ("request_cancelled", "approval"),
             EventMetadata::Dispatched => ("request_dispatched", "approval"),
             EventMetadata::Claimed { .. } => ("execution_started", "execution"),
-            EventMetadata::Completed { success: true, .. } => ("execution_completed", "execution"),
-            EventMetadata::Completed { success: false, .. } => ("execution_failed", "execution"),
+            EventMetadata::Completed { success: true, .. } => ("request_completed", "execution"),
+            EventMetadata::Completed { success: false, .. } => ("request_failed", "execution"),
             EventMetadata::ExecutionLost { .. } => ("execution_lost", "agent"),
             EventMetadata::Expired => ("request_expired", "approval"),
         };

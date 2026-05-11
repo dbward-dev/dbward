@@ -30,9 +30,9 @@ pub fn spawn_background_tasks(
             // Lease reclaim
             if let Ok(expired) = state.agent_repo.find_expired_leases(&now_str) {
                 for (exec_id, req_id) in expired {
-                    if let Ok(true) = state.agent_repo.mark_execution_lost(&exec_id, &req_id, &now_str) {
+                    let audit = make_audit_event("execution_lost", EventCategory::Agent, &req_id);
+                    if let Ok(true) = state.agent_repo.mark_execution_lost_and_record(&exec_id, &req_id, &audit, &now_str) {
                         info!(execution_id = %exec_id, request_id = %req_id, "lease expired, marked execution_lost");
-                        emit_audit(&state, "execution_lost", EventCategory::Agent, &req_id);
                         emit_webhook(&state, "execution_lost", &req_id);
                     }
                 }
@@ -41,9 +41,9 @@ pub fn spawn_background_tasks(
             // Approval TTL expiry
             if let Ok(ids) = state.request_repo.find_expired_approved(&now_str) {
                 for id in ids {
-                    if let Ok(true) = state.request_repo.mark_expired(&id, &now_str) {
+                    let audit = make_audit_event("request_expired", EventCategory::Approval, &id);
+                    if let Ok(true) = state.request_repo.mark_expired_and_record(&id, &audit, &now_str) {
                         info!(request_id = %id, "approval TTL expired");
-                        emit_audit(&state, "request_expired", EventCategory::Approval, &id);
                         emit_webhook(&state, "request_expired", &id);
                     }
                 }
@@ -52,9 +52,9 @@ pub fn spawn_background_tasks(
             // Pending TTL expiry
             if let Ok(ids) = state.request_repo.find_expired_pending(&now_str) {
                 for id in ids {
-                    if let Ok(true) = state.request_repo.mark_expired(&id, &now_str) {
+                    let audit = make_audit_event("request_expired", EventCategory::Approval, &id);
+                    if let Ok(true) = state.request_repo.mark_expired_and_record(&id, &audit, &now_str) {
                         info!(request_id = %id, "pending TTL expired");
-                        emit_audit(&state, "request_expired", EventCategory::Approval, &id);
                         emit_webhook(&state, "request_expired", &id);
                     }
                 }
@@ -108,6 +108,15 @@ fn emit_audit(state: &AppState, event_type: &str, category: EventCategory, reque
     event.outcome = EventOutcome::Success;
     event.event_category = category;
     let _ = state.audit_logger.record(&event);
+}
+
+fn make_audit_event(event_type: &str, category: EventCategory, request_id: &str) -> AuditEvent {
+    let mut event = AuditEvent::simple(event_type, "approval", "system", Some(request_id));
+    event.actor_type = ActorType::System;
+    event.request_id = Some(request_id.to_string());
+    event.outcome = EventOutcome::Success;
+    event.event_category = category;
+    event
 }
 
 fn emit_webhook(state: &AppState, event_type: &str, request_id: &str) {

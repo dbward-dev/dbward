@@ -36,6 +36,8 @@ pub trait RequestRepo: Send + Sync {
     fn find_expired_pending(&self, now: &str) -> Result<Vec<String>, AppError>;
     fn find_stale_dispatched(&self, threshold: &str) -> Result<Vec<String>, AppError>;
     fn mark_expired(&self, id: &str, now: &str) -> Result<bool, AppError>;
+    /// Atomically marks request expired and records audit event in one transaction.
+    fn mark_expired_and_record(&self, id: &str, audit_event: &AuditEvent, now: &str) -> Result<bool, AppError>;
     fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError>;
     fn purge_old_requests(&self, before: &str) -> Result<u32, AppError>;
     fn count_by_status(&self, status: &str) -> Result<u32, AppError>;
@@ -76,6 +78,8 @@ pub trait AgentRepo: Send + Sync {
     // Background task methods
     fn find_expired_leases(&self, now: &str) -> Result<Vec<(String, String)>, AppError>;
     fn mark_execution_lost(&self, execution_id: &str, request_id: &str, now: &str) -> Result<bool, AppError>;
+    /// Atomically marks execution lost and records audit event in one transaction.
+    fn mark_execution_lost_and_record(&self, execution_id: &str, request_id: &str, audit_event: &AuditEvent, now: &str) -> Result<bool, AppError>;
 }
 
 // --- UserRepo ---

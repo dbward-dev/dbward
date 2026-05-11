@@ -87,6 +87,7 @@ impl RequestRepo for StubRequestRepo {
     fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
     fn find_stale_dispatched(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
     fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+    fn mark_expired_and_record(&self, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
     fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
     fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
     fn count_by_status(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
@@ -109,6 +110,7 @@ impl AgentRepo for StubAgentRepo {
     fn complete_execution(&self, _: &str, _: &str, _: bool, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
     fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+    fn mark_execution_lost_and_record(&self, _: &str, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
 }
 
 struct StubUserRepo;
