@@ -65,6 +65,7 @@ pub async fn create(
         share_with,
         no_store: body["no_store"].as_bool().unwrap_or(false),
         metadata_json: body.get("metadata").map(|v| v.to_string()).unwrap_or_else(|| "{}".into()),
+        channel: create_request::RequestChannel::Api,
     };
 
     let uc = create_request::CreateRequest {

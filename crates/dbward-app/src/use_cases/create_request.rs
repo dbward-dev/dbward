@@ -34,6 +34,15 @@ pub struct CreateRequestInput {
     pub share_with: Vec<String>,
     pub no_store: bool,
     pub metadata_json: String,
+    pub channel: RequestChannel,
+}
+
+/// The channel through which the request was submitted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RequestChannel {
+    Cli,
+    Api,
+    Mcp,
 }
 
 pub struct CreateRequestOutput {
@@ -62,6 +71,11 @@ impl CreateRequest {
         // 1b. Emergency requires reason
         if input.emergency && input.reason.is_none() {
             return Err(AppError::Validation("reason is required for emergency requests".into()));
+        }
+
+        // 1c. MCP channel cannot use break_glass
+        if input.emergency && input.channel == RequestChannel::Mcp {
+            return Err(AppError::Validation("emergency requests are not allowed via MCP".into()));
         }
 
         // 2. DB registered?
@@ -285,6 +299,7 @@ mod tests {
             share_with: vec![],
             no_store: false,
             metadata_json: "{}".into(),
+            channel: RequestChannel::Cli,
         }
     }
 

@@ -15,7 +15,7 @@ use dbward_app::ports::*;
 use dbward_app::use_cases::{
     approve_request::{ApproveRequest, ApproveRequestInput},
     cancel_request::{CancelRequest, CancelRequestInput},
-    create_request::{CreateRequest, CreateRequestInput},
+    create_request::{CreateRequest, CreateRequestInput, RequestChannel},
     dispatch_request::{DispatchRequest, DispatchRequestInput},
     reject_request::{RejectRequest, RejectRequestInput},
 };
@@ -265,6 +265,7 @@ fn make_input() -> CreateRequestInput {
         share_with: vec![],
         no_store: false,
         metadata_json: "{}".into(),
+        channel: RequestChannel::Cli,
     }
 }
 
