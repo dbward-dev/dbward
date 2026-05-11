@@ -127,6 +127,26 @@ pub fn initial_status(needs_approval: bool, emergency: bool) -> RequestStatus {
     }
 }
 
+/// Build a TransitionResult for request creation (no previous state).
+pub fn create_event(
+    new_status: RequestStatus,
+    context: TransitionContext,
+) -> TransitionResult {
+    let event = TransitionEvent {
+        request_id: context.request_id,
+        previous_status: new_status, // no previous state; use self
+        new_status,
+        actor_id: context.actor_id,
+        actor_type: context.actor_type,
+        database: context.database,
+        environment: context.environment,
+        operation: context.operation,
+        timestamp: context.timestamp,
+        metadata: context.metadata,
+    };
+    TransitionResult { new_status, event }
+}
+
 /// Internal: compute next status from current + trigger.
 fn compute_next_status(
     current: RequestStatus,

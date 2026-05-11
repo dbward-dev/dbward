@@ -271,12 +271,18 @@ fn make_input() -> CreateRequestInput {
     }
 }
 
+struct NoopDispatcher;
+impl EventDispatcher for NoopDispatcher {
+    fn dispatch(&self, _: dbward_domain::services::status_machine::TransitionEvent) {}
+}
+
 struct TestHarness {
     repo: Arc<SharedRepo>,
     clock: Arc<FakeClock>,
     id_gen: Arc<SeqIdGen>,
     authorizer: Arc<dyn Authorizer>,
     policy: Arc<FakePolicy>,
+    event_dispatcher: Arc<dyn EventDispatcher>,
     audit: Arc<dyn AuditLogger>,
     notifier: Arc<dyn Notifier>,
     db_registry: Arc<dyn DatabaseRegistry>,
@@ -290,6 +296,7 @@ impl TestHarness {
             id_gen: Arc::new(SeqIdGen::new()),
             authorizer: Arc::new(AllowAll),
             policy: Arc::new(FakePolicy { workflow, exec_policy: ExecutionPolicy::default() }),
+            event_dispatcher: Arc::new(NoopDispatcher),
             audit: Arc::new(FakeAudit),
             notifier: Arc::new(FakeNotifier),
             db_registry: Arc::new(FakeDbRegistry),
@@ -307,8 +314,7 @@ impl TestHarness {
             policy: self.policy.clone(),
             request_repo: self.repo.clone(),
             db_registry: self.db_registry.clone(),
-            audit: self.audit.clone(),
-            notifier: self.notifier.clone(),
+            event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
             id_gen: self.id_gen.clone(),
         }
@@ -472,14 +478,8 @@ fn emergency_request_skips_approval() {
     input.emergency = true;
 
     let created = h.create_uc().execute(input, &requester).unwrap();
-    assert_eq!(created.status, RequestStatus::BreakGlass);
-
-    // Dispatch directly (no approval needed)
-    let dispatched = h.dispatch_uc().execute(
-        DispatchRequestInput { request_id: created.id.clone() },
-        &requester,
-    ).unwrap();
-    assert_eq!(dispatched.status, RequestStatus::Dispatched);
+    assert_eq!(created.status, RequestStatus::Dispatched);
+    // Already dispatched at creation (ADR-004: break_glass → immediate dispatch)
 }
 
 #[test]
@@ -502,13 +502,8 @@ fn auto_approved_request_dispatches_directly() {
     let requester = make_user("alice", &["developer"]);
 
     let created = h.create_uc().execute(make_input(), &requester).unwrap();
-    assert_eq!(created.status, RequestStatus::AutoApproved);
-
-    let dispatched = h.dispatch_uc().execute(
-        DispatchRequestInput { request_id: created.id.clone() },
-        &requester,
-    ).unwrap();
-    assert_eq!(dispatched.status, RequestStatus::Dispatched);
+    assert_eq!(created.status, RequestStatus::Dispatched);
+    // Already dispatched at creation (ADR-004: auto_approved → immediate dispatch)
 }
 
 #[test]

@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
+use dbward_domain::auth::{AuthUser, Permission, ResourceContext, SubjectType};
 use dbward_domain::entities::{Request, RequestStatus};
-use dbward_domain::services::{status_machine, workflow_matcher};
+use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
+use dbward_domain::services::workflow_matcher;
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::error::AppError;
@@ -13,8 +14,7 @@ pub struct CreateRequest {
     pub policy: Arc<dyn PolicyEvaluator>,
     pub request_repo: Arc<dyn RequestRepo>,
     pub db_registry: Arc<dyn DatabaseRegistry>,
-    pub audit: Arc<dyn AuditLogger>,
-    pub notifier: Arc<dyn Notifier>,
+    pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
 }
@@ -78,7 +78,7 @@ impl CreateRequest {
             true,
         );
 
-        // 5. Determine initial status via status_machine
+        // 5. Determine initial status
         let needs_approval = !matches!(decision, workflow_matcher::ApprovalDecision::AutoApproved);
         let status = status_machine::initial_status(needs_approval, input.emergency);
 
@@ -91,10 +91,10 @@ impl CreateRequest {
         let request = Request {
             id: id.clone(),
             requester: user.subject_id.clone(),
-            database: input.database,
-            environment: input.environment,
+            database: input.database.clone(),
+            environment: input.environment.clone(),
             operation: input.operation,
-            detail: input.detail,
+            detail: input.detail.clone(),
             status,
             emergency: input.emergency,
             reason: input.reason,
@@ -112,7 +112,47 @@ impl CreateRequest {
         };
         self.request_repo.insert(&request)?;
 
-        Ok(CreateRequestOutput { id, status, operation: input.operation })
+        // 8. Emit creation event
+        let create_result = status_machine::create_event(
+            status,
+            TransitionContext {
+                request_id: id.clone(),
+                actor_id: user.subject_id.clone(),
+                actor_type: user.subject_type,
+                database: input.database.clone(),
+                environment: input.environment.clone(),
+                operation: input.operation,
+                timestamp: now,
+                metadata: EventMetadata::Created { detail: input.detail, emergency: input.emergency },
+            },
+        );
+        create_result.commit(&*self.event_dispatcher);
+
+        // 9. Auto-dispatch for auto_approved / break_glass (ADR-004)
+        let final_status = if matches!(status, RequestStatus::AutoApproved | RequestStatus::BreakGlass) {
+            self.request_repo.mark_dispatched(&id, now)?;
+            let dispatch_result = status_machine::transition(
+                status,
+                &RequestTrigger::Dispatch,
+                TransitionContext {
+                    request_id: id.clone(),
+                    actor_id: user.subject_id.clone(),
+                    actor_type: user.subject_type,
+                    database: input.database,
+                    environment: input.environment,
+                    operation: input.operation,
+                    timestamp: now,
+                    metadata: EventMetadata::Dispatched,
+                },
+            ).map_err(|e| AppError::Internal(e.to_string()))?;
+            let s = dispatch_result.status();
+            dispatch_result.commit(&*self.event_dispatcher);
+            s
+        } else {
+            status
+        };
+
+        Ok(CreateRequestOutput { id, status: final_status, operation: input.operation })
     }
 }
 
@@ -172,9 +212,9 @@ mod tests {
         fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> { Ok(()) }
     }
 
-    struct FakeNotifier;
-    impl Notifier for FakeNotifier {
-        fn dispatch(&self, _: crate::ports::WebhookEvent) {}
+    struct NoopDispatcher;
+    impl EventDispatcher for NoopDispatcher {
+        fn dispatch(&self, _: dbward_domain::services::status_machine::TransitionEvent) {}
     }
 
     struct FakeClock;
@@ -193,8 +233,7 @@ mod tests {
             policy: Arc::new(FakePolicy),
             request_repo: Arc::new(FakeRequestRepo),
             db_registry: Arc::new(FakeDbRegistry),
-            audit: Arc::new(FakeAudit),
-            notifier: Arc::new(FakeNotifier),
+            event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),
         }
