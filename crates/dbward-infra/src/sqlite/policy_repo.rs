@@ -175,6 +175,27 @@ impl PolicyRepo for SqlitePolicyRepo {
         Ok(results)
     }
 
+    fn get_roles_by_names(&self, names: &[String]) -> Result<Vec<RoleDefinition>, AppError> {
+        if names.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.blocking_lock();
+        let placeholders = std::iter::repeat("?").take(names.len()).collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT name, permissions_json, databases_json, environments_json FROM roles WHERE name IN ({})",
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| AppError::Internal(e.to_string()))?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = names.iter().map(|n| n as &dyn rusqlite::types::ToSql).collect();
+        let rows = stmt.query_map(params.as_slice(), row_to_role).map_err(|e| AppError::Internal(e.to_string()))?;
+        let mut results = Vec::new();
+        for row in rows {
+            let r = row.map_err(|e| AppError::Internal(e.to_string()))?;
+            results.push(r.map_err(|e| AppError::Internal(e.to_string()))?);
+        }
+        Ok(results)
+    }
+
     fn delete_role(&self, name: &str) -> Result<bool, AppError> {
         let conn = self.conn.blocking_lock();
         let changed = conn.execute("DELETE FROM roles WHERE name = ?1 AND built_in = 0", params![name])

@@ -54,18 +54,16 @@ impl TokenVerifier for ApiTokenVerifier {
 
         // Resolve roles from token.roles by looking up role definitions
         // Token.roles stores role NAMES fixed at creation time (source of truth)
-        let all_roles = self.policy_repo.list_roles()
+        let matched_roles = self.policy_repo.get_roles_by_names(&token.roles)
             .map_err(|e| AuthError::Internal(e.to_string()))?;
 
-        let roles: Vec<ResolvedRole> = token.roles.iter().filter_map(|role_name| {
-            all_roles.iter().find(|rd| rd.name == *role_name).map(|rd| {
-                ResolvedRole {
-                    name: rd.name.clone(),
-                    permissions: rd.permissions.iter().cloned().collect(),
-                    databases: rd.databases.clone(),
-                    environments: rd.environments.clone(),
-                }
-            })
+        let roles: Vec<ResolvedRole> = matched_roles.into_iter().map(|rd| {
+            ResolvedRole {
+                name: rd.name,
+                permissions: rd.permissions.into_iter().collect(),
+                databases: rd.databases,
+                environments: rd.environments,
+            }
         }).collect();
 
         if roles.is_empty() {

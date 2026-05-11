@@ -11,7 +11,7 @@ use dbward_domain::auth::*;
 use dbward_domain::entities::*;
 use dbward_domain::policies::{ExecutionPolicy, Workflow};
 use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
-use dbward_domain::values::{DatabaseName, Environment, Operation};
+use dbward_domain::values::{DatabaseName, Environment, Operation, ResultSummary};
 use dbward_server::state::AppState;
 use dbward_server::build_app;
 
@@ -75,8 +75,10 @@ impl RequestRepo for StubRequestRepo {
     fn mark_approved(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn approve_and_mark_approved(&self, _: &Approval, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn mark_rejected(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+    fn reject_and_record(&self, _: &str, _: &Approval, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn mark_dispatched(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+    fn create_and_dispatch(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> { Ok(()) }
     fn mark_running(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn mark_executed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
@@ -96,6 +98,7 @@ impl AgentRepo for StubAgentRepo {
     fn has_running_migration(&self, _: &DatabaseName, _: &Environment, _: &str) -> Result<bool, AppError> { Ok(false) }
     fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> { Ok(vec![]) }
     fn claim_and_mark_running(&self, _: &Execution, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+    fn complete_execution(&self, _: &str, _: &str, _: bool, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
 }
 
 struct StubUserRepo;
@@ -141,6 +144,7 @@ impl PolicyRepo for StubPolicyRepo {
     fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
     fn create_role(&self, _: &RoleDefinition) -> Result<(), AppError> { Ok(()) }
     fn list_roles(&self) -> Result<Vec<RoleDefinition>, AppError> { Ok(vec![]) }
+    fn get_roles_by_names(&self, _: &[String]) -> Result<Vec<RoleDefinition>, AppError> { Ok(vec![]) }
     fn delete_role(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
     fn count_roles(&self) -> Result<u32, AppError> { Ok(0) }
 }
@@ -181,7 +185,9 @@ impl ResultStore for StubResultStore {
 struct StubResultChannel;
 #[async_trait]
 impl ResultChannel for StubResultChannel {
-    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<Vec<u8>>, AppError> { Ok(None) }
+    async fn create_slot(&self, _: &str) {}
+    async fn publish(&self, _: &str, _: ResultSummary) {}
+    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> { Ok(None) }
 }
 
 struct StubTokenSigner;

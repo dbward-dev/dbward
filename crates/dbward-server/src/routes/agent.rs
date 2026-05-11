@@ -152,6 +152,7 @@ pub async fn submit_result(
         agent_repo: state.agent_repo.clone(),
         request_repo: state.request_repo.clone(),
         result_store: state.result_store.clone(),
+        result_channel: state.result_channel.clone(),
         event_dispatcher: state.event_dispatcher.clone(),
         clock: state.clock.clone(),
     };

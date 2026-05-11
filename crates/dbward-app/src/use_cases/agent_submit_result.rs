@@ -3,6 +3,7 @@ use std::sync::Arc;
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{ExecutionStatus, RequestStatus};
 use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
+use dbward_domain::values::ResultSummary;
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -12,6 +13,7 @@ pub struct AgentSubmitResult {
     pub agent_repo: Arc<dyn AgentRepo>,
     pub request_repo: Arc<dyn RequestRepo>,
     pub result_store: Arc<dyn ResultStore>,
+    pub result_channel: Arc<dyn ResultChannel>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
 }
@@ -78,36 +80,53 @@ impl AgentSubmitResult {
 
         let new_request_status = result.status();
 
-        // 7. Save result to external storage (if success and not no_store)
+        // 7. Store result to external storage
         if input.success && !request.no_store {
             if let Some(data) = &input.result_data {
                 let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
                 self.result_store.put(&storage_key, data).await?;
             }
+        } else if !input.success {
+            // Store failure info
+            let err_json = serde_json::json!({
+                "success": false,
+                "error": input.error_message.as_deref().unwrap_or("unknown error"),
+            });
+            let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
+            self.result_store.put(&storage_key, err_json.to_string().as_bytes()).await?;
         }
 
-        // 8. Update execution status + finished_at
-        let exec_status = if input.success { ExecutionStatus::Completed } else { ExecutionStatus::Failed };
-        self.agent_repo.update_execution_status(&execution.id, exec_status)?;
-
-        // 9. Update request status (skip if cancelled — request stays cancelled)
+        // 8. Atomically update execution + request status
         let now = self.clock.now();
-        if new_request_status != RequestStatus::Cancelled {
-            let ok = match new_request_status {
-                RequestStatus::Executed => self.request_repo.mark_executed(&execution.request_id, now)?,
-                RequestStatus::Failed => self.request_repo.mark_failed(&execution.request_id, now)?,
-                _ => true,
-            };
-            if !ok {
-                return Err(AppError::Conflict("concurrent status change".into()));
-            }
-        }
+        let request_updated = self.agent_repo.complete_execution(
+            &execution.id,
+            &execution.request_id,
+            input.success,
+            now,
+        )?;
+
+        // 9. Publish result to long-poll channel
+        let summary = ResultSummary {
+            execution_id: execution.id.clone(),
+            success: input.success,
+            rows_affected: None,
+            truncated: false,
+            error_message: input.error_message.clone(),
+        };
+        self.result_channel.publish(&execution.request_id, summary).await;
+
+        // If request was cancelled, new_request_status reflects that
+        let final_status = if !request_updated && new_request_status != RequestStatus::Cancelled {
+            return Err(AppError::Conflict("concurrent status change".into()));
+        } else {
+            new_request_status
+        };
 
         result.commit(&*self.event_dispatcher);
 
         Ok(AgentSubmitResultOutput {
             request_id: execution.request_id,
-            status: new_request_status,
+            status: final_status,
         })
     }
 }

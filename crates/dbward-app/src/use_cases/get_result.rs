@@ -27,8 +27,8 @@ impl GetResult {
         let request = self.request_repo.get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
-        // Must be executed
-        if request.status != RequestStatus::Executed {
+        // Must be terminal with result (Executed or Failed)
+        if !matches!(request.status, RequestStatus::Executed | RequestStatus::Failed) {
             return Err(AppError::NotFound("result not available".into()));
         }
 
@@ -49,12 +49,12 @@ impl GetResult {
             },
         ).map_err(AppError::Forbidden)?;
 
-        // Find latest completed execution (port contract: ordered by created_at ASC)
+        // Find latest terminal execution (Completed or Failed)
         let executions = self.agent_repo.find_executions_for_request(&input.request_id)?;
         let execution = executions.into_iter()
             .rev() // latest first
-            .find(|e| e.status == dbward_domain::entities::ExecutionStatus::Completed)
-            .ok_or_else(|| AppError::NotFound("no completed execution found".into()))?;
+            .find(|e| matches!(e.status, dbward_domain::entities::ExecutionStatus::Completed | dbward_domain::entities::ExecutionStatus::Failed))
+            .ok_or_else(|| AppError::NotFound("no terminal execution found".into()))?;
 
         // Retention check (30 days default)
         if let Some(expires_at) = execution.finished_at {

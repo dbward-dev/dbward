@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use dbward_domain::entities::*;
-use dbward_domain::values::{DatabaseName, Environment};
+use dbward_domain::values::{DatabaseName, Environment, ResultSummary};
 
 use crate::error::AppError;
 
@@ -20,8 +20,12 @@ pub trait RequestRepo: Send + Sync {
     /// Atomically inserts approval and marks request as approved in one transaction.
     fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_rejected(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    /// Atomically inserts rejection approval and marks request as rejected in one transaction.
+    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_cancelled(&self, id: &str, actor: &str, reason: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_dispatched(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    /// Atomically inserts a request and marks it as dispatched in one transaction.
+    fn create_and_dispatch(&self, request: &Request) -> Result<(), AppError>;
     fn mark_running(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_executed(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_failed(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
@@ -47,6 +51,15 @@ pub trait AgentRepo: Send + Sync {
         &self,
         execution: &Execution,
         request_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError>;
+    /// Atomically updates execution status (Completed/Failed) and request status (executed/failed).
+    /// Returns false if request was cancelled (request update skipped).
+    fn complete_execution(
+        &self,
+        execution_id: &str,
+        request_id: &str,
+        success: bool,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError>;
 }
@@ -138,6 +151,7 @@ pub trait PolicyRepo: Send + Sync {
 
     fn create_role(&self, role: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError>;
     fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError>;
+    fn get_roles_by_names(&self, names: &[String]) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError>;
     fn delete_role(&self, name: &str) -> Result<bool, AppError>;
     fn count_roles(&self) -> Result<u32, AppError>;
 }
@@ -156,7 +170,9 @@ pub trait LicenseChecker: Send + Sync {
 
 #[async_trait]
 pub trait ResultChannel: Send + Sync {
-    async fn subscribe(&self, request_id: &str, timeout_secs: u64) -> Result<Option<Vec<u8>>, AppError>;
+    async fn create_slot(&self, request_id: &str);
+    async fn publish(&self, request_id: &str, summary: ResultSummary);
+    async fn subscribe(&self, request_id: &str, timeout_secs: u64) -> Result<Option<ResultSummary>, AppError>;
 }
 
 // --- SsrfValidator (UC-15 webhook URL validation) ---

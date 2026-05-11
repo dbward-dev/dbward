@@ -5,5 +5,5 @@ pub mod workflow;
 
 pub use execution::ExecutionPolicy;
 pub use notification::NotificationPolicy;
-pub use result::ResultPolicy;
+pub use result::{DeliveryMode, ResultPolicy};
 pub use workflow::{ApproverGroup, Workflow, WorkflowStep, WorkflowStepMode};

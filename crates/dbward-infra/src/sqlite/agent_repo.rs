@@ -267,6 +267,32 @@ impl AgentRepo for SqliteAgentRepo {
         tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(true)
     }
+
+    fn complete_execution(
+        &self,
+        execution_id: &str,
+        request_id: &str,
+        success: bool,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError> {
+        let conn = self.conn.blocking_lock();
+        let tx = conn.unchecked_transaction().map_err(|e| AppError::Internal(e.to_string()))?;
+
+        let exec_status = if success { "completed" } else { "failed" };
+        tx.execute(
+            "UPDATE executions SET status = ?1, finished_at = ?2 WHERE id = ?3",
+            params![exec_status, now.to_rfc3339(), execution_id],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+        let req_status = if success { "executed" } else { "failed" };
+        let updated = tx.execute(
+            "UPDATE requests SET status = ?1, updated_at = ?2 WHERE id = ?3 AND status = 'running'",
+            params![req_status, now.to_rfc3339(), request_id],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+        tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(updated > 0)
+    }
 }
 
 // --- helpers ---

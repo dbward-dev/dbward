@@ -312,6 +312,40 @@ impl RequestRepo for SqliteRequestRepo {
         Ok(affected > 0)
     }
 
+    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: DateTime<Utc>) -> Result<bool, AppError> {
+        let conn = self.conn.blocking_lock();
+        let tx = conn.unchecked_transaction().map_err(map_err)?;
+
+        let now_str = now.to_rfc3339();
+        let affected = tx.execute(
+            "UPDATE requests SET status = 'rejected', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending'",
+            params![request_id, now_str],
+        ).map_err(map_err)?;
+
+        if affected == 0 {
+            drop(tx);
+            return Ok(false);
+        }
+
+        tx.execute(
+            "INSERT INTO approvals (id, request_id, action, actor_id, matched_selector, step_index, comment, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                approval.id,
+                approval.request_id,
+                approval_action_str(&approval.action),
+                approval.actor_id,
+                approval.matched_selector,
+                approval.step_index,
+                approval.comment,
+                approval.created_at.to_rfc3339(),
+            ],
+        ).map_err(map_err)?;
+
+        tx.commit().map_err(map_err)?;
+        Ok(true)
+    }
+
     fn mark_cancelled(&self, id: &str, actor: &str, reason: Option<&str>, now: DateTime<Utc>) -> Result<bool, AppError> {
         let conn = self.conn.blocking_lock();
         let affected = conn
@@ -333,6 +367,48 @@ impl RequestRepo for SqliteRequestRepo {
             )
             .map_err(map_err)?;
         Ok(affected > 0)
+    }
+
+    fn create_and_dispatch(&self, req: &Request) -> Result<(), AppError> {
+        let conn = self.conn.blocking_lock();
+        let tx = conn.unchecked_transaction().map_err(map_err)?;
+        let db_id = database_id(&req.database, &req.environment);
+        let share_with_json = serde_json::to_string(&req.share_with)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+
+        tx.execute(
+            "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            params![
+                req.id,
+                req.requester,
+                req.operation.as_str(),
+                db_id,
+                req.detail,
+                req.status.as_str(),
+                req.emergency as i64,
+                req.reason,
+                req.idempotency_key,
+                req.metadata_json,
+                share_with_json,
+                req.no_store as i64,
+                req.workflow_snapshot_json,
+                req.cancelled_by,
+                req.cancel_reason,
+                req.created_at.to_rfc3339(),
+                req.updated_at.to_rfc3339(),
+                req.resolved_at.map(|t| t.to_rfc3339()),
+                req.expires_at.map(|t| t.to_rfc3339()),
+            ],
+        ).map_err(map_err)?;
+
+        tx.execute(
+            "UPDATE requests SET status = 'dispatched', updated_at = ?2 WHERE id = ?1",
+            params![req.id, req.updated_at.to_rfc3339()],
+        ).map_err(map_err)?;
+
+        tx.commit().map_err(map_err)?;
+        Ok(())
     }
 
     fn mark_running(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {

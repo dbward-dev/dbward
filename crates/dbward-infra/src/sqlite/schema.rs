@@ -196,7 +196,8 @@ CREATE TABLE IF NOT EXISTS result_policies (
     id TEXT PRIMARY KEY,
     database_name TEXT NOT NULL,
     environment TEXT NOT NULL,
-    delivery_mode TEXT NOT NULL DEFAULT 'direct',
+    retention_days INTEGER NOT NULL DEFAULT 30,
+    delivery_mode TEXT NOT NULL DEFAULT 'both',
     access_json TEXT NOT NULL DEFAULT '[]',
     UNIQUE(database_name, environment)
 );
@@ -259,4 +260,11 @@ CREATE TABLE IF NOT EXISTS schema_version (
     applied_at TEXT NOT NULL
 );
 INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (1, datetime('now'));
+
+-- Seed built-in roles
+INSERT OR IGNORE INTO roles (name, permissions_json, databases_json, environments_json, built_in) VALUES
+('admin', '[\"*\"]', '[\"*\"]', '[\"*\"]', 1),
+('developer', '[\"request.create\",\"request.create_select\",\"request.view\",\"request.cancel\",\"result.view\",\"token.revoke_own\"]', '[\"*\"]', '[\"*\"]', 1),
+('readonly', '[\"request.create_select\",\"request.view\",\"result.view\"]', '[\"*\"]', '[\"*\"]', 1),
+('agent-default', '[\"agent.poll\",\"agent.claim\",\"agent.heartbeat\",\"agent.submit_result\"]', '[\"*\"]', '[\"*\"]', 1);
 ";

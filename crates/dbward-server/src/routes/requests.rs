@@ -54,10 +54,15 @@ pub async fn create(
         .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
         .unwrap_or_default();
 
+    let operation = body["operation"]
+        .as_str()
+        .and_then(|s| s.parse::<Operation>().ok())
+        .unwrap_or(Operation::ExecuteSelect);
+
     let input = create_request::CreateRequestInput {
         database,
         environment,
-        operation: Operation::ExecuteSelect, // ignored; classified from SQL in use case
+        operation,
         detail: detail.to_string(),
         reason: body["reason"].as_str().map(String::from),
         emergency: body["emergency"].as_bool().unwrap_or(false),
@@ -281,8 +286,12 @@ pub async fn stream_result(
 
     match uc.execute(input, &user).await {
         Ok(out) => match out.data {
-            Some(data) => Ok((StatusCode::OK, Json(json!({
-                "data": base64_encode(&data),
+            Some(summary) => Ok((StatusCode::OK, Json(json!({
+                "execution_id": summary.execution_id,
+                "success": summary.success,
+                "rows_affected": summary.rows_affected,
+                "truncated": summary.truncated,
+                "error_message": summary.error_message,
             })))),
             None => Ok((StatusCode::NO_CONTENT, Json(json!({})))),
         },

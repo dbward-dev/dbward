@@ -210,6 +210,9 @@ mod tests {
         fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
         fn create_role(&self, _: &RoleDefinition) -> Result<(), AppError> { Ok(()) }
         fn list_roles(&self) -> Result<Vec<RoleDefinition>, AppError> { Ok(self.roles.clone()) }
+        fn get_roles_by_names(&self, names: &[String]) -> Result<Vec<RoleDefinition>, AppError> {
+            Ok(self.roles.iter().filter(|r| names.contains(&r.name)).cloned().collect())
+        }
         fn delete_role(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
         fn count_roles(&self) -> Result<u32, AppError> { Ok(0) }
     }

@@ -1,5 +1,3 @@
-// TODO(v0.2): Transaction boundary gap — insert + approval creation should be atomic.
-// Requires UnitOfWork port trait.
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
@@ -53,8 +51,11 @@ pub struct CreateRequestOutput {
 
 impl CreateRequest {
     pub fn execute(&self, input: CreateRequestInput, user: &AuthUser) -> Result<CreateRequestOutput, AppError> {
-        // 1. Classify operation from SQL (ignore user-supplied value)
-        let operation = sql_classifier::classify(&input.detail);
+        // 1. Determine operation: migration types are explicit, others classified from SQL
+        let operation = match input.operation {
+            Operation::MigrateUp | Operation::MigrateDown | Operation::MigrateStatus => input.operation,
+            _ => sql_classifier::classify(&input.detail),
+        };
 
         // 1b. Permission + DB/env scope check
         let perm = if input.emergency {
@@ -144,30 +145,26 @@ impl CreateRequest {
             resolved_at: None,
             expires_at: None,
         };
-        self.request_repo.insert(&request)?;
-
-        // 8. Emit creation event
-        let create_result = status_machine::create_event(
-            status,
-            TransitionContext {
-                request_id: id.clone(),
-                actor_id: user.subject_id.clone(),
-                actor_type: user.subject_type,
-                database: input.database.clone(),
-                environment: input.environment.clone(),
-                operation,
-                timestamp: now,
-                metadata: EventMetadata::Created { detail: input.detail, emergency: input.emergency },
-            },
-        );
-        create_result.commit(&*self.event_dispatcher);
-
-        // 9. Auto-dispatch for auto_approved / break_glass (ADR-004)
+        // 8. Persist request — atomic create+dispatch for auto-dispatch path
         let final_status = if matches!(status, RequestStatus::AutoApproved | RequestStatus::BreakGlass) {
-            let ok = self.request_repo.mark_dispatched(&id, now)?;
-            if !ok {
-                return Err(AppError::Internal("failed to auto-dispatch".into()));
-            }
+            self.request_repo.create_and_dispatch(&request)?;
+
+            // Emit creation event
+            let create_result = status_machine::create_event(
+                status,
+                TransitionContext {
+                    request_id: id.clone(),
+                    actor_id: user.subject_id.clone(),
+                    actor_type: user.subject_type,
+                    database: input.database.clone(),
+                    environment: input.environment.clone(),
+                    operation,
+                    timestamp: now,
+                    metadata: EventMetadata::Created { detail: input.detail, emergency: input.emergency },
+                },
+            );
+            create_result.commit(&*self.event_dispatcher);
+
             let dispatch_result = status_machine::transition(
                 status,
                 &RequestTrigger::Dispatch,
@@ -186,6 +183,22 @@ impl CreateRequest {
             dispatch_result.commit(&*self.event_dispatcher);
             s
         } else {
+            self.request_repo.insert(&request)?;
+
+            let create_result = status_machine::create_event(
+                status,
+                TransitionContext {
+                    request_id: id.clone(),
+                    actor_id: user.subject_id.clone(),
+                    actor_type: user.subject_type,
+                    database: input.database,
+                    environment: input.environment,
+                    operation,
+                    timestamp: now,
+                    metadata: EventMetadata::Created { detail: input.detail, emergency: input.emergency },
+                },
+            );
+            create_result.commit(&*self.event_dispatcher);
             status
         };
 
@@ -231,8 +244,10 @@ mod tests {
         fn mark_approved(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn approve_and_mark_approved(&self, _: &dbward_domain::entities::Approval, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_rejected(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn reject_and_record(&self, _: &str, _: &dbward_domain::entities::Approval, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_dispatched(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
         fn mark_running(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_executed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
@@ -316,5 +331,36 @@ mod tests {
         let uc = make_uc(Arc::new(DenyAll));
         let result = uc.execute(make_input(), &make_user());
         assert!(matches!(result, Err(AppError::Forbidden(_))));
+    }
+
+    #[test]
+    fn migrate_up_uses_input_operation_directly() {
+        let uc = make_uc(Arc::new(AllowAll));
+        let mut input = make_input();
+        input.operation = Operation::MigrateUp;
+        input.detail = "migrations/001_init.sql".into();
+        let result = uc.execute(input, &make_user()).unwrap();
+        assert_eq!(result.operation, Operation::MigrateUp);
+    }
+
+    #[test]
+    fn migrate_down_uses_input_operation_directly() {
+        let uc = make_uc(Arc::new(AllowAll));
+        let mut input = make_input();
+        input.operation = Operation::MigrateDown;
+        input.detail = "migrations/001_init.sql".into();
+        let result = uc.execute(input, &make_user()).unwrap();
+        assert_eq!(result.operation, Operation::MigrateDown);
+    }
+
+    #[test]
+    fn execute_select_still_classifies_from_sql() {
+        let uc = make_uc(Arc::new(AllowAll));
+        let mut input = make_input();
+        input.operation = Operation::ExecuteSelect;
+        input.detail = "INSERT INTO t VALUES (1)".into();
+        let result = uc.execute(input, &make_user()).unwrap();
+        // SQL classifier overrides: INSERT → ExecuteDml
+        assert_eq!(result.operation, Operation::ExecuteDml);
     }
 }

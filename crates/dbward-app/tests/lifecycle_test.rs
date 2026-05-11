@@ -84,6 +84,10 @@ impl RequestRepo for SharedRepo {
             Ok(false)
         }
     }
+    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: DateTime<Utc>) -> Result<bool, AppError> {
+        self.approvals.lock().unwrap().push(approval.clone());
+        self.mark_rejected(request_id, now)
+    }
     fn mark_cancelled(&self, id: &str, actor: &str, reason: Option<&str>, now: DateTime<Utc>) -> Result<bool, AppError> {
         let mut reqs = self.requests.lock().unwrap();
         if let Some(r) = reqs.iter_mut().find(|r| r.id == id) {
@@ -105,6 +109,13 @@ impl RequestRepo for SharedRepo {
         } else {
             Ok(false)
         }
+    }
+    fn create_and_dispatch(&self, req: &Request) -> Result<(), AppError> {
+        let mut reqs = self.requests.lock().unwrap();
+        let mut r = req.clone();
+        r.status = RequestStatus::Dispatched;
+        reqs.push(r);
+        Ok(())
     }
     fn mark_running(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let mut reqs = self.requests.lock().unwrap();
@@ -660,6 +671,21 @@ impl AgentRepo for SharedAgentRepo {
             r.status = RequestStatus::Running;
         }
         Ok(true)
+    }
+    fn complete_execution(&self, execution_id: &str, request_id: &str, success: bool, now: DateTime<Utc>) -> Result<bool, AppError> {
+        let mut execs = self.executions.lock().unwrap();
+        if let Some(e) = execs.iter_mut().find(|e| e.id == execution_id) {
+            e.status = if success { ExecutionStatus::Completed } else { ExecutionStatus::Failed };
+            e.finished_at = Some(now);
+        }
+        let mut reqs = self.request_repo.requests.lock().unwrap();
+        if let Some(r) = reqs.iter_mut().find(|r| r.id == request_id && r.status == RequestStatus::Running) {
+            r.status = if success { RequestStatus::Executed } else { RequestStatus::Failed };
+            r.updated_at = now;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }
 

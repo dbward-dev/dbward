@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
+use dbward_domain::values::ResultSummary;
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -17,7 +18,7 @@ pub struct StreamResultInput {
 }
 
 pub struct StreamResultOutput {
-    pub data: Option<Vec<u8>>,
+    pub data: Option<ResultSummary>,
 }
 
 impl StreamResult {
@@ -25,7 +26,6 @@ impl StreamResult {
         let request = self.request_repo.get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
-        // Authorization (share_with does NOT apply to live stream per design)
         self.authorizer.authorize_scoped(
             user,
             Permission::ResultView,
@@ -33,7 +33,7 @@ impl StreamResult {
             &request.environment,
             &ResourceContext::Result {
                 requester_id: request.requester.clone(),
-                access_selectors: vec![],
+                access_selectors: request.share_with.clone(),
             },
         ).map_err(AppError::Forbidden)?;
 
