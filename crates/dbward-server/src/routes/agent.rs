@@ -173,7 +173,7 @@ pub async fn list_agents(
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     use dbward_domain::auth::Permission;
 
-    state.authorizer.authorize_global(&user, Permission::AgentPoll)
+    state.authorizer.authorize_global(&user, Permission::MetricsView)
         .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
 
     let agents = state.agent_repo.list()
