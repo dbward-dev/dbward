@@ -1,0 +1,13 @@
+[package]
+name = "dbward-domain"
+version = "0.1.0"
+edition = "2021"
+description = "Domain layer for dbward — entities, policies, value objects, and domain services"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+serde_json = "1"
