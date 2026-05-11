@@ -44,12 +44,19 @@ impl CreateRequest {
         // 1. Permission + DB/env scope check
         let perm = if input.emergency {
             Permission::RequestBreakGlass
+        } else if input.operation == Operation::ExecuteSelect {
+            Permission::RequestCreateSelect
         } else {
             Permission::RequestCreate
         };
         self.authorizer
             .authorize_scoped(user, perm, &input.database, &input.environment, &ResourceContext::Global)
             .map_err(AppError::Forbidden)?;
+
+        // 1b. Emergency requires reason
+        if input.emergency && input.reason.is_none() {
+            return Err(AppError::Validation("reason is required for emergency requests".into()));
+        }
 
         // 2. DB registered?
         if !self.db_registry.exists(&input.database, &input.environment)? {
@@ -81,6 +88,13 @@ impl CreateRequest {
         // 5. Determine initial status
         let needs_approval = !matches!(decision, workflow_matcher::ApprovalDecision::AutoApproved);
         let status = status_machine::initial_status(needs_approval, input.emergency);
+
+        // 5b. Workflow require_reason check
+        if let Some(ref wf) = workflow {
+            if wf.require_reason && input.reason.is_none() {
+                return Err(AppError::Validation("reason is required by workflow policy".into()));
+            }
+        }
 
         // 6. Serialize workflow snapshot for approve/reject
         let workflow_snapshot_json = workflow.as_ref().map(|wf| serde_json::to_string(wf).unwrap());

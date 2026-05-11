@@ -464,6 +464,18 @@ fn cancel_blocks_further_actions() {
     assert!(matches!(result, Err(AppError::Conflict(_))));
 }
 
+
+#[test]
+fn emergency_without_reason_rejected() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.emergency = true;
+    // No reason provided
+    let result = h.create_uc().execute(input, &requester);
+    assert!(matches!(result, Err(AppError::Validation(_))));
+}
+
 #[test]
 fn emergency_request_skips_approval() {
     let h = TestHarness::new(Some(single_step_workflow()));
@@ -471,6 +483,7 @@ fn emergency_request_skips_approval() {
 
     let mut input = make_input();
     input.emergency = true;
+    input.reason = Some("critical fix".into());
 
     let created = h.create_uc().execute(input, &requester).unwrap();
     assert_eq!(created.status, RequestStatus::Dispatched);
@@ -823,6 +836,7 @@ fn event_dispatcher_records_break_glass_auto_dispatch() {
     let requester = make_user("alice", &["developer"]);
     let mut input = make_input();
     input.emergency = true;
+    input.reason = Some("critical fix".into());
 
     let created = h.create_uc().execute(input, &requester).unwrap();
     assert_eq!(created.status, RequestStatus::Dispatched);
