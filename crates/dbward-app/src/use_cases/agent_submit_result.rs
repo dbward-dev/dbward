@@ -12,8 +12,7 @@ pub struct AgentSubmitResult {
     pub agent_repo: Arc<dyn AgentRepo>,
     pub request_repo: Arc<dyn RequestRepo>,
     pub result_store: Arc<dyn ResultStore>,
-    pub audit: Arc<dyn AuditLogger>,
-    pub notifier: Arc<dyn Notifier>,
+    pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
 }
 

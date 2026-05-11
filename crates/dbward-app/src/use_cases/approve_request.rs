@@ -11,8 +11,7 @@ use crate::ports::*;
 pub struct ApproveRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub request_repo: Arc<dyn RequestRepo>,
-    pub audit: Arc<dyn AuditLogger>,
-    pub notifier: Arc<dyn Notifier>,
+    pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
 }
@@ -179,6 +178,9 @@ fn find_matched_selector(user: &AuthUser, approvers: &[dbward_domain::policies::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
+    struct NoopDispatcher;
+    impl EventDispatcher for NoopDispatcher { fn dispatch(&self, _: TransitionEvent) {} }
     use chrono::{DateTime, Utc};
     use dbward_domain::auth::{ResolvedRole, SubjectType};
     use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
@@ -317,8 +319,7 @@ mod tests {
         ApproveRequest {
             authorizer: Arc::new(AllowAll),
             request_repo: repo,
-            audit: Arc::new(FakeAudit),
-            notifier: Arc::new(FakeNotifier),
+            event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),
         }

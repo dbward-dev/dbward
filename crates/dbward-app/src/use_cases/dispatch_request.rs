@@ -11,8 +11,7 @@ pub struct DispatchRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub policy: Arc<dyn PolicyEvaluator>,
     pub request_repo: Arc<dyn RequestRepo>,
-    pub audit: Arc<dyn AuditLogger>,
-    pub notifier: Arc<dyn Notifier>,
+    pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -97,6 +96,9 @@ impl DispatchRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
+    struct NoopDispatcher;
+    impl EventDispatcher for NoopDispatcher { fn dispatch(&self, _: TransitionEvent) {} }
     use dbward_domain::auth::{ResolvedRole, SubjectType};
     use dbward_domain::entities::Request;
     use dbward_domain::values::{DatabaseName, Environment, Operation};
@@ -155,7 +157,7 @@ mod tests {
     #[test]
     fn dispatch_approved_succeeds() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::Approved))), dispatched: Mutex::new(false) });
-        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), audit: Arc::new(FakeAudit), notifier: Arc::new(FakeNotifier), clock: Arc::new(FakeClock) };
+        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         let out = uc.execute(DispatchRequestInput { request_id: "req-001".into() }, &user).unwrap();
@@ -166,7 +168,7 @@ mod tests {
     #[test]
     fn dispatch_pending_fails() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::Pending))), dispatched: Mutex::new(false) });
-        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo, audit: Arc::new(FakeAudit), notifier: Arc::new(FakeNotifier), clock: Arc::new(FakeClock) };
+        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         assert!(matches!(uc.execute(DispatchRequestInput { request_id: "req-001".into() }, &user), Err(AppError::Conflict(_))));
@@ -175,7 +177,7 @@ mod tests {
     #[test]
     fn dispatch_break_glass_succeeds() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::BreakGlass))), dispatched: Mutex::new(false) });
-        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), audit: Arc::new(FakeAudit), notifier: Arc::new(FakeNotifier), clock: Arc::new(FakeClock) };
+        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         let out = uc.execute(DispatchRequestInput { request_id: "req-001".into() }, &user).unwrap();

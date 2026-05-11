@@ -159,15 +159,7 @@ impl DatabaseRegistry for FakeDbRegistry {
     fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> { Ok(vec![]) }
 }
 
-struct FakeAudit;
-impl AuditLogger for FakeAudit {
-    fn record(&self, _: &AuditEvent) -> Result<(), AppError> { Ok(()) }
-}
 
-struct FakeNotifier;
-impl Notifier for FakeNotifier {
-    fn dispatch(&self, _: WebhookEvent) {}
-}
 
 struct FakeClock {
     now: Mutex<DateTime<Utc>>,
@@ -283,8 +275,6 @@ struct TestHarness {
     authorizer: Arc<dyn Authorizer>,
     policy: Arc<FakePolicy>,
     event_dispatcher: Arc<dyn EventDispatcher>,
-    audit: Arc<dyn AuditLogger>,
-    notifier: Arc<dyn Notifier>,
     db_registry: Arc<dyn DatabaseRegistry>,
 }
 
@@ -297,8 +287,6 @@ impl TestHarness {
             authorizer: Arc::new(AllowAll),
             policy: Arc::new(FakePolicy { workflow, exec_policy: ExecutionPolicy::default() }),
             event_dispatcher: Arc::new(NoopDispatcher),
-            audit: Arc::new(FakeAudit),
-            notifier: Arc::new(FakeNotifier),
             db_registry: Arc::new(FakeDbRegistry),
         }
     }
@@ -324,8 +312,7 @@ impl TestHarness {
         ApproveRequest {
             authorizer: self.authorizer.clone(),
             request_repo: self.repo.clone(),
-            audit: self.audit.clone(),
-            notifier: self.notifier.clone(),
+            event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
             id_gen: self.id_gen.clone(),
         }
@@ -335,8 +322,7 @@ impl TestHarness {
         RejectRequest {
             authorizer: self.authorizer.clone(),
             request_repo: self.repo.clone(),
-            audit: self.audit.clone(),
-            notifier: self.notifier.clone(),
+            event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
             id_gen: self.id_gen.clone(),
         }
@@ -346,8 +332,7 @@ impl TestHarness {
         CancelRequest {
             authorizer: self.authorizer.clone(),
             request_repo: self.repo.clone(),
-            audit: self.audit.clone(),
-            notifier: self.notifier.clone(),
+            event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
         }
     }
@@ -357,8 +342,7 @@ impl TestHarness {
             authorizer: self.authorizer.clone(),
             policy: self.policy.clone(),
             request_repo: self.repo.clone(),
-            audit: self.audit.clone(),
-            notifier: self.notifier.clone(),
+            event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
         }
     }

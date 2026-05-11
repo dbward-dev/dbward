@@ -10,8 +10,7 @@ use crate::ports::*;
 pub struct CancelRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub request_repo: Arc<dyn RequestRepo>,
-    pub audit: Arc<dyn AuditLogger>,
-    pub notifier: Arc<dyn Notifier>,
+    pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -73,6 +72,9 @@ impl CancelRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
+    struct NoopDispatcher;
+    impl EventDispatcher for NoopDispatcher { fn dispatch(&self, _: TransitionEvent) {} }
     use dbward_domain::auth::{ResolvedRole, SubjectType};
     use dbward_domain::entities::Request;
     use dbward_domain::values::{DatabaseName, Environment, Operation};
@@ -134,7 +136,7 @@ mod tests {
     #[test]
     fn cancel_pending_succeeds() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::Pending))), cancelled: Mutex::new(false) });
-        let uc = CancelRequest { authorizer: Arc::new(AllowAll), request_repo: repo.clone(), audit: Arc::new(FakeAudit), notifier: Arc::new(FakeNotifier), clock: Arc::new(FakeClock) };
+        let uc = CancelRequest { authorizer: Arc::new(AllowAll), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         let out = uc.execute(CancelRequestInput { request_id: "req-001".into(), reason: Some("changed mind".into()) }, &user).unwrap();
@@ -145,7 +147,7 @@ mod tests {
     #[test]
     fn cancel_rejected_fails() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::Rejected))), cancelled: Mutex::new(false) });
-        let uc = CancelRequest { authorizer: Arc::new(AllowAll), request_repo: repo, audit: Arc::new(FakeAudit), notifier: Arc::new(FakeNotifier), clock: Arc::new(FakeClock) };
+        let uc = CancelRequest { authorizer: Arc::new(AllowAll), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         assert!(matches!(uc.execute(CancelRequestInput { request_id: "req-001".into(), reason: None }, &user), Err(AppError::Conflict(_))));
@@ -154,7 +156,7 @@ mod tests {
     #[test]
     fn cancel_denied_by_authorizer() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::Pending))), cancelled: Mutex::new(false) });
-        let uc = CancelRequest { authorizer: Arc::new(DenyAll), request_repo: repo, audit: Arc::new(FakeAudit), notifier: Arc::new(FakeNotifier), clock: Arc::new(FakeClock) };
+        let uc = CancelRequest { authorizer: Arc::new(DenyAll), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "bob".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         assert!(matches!(uc.execute(CancelRequestInput { request_id: "req-001".into(), reason: None }, &user), Err(AppError::Forbidden(_))));

@@ -10,8 +10,7 @@ use crate::ports::*;
 pub struct RejectRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub request_repo: Arc<dyn RequestRepo>,
-    pub audit: Arc<dyn AuditLogger>,
-    pub notifier: Arc<dyn Notifier>,
+    pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
 }
@@ -132,6 +131,9 @@ impl RejectRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
+    struct NoopDispatcher;
+    impl EventDispatcher for NoopDispatcher { fn dispatch(&self, _: TransitionEvent) {} }
     use dbward_domain::auth::{ResolvedRole, SubjectType};
     use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
     use dbward_domain::entities::Request;
@@ -199,7 +201,7 @@ mod tests {
     #[test]
     fn requester_can_reject_own_request() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_pending_request())), rejected: Mutex::new(false) });
-        let uc = RejectRequest { authorizer: Arc::new(AllowAll), request_repo: repo.clone(), audit: Arc::new(FakeAudit), notifier: Arc::new(FakeNotifier), clock: Arc::new(FakeClock), id_gen: Arc::new(FakeIdGen) };
+        let uc = RejectRequest { authorizer: Arc::new(AllowAll), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock), id_gen: Arc::new(FakeIdGen) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         let out = uc.execute(RejectRequestInput { request_id: "req-001".into(), comment: None }, &user).unwrap();
@@ -212,7 +214,7 @@ mod tests {
         let mut req = make_pending_request();
         req.status = RequestStatus::Approved;
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(req)), rejected: Mutex::new(false) });
-        let uc = RejectRequest { authorizer: Arc::new(AllowAll), request_repo: repo, audit: Arc::new(FakeAudit), notifier: Arc::new(FakeNotifier), clock: Arc::new(FakeClock), id_gen: Arc::new(FakeIdGen) };
+        let uc = RejectRequest { authorizer: Arc::new(AllowAll), request_repo: repo.clone(), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock), id_gen: Arc::new(FakeIdGen) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         assert!(matches!(uc.execute(RejectRequestInput { request_id: "req-001".into(), comment: None }, &user), Err(AppError::Conflict(_))));
