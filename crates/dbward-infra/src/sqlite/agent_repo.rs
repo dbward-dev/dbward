@@ -258,8 +258,14 @@ impl AgentRepo for SqliteAgentRepo {
             params![request_id, now_str],
         ).map_err(|e| AppError::Internal(e.to_string()))?;
 
+        if updated == 0 {
+            // Drop tx without commit → implicit rollback (reverts the INSERT)
+            drop(tx);
+            return Ok(false);
+        }
+
         tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
-        Ok(updated > 0)
+        Ok(true)
     }
 }
 

@@ -267,6 +267,40 @@ impl RequestRepo for SqliteRequestRepo {
         Ok(affected > 0)
     }
 
+    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+        let conn = self.conn.blocking_lock();
+        let tx = conn.unchecked_transaction().map_err(map_err)?;
+
+        tx.execute(
+            "INSERT INTO approvals (id, request_id, action, actor_id, matched_selector, step_index, comment, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                approval.id,
+                approval.request_id,
+                approval_action_str(&approval.action),
+                approval.actor_id,
+                approval.matched_selector,
+                approval.step_index,
+                approval.comment,
+                approval.created_at.to_rfc3339(),
+            ],
+        ).map_err(map_err)?;
+
+        let now_str = now.to_rfc3339();
+        let affected = tx.execute(
+            "UPDATE requests SET status = 'approved', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending'",
+            params![request_id, now_str],
+        ).map_err(map_err)?;
+
+        if affected == 0 {
+            drop(tx);
+            return Ok(false);
+        }
+
+        tx.commit().map_err(map_err)?;
+        Ok(true)
+    }
+
     fn mark_rejected(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let conn = self.conn.blocking_lock();
         let affected = conn

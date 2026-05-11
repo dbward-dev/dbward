@@ -27,7 +27,6 @@ pub struct AgentClaimInput {
     pub request_id: String,
     pub agent_id: String,
     pub agent_databases: Vec<dbward_domain::entities::DatabaseCapability>,
-    pub agent_operations: Vec<Operation>,
 }
 
 pub struct AgentClaimOutput {
@@ -81,15 +80,7 @@ impl AgentClaim {
             }));
         }
 
-        // 5. Operation capability check
-        if !input.agent_operations.is_empty() && !input.agent_operations.contains(&request.operation) {
-            return Err(AppError::Forbidden(crate::error::AuthzError::Forbidden {
-                permission: Permission::AgentClaim,
-                reason: "agent lacks capability for this operation".into(),
-            }));
-        }
-
-        // 6. Migration exclusion: no concurrent migrate on same (db, env)
+        // 5. Migration exclusion: no concurrent migrate on same (db, env)
         if matches!(request.operation, Operation::MigrateUp | Operation::MigrateDown) {
             if self.agent_repo.has_running_migration(&request.database, &request.environment, &request.id)? {
                 return Err(AppError::Conflict("migration already running for this database".into()));

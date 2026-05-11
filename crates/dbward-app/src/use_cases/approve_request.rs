@@ -1,5 +1,3 @@
-// TODO(v0.2): Transaction boundary gap — insert_approval + mark_approved should be atomic.
-// Requires UnitOfWork port trait.
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
@@ -134,11 +132,10 @@ impl ApproveRequest {
             comment: input.comment,
             created_at: now,
         };
-        self.request_repo.insert_approval(&approval)?;
 
         // 11. Check if step (and all steps) are now satisfied
         let mut all_approvals = approvals;
-        all_approvals.push(approval);
+        all_approvals.push(approval.clone());
 
         let all_satisfied = workflow_matcher::all_steps_satisfied(&workflow.steps, &all_approvals);
 
@@ -180,10 +177,12 @@ impl ApproveRequest {
         let new_status = result.status();
 
         if all_satisfied {
-            let ok = self.request_repo.mark_approved(&request.id, now)?;
+            let ok = self.request_repo.approve_and_mark_approved(&approval, &request.id, now)?;
             if !ok {
                 return Err(AppError::Conflict("concurrent status change".into()));
             }
+        } else {
+            self.request_repo.insert_approval(&approval)?;
         }
 
         result.commit(&*self.event_dispatcher);
@@ -260,6 +259,11 @@ mod tests {
         }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
         fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+            *self.marked_approved.lock().unwrap() = true;
+            Ok(true)
+        }
+        fn approve_and_mark_approved(&self, a: &Approval, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+            self.approvals.lock().unwrap().push(a.clone());
             *self.marked_approved.lock().unwrap() = true;
             Ok(true)
         }

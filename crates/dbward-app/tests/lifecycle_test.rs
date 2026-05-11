@@ -70,6 +70,10 @@ impl RequestRepo for SharedRepo {
             Ok(false)
         }
     }
+    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+        self.approvals.lock().unwrap().push(approval.clone());
+        self.mark_approved(request_id, now)
+    }
     fn mark_rejected(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let mut reqs = self.requests.lock().unwrap();
         if let Some(r) = reqs.iter_mut().find(|r| r.id == id) {
@@ -727,7 +731,7 @@ fn agent_full_flow_poll_claim_heartbeat() {
         id_gen: h.id_gen.clone(),
     };
     let claim_result = claim_uc.execute(
-        AgentClaimInput { request_id: created.id.clone(), agent_id: "agent-1".into(), agent_databases: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }], agent_operations: vec![] },
+        AgentClaimInput { request_id: created.id.clone(), agent_id: "agent-1".into(), agent_databases: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }] },
         &agent,
     ).unwrap();
     assert!(!claim_result.execution_token.is_empty());
@@ -780,7 +784,7 @@ fn heartbeat_detects_cancelled_request() {
         clock: h.clock.clone(),
         id_gen: h.id_gen.clone(),
     };
-    let claim_result = claim_uc.execute(AgentClaimInput { request_id: created.id.clone(), agent_id: "agent-1".into(), agent_databases: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }], agent_operations: vec![] }, &agent).unwrap();
+    let claim_result = claim_uc.execute(AgentClaimInput { request_id: created.id.clone(), agent_id: "agent-1".into(), agent_databases: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }] }, &agent).unwrap();
 
     // Cancel the request while agent is running
     {

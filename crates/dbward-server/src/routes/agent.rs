@@ -98,7 +98,6 @@ pub async fn claim(
             request_id: id,
             agent_id: user.subject_id.clone(),
             agent_databases: agent.databases,
-            agent_operations: vec![],
         },
         &user,
     ).map_err(map_error)?;

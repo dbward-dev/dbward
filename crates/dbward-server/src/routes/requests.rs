@@ -120,9 +120,15 @@ pub async fn get(
         &ResourceContext::Request { requester_id: req.requester.clone() },
     );
     if scoped_ok.is_err() {
-        // Approvers can view pending requests they need to act on
+        // Approvers can view pending requests they need to act on (scoped to matching db/env)
         let is_approver_view = req.status == RequestStatus::Pending
-            && state.authorizer.authorize_global(&user, Permission::RequestApprove).is_ok();
+            && state.authorizer.authorize_scoped(
+                &user,
+                Permission::RequestApprove,
+                &req.database,
+                &req.environment,
+                &ResourceContext::Global,
+            ).is_ok();
         if !is_approver_view {
             return Err(map_error(AppError::Forbidden(scoped_ok.unwrap_err())));
         }
