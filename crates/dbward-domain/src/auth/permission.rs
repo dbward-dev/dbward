@@ -2,7 +2,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// Fine-grained permission in the `resource.action` format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Permission {
     RequestCreate,
     RequestCreateSelect,

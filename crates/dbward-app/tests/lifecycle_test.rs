@@ -132,6 +132,7 @@ impl RequestRepo for SharedRepo {
             Ok(false)
         }
     }
+    fn cancel_all_for_user(&self, _: &str, _: DateTime<Utc>) -> Result<u32, AppError> { Ok(0) }
 }
 
 struct AllowAll;

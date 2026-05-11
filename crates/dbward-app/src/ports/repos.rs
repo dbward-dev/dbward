@@ -23,6 +23,7 @@ pub trait RequestRepo: Send + Sync {
     fn mark_running(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_executed(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_failed(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn cancel_all_for_user(&self, user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError>;
 }
 
 // --- AgentRepo ---
@@ -44,8 +45,9 @@ pub trait UserRepo: Send + Sync {
     fn get(&self, user_id: &str) -> Result<Option<User>, AppError>;
     fn upsert(&self, user: &User) -> Result<(), AppError>;
     fn list(&self) -> Result<Vec<User>, AppError>;
-    fn suspend(&self, user_id: &str) -> Result<(), AppError>;
-    fn activate(&self, user_id: &str) -> Result<(), AppError>;
+    fn suspend(&self, user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn activate(&self, user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn is_suspended(&self, user_id: &str) -> Result<bool, AppError>;
 }
 
 // --- TokenRepo ---
@@ -54,7 +56,10 @@ pub trait TokenRepo: Send + Sync {
     fn create(&self, token: &Token) -> Result<(), AppError>;
     fn verify(&self, prefix: &str, hash: &str) -> Result<Option<Token>, AppError>;
     fn list(&self) -> Result<Vec<Token>, AppError>;
-    fn revoke(&self, token_id: &str) -> Result<(), AppError>;
+    fn get(&self, token_id: &str) -> Result<Option<Token>, AppError>;
+    fn revoke(&self, token_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn revoke_all_for_user(&self, subject_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError>;
+    fn count_active(&self) -> Result<u32, AppError>;
 }
 
 // --- WebhookRepo ---
@@ -78,6 +83,68 @@ pub trait DatabaseRegistry: Send + Sync {
 
 pub trait AuditLogger: Send + Sync {
     fn record(&self, event: &AuditEvent) -> Result<(), AppError>;
+}
+
+// --- AuditRepo (query/verify) ---
+
+pub trait AuditRepo: Send + Sync {
+    fn list(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, AppError>;
+    fn verify_chain(&self) -> Result<AuditVerifyResult, AppError>;
+}
+
+pub struct AuditFilter {
+    pub actor_id: Option<String>,
+    pub event_type: Option<String>,
+    pub event_category: Option<String>,
+    pub outcome: Option<String>,
+    pub environment: Option<String>,
+    pub database: Option<String>,
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    pub until: Option<chrono::DateTime<chrono::Utc>>,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+pub struct AuditVerifyResult {
+    pub total_events: u64,
+    pub first_broken_id: Option<String>,
+}
+
+// --- PolicyRepo ---
+
+pub trait PolicyRepo: Send + Sync {
+    fn create_workflow(&self, wf: &dbward_domain::policies::Workflow) -> Result<(), AppError>;
+    fn get_workflow(&self, id: &str) -> Result<Option<dbward_domain::policies::Workflow>, AppError>;
+    fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError>;
+    fn delete_workflow(&self, id: &str) -> Result<bool, AppError>;
+    fn count_workflows(&self) -> Result<u32, AppError>;
+
+    fn create_execution_policy(&self, ep: &dbward_domain::policies::ExecutionPolicy) -> Result<(), AppError>;
+    fn get_execution_policy(&self, id: &str) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError>;
+    fn list_execution_policies(&self) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError>;
+    fn delete_execution_policy(&self, id: &str) -> Result<bool, AppError>;
+
+    fn create_role(&self, role: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError>;
+    fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError>;
+    fn delete_role(&self, name: &str) -> Result<bool, AppError>;
+    fn count_roles(&self) -> Result<u32, AppError>;
+}
+
+// --- LicenseChecker ---
+
+pub trait LicenseChecker: Send + Sync {
+    fn max_tokens(&self) -> u32;
+    fn max_workflows(&self) -> u32;
+    fn max_webhooks(&self) -> u32;
+    fn max_roles(&self) -> u32;
+    fn is_pro(&self) -> bool;
+}
+
+// --- ResultChannel (UC-6 long-poll) ---
+
+#[async_trait]
+pub trait ResultChannel: Send + Sync {
+    async fn subscribe(&self, request_id: &str, timeout_secs: u64) -> Result<Option<Vec<u8>>, AppError>;
 }
 
 // --- ResultStore ---

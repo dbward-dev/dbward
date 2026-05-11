@@ -8,9 +8,11 @@ description = "Application layer for dbward — use cases and port traits"
 dbward-domain = { path = "../dbward-domain" }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
+hex = "0.4"
 serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

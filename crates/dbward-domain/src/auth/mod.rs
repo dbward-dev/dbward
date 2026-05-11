@@ -1,12 +1,14 @@
 pub mod permission;
 pub mod resolved_role;
 pub mod resource_context;
+pub mod role_definition;
 
 use serde::{Deserialize, Serialize};
 
 pub use permission::Permission;
 pub use resolved_role::ResolvedRole;
 pub use resource_context::ResourceContext;
+pub use role_definition::RoleDefinition;
 
 /// Authenticated principal. Constructed by middleware after token/OIDC verification + role resolution.
 #[derive(Debug, Clone)]

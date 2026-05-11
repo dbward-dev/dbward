@@ -6,7 +6,8 @@ mod services;
 pub use authorizer::{Authorizer, PolicyEvaluator, RoleResolver, TokenVerifier};
 pub use clock::{Clock, IdGenerator};
 pub use repos::{
-    AgentRepo, AuditLogger, DatabaseRegistry, ExecutionTokenClaims, RequestRepo, ResultStore,
+    AgentRepo, AuditFilter, AuditLogger, AuditRepo, AuditVerifyResult, DatabaseRegistry,
+    ExecutionTokenClaims, LicenseChecker, PolicyRepo, RequestRepo, ResultChannel, ResultStore,
     TokenRepo, TokenSigner, UserRepo, WebhookRepo,
 };
 pub use services::{Notifier, WebhookEvent};
