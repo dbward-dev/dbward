@@ -1,3 +1,7 @@
+pub mod agent_claim;
+pub mod agent_heartbeat;
+pub mod agent_poll;
+pub mod agent_submit_result;
 pub mod approve_request;
 pub mod cancel_request;
 pub mod create_request;

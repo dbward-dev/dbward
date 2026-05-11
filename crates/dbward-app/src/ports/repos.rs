@@ -20,6 +20,9 @@ pub trait RequestRepo: Send + Sync {
     fn mark_rejected(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_cancelled(&self, id: &str, actor: &str, reason: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_dispatched(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn mark_running(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn mark_executed(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn mark_failed(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
 }
 
 // --- AgentRepo ---

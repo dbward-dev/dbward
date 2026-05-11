@@ -102,6 +102,36 @@ impl RequestRepo for SharedRepo {
             Ok(false)
         }
     }
+    fn mark_running(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+        let mut reqs = self.requests.lock().unwrap();
+        if let Some(r) = reqs.iter_mut().find(|r| r.id == id) {
+            r.status = RequestStatus::Running;
+            r.updated_at = now;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+    fn mark_executed(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+        let mut reqs = self.requests.lock().unwrap();
+        if let Some(r) = reqs.iter_mut().find(|r| r.id == id) {
+            r.status = RequestStatus::Executed;
+            r.updated_at = now;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+    fn mark_failed(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+        let mut reqs = self.requests.lock().unwrap();
+        if let Some(r) = reqs.iter_mut().find(|r| r.id == id) {
+            r.status = RequestStatus::Failed;
+            r.updated_at = now;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 struct AllowAll;
@@ -554,4 +584,197 @@ fn redispatch_respects_max_executions() {
     // Actually, our fake returns 0. Let's test with max_executions=0 instead.
     // This is a limitation of the fake — real test would need a smarter fake.
     // Skip this edge case for now; the TTL test above covers the dispatch guard.
+}
+
+// === Agent Flow Tests ===
+
+use dbward_app::use_cases::{
+    agent_poll::{AgentPoll, AgentPollInput},
+    agent_claim::{AgentClaim, AgentClaimInput},
+    agent_heartbeat::{AgentHeartbeat, AgentHeartbeatInput},
+};
+
+struct SharedAgentRepo {
+    executions: Mutex<Vec<Execution>>,
+    request_repo: Arc<SharedRepo>,
+}
+
+impl SharedAgentRepo {
+    fn new(request_repo: Arc<SharedRepo>) -> Self {
+        Self { executions: Mutex::new(vec![]), request_repo }
+    }
+}
+
+impl AgentRepo for SharedAgentRepo {
+    fn upsert(&self, _: &Agent) -> Result<(), AppError> { Ok(()) }
+    fn get(&self, _: &str) -> Result<Option<Agent>, AppError> { Ok(None) }
+    fn create_execution(&self, exec: &Execution) -> Result<(), AppError> {
+        self.executions.lock().unwrap().push(exec.clone());
+        // Also mark request as running
+        let mut reqs = self.request_repo.requests.lock().unwrap();
+        if let Some(r) = reqs.iter_mut().find(|r| r.id == exec.request_id) {
+            r.status = RequestStatus::Running;
+        }
+        Ok(())
+    }
+    fn get_execution(&self, id: &str) -> Result<Option<Execution>, AppError> {
+        Ok(self.executions.lock().unwrap().iter().find(|e| e.id == id).cloned())
+    }
+    fn update_execution_status(&self, id: &str, status: ExecutionStatus) -> Result<(), AppError> {
+        let mut execs = self.executions.lock().unwrap();
+        if let Some(e) = execs.iter_mut().find(|e| e.id == id) {
+            e.status = status;
+        }
+        Ok(())
+    }
+    fn extend_lease(&self, id: &str, new_expiry: DateTime<Utc>) -> Result<(), AppError> {
+        let mut execs = self.executions.lock().unwrap();
+        if let Some(e) = execs.iter_mut().find(|e| e.id == id) {
+            e.lease_expires_at = new_expiry;
+        }
+        Ok(())
+    }
+    fn find_dispatched_jobs(&self, _caps: &[(DatabaseName, Environment)]) -> Result<Vec<Request>, AppError> {
+        let reqs = self.request_repo.requests.lock().unwrap();
+        Ok(reqs.iter().filter(|r| r.status == RequestStatus::Dispatched).cloned().collect())
+    }
+}
+
+struct FakeTokenSigner;
+impl TokenSigner for FakeTokenSigner {
+    fn sign(&self, claims: &ExecutionTokenClaims) -> String {
+        format!("token:{}:{}", claims.request_id, claims.database)
+    }
+}
+
+fn make_agent_user(id: &str) -> AuthUser {
+    AuthUser {
+        subject_id: id.to_string(),
+        subject_type: SubjectType::Agent,
+        roles: vec![ResolvedRole {
+            name: "agent-default".into(),
+            permissions: [Permission::AgentPoll, Permission::AgentClaim, Permission::AgentHeartbeat, Permission::AgentSubmitResult].into_iter().collect(),
+            databases: vec![],
+            environments: vec![],
+        }],
+        groups: vec![],
+        token_id: Some("agent-token-1".into()),
+    }
+}
+
+#[test]
+fn agent_full_flow_poll_claim_heartbeat() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let approver = make_user("bob", &["dba"]);
+    let agent = make_agent_user("agent-1");
+
+    // Create + Approve + Dispatch
+    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    h.approve_uc().execute(
+        ApproveRequestInput { request_id: created.id.clone(), comment: None },
+        &approver,
+    ).unwrap();
+    h.dispatch_uc().execute(
+        DispatchRequestInput { request_id: created.id.clone() },
+        &requester,
+    ).unwrap();
+
+    // Agent flow
+    let agent_repo = Arc::new(SharedAgentRepo::new(h.repo.clone()));
+
+    // Poll
+    let poll_uc = AgentPoll {
+        authorizer: h.authorizer.clone(),
+        agent_repo: agent_repo.clone(),
+        clock: h.clock.clone(),
+    };
+    let poll_result = poll_uc.execute(
+        AgentPollInput { capabilities: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }] },
+        &agent,
+    ).unwrap();
+    assert_eq!(poll_result.jobs.len(), 1);
+    assert_eq!(poll_result.jobs[0].id, created.id);
+
+    // Claim
+    let claim_uc = AgentClaim {
+        authorizer: h.authorizer.clone(),
+        request_repo: h.repo.clone(),
+        agent_repo: agent_repo.clone(),
+        token_signer: Arc::new(FakeTokenSigner),
+        clock: h.clock.clone(),
+        id_gen: h.id_gen.clone(),
+    };
+    let claim_result = claim_uc.execute(
+        AgentClaimInput { request_id: created.id.clone() },
+        &agent,
+    ).unwrap();
+    assert!(!claim_result.execution_token.is_empty());
+    assert_eq!(claim_result.database, "app");
+
+    // Verify request is now Running
+    let req = h.repo.get(&created.id).unwrap().unwrap();
+    assert_eq!(req.status, RequestStatus::Running);
+
+    // Heartbeat
+    let hb_uc = AgentHeartbeat {
+        authorizer: h.authorizer.clone(),
+        agent_repo: agent_repo.clone(),
+        request_repo: h.repo.clone(),
+        clock: h.clock.clone(),
+    };
+    let hb_result = hb_uc.execute(
+        AgentHeartbeatInput { execution_id: claim_result.execution_id.clone() },
+        &agent,
+    ).unwrap();
+    assert!(!hb_result.cancelled);
+}
+
+#[test]
+fn heartbeat_detects_cancelled_request() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let approver = make_user("bob", &["dba"]);
+    let agent = make_agent_user("agent-1");
+
+    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    h.approve_uc().execute(
+        ApproveRequestInput { request_id: created.id.clone(), comment: None },
+        &approver,
+    ).unwrap();
+    h.dispatch_uc().execute(
+        DispatchRequestInput { request_id: created.id.clone() },
+        &requester,
+    ).unwrap();
+
+    let agent_repo = Arc::new(SharedAgentRepo::new(h.repo.clone()));
+    let claim_uc = AgentClaim {
+        authorizer: h.authorizer.clone(),
+        request_repo: h.repo.clone(),
+        agent_repo: agent_repo.clone(),
+        token_signer: Arc::new(FakeTokenSigner),
+        clock: h.clock.clone(),
+        id_gen: h.id_gen.clone(),
+    };
+    let claim_result = claim_uc.execute(AgentClaimInput { request_id: created.id.clone() }, &agent).unwrap();
+
+    // Cancel the request while agent is running
+    {
+        let mut reqs = h.repo.requests.lock().unwrap();
+        let r = reqs.iter_mut().find(|r| r.id == created.id).unwrap();
+        r.status = RequestStatus::Cancelled;
+    }
+
+    // Heartbeat should detect cancellation
+    let hb_uc = AgentHeartbeat {
+        authorizer: h.authorizer.clone(),
+        agent_repo: agent_repo.clone(),
+        request_repo: h.repo.clone(),
+        clock: h.clock.clone(),
+    };
+    let hb_result = hb_uc.execute(
+        AgentHeartbeatInput { execution_id: claim_result.execution_id },
+        &agent,
+    ).unwrap();
+    assert!(hb_result.cancelled);
 }
