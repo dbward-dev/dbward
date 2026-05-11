@@ -829,3 +829,77 @@ fn event_dispatcher_records_break_glass_auto_dispatch() {
     assert_eq!(events[0].new_status, RequestStatus::BreakGlass);
     assert_eq!(events[1].new_status, RequestStatus::Dispatched);
 }
+
+#[test]
+fn event_dispatcher_records_auto_approved_two_events() {
+    let auto_wf = Workflow {
+        id: "wf-auto".into(),
+        database: DatabaseName::new("*").unwrap(),
+        environment: Environment::new("*").unwrap(),
+        operations: vec![],
+        steps: vec![],
+        skip_approval_for: vec![],
+        require_reason: false,
+        allow_self_approve: false,
+        allow_same_approver_across_steps: true,
+        pending_ttl_secs: None,
+        approval_ttl_secs: None,
+    };
+    let h = TestHarness::new(Some(auto_wf));
+    let requester = make_user("alice", &["developer"]);
+
+    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    assert_eq!(created.status, RequestStatus::Dispatched);
+
+    let events = h.event_dispatcher.events();
+    assert_eq!(events.len(), 2, "auto_approved emits 2 events: Created + Dispatched");
+    assert_eq!(events[0].new_status, RequestStatus::AutoApproved);
+    assert_eq!(events[1].new_status, RequestStatus::Dispatched);
+    assert_eq!(events[1].previous_status, RequestStatus::AutoApproved);
+}
+
+#[test]
+fn reject_from_non_pending_returns_conflict() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let approver = make_user("bob", &["dba"]);
+
+    // Create + Approve → Approved
+    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    h.approve_uc().execute(
+        ApproveRequestInput { request_id: created.id.clone(), comment: None },
+        &approver,
+    ).unwrap();
+
+    // Reject from Approved → should fail
+    let result = h.reject_uc().execute(
+        RejectRequestInput { request_id: created.id.clone(), comment: None },
+        &approver,
+    );
+    assert!(matches!(result, Err(AppError::Conflict(_))));
+}
+
+#[test]
+fn cancelled_request_complete_stays_cancelled() {
+    // Verified via status_machine unit test:
+    // (Cancelled, Complete { success: true }) → Cancelled
+    // Full integration test deferred to async test suite (requires ResultStore + tokio runtime)
+    let result = dbward_domain::services::status_machine::transition(
+        RequestStatus::Cancelled,
+        &dbward_domain::services::status_machine::RequestTrigger::Complete { success: true },
+        dbward_domain::services::status_machine::TransitionContext {
+            request_id: "req-001".into(),
+            actor_id: "agent-1".into(),
+            actor_type: SubjectType::Agent,
+            database: DatabaseName::new("app").unwrap(),
+            environment: Environment::new("production").unwrap(),
+            operation: Operation::ExecuteDml,
+            timestamp: chrono::Utc::now(),
+            metadata: dbward_domain::services::status_machine::EventMetadata::Completed {
+                success: true,
+                execution_id: "exec-1".into(),
+            },
+        },
+    ).unwrap();
+    assert_eq!(result.status(), RequestStatus::Cancelled);
+}

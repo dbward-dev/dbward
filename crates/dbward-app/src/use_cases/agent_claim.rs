@@ -135,7 +135,10 @@ impl AgentClaim {
         self.agent_repo.create_execution(&execution)?;
 
         // 11. Mark request as running
-        self.request_repo.mark_running(&request.id, now)?;
+        let ok = self.request_repo.mark_running(&request.id, now)?;
+        if !ok {
+            return Err(AppError::Conflict("concurrent status change".into()));
+        }
 
         result.commit(&*self.event_dispatcher);
 
