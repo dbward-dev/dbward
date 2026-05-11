@@ -269,14 +269,6 @@ mod tests {
         fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     }
 
-    struct FakeAudit;
-    impl AuditLogger for FakeAudit {
-        fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> { Ok(()) }
-    }
-    struct FakeNotifier;
-    impl Notifier for FakeNotifier {
-        fn dispatch(&self, _: WebhookEvent) {}
-    }
     struct FakeClock;
     impl Clock for FakeClock {
         fn now(&self) -> DateTime<Utc> { Utc::now() }

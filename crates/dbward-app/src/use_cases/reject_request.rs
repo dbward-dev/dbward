@@ -118,6 +118,7 @@ impl RejectRequest {
             return Err(AppError::Conflict("concurrent status change".into()));
         }
 
+        // Insert rejection record after status change succeeds
         let approval = Approval {
             id: self.id_gen.generate(),
             request_id: request.id.clone(),
@@ -157,10 +158,6 @@ mod tests {
         fn authorize_scoped(&self, _: &AuthUser, _: Permission, _: &DatabaseName, _: &Environment, _: &ResourceContext) -> Result<(), AuthzError> { Ok(()) }
         fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> { Ok(()) }
     }
-    struct FakeAudit;
-    impl AuditLogger for FakeAudit { fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> { Ok(()) } }
-    struct FakeNotifier;
-    impl Notifier for FakeNotifier { fn dispatch(&self, _: WebhookEvent) {} }
     struct FakeClock;
     impl Clock for FakeClock { fn now(&self) -> DateTime<Utc> { Utc::now() } }
     struct FakeIdGen;

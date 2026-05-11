@@ -210,11 +210,6 @@ mod tests {
         fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> { Ok(vec![]) }
     }
 
-    struct FakeAudit;
-    impl AuditLogger for FakeAudit {
-        fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> { Ok(()) }
-    }
-
     struct NoopDispatcher;
     impl EventDispatcher for NoopDispatcher {
         fn dispatch(&self, _: dbward_domain::services::status_machine::TransitionEvent) {}

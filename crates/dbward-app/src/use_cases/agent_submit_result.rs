@@ -93,10 +93,13 @@ impl AgentSubmitResult {
         // 9. Update request status (skip if cancelled — request stays cancelled)
         let now = self.clock.now();
         if new_request_status != RequestStatus::Cancelled {
-            match new_request_status {
-                RequestStatus::Executed => { self.request_repo.mark_executed(&execution.request_id, now)?; }
-                RequestStatus::Failed => { self.request_repo.mark_failed(&execution.request_id, now)?; }
-                _ => {}
+            let ok = match new_request_status {
+                RequestStatus::Executed => self.request_repo.mark_executed(&execution.request_id, now)?,
+                RequestStatus::Failed => self.request_repo.mark_failed(&execution.request_id, now)?,
+                _ => true,
+            };
+            if !ok {
+                return Err(AppError::Conflict("concurrent status change".into()));
             }
         }
 

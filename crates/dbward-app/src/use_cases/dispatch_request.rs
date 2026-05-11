@@ -125,10 +125,6 @@ mod tests {
         fn authorize_scoped(&self, _: &AuthUser, _: Permission, _: &DatabaseName, _: &Environment, _: &ResourceContext) -> Result<(), AuthzError> { Ok(()) }
         fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> { Ok(()) }
     }
-    struct FakeAudit;
-    impl AuditLogger for FakeAudit { fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> { Ok(()) } }
-    struct FakeNotifier;
-    impl Notifier for FakeNotifier { fn dispatch(&self, _: WebhookEvent) {} }
     struct FakeClock;
     impl Clock for FakeClock { fn now(&self) -> DateTime<Utc> { Utc::now() } }
 
