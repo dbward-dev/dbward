@@ -83,4 +83,8 @@ impl TokenSigner for Ed25519TokenSigner {
             "requester_subject_id": claims.requester,
         }).to_string()
     }
+
+    fn public_key_hex(&self) -> String {
+        hex::encode(self.signing_key.verifying_key().to_bytes())
+    }
 }

@@ -230,6 +230,37 @@ impl AgentRepo for SqliteAgentRepo {
         }
         Ok(results)
     }
+
+    fn claim_and_mark_running(
+        &self,
+        execution: &Execution,
+        request_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError> {
+        let conn = self.conn.blocking_lock();
+        let tx = conn.unchecked_transaction().map_err(|e| AppError::Internal(e.to_string()))?;
+
+        let status = execution_status_str(execution.status);
+        let lease = execution.lease_expires_at.to_rfc3339();
+        let started = execution.started_at.map(|t| t.to_rfc3339());
+        let finished = execution.finished_at.map(|t| t.to_rfc3339());
+        let created = execution.created_at.to_rfc3339();
+
+        tx.execute(
+            "INSERT INTO executions (id, request_id, agent_id, status, token, lease_expires_at, started_at, finished_at, error_message, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![execution.id, execution.request_id, execution.agent_id, status, execution.token, lease, started, finished, execution.error_message, created],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+        let now_str = now.to_rfc3339();
+        let updated = tx.execute(
+            "UPDATE requests SET status = 'running', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
+            params![request_id, now_str],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+        tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(updated > 0)
+    }
 }
 
 // --- helpers ---

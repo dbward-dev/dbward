@@ -28,7 +28,11 @@ fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
         AppError::PlanLimit(_) => (StatusCode::PAYMENT_REQUIRED, "plan_limit_reached"),
         AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
     };
-    (status, Json(json!({"error": e.to_string(), "code": code})))
+    let message = match &e {
+        AppError::Internal(_) => "internal server error".to_string(),
+        other => other.to_string(),
+    };
+    (status, Json(json!({"error": message, "code": code})))
 }
 
 pub async fn create(
@@ -38,16 +42,12 @@ pub async fn create(
 ) -> ApiResult {
     let database = body["database"].as_str().unwrap_or_default();
     let environment = body["environment"].as_str().unwrap_or_default();
-    let operation_str = body["operation"].as_str().unwrap_or_default();
     let detail = body["detail"].as_str().unwrap_or_default();
 
     let database = DatabaseName::new(database)
         .map_err(|e| map_error(AppError::Validation(e.to_string())))?;
     let environment = Environment::new(environment)
         .map_err(|e| map_error(AppError::Validation(e.to_string())))?;
-    let operation: Operation = operation_str
-        .parse()
-        .map_err(|e: &str| map_error(AppError::Validation(e.to_string())))?;
 
     let share_with = body["share_with"]
         .as_array()
@@ -57,7 +57,7 @@ pub async fn create(
     let input = create_request::CreateRequestInput {
         database,
         environment,
-        operation,
+        operation: Operation::ExecuteSelect, // ignored; classified from SQL in use case
         detail: detail.to_string(),
         reason: body["reason"].as_str().map(String::from),
         emergency: body["emergency"].as_bool().unwrap_or(false),
@@ -111,13 +111,22 @@ pub async fn get(
     };
 
     use dbward_domain::auth::{Permission, ResourceContext};
-    state.authorizer.authorize_scoped(
+    use dbward_domain::entities::RequestStatus;
+    let scoped_ok = state.authorizer.authorize_scoped(
         &user,
         Permission::RequestView,
         &req.database,
         &req.environment,
         &ResourceContext::Request { requester_id: req.requester.clone() },
-    ).map_err(|e| map_error(AppError::Forbidden(e)))?;
+    );
+    if scoped_ok.is_err() {
+        // Approvers can view pending requests they need to act on
+        let is_approver_view = req.status == RequestStatus::Pending
+            && state.authorizer.authorize_global(&user, Permission::RequestApprove).is_ok();
+        if !is_approver_view {
+            return Err(map_error(AppError::Forbidden(scoped_ok.unwrap_err())));
+        }
+    }
 
     Ok((StatusCode::OK, Json(json!({
         "id": req.id,

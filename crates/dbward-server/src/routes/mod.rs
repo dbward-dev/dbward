@@ -24,7 +24,11 @@ fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
         AppError::PlanLimit(_) => (StatusCode::PAYMENT_REQUIRED, "plan_limit_reached"),
         AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
     };
-    (status, Json(serde_json::json!({"error": e.to_string(), "code": code})))
+    let message = match &e {
+        AppError::Internal(_) => "internal server error".to_string(),
+        other => other.to_string(),
+    };
+    (status, Json(serde_json::json!({"error": message, "code": code})))
 }
 
 pub fn build_router(state: AppState) -> Router {

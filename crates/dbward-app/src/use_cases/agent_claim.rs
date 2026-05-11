@@ -1,3 +1,5 @@
+// TODO(v0.2): Transaction boundary gap — create_execution + mark_running should be atomic.
+// Requires UnitOfWork port trait to wrap both repo calls in a single SQLite transaction.
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
@@ -132,13 +134,9 @@ impl AgentClaim {
             error_message: None,
             created_at: now,
         };
-        self.agent_repo.create_execution(&execution)?;
-
-        // 11. Mark request as running
-        let ok = self.request_repo.mark_running(&request.id, now)?;
-        if !ok {
-            return Err(AppError::Conflict("concurrent status change".into()));
-        }
+        self.agent_repo.claim_and_mark_running(&execution, &request.id, now)?
+            .then_some(())
+            .ok_or_else(|| AppError::Conflict("concurrent status change".into()))?;
 
         result.commit(&*self.event_dispatcher);
 

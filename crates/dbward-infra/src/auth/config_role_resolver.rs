@@ -2,13 +2,62 @@ use std::collections::{HashMap, HashSet};
 
 use dbward_app::error::AuthError;
 use dbward_app::ports::RoleResolver;
-use dbward_domain::auth::{ResolvedRole, RoleDefinition, SubjectType};
+use dbward_domain::auth::{Permission, ResolvedRole, RoleDefinition, SubjectType};
+use dbward_domain::values::{DatabaseName, Environment};
 
 pub struct ConfigRoleResolver {
     roles: HashMap<String, ResolvedRole>,
     role_bindings: HashMap<String, Vec<String>>,
     user_bindings: HashMap<String, Vec<String>>,
     default_role: Option<String>,
+}
+
+/// Returns built-in role definitions that are always available.
+fn builtin_roles() -> Vec<(String, ResolvedRole)> {
+    let wildcard_db = DatabaseName::new("*").unwrap();
+    let wildcard_env = Environment::new("*").unwrap();
+    vec![
+        ("admin".to_string(), ResolvedRole {
+            name: "admin".to_string(),
+            permissions: [Permission::All].into_iter().collect(),
+            databases: vec![wildcard_db.clone()],
+            environments: vec![wildcard_env.clone()],
+        }),
+        ("developer".to_string(), ResolvedRole {
+            name: "developer".to_string(),
+            permissions: [
+                Permission::RequestCreate,
+                Permission::RequestCreateSelect,
+                Permission::RequestView,
+                Permission::RequestCancel,
+                Permission::ResultView,
+                Permission::TokenRevokeOwn,
+            ].into_iter().collect(),
+            databases: vec![wildcard_db.clone()],
+            environments: vec![wildcard_env.clone()],
+        }),
+        ("readonly".to_string(), ResolvedRole {
+            name: "readonly".to_string(),
+            permissions: [
+                Permission::RequestCreateSelect,
+                Permission::RequestView,
+                Permission::ResultView,
+            ].into_iter().collect(),
+            databases: vec![wildcard_db.clone()],
+            environments: vec![wildcard_env.clone()],
+        }),
+        ("agent-default".to_string(), ResolvedRole {
+            name: "agent-default".to_string(),
+            permissions: [
+                Permission::AgentPoll,
+                Permission::AgentClaim,
+                Permission::AgentHeartbeat,
+                Permission::AgentSubmitResult,
+            ].into_iter().collect(),
+            databases: vec![wildcard_db],
+            environments: vec![wildcard_env],
+        }),
+    ]
 }
 
 impl ConfigRoleResolver {
@@ -19,6 +68,10 @@ impl ConfigRoleResolver {
         default_role: Option<String>,
     ) -> Self {
         let mut roles = HashMap::new();
+        // Insert built-in roles first (can be overridden by config)
+        for (name, resolved) in builtin_roles() {
+            roles.insert(name, resolved);
+        }
         for def in role_definitions {
             let resolved = ResolvedRole {
                 name: def.name.clone(),

@@ -40,6 +40,13 @@ pub trait AgentRepo: Send + Sync {
     fn has_running_migration(&self, db: &DatabaseName, env: &Environment, exclude_request_id: &str) -> Result<bool, AppError>;
     /// Returns executions ordered by created_at ASC (oldest first).
     fn find_executions_for_request(&self, request_id: &str) -> Result<Vec<Execution>, AppError>;
+    /// Atomically creates execution and marks request as running in a single transaction.
+    fn claim_and_mark_running(
+        &self,
+        execution: &Execution,
+        request_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError>;
 }
 
 // --- UserRepo ---
@@ -169,6 +176,7 @@ pub trait ResultStore: Send + Sync {
 
 pub trait TokenSigner: Send + Sync {
     fn sign(&self, claims: &ExecutionTokenClaims) -> String;
+    fn public_key_hex(&self) -> String;
 }
 
 /// Claims embedded in an execution token.

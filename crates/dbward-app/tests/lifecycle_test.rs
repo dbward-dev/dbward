@@ -648,6 +648,14 @@ impl AgentRepo for SharedAgentRepo {
     fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> {
         Ok(vec![])
     }
+    fn claim_and_mark_running(&self, exec: &Execution, _request_id: &str, _now: DateTime<Utc>) -> Result<bool, AppError> {
+        self.executions.lock().unwrap().push(exec.clone());
+        let mut reqs = self.request_repo.requests.lock().unwrap();
+        if let Some(r) = reqs.iter_mut().find(|r| r.id == exec.request_id) {
+            r.status = RequestStatus::Running;
+        }
+        Ok(true)
+    }
 }
 
 struct FakeTokenSigner;
@@ -655,6 +663,7 @@ impl TokenSigner for FakeTokenSigner {
     fn sign(&self, claims: &ExecutionTokenClaims) -> String {
         format!("token:{}:{}", claims.request_id, claims.database)
     }
+    fn public_key_hex(&self) -> String { "fake".into() }
 }
 
 fn make_agent_user(id: &str) -> AuthUser {

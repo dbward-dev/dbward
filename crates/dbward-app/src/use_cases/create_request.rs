@@ -1,7 +1,10 @@
+// TODO(v0.2): Transaction boundary gap — insert + approval creation should be atomic.
+// Requires UnitOfWork port trait.
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Request, RequestStatus};
+use dbward_domain::services::sql_classifier;
 use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 use dbward_domain::services::workflow_matcher;
 use dbward_domain::values::{DatabaseName, Environment, Operation};
@@ -41,10 +44,13 @@ pub struct CreateRequestOutput {
 
 impl CreateRequest {
     pub fn execute(&self, input: CreateRequestInput, user: &AuthUser) -> Result<CreateRequestOutput, AppError> {
-        // 1. Permission + DB/env scope check
+        // 1. Classify operation from SQL (ignore user-supplied value)
+        let operation = sql_classifier::classify(&input.detail);
+
+        // 1b. Permission + DB/env scope check
         let perm = if input.emergency {
             Permission::RequestBreakGlass
-        } else if input.operation == Operation::ExecuteSelect {
+        } else if operation == Operation::ExecuteSelect {
             Permission::RequestCreateSelect
         } else {
             Permission::RequestCreate
@@ -75,7 +81,7 @@ impl CreateRequest {
         }
 
         // 4. Workflow evaluation
-        let workflow = self.policy.evaluate_workflow(&input.database, &input.environment, input.operation)?;
+        let workflow = self.policy.evaluate_workflow(&input.database, &input.environment, operation)?;
         let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
         let decision = workflow_matcher::evaluate(
             workflow.as_ref(),
@@ -107,7 +113,7 @@ impl CreateRequest {
             requester: user.subject_id.clone(),
             database: input.database.clone(),
             environment: input.environment.clone(),
-            operation: input.operation,
+            operation,
             detail: input.detail.clone(),
             status,
             emergency: input.emergency,
@@ -135,7 +141,7 @@ impl CreateRequest {
                 actor_type: user.subject_type,
                 database: input.database.clone(),
                 environment: input.environment.clone(),
-                operation: input.operation,
+                operation,
                 timestamp: now,
                 metadata: EventMetadata::Created { detail: input.detail, emergency: input.emergency },
             },
@@ -157,7 +163,7 @@ impl CreateRequest {
                     actor_type: user.subject_type,
                     database: input.database,
                     environment: input.environment,
-                    operation: input.operation,
+                    operation,
                     timestamp: now,
                     metadata: EventMetadata::Dispatched,
                 },
@@ -169,7 +175,7 @@ impl CreateRequest {
             status
         };
 
-        Ok(CreateRequestOutput { id, status: final_status, operation: input.operation })
+        Ok(CreateRequestOutput { id, status: final_status, operation })
     }
 }
 

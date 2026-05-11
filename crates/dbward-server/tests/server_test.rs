@@ -94,6 +94,7 @@ impl AgentRepo for StubAgentRepo {
     fn find_dispatched_jobs(&self, _: &[(DatabaseName, Environment)]) -> Result<Vec<dbward_domain::entities::Request>, AppError> { Ok(vec![]) }
     fn has_running_migration(&self, _: &DatabaseName, _: &Environment, _: &str) -> Result<bool, AppError> { Ok(false) }
     fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> { Ok(vec![]) }
+    fn claim_and_mark_running(&self, _: &Execution, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
 }
 
 struct StubUserRepo;
@@ -185,6 +186,7 @@ impl ResultChannel for StubResultChannel {
 struct StubTokenSigner;
 impl TokenSigner for StubTokenSigner {
     fn sign(&self, _: &ExecutionTokenClaims) -> String { "signed".into() }
+    fn public_key_hex(&self) -> String { "deadbeef".into() }
 }
 
 struct StubNotifier;

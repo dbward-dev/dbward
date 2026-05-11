@@ -77,6 +77,12 @@ pub async fn claim(
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
+
+    // Fetch agent's registered capabilities
+    let agent = state.agent_repo.get(&user.subject_id)
+        .map_err(map_error)?
+        .ok_or_else(|| map_error(dbward_app::error::AppError::NotFound("agent not registered".into())))?;
+
     let uc = AgentClaim {
         authorizer: state.authorizer.clone(),
         request_repo: state.request_repo.clone(),
@@ -91,7 +97,7 @@ pub async fn claim(
         AgentClaimInput {
             request_id: id,
             agent_id: user.subject_id.clone(),
-            agent_databases: vec![],
+            agent_databases: agent.databases,
             agent_operations: vec![],
         },
         &user,

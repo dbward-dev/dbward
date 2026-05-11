@@ -1,3 +1,5 @@
+// TODO(v0.2): Transaction boundary gap — insert_approval + mark_approved should be atomic.
+// Requires UnitOfWork port trait.
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};

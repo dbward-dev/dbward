@@ -10,6 +10,6 @@ pub async fn ready() -> StatusCode {
     StatusCode::OK
 }
 
-pub async fn public_key(State(_state): State<AppState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({"public_key": ""}))
+pub async fn public_key(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({"public_key": state.token_signer.public_key_hex()}))
 }
