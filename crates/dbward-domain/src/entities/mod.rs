@@ -9,11 +9,11 @@ mod user;
 mod webhook;
 
 pub use agent::{Agent, AgentDerivedStatus, AgentStatus, DatabaseCapability};
-pub use approval::Approval;
+pub use approval::{Approval, ApprovalAction};
 pub use audit_event::{ActorType, AuditEvent, EventCategory, EventOutcome};
 pub use execution::{Execution, ExecutionStatus};
 pub use request::{Request, RequestStatus};
 pub use result::{ExecutionResult, ResultAccess, ResultStatus, SelectorType};
-pub use token::{SubjectType, Token, TokenStatus};
+pub use token::{Token, TokenStatus};
 pub use user::{User, UserStatus};
 pub use webhook::{Webhook, WebhookFormat, WebhookStatus};

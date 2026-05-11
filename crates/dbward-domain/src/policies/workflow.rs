@@ -32,7 +32,10 @@ pub struct Workflow {
     pub require_reason: bool,
     pub allow_self_approve: bool,
     pub allow_same_approver_across_steps: bool,
+    /// How long a request can stay pending before expiring.
     pub pending_ttl_secs: Option<u64>,
+    /// How long after approval the request remains valid for dispatch.
+    pub approval_ttl_secs: Option<u64>,
 }
 
 impl Workflow {
@@ -64,6 +67,7 @@ mod tests {
             allow_self_approve: false,
             allow_same_approver_across_steps: false,
             pending_ttl_secs: None,
+            approval_ttl_secs: None,
         }
     }
 
@@ -77,7 +81,7 @@ mod tests {
     fn not_auto_approve_with_steps() {
         let step = WorkflowStep {
             approvers: vec![ApproverGroup {
-                selector: Selector::Role(crate::values::Role::Admin),
+                selector: Selector::Role("admin".to_string()),
                 min: 1,
             }],
             mode: WorkflowStepMode::All,

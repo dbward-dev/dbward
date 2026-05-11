@@ -728,6 +728,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbward-app"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dbward-domain",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "dbward-core"
 version = "0.1.0"
 dependencies = [

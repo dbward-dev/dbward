@@ -1,15 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use super::Role;
-
 /// A selector that matches users by role, group, or specific user ID.
-/// Format: `role:<name>`, `group:<name>`, `user:<id>`
+/// Format: `role:<name>`, `group:<name>`, `user:<id>`, `requester`
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum Selector {
     Requester,
-    Role(Role),
+    Role(String),
     Group(String),
     User(String),
 }
@@ -37,12 +35,7 @@ impl Selector {
             return Err(SelectorParseError(format!("empty value in '{s}'")));
         }
         match prefix {
-            "role" => {
-                let role: Role = value
-                    .parse()
-                    .map_err(|_| SelectorParseError(format!("unknown role '{value}'")))?;
-                Ok(Self::Role(role))
-            }
+            "role" => Ok(Self::Role(value.to_string())),
             "group" => Ok(Self::Group(value.to_string())),
             "user" => Ok(Self::User(value.to_string())),
             _ => Err(SelectorParseError(format!("unknown prefix '{prefix}'"))),
@@ -50,10 +43,16 @@ impl Selector {
     }
 
     /// Check if this selector matches the given user attributes.
-    pub fn matches(&self, role: Role, groups: &[String], user_id: &str, is_requester: bool) -> bool {
+    pub fn matches(
+        &self,
+        role_names: &[String],
+        groups: &[String],
+        user_id: &str,
+        is_requester: bool,
+    ) -> bool {
         match self {
             Self::Requester => is_requester,
-            Self::Role(r) => role.satisfies(*r),
+            Self::Role(r) => role_names.iter().any(|rn| rn == r),
             Self::Group(g) => groups.iter().any(|ug| ug == g),
             Self::User(u) => user_id == u,
         }
@@ -77,7 +76,7 @@ impl fmt::Display for Selector {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Requester => f.write_str("requester"),
-            Self::Role(r) => write!(f, "role:{}", r.as_str()),
+            Self::Role(r) => write!(f, "role:{r}"),
             Self::Group(g) => write!(f, "group:{g}"),
             Self::User(u) => write!(f, "user:{u}"),
         }
@@ -91,8 +90,8 @@ mod tests {
     #[test]
     fn parse_valid() {
         assert_eq!(
-            Selector::parse("role:admin").unwrap(),
-            Selector::Role(Role::Admin)
+            Selector::parse("role:dba").unwrap(),
+            Selector::Role("dba".to_string())
         );
         assert_eq!(
             Selector::parse("group:dba-team").unwrap(),
@@ -114,30 +113,29 @@ mod tests {
 
     #[test]
     fn matches_role() {
-        let sel = Selector::Role(Role::Developer);
-        assert!(sel.matches(Role::Admin, &[], "bob", false));
-        assert!(sel.matches(Role::Developer, &[], "bob", false));
-        assert!(!sel.matches(Role::Readonly, &[], "bob", false));
+        let sel = Selector::Role("dba".to_string());
+        assert!(sel.matches(&["dba".to_string()], &[], "bob", false));
+        assert!(!sel.matches(&["viewer".to_string()], &[], "bob", false));
     }
 
     #[test]
     fn matches_group() {
-        let sel = Selector::Group("dba".to_string());
-        assert!(sel.matches(Role::Readonly, &["dba".to_string()], "x", false));
-        assert!(!sel.matches(Role::Admin, &["dev".to_string()], "x", false));
+        let sel = Selector::Group("dba-team".to_string());
+        assert!(sel.matches(&[], &["dba-team".to_string()], "x", false));
+        assert!(!sel.matches(&[], &["dev".to_string()], "x", false));
     }
 
     #[test]
     fn matches_user() {
         let sel = Selector::User("alice".to_string());
-        assert!(sel.matches(Role::Readonly, &[], "alice", false));
-        assert!(!sel.matches(Role::Admin, &[], "bob", false));
+        assert!(sel.matches(&[], &[], "alice", false));
+        assert!(!sel.matches(&[], &[], "bob", false));
     }
 
     #[test]
     fn matches_requester() {
         let sel = Selector::Requester;
-        assert!(sel.matches(Role::Readonly, &[], "x", true));
-        assert!(!sel.matches(Role::Admin, &[], "x", false));
+        assert!(sel.matches(&[], &[], "x", true));
+        assert!(!sel.matches(&[], &[], "x", false));
     }
 }
