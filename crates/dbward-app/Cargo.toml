@@ -9,6 +9,7 @@ dbward-domain = { path = "../dbward-domain" }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 serde_json = "1"
+sha2 = "0.10"
 thiserror = "2"
 
 [dev-dependencies]

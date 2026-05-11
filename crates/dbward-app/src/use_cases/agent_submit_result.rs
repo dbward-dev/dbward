@@ -31,7 +31,7 @@ pub struct AgentSubmitResultOutput {
 
 impl AgentSubmitResult {
     pub async fn execute(&self, input: AgentSubmitResultInput, user: &AuthUser) -> Result<AgentSubmitResultOutput, AppError> {
-        // 1. Authorization
+        // 1. Authorization (global)
         self.authorizer.authorize_global(user, Permission::AgentSubmitResult)
             .map_err(AppError::Forbidden)?;
 
@@ -39,53 +39,62 @@ impl AgentSubmitResult {
         let execution = self.agent_repo.get_execution(&input.execution_id)?
             .ok_or_else(|| AppError::NotFound("execution not found".into()))?;
 
-        // 3. Verify ownership
-        if execution.agent_id != user.subject_id {
-            return Err(AppError::Forbidden(crate::error::AuthzError::Forbidden {
-                permission: Permission::AgentSubmitResult,
-                reason: "not your execution".into(),
-            }));
-        }
+        // 3. Resource-level authorization (agent_id match via Authorizer)
+        self.authorizer.authorize_scoped(
+            user,
+            Permission::AgentSubmitResult,
+            &dbward_domain::values::DatabaseName::wildcard(),
+            &dbward_domain::values::Environment::wildcard(),
+            &ResourceContext::AgentExecution { agent_id: execution.agent_id.clone() },
+        ).map_err(AppError::Forbidden)?;
 
-        // 4. Verify execution is claimable for result submission
+        // 4. Verify execution is still active
         if execution.status != ExecutionStatus::Claimed {
             return Err(AppError::Conflict(format!(
                 "execution is {:?}, cannot submit result", execution.status
             )));
         }
 
-        // 5. Get request for status transition
+        // 5. Get request
         let request = self.request_repo.get(&execution.request_id)?
             .ok_or_else(|| AppError::Internal("request not found for execution".into()))?;
 
-        // 6. Determine new status via status_machine
-        let event = RequestEvent::Complete { success: input.success };
-        let new_status = status_machine::transition(request.status, &event)
-            .map_err(|e| AppError::Conflict(e.to_string()))?;
+        // 6. Determine final status
+        // Special case: cancelled request still accepts failed results (agent-design §4.3)
+        let new_request_status = if request.status == RequestStatus::Cancelled {
+            // Request stays cancelled; only execution transitions to Failed
+            RequestStatus::Cancelled
+        } else {
+            let event = RequestEvent::Complete { success: input.success };
+            status_machine::transition(request.status, &event)
+                .map_err(|e| AppError::Conflict(e.to_string()))?
+        };
 
-        // 7. Save result to external storage (if success and data provided)
-        if input.success {
+        // 7. Save result to external storage (if success and not no_store)
+        if input.success && !request.no_store {
             if let Some(data) = &input.result_data {
                 let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
                 self.result_store.put(&storage_key, data).await?;
             }
         }
 
-        // 8. Update execution status
+        // 8. Update execution status + finished_at
         let exec_status = if input.success { ExecutionStatus::Completed } else { ExecutionStatus::Failed };
         self.agent_repo.update_execution_status(&execution.id, exec_status)?;
 
-        // 9. Update request status (Executed or Failed)
+        // 9. Update request status (skip if cancelled — request stays cancelled)
         let now = self.clock.now();
-        match new_status {
-            RequestStatus::Executed => { self.request_repo.mark_executed(&execution.request_id, now)?; }
-            RequestStatus::Failed => { self.request_repo.mark_failed(&execution.request_id, now)?; }
-            _ => {}
+        if new_request_status != RequestStatus::Cancelled {
+            match new_request_status {
+                RequestStatus::Executed => { self.request_repo.mark_executed(&execution.request_id, now)?; }
+                RequestStatus::Failed => { self.request_repo.mark_failed(&execution.request_id, now)?; }
+                _ => {}
+            }
         }
 
         Ok(AgentSubmitResultOutput {
             request_id: execution.request_id,
-            status: new_status,
+            status: new_request_status,
         })
     }
 }

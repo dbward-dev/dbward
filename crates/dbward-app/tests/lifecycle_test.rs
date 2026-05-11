@@ -638,6 +638,9 @@ impl AgentRepo for SharedAgentRepo {
         let reqs = self.request_repo.requests.lock().unwrap();
         Ok(reqs.iter().filter(|r| r.status == RequestStatus::Dispatched).cloned().collect())
     }
+    fn has_running_migration(&self, _: &DatabaseName, _: &Environment, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
 }
 
 struct FakeTokenSigner;
@@ -690,7 +693,7 @@ fn agent_full_flow_poll_claim_heartbeat() {
         clock: h.clock.clone(),
     };
     let poll_result = poll_uc.execute(
-        AgentPollInput { capabilities: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }] },
+        AgentPollInput { capabilities: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }], operations: vec![], limit: None, in_flight: 0, max_concurrent: 1 },
         &agent,
     ).unwrap();
     assert_eq!(poll_result.jobs.len(), 1);
@@ -700,13 +703,14 @@ fn agent_full_flow_poll_claim_heartbeat() {
     let claim_uc = AgentClaim {
         authorizer: h.authorizer.clone(),
         request_repo: h.repo.clone(),
+        policy: h.policy.clone(),
         agent_repo: agent_repo.clone(),
         token_signer: Arc::new(FakeTokenSigner),
         clock: h.clock.clone(),
         id_gen: h.id_gen.clone(),
     };
     let claim_result = claim_uc.execute(
-        AgentClaimInput { request_id: created.id.clone() },
+        AgentClaimInput { request_id: created.id.clone(), agent_id: "agent-1".into(), agent_databases: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }], agent_operations: vec![] },
         &agent,
     ).unwrap();
     assert!(!claim_result.execution_token.is_empty());
@@ -751,12 +755,13 @@ fn heartbeat_detects_cancelled_request() {
     let claim_uc = AgentClaim {
         authorizer: h.authorizer.clone(),
         request_repo: h.repo.clone(),
+        policy: h.policy.clone(),
         agent_repo: agent_repo.clone(),
         token_signer: Arc::new(FakeTokenSigner),
         clock: h.clock.clone(),
         id_gen: h.id_gen.clone(),
     };
-    let claim_result = claim_uc.execute(AgentClaimInput { request_id: created.id.clone() }, &agent).unwrap();
+    let claim_result = claim_uc.execute(AgentClaimInput { request_id: created.id.clone(), agent_id: "agent-1".into(), agent_databases: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }], agent_operations: vec![] }, &agent).unwrap();
 
     // Cancel the request while agent is running
     {

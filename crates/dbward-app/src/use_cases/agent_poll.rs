@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission};
-use dbward_domain::entities::{Agent, DatabaseCapability, Request};
-use dbward_domain::values::{DatabaseName, Environment};
+use dbward_domain::entities::{Agent, AgentStatus, DatabaseCapability, Request};
+use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -15,6 +15,10 @@ pub struct AgentPoll {
 
 pub struct AgentPollInput {
     pub capabilities: Vec<DatabaseCapability>,
+    pub operations: Vec<Operation>,
+    pub limit: Option<u32>,
+    pub in_flight: u32,
+    pub max_concurrent: u32,
 }
 
 pub struct AgentPollOutput {
@@ -23,8 +27,8 @@ pub struct AgentPollOutput {
 
 pub struct PollJob {
     pub id: String,
-    pub requester: String,
-    pub operation: dbward_domain::values::Operation,
+    pub created_by: String,
+    pub operation: Operation,
     pub environment: Environment,
     pub database: DatabaseName,
     pub detail: String,
@@ -36,15 +40,15 @@ impl AgentPoll {
         self.authorizer.authorize_global(user, Permission::AgentPoll)
             .map_err(AppError::Forbidden)?;
 
-        // 2. Upsert agent (register/update last_seen)
+        // 2. Upsert agent (register/update last_seen + status)
         let now = self.clock.now();
         let agent = Agent {
             id: user.subject_id.clone(),
             token_id: user.token_id.clone().unwrap_or_default(),
             databases: input.capabilities.clone(),
-            status: dbward_domain::entities::AgentStatus::Active,
-            max_concurrent: 1,
-            in_flight: 0,
+            status: AgentStatus::Active,
+            max_concurrent: input.max_concurrent,
+            in_flight: input.in_flight,
             last_seen: Some(now),
             created_at: now,
         };
@@ -54,12 +58,21 @@ impl AgentPoll {
         let pairs: Vec<(DatabaseName, Environment)> = input.capabilities.iter()
             .map(|c| (c.database.clone(), c.environment.clone()))
             .collect();
-        let jobs = self.agent_repo.find_dispatched_jobs(&pairs)?;
+        let mut jobs = self.agent_repo.find_dispatched_jobs(&pairs)?;
 
-        // 4. Map to output
+        // 4. Filter by operations (if specified)
+        if !input.operations.is_empty() {
+            jobs.retain(|r| input.operations.contains(&r.operation));
+        }
+
+        // 5. Apply limit
+        let limit = input.limit.unwrap_or(10).min(20) as usize;
+        jobs.truncate(limit);
+
+        // 6. Map to output
         let poll_jobs = jobs.into_iter().map(|r| PollJob {
             id: r.id,
-            requester: r.requester,
+            created_by: r.requester,
             operation: r.operation,
             environment: r.environment,
             database: r.database,
