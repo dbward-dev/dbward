@@ -263,9 +263,19 @@ fn make_input() -> CreateRequestInput {
     }
 }
 
-struct NoopDispatcher;
-impl EventDispatcher for NoopDispatcher {
-    fn dispatch(&self, _: dbward_domain::services::status_machine::TransitionEvent) {}
+use dbward_domain::services::status_machine::TransitionEvent;
+
+struct RecordingDispatcher {
+    events: Mutex<Vec<TransitionEvent>>,
+}
+impl RecordingDispatcher {
+    fn new() -> Self { Self { events: Mutex::new(vec![]) } }
+    fn events(&self) -> Vec<TransitionEvent> { self.events.lock().unwrap().clone() }
+}
+impl EventDispatcher for RecordingDispatcher {
+    fn dispatch(&self, event: TransitionEvent) {
+        self.events.lock().unwrap().push(event);
+    }
 }
 
 struct TestHarness {
@@ -274,7 +284,7 @@ struct TestHarness {
     id_gen: Arc<SeqIdGen>,
     authorizer: Arc<dyn Authorizer>,
     policy: Arc<FakePolicy>,
-    event_dispatcher: Arc<dyn EventDispatcher>,
+    event_dispatcher: Arc<RecordingDispatcher>,
     db_registry: Arc<dyn DatabaseRegistry>,
 }
 
@@ -286,7 +296,7 @@ impl TestHarness {
             id_gen: Arc::new(SeqIdGen::new()),
             authorizer: Arc::new(AllowAll),
             policy: Arc::new(FakePolicy { workflow, exec_policy: ExecutionPolicy::default() }),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            event_dispatcher: Arc::new(RecordingDispatcher::new()),
             db_registry: Arc::new(FakeDbRegistry),
         }
     }
@@ -765,4 +775,57 @@ fn heartbeat_detects_cancelled_request() {
         &agent,
     ).unwrap();
     assert!(hb_result.cancelled);
+}
+
+#[test]
+fn event_dispatcher_records_full_lifecycle() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let approver = make_user("bob", &["dba"]);
+
+    // Create → Pending
+    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    assert_eq!(created.status, RequestStatus::Pending);
+
+    // Approve → Approved
+    let approved = h.approve_uc().execute(
+        ApproveRequestInput { request_id: created.id.clone(), comment: None },
+        &approver,
+    ).unwrap();
+    assert_eq!(approved.status, RequestStatus::Approved);
+
+    // Dispatch → Dispatched
+    let dispatched = h.dispatch_uc().execute(
+        DispatchRequestInput { request_id: created.id.clone() },
+        &requester,
+    ).unwrap();
+    assert_eq!(dispatched.status, RequestStatus::Dispatched);
+
+    // Verify events
+    let events = h.event_dispatcher.events();
+    assert_eq!(events.len(), 3, "expected 3 events: created, approved, dispatched");
+    assert_eq!(events[0].new_status, RequestStatus::Pending);
+    assert_eq!(events[1].new_status, RequestStatus::Approved);
+    assert_eq!(events[2].new_status, RequestStatus::Dispatched);
+    // Verify actor attribution
+    assert_eq!(events[0].actor_id, "alice");
+    assert_eq!(events[1].actor_id, "bob");
+    assert_eq!(events[2].actor_id, "alice");
+}
+
+#[test]
+fn event_dispatcher_records_break_glass_auto_dispatch() {
+    let h = TestHarness::new(None);
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.emergency = true;
+
+    let created = h.create_uc().execute(input, &requester).unwrap();
+    assert_eq!(created.status, RequestStatus::Dispatched);
+
+    // break_glass emits 2 events: create(BreakGlass) + dispatch(Dispatched)
+    let events = h.event_dispatcher.events();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].new_status, RequestStatus::BreakGlass);
+    assert_eq!(events[1].new_status, RequestStatus::Dispatched);
 }

@@ -1,5 +1,5 @@
 use crate::policies::Workflow;
-use crate::values::{DatabaseName, Environment, Operation, Selector};
+use crate::values::{DatabaseName, Environment, Operation};
 
 /// Result of workflow evaluation for a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,6 +94,7 @@ fn specificity_score(w: &Workflow, db: &DatabaseName, env: &Environment, op: Ope
 mod tests {
     use super::*;
     use crate::policies::{ApproverGroup, WorkflowStep, WorkflowStepMode};
+    use crate::values::Selector;
 
     fn wf(db: &str, env: &str, ops: Vec<Operation>, steps: Vec<WorkflowStep>, skip: Vec<Selector>) -> Workflow {
         Workflow {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission};
-use dbward_domain::entities::{Agent, AgentStatus, DatabaseCapability, Request};
+use dbward_domain::entities::{Agent, AgentStatus, DatabaseCapability};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::error::AppError;

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Approval, ApprovalAction, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
+use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 
 use crate::error::{AppError, AuthzError};
 use crate::ports::*;
@@ -38,14 +39,7 @@ impl RejectRequest {
         let request = self.request_repo.get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
-        // 2. Status check
-        if request.status != RequestStatus::Pending {
-            return Err(AppError::Conflict(format!(
-                "request is {}, expected pending", request.status.as_str()
-            )));
-        }
-
-        // 3. Authorization: requester can self-reject, or approvers can reject
+        // 2. Authorization: requester can self-reject, or approvers can reject
         let is_requester = user.subject_id == request.requester;
 
         // Parse workflow and approvals (needed for both authz and record)
@@ -102,8 +96,23 @@ impl RejectRequest {
             }
         };
 
-        // 5. Mark rejected + insert rejection record
+        // 5. Transition via status_machine
         let now = self.clock.now();
+        let result = status_machine::transition(
+            request.status,
+            &RequestTrigger::Reject,
+            TransitionContext {
+                request_id: request.id.clone(),
+                actor_id: user.subject_id.clone(),
+                actor_type: user.subject_type,
+                database: request.database.clone(),
+                environment: request.environment.clone(),
+                operation: request.operation,
+                timestamp: now,
+                metadata: EventMetadata::Rejected { comment: input.comment.clone() },
+            },
+        ).map_err(|e| AppError::Conflict(e.to_string()))?;
+
         let ok = self.request_repo.mark_rejected(&request.id, now)?;
         if !ok {
             return Err(AppError::Conflict("concurrent status change".into()));
@@ -120,6 +129,8 @@ impl RejectRequest {
             created_at: now,
         };
         self.request_repo.insert_approval(&approval)?;
+
+        result.commit(&*self.event_dispatcher);
 
         Ok(RejectRequestOutput {
             id: request.id,

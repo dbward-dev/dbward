@@ -4,6 +4,7 @@ use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Approval, ApprovalAction, Request, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
 use dbward_domain::services::{approval_checker, workflow_matcher};
+use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 
 use crate::error::{AppError, AuthzError};
 use crate::ports::*;
@@ -120,6 +121,7 @@ impl ApproveRequest {
 
         // 10. Insert approval
         let now = self.clock.now();
+        let comment = input.comment.clone();
         let approval = Approval {
             id: self.id_gen.generate(),
             request_id: request.id.clone(),
@@ -137,21 +139,52 @@ impl ApproveRequest {
         all_approvals.push(approval);
 
         let all_satisfied = workflow_matcher::all_steps_satisfied(&workflow.steps, &all_approvals);
-        let new_status = if all_satisfied {
-            let ok = self.request_repo.mark_approved(&request.id, now)?;
-            if !ok {
-                return Err(AppError::Conflict("concurrent status change".into()));
-            }
-            RequestStatus::Approved
-        } else {
-            RequestStatus::Pending
-        };
 
         let step_completed = if all_satisfied {
             total_steps
         } else {
             workflow_matcher::find_current_step(&workflow.steps, &all_approvals)
         };
+
+        let trigger = if all_satisfied {
+            RequestTrigger::ApproveFinal
+        } else {
+            RequestTrigger::ApproveStep
+        };
+
+        let result = status_machine::transition(
+            request.status,
+            &trigger,
+            TransitionContext {
+                request_id: request.id.clone(),
+                actor_id: user.subject_id.clone(),
+                actor_type: user.subject_type,
+                database: request.database.clone(),
+                environment: request.environment.clone(),
+                operation: request.operation,
+                timestamp: now,
+                metadata: if all_satisfied {
+                    EventMetadata::Approved { comment: comment.clone() }
+                } else {
+                    EventMetadata::StepApproved {
+                        step_index: current_step_index,
+                        total_steps,
+                        comment,
+                    }
+                },
+            },
+        ).map_err(|e| AppError::Conflict(e.to_string()))?;
+
+        let new_status = result.status();
+
+        if all_satisfied {
+            let ok = self.request_repo.mark_approved(&request.id, now)?;
+            if !ok {
+                return Err(AppError::Conflict("concurrent status change".into()));
+            }
+        }
+
+        result.commit(&*self.event_dispatcher);
 
         Ok(ApproveRequestOutput {
             id: request.id,

@@ -202,17 +202,6 @@ fn compute_next_status(
 // --- Legacy API (for gradual migration) ---
 
 /// Legacy event type (used by existing use_cases during migration).
-pub type RequestEvent = RequestTrigger;
-
-/// Legacy transition function (does not require context).
-/// Use `transition()` with context for new code.
-pub fn transition_simple(
-    current: RequestStatus,
-    trigger: &RequestTrigger,
-) -> Result<RequestStatus, InvalidTransition> {
-    compute_next_status(current, trigger)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

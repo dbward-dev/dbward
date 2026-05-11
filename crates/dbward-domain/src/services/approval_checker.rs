@@ -1,6 +1,5 @@
 use crate::auth::{AuthUser, Permission};
 use crate::policies::workflow::ApproverGroup;
-use crate::values::Selector;
 
 /// Determines whether a user can approve a given workflow step.
 /// Shared by Authorizer (single request check) and list filter (pending_for_me).
@@ -44,6 +43,7 @@ pub fn is_approvable_by(
 mod tests {
     use super::*;
     use crate::auth::{AuthUser, Permission, ResolvedRole, SubjectType};
+    use crate::values::Selector;
     use std::collections::HashSet;
 
     fn make_user(id: &str, roles: &[&str], groups: &[&str]) -> AuthUser {

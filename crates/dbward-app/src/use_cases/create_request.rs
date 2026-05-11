@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dbward_domain::auth::{AuthUser, Permission, ResourceContext, SubjectType};
+use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Request, RequestStatus};
 use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 use dbward_domain::services::workflow_matcher;
