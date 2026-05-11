@@ -65,4 +65,19 @@ impl UserManage {
             cancelled_requests,
         })
     }
+
+    pub fn activate(&self, user_id: &str, user: &AuthUser) -> Result<(), AppError> {
+        self.authorizer.authorize_global(user, Permission::UserManage)
+            .map_err(AppError::Forbidden)?;
+
+        self.user_repo.get(user_id)?
+            .ok_or_else(|| AppError::NotFound("user not found".into()))?;
+
+        let now = self.clock.now();
+        self.user_repo.activate(user_id, now)?;
+
+        self.audit.record(&AuditEvent::simple("user_activated", "identity", &user.subject_id, Some(user_id)))?;
+
+        Ok(())
+    }
 }

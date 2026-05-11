@@ -124,6 +124,13 @@ impl WebhookManage {
         self.webhook_repo.list()
     }
 
+    pub fn get(&self, id: &str, user: &AuthUser) -> Result<Webhook, AppError> {
+        self.authorizer.authorize_global(user, Permission::WebhookManage)
+            .map_err(AppError::Forbidden)?;
+        self.webhook_repo.get(id)?
+            .ok_or_else(|| AppError::NotFound("webhook not found".into()))
+    }
+
     pub fn delete(&self, input: WebhookDeleteInput, user: &AuthUser) -> Result<(), AppError> {
         self.authorizer.authorize_global(user, Permission::WebhookManage)
             .map_err(AppError::Forbidden)?;

@@ -31,6 +31,7 @@ pub trait RequestRepo: Send + Sync {
 pub trait AgentRepo: Send + Sync {
     fn upsert(&self, agent: &Agent) -> Result<(), AppError>;
     fn get(&self, agent_id: &str) -> Result<Option<Agent>, AppError>;
+    fn list(&self) -> Result<Vec<Agent>, AppError>;
     fn create_execution(&self, execution: &Execution) -> Result<(), AppError>;
     fn get_execution(&self, execution_id: &str) -> Result<Option<Execution>, AppError>;
     fn update_execution_status(&self, execution_id: &str, status: ExecutionStatus) -> Result<(), AppError>;

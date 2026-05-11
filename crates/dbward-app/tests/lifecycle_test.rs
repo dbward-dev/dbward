@@ -611,6 +611,7 @@ impl SharedAgentRepo {
 impl AgentRepo for SharedAgentRepo {
     fn upsert(&self, _: &Agent) -> Result<(), AppError> { Ok(()) }
     fn get(&self, _: &str) -> Result<Option<Agent>, AppError> { Ok(None) }
+    fn list(&self) -> Result<Vec<Agent>, AppError> { Ok(vec![]) }
     fn create_execution(&self, exec: &Execution) -> Result<(), AppError> {
         self.executions.lock().unwrap().push(exec.clone());
         // Also mark request as running

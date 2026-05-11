@@ -1,22 +1,21 @@
-use axum::{extract::State, Json};
-use axum::http::HeaderMap;
-use serde_json::json;
+use axum::{
+    extract::{Extension, State},
+    http::StatusCode,
+    Json,
+};
+use dbward_domain::auth::AuthUser;
 
 use crate::state::AppState;
 
-pub(crate) async fn list_databases(
+use super::map_error;
+
+pub async fn list(
     State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
-    crate::auth::authenticate(&headers, &state).await?;
-    let conn = state.db().await;
-    let databases = crate::db::database_repo::list_databases(&conn)
-        .map_err(|e| crate::api_error::ApiError::internal(format!("list databases: {e}")))?;
-
-    let result: Vec<serde_json::Value> = databases
-        .into_iter()
-        .map(|(name, envs)| json!({"name": name, "environments": envs}))
-        .collect();
-
-    Ok(Json(json!({ "databases": result })))
+    Extension(_user): Extension<AuthUser>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let databases = state.database_registry.list().map_err(map_error)?;
+    let items: Vec<_> = databases.iter().map(|(db, env)| {
+        serde_json::json!({ "database": db, "environment": env })
+    }).collect();
+    Ok((StatusCode::OK, Json(serde_json::json!({ "databases": items }))))
 }

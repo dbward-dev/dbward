@@ -1,744 +1,172 @@
-use axum::Json;
-use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
-use serde_json::json;
-use sha2::Digest;
-use tracing::error;
+use axum::{
+    extract::{Extension, Path, State},
+    http::StatusCode,
+    Json,
+};
+use dbward_app::use_cases::{
+    agent_claim::{AgentClaim, AgentClaimInput},
+    agent_heartbeat::{AgentHeartbeat, AgentHeartbeatInput},
+    agent_poll::{AgentPoll, AgentPollInput},
+    agent_submit_result::{AgentSubmitResult, AgentSubmitResultInput},
+};
+use dbward_domain::auth::AuthUser;
+use serde::Deserialize;
 
-use crate::auth;
-use crate::authz::{self, Action, Resource};
 use crate::state::AppState;
 
-/// List all known agents (admin only).
-pub(crate) async fn list_agents(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize_and_audit(&user, Action::ReadMetrics, Resource::Global, &state).await?;
+use super::map_error;
 
-    let conn = state.db().await;
-    let agents = crate::db::agent_repo::list_agents(&conn)?;
-
-    let now = chrono::Utc::now();
-    let items: Vec<serde_json::Value> = agents
-        .into_iter()
-        .map(|a| {
-            let caps: serde_json::Value =
-                serde_json::from_str(&a.capabilities_json).unwrap_or(json!({}));
-            let active_jobs: serde_json::Value =
-                serde_json::from_str(&a.active_jobs_json).unwrap_or(json!([]));
-            let last_poll_ago_secs = chrono::DateTime::parse_from_rfc3339(&a.last_seen_at)
-                .map(|t| now.signed_duration_since(t).num_seconds().max(0))
-                .unwrap_or(9999);
-            let status = if a.draining {
-                "draining"
-            } else if last_poll_ago_secs > 60 {
-                "offline"
-            } else if a.in_flight >= a.max_concurrent {
-                "saturated"
-            } else {
-                "healthy"
-            };
-            json!({
-                "id": a.id,
-                "status": status,
-                "capabilities": caps,
-                "last_seen_at": a.last_seen_at,
-                "last_poll_ago_secs": last_poll_ago_secs,
-                "in_flight": a.in_flight,
-                "max_concurrent": a.max_concurrent,
-                "available": (a.max_concurrent - a.in_flight).max(0),
-                "draining": a.draining,
-                "uptime_secs": a.uptime_secs,
-                "active_jobs": active_jobs,
-                "created_at": a.created_at,
-            })
-        })
-        .collect();
-
-    Ok(Json(json!({ "agents": items })))
+#[derive(Deserialize)]
+pub struct PollBody {
+    pub capabilities: Vec<dbward_domain::entities::DatabaseCapability>,
+    #[serde(default)]
+    pub operations: Vec<dbward_domain::values::Operation>,
+    pub limit: Option<u32>,
+    #[serde(default)]
+    pub in_flight: u32,
+    #[serde(default = "default_max_concurrent")]
+    pub max_concurrent: u32,
 }
 
-// ---------------------------------------------------------------------------
-// Agent endpoints
-// ---------------------------------------------------------------------------
-
-/// Agent polls for dispatchable jobs (approved / auto_approved / break_glass).
-pub(crate) async fn agent_poll(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize_and_audit(&user, Action::AgentPoll, Resource::Global, &state).await?;
-
-    // Parse capabilities: prefer new pair-based format, fall back to legacy independent lists
-    let db_env_pairs: Vec<(String, String)> = body["database_environments"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| {
-                    let arr = v.as_array()?;
-                    Some((arr.first()?.as_str()?.to_string(), arr.get(1)?.as_str()?.to_string()))
-                })
-                .collect()
-        })
-        .unwrap_or_else(|| {
-            // Legacy: independent lists → cross product
-            let databases: Vec<String> = body["databases"]
-                .as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default();
-            let environments: Vec<String> = body["environments"]
-                .as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-                .unwrap_or_default();
-            databases.iter()
-                .flat_map(|db| environments.iter().map(move |env| (db.clone(), env.clone())))
-                .collect()
-        });
-    let operations: Vec<String> = body["operations"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let conn = state.db().await;
-
-    // Free tier: check agent limit for new agents only
-    let is_existing: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM agents WHERE id = ?1)",
-            rusqlite::params![user.user],
-            |row| row.get(0),
-        )
-        .unwrap_or(false);
-    if !is_existing {
-        crate::limits::check_can_create(&conn, crate::limits::Resource::Agent, &state.license)?;
-    }
-
-    // Record agent capabilities for claim-time verification (new format)
-    let unique_databases: Vec<String> = db_env_pairs.iter().map(|(db, _)| db.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
-    let caps_json = serde_json::to_string(&json!({
-        "targets": db_env_pairs.iter().map(|(db, env)| json!({"database": db, "environment": env})).collect::<Vec<_>>(),
-        "databases": unique_databases,
-        "operations": operations,
-    }))
-    .unwrap_or_else(|_| "{}".into());
-    // Parse agent status (optional, for observability)
-    let agent_status = body["status"].as_object().map(|s| {
-        let active_jobs_json = s
-            .get("active_jobs")
-            .map(|v| {
-                let json = serde_json::to_string(v).unwrap_or_else(|_| "[]".into());
-                if json.len() > 4096 { "[]".into() } else { json }
-            })
-            .unwrap_or_else(|| "[]".into());
-        crate::db::agent_repo::AgentStatusReport {
-            in_flight: s.get("in_flight").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-            max_concurrent: s
-                .get("max_concurrent")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(1) as u32,
-            draining: s.get("draining").and_then(|v| v.as_bool()).unwrap_or(false),
-            uptime_secs: s.get("uptime_secs").and_then(|v| v.as_u64()).unwrap_or(0),
-            active_jobs_json,
-        }
-    });
-
-    crate::db::agent_repo::upsert_agent(
-        &conn,
-        &user.user,
-        &user.token_id,
-        &caps_json,
-        agent_status.as_ref(),
-    )
-    .map_err(|e| crate::api_error::ApiError::internal(format!("agent registration failed: {e}")))?;
-    drop(conn);
-
-    if !is_existing {
-        let mut conn = state.db().await;
-        let _ = crate::db::audit_event_repo::record_audit_event(
-            &mut conn,
-            crate::db::audit_event_repo::AuditEvent {
-                event_type: "agent_registered",
-                event_category: "agent",
-                outcome: "success",
-                actor_id: &user.user,
-                actor_type: "agent",
-                resource_type: Some("agent"),
-                resource_id: Some(&user.user),
-                peer_ip: None,
-                client_ip: None,
-                client_ip_source: None,
-                request_id: None,
-                operation: None,
-                environment: None,
-                database_name: None,
-                detail_fingerprint: None,
-                detail_raw: None,
-                reason: None,
-                metadata_json: &caps_json,
-            },
-            &headers,
-            &state.audit_config,
-            &state.trusted_proxies,
-        );
-    }
-
-    let conn = state.db().await;
-
-    // Free tier: check total unique database connections across all agents
-    if !db_env_pairs.is_empty() {
-        crate::limits::check_database_limit(&conn, &state.license)?;
-    }
-
-    // Build dynamic WHERE clause for capability filtering
-    let mut where_clauses = vec!["status = 'dispatched'".to_string()];
-    let mut bind_values: Vec<String> = Vec::new();
-
-    // Filter by (database, environment) pairs — no wildcards in pair-based format
-    if !db_env_pairs.is_empty() {
-        let mut pair_conditions: Vec<String> = Vec::new();
-        for (db, env) in &db_env_pairs {
-            let db_idx = bind_values.len() + 1;
-            let env_idx = bind_values.len() + 2;
-            pair_conditions.push(format!("(database_name = ?{db_idx} AND environment = ?{env_idx})"));
-            bind_values.push(db.clone());
-            bind_values.push(env.clone());
-        }
-        where_clauses.push(format!("({})", pair_conditions.join(" OR ")));
-    }
-
-    if super::requests::should_filter_capability(&operations) {
-        let placeholders: Vec<String> = operations
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("?{}", bind_values.len() + i + 1))
-            .collect();
-        where_clauses.push(format!("operation IN ({})", placeholders.join(",")));
-        bind_values.extend(operations.clone());
-    }
-
-    let where_sql = where_clauses.join(" AND ");
-    let limit = body["limit"].as_u64().unwrap_or(10).min(20) as usize;
-    let query_sql = format!(
-        "SELECT id, created_by, operation, environment, database_name, detail
-         FROM requests WHERE {where_sql} ORDER BY created_at ASC LIMIT {limit}"
-    );
-
-    let mut stmt = conn.prepare(&query_sql)?;
-
-    let rows: Vec<serde_json::Value> = stmt
-        .query_map(rusqlite::params_from_iter(&bind_values), |row| {
-            Ok(json!({
-                "id": row.get::<_, String>(0)?,
-                "created_by": row.get::<_, String>(1)?,
-                "operation": row.get::<_, String>(2)?,
-                "environment": row.get::<_, String>(3)?,
-                "database": row.get::<_, String>(4)?,
-                "detail": row.get::<_, String>(5)?,
-            }))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(Json(json!({"jobs": rows})))
+fn default_max_concurrent() -> u32 {
+    4
 }
 
-/// Agent claims a job for execution.
-pub(crate) async fn agent_claim(
+pub async fn poll(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize_and_audit(&user, Action::AgentClaim, Resource::Global, &state).await?;
-    // Use agent_id from body for display, fall back to token subject
-    let agent_id = body["agent_id"]
-        .as_str()
-        .unwrap_or(&user.user)
-        .to_string();
-
-    let mut conn = state.db().await;
-
-    let ctx = crate::db::request_repo::get_request_context(&conn, &id)
-        .map_err(|_| crate::api_error::ApiError::not_found("request not found"))?;
-    let (operation, environment, database, detail, status) = (
-        ctx.operation,
-        ctx.environment,
-        ctx.database_name,
-        ctx.detail,
-        ctx.status,
-    );
-
-    if status != "dispatched" {
-        return Err(crate::api_error::ApiError::conflict(format!(
-            "request status is {status}, cannot claim"
-        )));
-    }
-
-    authz::authorize_with_audit(
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<PollBody>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let uc = AgentPoll {
+        authorizer: state.authorizer.clone(),
+        agent_repo: state.agent_repo.clone(),
+        clock: state.clock.clone(),
+    };
+    let output = uc.execute(
+        AgentPollInput {
+            capabilities: body.capabilities,
+            operations: body.operations,
+            limit: body.limit,
+            in_flight: body.in_flight,
+            max_concurrent: body.max_concurrent,
+        },
         &user,
-        Action::AgentClaim,
-        Resource::AgentExecution {
-            agent_id: agent_id.clone(),
-        },
-        &mut conn,
-    )?;
+    ).map_err(map_error)?;
 
-    // Verify agent has capability for this job
-    if let Some(caps_json) = crate::db::agent_repo::get_agent_capabilities(&conn, &agent_id)
-        && let Ok(caps) = serde_json::from_str::<serde_json::Value>(&caps_json)
-    {
-        // New format: targets array of {database, environment} pairs
-        let target_match = if let Some(targets) = caps["targets"].as_array() {
-            targets.is_empty()
-                || targets.iter().any(|t| {
-                    t["database"].as_str() == Some(&database)
-                        && t["environment"].as_str() == Some(&environment)
-                })
-        } else {
-            // Legacy format: independent databases/environments arrays
-            let matches = |arr: &serde_json::Value, val: &str| -> bool {
-                arr.as_array().is_none_or(|a| {
-                    a.is_empty()
-                        || a.iter()
-                            .any(|v| v.as_str() == Some(val) || v.as_str() == Some("*"))
-                })
-            };
-            matches(&caps["databases"], &database)
-                && matches(&caps["environments"], &environment)
-        };
-
-        let op_match = {
-            let ops = &caps["operations"];
-            ops.as_array().is_none_or(|a| {
-                a.is_empty()
-                    || a.iter()
-                        .any(|v| v.as_str() == Some(&operation) || v.as_str() == Some("*"))
-            })
-        };
-
-        if !target_match || !op_match {
-            return Err(crate::api_error::ApiError::forbidden(
-                "agent lacks capability for this job",
-            ));
-        }
-    }
-
-    // Pre-v10 requests have no users row; they were created by developer+ (readonly can't create dispatchable requests)
-    let requester_role = crate::db::user_repo::get_user(&conn, "user", &ctx.created_by)
-        .ok()
-        .flatten()
-        .map(|u| u.role)
-        .unwrap_or_else(|| "developer".to_string());
-
-    let token = state
-        .token_signer
-        .issue(&id, &operation, &environment, &database, &detail, &requester_role, &ctx.created_by);
-    let token_json = serde_json::to_string(&token)?;
-
-    // Prevent concurrent migrations on the same (database, environment)
-    if operation.starts_with("migrate_") && operation != "migrate_status" {
-        let has_running: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM requests
-                 WHERE database_name = ?1 AND environment = ?2
-                   AND operation IN ('migrate_up', 'migrate_down')
-                   AND status = 'running' AND id != ?3)",
-                rusqlite::params![&database, &environment, &id],
-                |row| row.get(0),
-            )
-            .unwrap_or(false);
-        if has_running {
-            return Err(crate::api_error::ApiError::new(
-                axum::http::StatusCode::CONFLICT,
-                "migration already running for this database",
-            )
-            .with_code("migration_conflict"));
-        }
-    }
-
-    let Some(exec_id) = crate::db::agent_repo::create_execution_and_mark_running(
-        &mut conn,
-        &id,
-        &agent_id,
-        &token_json,
-    )?
-    else {
-        return Err(crate::api_error::ApiError::conflict(
-            "request status is no longer dispatched, cannot claim",
-        ));
-    };
-
-    // Audit: execution_started
-    if let Err(e) = crate::db::audit_event_repo::record_audit_event(
-        &mut conn,
-        crate::db::audit_event_repo::AuditEvent {
-            event_type: "execution_started",
-            event_category: "execution",
-            outcome: "success",
-            actor_id: &agent_id,
-            actor_type: "agent",
-            resource_type: Some("request"),
-            resource_id: Some(&id),
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
-            request_id: Some(&id),
-            operation: Some(&operation),
-            environment: Some(&environment),
-            database_name: Some(&database),
-            detail_fingerprint: None,
-            detail_raw: None,
-            reason: None,
-            metadata_json: &serde_json::json!({
-                "execution_id": exec_id,
-            })
-            .to_string(),
-        },
-        &headers,
-        &state.audit_config,
-        &state.trusted_proxies,
-    ) {
-        error!(error = %e, "audit write failed");
-    }
-
-    Ok(Json(json!({
-        "execution_id": exec_id,
-        "request_id": id,
-        "operation": operation,
-        "environment": environment,
-        "database": database,
-        "detail": detail,
-        "execution_token": token,
-    })))
+    Ok((StatusCode::OK, Json(serde_json::json!({ "jobs": output.jobs.iter().map(|j| serde_json::json!({
+        "id": j.id,
+        "created_by": j.created_by,
+        "operation": j.operation,
+        "environment": j.environment,
+        "database": j.database,
+        "detail": j.detail,
+    })).collect::<Vec<_>>() }))))
 }
 
-/// Agent heartbeat: extend lease while executing.
-pub(crate) async fn agent_heartbeat(
+pub async fn claim(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> Result<Json<serde_json::Value>, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize_and_audit(&user, Action::AgentPoll, Resource::Global, &state).await?;
-
-    let conn = state.db().await;
-    let new_expires = chrono::Utc::now() + chrono::Duration::seconds(300);
-    let updated = conn.execute(
-        "UPDATE agent_executions SET lease_expires_at = ?1
-         WHERE id = ?2 AND status = 'claimed'",
-        rusqlite::params![new_expires.to_rfc3339(), id],
-    )?;
-
-    if updated == 0 {
-        return Err(crate::api_error::ApiError::new(
-            StatusCode::NOT_FOUND,
-            "execution not found or not claimed",
-        ));
-    }
-
-    let cancelled: bool = conn.query_row(
-        "SELECT r.status FROM requests r JOIN agent_executions e ON e.request_id = r.id WHERE e.id = ?1",
-        rusqlite::params![id],
-        |row| {
-            let status: String = row.get(0)?;
-            Ok(status == "cancelled")
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let uc = AgentClaim {
+        authorizer: state.authorizer.clone(),
+        request_repo: state.request_repo.clone(),
+        agent_repo: state.agent_repo.clone(),
+        policy: state.policy_evaluator.clone(),
+        token_signer: state.token_signer.clone(),
+        event_dispatcher: state.event_dispatcher.clone(),
+        clock: state.clock.clone(),
+        id_gen: state.id_generator.clone(),
+    };
+    let output = uc.execute(
+        AgentClaimInput {
+            request_id: id,
+            agent_id: user.subject_id.clone(),
+            agent_databases: vec![],
+            agent_operations: vec![],
         },
-    ).unwrap_or(false);
+        &user,
+    ).map_err(map_error)?;
 
-    Ok(Json(serde_json::json!({"cancelled": cancelled})))
+    Ok((StatusCode::OK, Json(serde_json::json!({
+        "execution_id": output.execution_id,
+        "request_id": output.request_id,
+        "execution_token": output.execution_token,
+        "operation": output.operation,
+        "database": output.database,
+        "environment": output.environment,
+        "detail": output.detail,
+        "statement_timeout_secs": output.statement_timeout_secs,
+    }))))
 }
 
-/// Agent sends execution result. Server relays to waiting CLI via channel.
-pub(crate) async fn agent_result(
+pub async fn heartbeat(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    axum::extract::Path(id): axum::extract::Path<String>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<impl IntoResponse, crate::api_error::ApiError> {
-    let user = auth::authenticate(&headers, &state).await?;
-    authz::authorize_and_audit(&user, Action::AgentSubmitResult, Resource::Global, &state).await?;
-
-    let success = body["success"].as_bool().unwrap_or(false);
-    let result = body["result"].clone();
-    let error_msg = body["error"].as_str().map(|s| s.to_string());
-
-    let (
-        request_id,
-        req_status,
-        wh_operation,
-        wh_environment,
-        wh_database,
-        wh_detail,
-        wh_requester,
-        wh_agent_id,
-        webhook_ctx,
-    ) = {
-        let mut conn = state.db().await;
-
-        let exec_ctx = crate::db::agent_repo::get_execution_context(&conn, &id)
-            .map_err(|_| crate::api_error::ApiError::not_found("execution not found"))?;
-
-        if exec_ctx.status != "claimed" {
-            return Err(crate::api_error::ApiError::conflict(format!(
-                "execution status is {}",
-                exec_ctx.status
-            )));
-        }
-
-        authz::authorize_with_audit(
-            &user,
-            Action::AgentSubmitResult,
-            Resource::AgentExecution {
-                agent_id: exec_ctx.agent_id.clone(),
-            },
-            &mut conn,
-        )?;
-
-        let req_ctx = crate::db::request_repo::get_request_context(&conn, &exec_ctx.request_id)?;
-
-        let req_status = crate::db::agent_repo::finish_execution(
-            &mut conn,
-            &id,
-            &exec_ctx.request_id,
-            success,
-            error_msg.as_deref(),
-            &req_ctx.operation,
-            &req_ctx.environment,
-            &req_ctx.database_name,
-            &req_ctx.detail,
-            &req_ctx.created_by,
-        )?;
-        state
-            .metrics
-            .record_agent_execution(if success { "succeeded" } else { "failed" });
-
-        // Audit: execution_completed or execution_failed
-        if let Err(e) = crate::db::audit_event_repo::record_audit_event(
-            &mut conn,
-            crate::db::audit_event_repo::AuditEvent {
-                event_type: if success {
-                    "execution_completed"
-                } else {
-                    "execution_failed"
-                },
-                event_category: "execution",
-                outcome: if success { "success" } else { "failure" },
-                actor_id: &exec_ctx.agent_id,
-                actor_type: "agent",
-                resource_type: Some("request"),
-                resource_id: Some(&exec_ctx.request_id),
-                peer_ip: None,
-                client_ip: None,
-                client_ip_source: None,
-                request_id: Some(&exec_ctx.request_id),
-                operation: Some(&req_ctx.operation),
-                environment: Some(&req_ctx.environment),
-                database_name: Some(&req_ctx.database_name),
-                detail_fingerprint: None,
-                detail_raw: Some(&req_ctx.detail),
-                reason: None,
-                metadata_json: &serde_json::json!({
-                    "execution_id": id,
-                    "error": error_msg,
-                })
-                .to_string(),
-            },
-            &headers,
-            &state.audit_config,
-            &state.trusted_proxies,
-        ) {
-            error!(error = %e, "audit write failed");
-        }
-
-        let notif_hooks = crate::db::policy_repo::get_notification_webhooks(
-            &conn,
-            &req_ctx.database_name,
-            &req_ctx.environment,
-        );
-
-        (
-            exec_ctx.request_id,
-            req_status,
-            req_ctx.operation,
-            req_ctx.environment,
-            req_ctx.database_name,
-            req_ctx.detail,
-            req_ctx.created_by,
-            exec_ctx.agent_id,
-            notif_hooks,
-        )
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let uc = AgentHeartbeat {
+        authorizer: state.authorizer.clone(),
+        agent_repo: state.agent_repo.clone(),
+        request_repo: state.request_repo.clone(),
+        event_dispatcher: state.event_dispatcher.clone(),
+        clock: state.clock.clone(),
     };
+    let output = uc.execute(AgentHeartbeatInput { execution_id: id }, &user)
+        .map_err(map_error)?;
 
-    // Save to result storage (skip if no_store flag is set)
-    if success {
-        let no_store: bool = {
-            let conn = state.db().await;
-            conn.query_row(
-                "SELECT no_store FROM requests WHERE id = ?1",
-                [&request_id],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap_or(0)
-                != 0
-        };
+    Ok((StatusCode::OK, Json(serde_json::json!({ "cancelled": output.cancelled }))))
+}
 
-        if !no_store {
-            let share_with: Vec<String> = {
-                let conn = state.db().await;
-                conn.query_row(
-                    "SELECT share_with_json FROM requests WHERE id = ?1",
-                    [&request_id],
-                    |row| row.get::<_, Option<String>>(0),
-                )
-                .ok()
-                .flatten()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or_default()
-            };
+#[derive(Deserialize)]
+pub struct SubmitResultBody {
+    pub success: bool,
+    pub result_data: Option<String>,
+    pub error_message: Option<String>,
+}
 
-            let data = serde_json::to_vec(&result).unwrap_or_default();
-            let content_length = data.len() as i64;
-            let checksum = format!("{:x}", sha2::Sha256::digest(&data));
-            let storage_key = state.result_store.storage_key(&request_id);
-            let backend = state.result_store.backend();
+pub async fn submit_result(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    Json(body): Json<SubmitResultBody>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let uc = AgentSubmitResult {
+        authorizer: state.authorizer.clone(),
+        agent_repo: state.agent_repo.clone(),
+        request_repo: state.request_repo.clone(),
+        result_store: state.result_store.clone(),
+        event_dispatcher: state.event_dispatcher.clone(),
+        clock: state.clock.clone(),
+    };
+    let result_data = body.result_data.map(|s| s.into_bytes());
+    let output = uc.execute(
+        AgentSubmitResultInput {
+            execution_id: id,
+            success: body.success,
+            result_data,
+            error_message: body.error_message,
+        },
+        &user,
+    ).await.map_err(map_error)?;
 
-            match state.result_store.put(&request_id, &data).await {
-                Ok(()) => {
-                    let now = chrono::Utc::now().to_rfc3339();
-                    let retention_days = state.retention.result_ttl_days as i64;
-                    let expires_at =
-                        (chrono::Utc::now() + chrono::Duration::days(retention_days)).to_rfc3339();
-                    let db_write_result = {
-                        let mut conn = state.db().await;
-                        let tx = conn.transaction();
-                        tx.and_then(|tx| {
-                                tx.execute(
-                                    "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'stored', ?7, ?8)",
-                                    rusqlite::params![request_id, backend, storage_key, content_length, checksum, retention_days, now, expires_at],
-                                )?;
-                                tx.execute(
-                                    "DELETE FROM result_access WHERE request_id = ?1",
-                                    rusqlite::params![request_id],
-                                )?;
+    Ok((StatusCode::OK, Json(serde_json::json!({
+        "request_id": output.request_id,
+        "status": output.status,
+    }))))
+}
 
-                                // Default access: requester + admin. share_with adds extra.
-                                let mut all_selectors =
-                                    vec!["requester".to_string(), "role:admin".to_string()];
-                                all_selectors.extend(share_with.iter().cloned());
-                                for sel in &all_selectors {
-                                    let (sel_type, sel_value) = if sel == "requester" {
-                                        ("requester", "")
-                                    } else if let Some(v) = sel.strip_prefix("role:") {
-                                        ("role", v)
-                                    } else if let Some(v) = sel.strip_prefix("group:") {
-                                        ("group", v)
-                                    } else if let Some(v) = sel.strip_prefix("user:") {
-                                        ("user", v)
-                                    } else {
-                                        ("role", sel.as_str())
-                                    };
-                                    tx.execute(
-                                        "INSERT INTO result_access (request_id, selector_type, selector_value) VALUES (?1, ?2, ?3)",
-                                        rusqlite::params![request_id, sel_type, sel_value],
-                                    )?;
-                                }
-                                tx.commit()
-                            })
-                    };
+pub async fn list_agents(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    use dbward_domain::auth::Permission;
 
-                    if db_write_result.is_err() {
-                        if let Err(err) = state.result_store.delete(&request_id).await {
-                            error!(
-                                request_id = %request_id,
-                                error = %err,
-                                "failed to delete partially stored result"
-                            );
-                        }
-                        let conn = state.db().await;
-                        if let Err(err) = conn.execute(
-                            "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, ?2, ?3, 0, '', ?4, 'storage_failed', ?5, ?5)",
-                            rusqlite::params![request_id, backend, storage_key, retention_days, now],
-                        ) {
-                            error!(
-                                request_id = %request_id,
-                                error = %err,
-                                "failed to mark result storage failure"
-                            );
-                        }
-                    }
-                }
-                Err(_) => {
-                    let conn = state.db().await;
-                    let now = chrono::Utc::now().to_rfc3339();
-                    if let Err(err) = conn.execute(
-                        "INSERT OR REPLACE INTO request_results (request_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, stored_at, expires_at) VALUES (?1, 'unknown', '', 0, '', ?3, 'storage_failed', ?2, ?2)",
-                        rusqlite::params![
-                            request_id,
-                            now,
-                            crate::constants::RESULT_STORAGE_FAILURE_RETENTION_DAYS,
-                        ],
-                    ) {
-                        error!(request_id = %request_id, error = %err, "failed to persist storage failure");
-                    }
-                }
-            }
-        }
-    }
+    state.authorizer.authorize_global(&user, Permission::AgentPoll)
+        .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
 
-    // Relay result to waiting CLI
-    let payload = json!({
-        "success": success,
-        "result": result,
-        "error": error_msg,
-        "request_id": request_id,
-    });
+    let agents = state.agent_repo.list()
+        .map_err(map_error)?;
 
-    let slot = state.result_channels.get_or_insert(&request_id).await;
-    let mut r = slot.result.lock().await;
-    *r = Some(payload);
-    slot.notify.notify_waiters();
-
-    state.request_notifier.notify(&request_id).await;
-
-    // B17: Fire webhook on completion/failure (skip if request was already cancelled)
-    if req_status != "cancelled" {
-        let event_name = if success {
-            "request_completed"
-        } else {
-            "request_failed"
-        };
-        state.webhooks.read().unwrap().dispatch_with_policy(
-            webhook_ctx,
-            crate::webhook::WebhookEvent {
-                event: event_name.into(),
-                timestamp: chrono::Utc::now().to_rfc3339(),
-                request_id: request_id.clone(),
-                status: req_status.clone(),
-                requester: wh_requester,
-                actor: wh_agent_id,
-                actor_role: Some("agent".into()),
-                operation: wh_operation,
-                environment: wh_environment,
-                detail: wh_detail,
-                database: wh_database,
-                reason: error_msg.clone(),
-                next_step: None,
-                cli_command: None,
-            },
-            state.metrics.clone(),
-        );
-    }
-
-    Ok(Json(
-        json!({"status": req_status, "request_id": request_id}),
-    ))
+    Ok((StatusCode::OK, Json(serde_json::json!({ "agents": agents }))))
 }

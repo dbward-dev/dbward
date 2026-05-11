@@ -1,225 +1,37 @@
-use rusqlite::Connection;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
 
-use crate::Metrics;
-use crate::oidc::OidcVerifier;
-use crate::server_config::RetentionConfig;
-use crate::token::TokenSigner;
-use crate::webhook::WebhookDispatcher;
-
-/// Holds a pending result slot: agent writes, CLI reads.
-pub struct ResultSlot {
-    pub result: Mutex<Option<serde_json::Value>>,
-    pub notify: tokio::sync::Notify,
-    pub created_at: Instant,
-}
-
-/// In-memory channels for relaying query results from agent to CLI.
-pub struct ResultChannels {
-    pub slots: Mutex<HashMap<String, Arc<ResultSlot>>>,
-}
-
-impl Default for ResultChannels {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ResultChannels {
-    const SLOT_TTL: Duration = Duration::from_secs(600);
-
-    pub fn new() -> Self {
-        Self {
-            slots: Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub async fn insert(&self, request_id: String, slot: Arc<ResultSlot>) {
-        self.cleanup_expired().await;
-        self.slots.lock().await.insert(request_id, slot);
-    }
-
-    pub async fn get(&self, request_id: &str) -> Option<Arc<ResultSlot>> {
-        self.cleanup_expired().await;
-        self.slots.lock().await.get(request_id).cloned()
-    }
-
-    pub async fn get_or_insert(&self, request_id: &str) -> Arc<ResultSlot> {
-        self.cleanup_expired().await;
-        let mut slots = self.slots.lock().await;
-        slots
-            .entry(request_id.to_string())
-            .or_insert_with(|| {
-                Arc::new(ResultSlot {
-                    result: Mutex::new(None),
-                    notify: tokio::sync::Notify::new(),
-                    created_at: Instant::now(),
-                })
-            })
-            .clone()
-    }
-
-    pub async fn remove(&self, request_id: &str) -> Option<Arc<ResultSlot>> {
-        self.slots.lock().await.remove(request_id)
-    }
-
-    pub async fn notify_all(&self) {
-        let slots = self.slots.lock().await;
-        for slot in slots.values() {
-            slot.notify.notify_waiters();
-        }
-    }
-
-    async fn cleanup_expired(&self) {
-        let now = Instant::now();
-        self.slots
-            .lock()
-            .await
-            .retain(|_, slot| now.duration_since(slot.created_at) < Self::SLOT_TTL);
-    }
-}
-
-/// Notifies long-polling GET /api/requests/{id}?wait= when status changes.
-pub struct RequestNotifier {
-    notifiers: Mutex<HashMap<String, (Arc<tokio::sync::Notify>, Instant)>>,
-}
-
-impl Default for RequestNotifier {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RequestNotifier {
-    const ENTRY_TTL: Duration = Duration::from_secs(600);
-
-    pub fn new() -> Self {
-        Self {
-            notifiers: Mutex::new(HashMap::new()),
-        }
-    }
-
-    pub async fn subscribe(&self, request_id: &str) -> Arc<tokio::sync::Notify> {
-        let mut map = self.notifiers.lock().await;
-        self.cleanup_expired_inner(&mut map);
-        map.entry(request_id.to_string())
-            .or_insert_with(|| (Arc::new(tokio::sync::Notify::new()), Instant::now()))
-            .0
-            .clone()
-    }
-
-    pub async fn notify(&self, request_id: &str) {
-        let map = self.notifiers.lock().await;
-        if let Some((n, _)) = map.get(request_id) {
-            n.notify_waiters();
-        }
-    }
-
-    pub async fn remove(&self, request_id: &str) {
-        self.notifiers.lock().await.remove(request_id);
-    }
-
-    pub async fn notify_all(&self) {
-        let map = self.notifiers.lock().await;
-        for (n, _) in map.values() {
-            n.notify_waiters();
-        }
-    }
-
-    fn cleanup_expired_inner(
-        &self,
-        map: &mut HashMap<String, (Arc<tokio::sync::Notify>, Instant)>,
-    ) {
-        let now = Instant::now();
-        map.retain(|_, (_, created)| now.duration_since(*created) < Self::ENTRY_TTL);
-    }
-}
+use dbward_app::ports::{
+    AgentRepo, AuditLogger, AuditRepo, Authorizer, Clock, DatabaseRegistry, EventDispatcher,
+    IdGenerator, LicenseChecker, Notifier, PolicyEvaluator, PolicyRepo, RequestRepo, ResultChannel,
+    ResultStore, RoleResolver, SsrfValidator, TokenRepo, TokenSigner, TokenVerifier, UserRepo,
+    WebhookRepo,
+};
 
 #[derive(Clone)]
 pub struct AppState {
-    pub sqlite: Arc<Mutex<Connection>>,
-    pub token_signer: Arc<TokenSigner>,
-    pub webhooks: Arc<std::sync::RwLock<WebhookDispatcher>>,
-    pub metrics: Arc<Metrics>,
-    pub license: crate::license::License,
-    pub oidc: Option<Arc<OidcVerifier>>,
-    pub auth_mode: String,
-    pub result_channels: Arc<ResultChannels>,
-    pub retention: RetentionConfig,
-    pub request_notifier: Arc<RequestNotifier>,
-    pub result_store: Arc<crate::result_storage::ResultStore>,
-    pub draining: Arc<std::sync::atomic::AtomicBool>,
-    pub break_glass_roles: Vec<String>,
-    pub audit_config: crate::server_config::AuditConfig,
-    pub trusted_proxies: Vec<String>,
-    pub update_available: Arc<Mutex<Option<String>>>,
-    pub update_check_enabled: bool,
-    pub enforcer: Arc<std::sync::RwLock<casbin::Enforcer>>,
-}
-
-impl AppState {
-    pub async fn db(&self) -> tokio::sync::MutexGuard<'_, Connection> {
-        self.sqlite.lock().await
-    }
-
-    /// Create an AppState with sensible defaults for testing.
-    /// Requires the `test-helpers` feature.
-    #[cfg(feature = "test-helpers")]
-    pub fn test_default() -> Self {
-        let conn = Connection::open_in_memory().unwrap();
-        crate::db::init(&conn).unwrap();
-        Self {
-            sqlite: Arc::new(Mutex::new(conn)),
-            token_signer: Arc::new(crate::token::TokenSigner::generate()),
-            webhooks: Arc::new(std::sync::RwLock::new(
-                crate::webhook::WebhookDispatcher::new(vec![]),
-            )),
-            metrics: Arc::new(crate::metrics::Metrics::new()),
-            license: crate::license::License::default(),
-            oidc: None,
-            auth_mode: "token".into(),
-            result_channels: Arc::new(ResultChannels::new()),
-            retention: RetentionConfig::default(),
-            request_notifier: Arc::new(RequestNotifier::new()),
-            result_store: Arc::new(
-                crate::result_storage::ResultStore::new_local(
-                    &std::env::temp_dir()
-                        .join(format!("dbward-test-{}", std::process::id()))
-                        .to_string_lossy(),
-                )
-                .unwrap(),
-            ),
-            draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            break_glass_roles: vec!["admin".into()],
-            audit_config: crate::server_config::AuditConfig::default(),
-            trusted_proxies: vec![],
-            update_available: Arc::new(Mutex::new(None)),
-            update_check_enabled: false,
-            enforcer: crate::authz::get_enforcer_arc_or_default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AuthUser {
-    pub token_id: String,
-    pub user: String,
-    pub roles: Vec<String>,
-    pub groups: Vec<String>,
-    pub subject_type: String,
-}
-
-impl AuthUser {
-    /// Returns the effective permission level:
-    /// "admin" > "developer" > "readonly" > "approver" (custom roles can only approve).
-    pub fn effective_permission(&self) -> &str {
-        dbward_core::role::effective_permission(&self.roles)
-    }
-
-    pub fn has_role(&self, role: &str) -> bool {
-        self.roles.iter().any(|r| r == role)
-    }
+    // Auth
+    pub token_verifier: Arc<dyn TokenVerifier>,
+    pub role_resolver: Arc<dyn RoleResolver>,
+    pub authorizer: Arc<dyn Authorizer>,
+    // Repos
+    pub request_repo: Arc<dyn RequestRepo>,
+    pub agent_repo: Arc<dyn AgentRepo>,
+    pub user_repo: Arc<dyn UserRepo>,
+    pub token_repo: Arc<dyn TokenRepo>,
+    pub webhook_repo: Arc<dyn WebhookRepo>,
+    pub policy_repo: Arc<dyn PolicyRepo>,
+    pub database_registry: Arc<dyn DatabaseRegistry>,
+    pub audit_logger: Arc<dyn AuditLogger>,
+    pub audit_repo: Arc<dyn AuditRepo>,
+    // Services
+    pub policy_evaluator: Arc<dyn PolicyEvaluator>,
+    pub result_store: Arc<dyn ResultStore>,
+    pub result_channel: Arc<dyn ResultChannel>,
+    pub token_signer: Arc<dyn TokenSigner>,
+    pub notifier: Arc<dyn Notifier>,
+    pub event_dispatcher: Arc<dyn EventDispatcher>,
+    pub ssrf_validator: Arc<dyn SsrfValidator>,
+    pub license_checker: Arc<dyn LicenseChecker>,
+    pub clock: Arc<dyn Clock>,
+    pub id_generator: Arc<dyn IdGenerator>,
 }

@@ -65,6 +65,31 @@ impl AgentRepo for SqliteAgentRepo {
         .transpose()
     }
 
+    fn list(&self) -> Result<Vec<Agent>, AppError> {
+        let conn = self.conn.blocking_lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, token_id, databases_json, status, max_concurrent, in_flight, last_seen_at, created_at FROM agents ORDER BY last_seen_at DESC",
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        let rows = stmt.query_map([], |row| {
+            Ok(AgentRow {
+                id: row.get(0)?,
+                token_id: row.get(1)?,
+                databases_json: row.get(2)?,
+                status: row.get(3)?,
+                max_concurrent: row.get(4)?,
+                in_flight: row.get(5)?,
+                last_seen_at: row.get::<_, Option<String>>(6)?,
+                created_at: row.get(7)?,
+            })
+        }).map_err(|e| AppError::Internal(e.to_string()))?;
+        let mut results = Vec::new();
+        for row in rows {
+            let r = row.map_err(|e| AppError::Internal(e.to_string()))?;
+            results.push(row_to_agent(r)?);
+        }
+        Ok(results)
+    }
+
     fn create_execution(&self, execution: &Execution) -> Result<(), AppError> {
         let conn = self.conn.blocking_lock();
         let status = execution_status_str(execution.status);

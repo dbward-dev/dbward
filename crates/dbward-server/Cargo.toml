@@ -5,44 +5,20 @@ edition.workspace = true
 license = "BUSL-1.1"
 repository.workspace = true
 rust-version.workspace = true
-description = "Approval workflow HTTP server with Ed25519 signed execution tokens"
-keywords = ["database", "approval", "workflow", "audit"]
-categories = ["database", "web-programming::http-server"]
+description = "Thin axum HTTP layer wiring dbward-app use cases"
 
 [dependencies]
-dbward-core = { path = "../dbward-core", version = "0.1.0" }
-dbward-api-types = { path = "../dbward-api-types" }
+dbward-app = { path = "../dbward-app" }
+dbward-domain = { path = "../dbward-domain" }
 axum = "0.8"
+chrono.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-uuid.workspace = true
-chrono.workspace = true
-rusqlite = { version = "0.35", features = ["bundled"] }
-sha2 = "0.10"
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-rand = "0.8"
-hex = "0.4"
 tower-http = { version = "0.6", features = ["cors"] }
-reqwest = { version = "0.12", features = ["json"] }
-url = "2"
-hmac = "0.12"
-toml.workspace = true
-jsonwebtoken = "9"
-base64 = "0.22"
-object_store = { version = "0.11", features = ["aws"] }
-async-trait = "0.1"
-casbin = { version = "2.20", default-features = false, features = ["runtime-tokio"] }
 tracing.workspace = true
-tracing-subscriber.workspace = true
-tracing-appender.workspace = true
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 hyper = "1"
 http-body-util = "0.1"
-tempfile = "3"
-
-[features]
-dev = []
-test-helpers = []
