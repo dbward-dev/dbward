@@ -49,7 +49,7 @@ impl AgentClaim {
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
         // 3. Status check: must be dispatched → running
-        status_machine::transition(request.status, &RequestEvent::Claim)
+        status_machine::transition_simple(request.status, &RequestEvent::Claim)
             .map_err(|e| AppError::Conflict(e.to_string()))?;
 
         // 4. Capability verification: agent must support (database, environment)

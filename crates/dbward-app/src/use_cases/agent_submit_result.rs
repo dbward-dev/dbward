@@ -66,7 +66,7 @@ impl AgentSubmitResult {
             RequestStatus::Cancelled
         } else {
             let event = RequestEvent::Complete { success: input.success };
-            status_machine::transition(request.status, &event)
+            status_machine::transition_simple(request.status, &event)
                 .map_err(|e| AppError::Conflict(e.to_string()))?
         };
 

@@ -41,7 +41,7 @@ impl DispatchRequest {
         ).map_err(AppError::Forbidden)?;
 
         // 3. Status check via status_machine
-        status_machine::transition(request.status, &RequestEvent::Dispatch)
+        status_machine::transition_simple(request.status, &RequestEvent::Dispatch)
             .map_err(|e| AppError::Conflict(e.to_string()))?;
 
         // 4. Approval TTL check (based on resolved_at = when approval was granted)

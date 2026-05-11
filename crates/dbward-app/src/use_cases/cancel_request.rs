@@ -48,7 +48,7 @@ impl CancelRequest {
         ).map_err(AppError::Forbidden)?;
 
         // 3. Status check via status_machine
-        status_machine::transition(request.status, &RequestEvent::Cancel)
+        status_machine::transition_simple(request.status, &RequestEvent::Cancel)
             .map_err(|e| AppError::Conflict(e.to_string()))?;
 
         // 4. Mark cancelled
