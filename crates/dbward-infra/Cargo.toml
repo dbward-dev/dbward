@@ -1,0 +1,50 @@
+[package]
+name = "dbward-infra"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Infrastructure layer for dbward — port trait implementations"
+
+[dependencies]
+dbward-domain = { path = "../dbward-domain" }
+dbward-app = { path = "../dbward-app" }
+
+# Async
+async-trait = "0.1"
+tokio = { workspace = true }
+
+# Database
+rusqlite = { version = "0.35", features = ["bundled"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+
+# Crypto
+sha2 = "0.10"
+hex = "0.4"
+hmac = "0.12"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+
+# HTTP (webhook, OIDC)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# Object storage
+object_store = { version = "0.11", features = ["aws"] }
+
+# JWT / OIDC
+jsonwebtoken = "9"
+
+# Utilities
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+url = "2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile = "3"
