@@ -22,3 +22,6 @@ tracing.workspace = true
 tower = { version = "0.5", features = ["util"] }
 hyper = "1"
 http-body-util = "0.1"
+async-trait = "0.1"
+dbward-domain = { path = "../dbward-domain" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
