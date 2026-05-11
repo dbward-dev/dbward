@@ -707,7 +707,22 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "sqlparser",
  "thiserror",
+]
+
+[[package]]
+name = "dbward-driver"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "serde_json",
+ "sqlparser",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -742,12 +757,13 @@ name = "dbward-migrate"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "dbward-core",
+ "dbward-driver",
  "serde",
  "serde_json",
  "sha2",
  "testcontainers",
  "testcontainers-modules",
+ "thiserror",
  "tokio",
 ]
 

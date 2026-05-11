@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Request, RequestStatus};
+use dbward_domain::services::classification::{ClassifyError, Dialect};
 use dbward_domain::services::sql_classifier;
 use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 use dbward_domain::services::workflow_matcher;
@@ -54,7 +55,14 @@ impl CreateRequest {
         // 1. Determine operation: migration types are explicit, others classified from SQL
         let operation = match input.operation {
             Operation::MigrateUp | Operation::MigrateDown | Operation::MigrateStatus => input.operation,
-            _ => sql_classifier::classify(&input.detail),
+            _ => {
+                let classification = sql_classifier::classify(&input.detail, Dialect::PostgreSql)
+                    .map_err(|e| match e {
+                        ClassifyError::Empty => AppError::Validation("empty query".into()),
+                        ClassifyError::Rejected { reason } => AppError::Validation(reason),
+                    })?;
+                classification.operation
+            }
         };
 
         // 1b. Permission + DB/env scope check
@@ -118,7 +126,11 @@ impl CreateRequest {
         }
 
         // 6. Serialize workflow snapshot for approve/reject
-        let workflow_snapshot_json = workflow.as_ref().map(|wf| serde_json::to_string(wf).unwrap());
+        let workflow_snapshot_json = workflow
+            .as_ref()
+            .map(|wf| serde_json::to_string(wf))
+            .transpose()
+            .map_err(|e| AppError::Internal(format!("serialize workflow: {e}")))?;
 
         // 7. Create request
         let now = self.clock.now();

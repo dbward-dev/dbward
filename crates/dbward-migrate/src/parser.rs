@@ -2,6 +2,8 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use crate::error::MigrateError;
+
 /// A parsed migration file (dbmate-compatible format).
 #[derive(Debug, Clone, Serialize)]
 pub struct Migration {
@@ -14,17 +16,15 @@ pub struct Migration {
 /// Parse migration files from a directory.
 /// Expected filename: `YYYYMMDDHHMMSS_name.sql`
 /// Expected content markers: `-- migrate:up` and `-- migrate:down`
-pub fn parse_migrations_dir(dir: &Path) -> Result<Vec<Migration>, dbward_core::Error> {
+pub fn parse_migrations_dir(dir: &Path) -> Result<Vec<Migration>, MigrateError> {
     let mut migrations = Vec::new();
 
     if !dir.exists() {
         return Ok(migrations);
     }
 
-    let mut entries: Vec<_> = std::fs::read_dir(dir)
-        .map_err(dbward_core::Error::Io)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(dbward_core::Error::Io)?
+    let mut entries: Vec<_> = std::fs::read_dir(dir)?
+        .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "sql"))
         .collect();
@@ -33,7 +33,7 @@ pub fn parse_migrations_dir(dir: &Path) -> Result<Vec<Migration>, dbward_core::E
 
     for entry in entries {
         let filename = entry.file_name().to_string_lossy().to_string();
-        let content = std::fs::read_to_string(entry.path()).map_err(dbward_core::Error::Io)?;
+        let content = std::fs::read_to_string(entry.path())?;
 
         if let Some(migration) = parse_migration_file(&filename, &content) {
             migrations.push(migration);
@@ -69,18 +69,15 @@ fn parse_migration_file(filename: &str, content: &str) -> Option<Migration> {
 }
 
 /// Create a new migration file with the given name.
-pub fn create_migration_file(
-    dir: &Path,
-    name: &str,
-) -> Result<std::path::PathBuf, dbward_core::Error> {
-    std::fs::create_dir_all(dir).map_err(dbward_core::Error::Io)?;
+pub fn create_migration_file(dir: &Path, name: &str) -> Result<std::path::PathBuf, MigrateError> {
+    std::fs::create_dir_all(dir)?;
 
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
     let filename = format!("{timestamp}_{name}.sql");
     let path = dir.join(&filename);
 
     let content = "-- migrate:up\n\n-- migrate:down\n";
-    std::fs::write(&path, content).map_err(dbward_core::Error::Io)?;
+    std::fs::write(&path, content)?;
 
     Ok(path)
 }

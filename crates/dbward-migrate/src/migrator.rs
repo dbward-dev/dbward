@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
+use crate::error::MigrateError;
 use crate::parser::{Migration, create_migration_file, parse_migrations_dir};
-use dbward_core::driver::DatabaseDriver;
+use dbward_driver::DatabaseDriver;
 
 #[derive(Debug, Serialize)]
 pub struct MigrationResult {
@@ -34,7 +35,7 @@ impl Migrator {
         }
     }
 
-    pub async fn status(&self) -> Result<Vec<MigrationStatus>, dbward_core::Error> {
+    pub async fn status(&self) -> Result<Vec<MigrationStatus>, MigrateError> {
         self.driver.ensure_migrations_table().await?;
         let applied = self.driver.applied_versions().await?;
         let migrations = parse_migrations_dir(&self.migrations_dir)?;
@@ -49,7 +50,7 @@ impl Migrator {
             .collect())
     }
 
-    pub async fn up(&self, count: Option<usize>) -> Result<MigrationResult, dbward_core::Error> {
+    pub async fn up(&self, count: Option<usize>) -> Result<MigrationResult, MigrateError> {
         self.driver.ensure_migrations_table().await?;
         let applied = self.driver.applied_versions().await?;
         let migrations = parse_migrations_dir(&self.migrations_dir)?;
@@ -81,7 +82,7 @@ impl Migrator {
         Ok(result)
     }
 
-    pub async fn down(&self, count: Option<usize>) -> Result<MigrationResult, dbward_core::Error> {
+    pub async fn down(&self, count: Option<usize>) -> Result<MigrationResult, MigrateError> {
         self.driver.ensure_migrations_table().await?;
         let applied = self.driver.applied_versions().await?;
         let migrations = parse_migrations_dir(&self.migrations_dir)?;
@@ -102,7 +103,7 @@ impl Migrator {
 
         for migration in to_rollback {
             let down_sql = migration.down_sql.as_deref().ok_or_else(|| {
-                dbward_core::Error::Config(format!("no down migration for {}", migration.version))
+                MigrateError::Config(format!("no down migration for {}", migration.version))
             })?;
 
             self.driver
@@ -116,16 +117,8 @@ impl Migrator {
         Ok(result)
     }
 
-    pub fn create(&self, name: &str) -> Result<std::path::PathBuf, dbward_core::Error> {
+    pub fn create(&self, name: &str) -> Result<std::path::PathBuf, MigrateError> {
         create_migration_file(&self.migrations_dir, name)
-    }
-
-    /// Create a Migrator for local-only operations (create migration files).
-    /// No DB driver needed.
-    pub fn new_local(migrations_dir: impl Into<std::path::PathBuf>) -> LocalMigrator {
-        LocalMigrator {
-            migrations_dir: migrations_dir.into(),
-        }
     }
 }
 
@@ -135,7 +128,13 @@ pub struct LocalMigrator {
 }
 
 impl LocalMigrator {
-    pub fn create(&self, name: &str) -> Result<std::path::PathBuf, dbward_core::Error> {
+    pub fn new(migrations_dir: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            migrations_dir: migrations_dir.into(),
+        }
+    }
+
+    pub fn create(&self, name: &str) -> Result<std::path::PathBuf, MigrateError> {
         create_migration_file(&self.migrations_dir, name)
     }
 }

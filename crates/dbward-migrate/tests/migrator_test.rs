@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
-use dbward_core::driver;
+use dbward_driver;
 use dbward_migrate::Migrator;
 
 fn fixtures_dir() -> PathBuf {
@@ -12,12 +12,12 @@ fn fixtures_dir() -> PathBuf {
 
 async fn setup() -> (
     testcontainers::ContainerAsync<Postgres>,
-    std::sync::Arc<dyn driver::DatabaseDriver>,
+    std::sync::Arc<dyn dbward_driver::DatabaseDriver>,
 ) {
     let container = Postgres::default().start().await.unwrap();
     let port = container.get_host_port_ipv4(5432).await.unwrap();
     let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let drv = driver::connect(&url).await.unwrap();
+    let drv = dbward_driver::connect(&url, None).await.unwrap();
     (container, drv)
 }
 

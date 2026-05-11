@@ -7,6 +7,7 @@ description = "Domain layer for dbward — entities, policies, value objects, an
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
+sqlparser = { version = "0.61", features = ["visitor"] }
 thiserror = "2"
 
 [dev-dependencies]

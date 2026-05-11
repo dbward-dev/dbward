@@ -2,7 +2,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use dbward_core::Error;
+use crate::error::MigrateError;
 
 /// v2 migration detail: version list + SQL content as JSON.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -23,13 +23,13 @@ pub struct MigrationEntry {
 }
 
 impl MigrationDetail {
-    pub fn to_detail_string(&self) -> Result<String, Error> {
-        serde_json::to_string(self).map_err(|e| Error::Config(format!("serialize detail: {e}")))
+    pub fn to_detail_string(&self) -> Result<String, MigrateError> {
+        serde_json::to_string(self).map_err(|e| MigrateError::Config(format!("serialize detail: {e}")))
     }
 
-    pub fn parse(detail: &str) -> Result<Self, Error> {
+    pub fn parse(detail: &str) -> Result<Self, MigrateError> {
         serde_json::from_str(detail)
-            .map_err(|e| Error::Config(format!("invalid migration detail JSON: {e}")))
+            .map_err(|e| MigrateError::Config(format!("invalid migration detail JSON: {e}")))
     }
 }
 
@@ -38,7 +38,7 @@ impl MigrationDetail {
 pub fn build_migrate_up_detail(
     dir: &Path,
     applied_versions: &[String],
-) -> Result<MigrationDetail, Error> {
+) -> Result<MigrationDetail, MigrateError> {
     let all_migrations = list_migration_files(dir, "up")?;
     let pending: Vec<_> = all_migrations
         .into_iter()
@@ -59,13 +59,13 @@ pub fn build_migrate_up_detail(
     let migrations: Vec<MigrationEntry> = pending
         .iter()
         .map(|(version, path)| {
-            let sql = std::fs::read_to_string(path).map_err(Error::Io)?;
+            let sql = std::fs::read_to_string(path).map_err(MigrateError::Io)?;
             Ok(MigrationEntry {
                 version: version.clone(),
                 sql,
             })
         })
-        .collect::<Result<Vec<_>, Error>>()?;
+        .collect::<Result<Vec<_>, MigrateError>>()?;
 
     let versions = migrations.iter().map(|m| m.version.clone()).collect();
 
@@ -83,7 +83,7 @@ pub fn build_migrate_up_detail(
 pub fn build_migrate_down_detail(
     dir: &Path,
     versions_to_revert: &[String],
-) -> Result<MigrationDetail, Error> {
+) -> Result<MigrationDetail, MigrateError> {
     let migrations: Vec<MigrationEntry> = versions_to_revert
         .iter()
         .map(|version| {
@@ -92,15 +92,15 @@ pub fn build_migrate_down_detail(
                 .iter()
                 .find(|(v, _)| v == version)
                 .ok_or_else(|| {
-                    Error::Config(format!("no down migration file for version '{version}'"))
+                    MigrateError::Config(format!("no down migration file for version '{version}'"))
                 })?;
-            let sql = std::fs::read_to_string(path).map_err(Error::Io)?;
+            let sql = std::fs::read_to_string(path).map_err(MigrateError::Io)?;
             Ok(MigrationEntry {
                 version: version.clone(),
                 sql,
             })
         })
-        .collect::<Result<Vec<_>, Error>>()?;
+        .collect::<Result<Vec<_>, MigrateError>>()?;
 
     let versions = migrations.iter().map(|m| m.version.clone()).collect();
 
@@ -115,14 +115,14 @@ pub fn build_migrate_down_detail(
 }
 
 /// List all available down migration versions (sorted).
-pub fn list_down_versions(dir: &Path) -> Result<Vec<String>, Error> {
+pub fn list_down_versions(dir: &Path) -> Result<Vec<String>, MigrateError> {
     let files = list_migration_files(dir, "down")?;
     Ok(files.into_iter().map(|(v, _)| v).collect())
 }
 
 /// Canonicalize: re-read files and rebuild detail to verify integrity.
 /// Used by agent to verify the detail matches current file state.
-pub fn canonicalize_migration_detail(detail: &str) -> Result<String, Error> {
+pub fn canonicalize_migration_detail(detail: &str) -> Result<String, MigrateError> {
     // v2 detail is self-contained (SQL is in the JSON). Just re-serialize canonically.
     let parsed = MigrationDetail::parse(detail)?;
     parsed.to_detail_string()
@@ -130,7 +130,7 @@ pub fn canonicalize_migration_detail(detail: &str) -> Result<String, Error> {
 
 /// List migration files in a directory, filtered by direction (up/down).
 /// Returns (version, path) pairs sorted by version.
-fn list_migration_files(dir: &Path, direction: &str) -> Result<Vec<(String, std::path::PathBuf)>, Error> {
+fn list_migration_files(dir: &Path, direction: &str) -> Result<Vec<(String, std::path::PathBuf)>, MigrateError> {
     let suffix = format!(".{direction}.sql");
     let mut entries = Vec::new();
 
@@ -138,8 +138,8 @@ fn list_migration_files(dir: &Path, direction: &str) -> Result<Vec<(String, std:
         return Ok(entries);
     }
 
-    for entry in std::fs::read_dir(dir).map_err(Error::Io)? {
-        let entry = entry.map_err(Error::Io)?;
+    for entry in std::fs::read_dir(dir).map_err(MigrateError::Io)? {
+        let entry = entry.map_err(MigrateError::Io)?;
         let filename = entry.file_name().to_string_lossy().to_string();
         if filename.ends_with(&suffix) {
             let version = filename.strip_suffix(&suffix).unwrap_or(&filename).to_string();
@@ -151,14 +151,14 @@ fn list_migration_files(dir: &Path, direction: &str) -> Result<Vec<(String, std:
     Ok(entries)
 }
 
-fn hash_migrations_dir(dir: &Path) -> Result<String, Error> {
+fn hash_migrations_dir(dir: &Path) -> Result<String, MigrateError> {
     let mut entries = Vec::new();
 
     if dir.exists() {
         for entry in std::fs::read_dir(dir)
-            .map_err(Error::Io)?
+            .map_err(MigrateError::Io)?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(Error::Io)?
+            .map_err(MigrateError::Io)?
         {
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "sql") {
@@ -171,7 +171,7 @@ fn hash_migrations_dir(dir: &Path) -> Result<String, Error> {
 
     let mut manifest_hasher = Sha256::new();
     for (filename, path) in entries {
-        let content = std::fs::read(&path).map_err(Error::Io)?;
+        let content = std::fs::read(&path).map_err(MigrateError::Io)?;
         let file_hash = sha256_hex(&content);
         manifest_hasher.update(filename.as_bytes());
         manifest_hasher.update([0]);
@@ -196,7 +196,7 @@ pub struct MigrationApprovalDetail {
 }
 
 impl MigrationApprovalDetail {
-    pub fn parse(detail: &str) -> Result<Self, Error> {
+    pub fn parse(detail: &str) -> Result<Self, MigrateError> {
         let mut count = None;
         let mut dir_hash = None;
 
@@ -206,7 +206,7 @@ impl MigrationApprovalDetail {
             }
             if let Some(value) = part.strip_prefix("count=") {
                 count = Some(value.parse::<usize>().map_err(|e| {
-                    Error::Config(format!("invalid migration approval detail count: {e}"))
+                    MigrateError::Config(format!("invalid migration approval detail count: {e}"))
                 })?);
                 continue;
             }
@@ -218,7 +218,7 @@ impl MigrationApprovalDetail {
 
         match (count, dir_hash) {
             (Some(count), Some(dir_hash)) if !dir_hash.is_empty() => Ok(Self { count, dir_hash }),
-            _ => Err(Error::Config(
+            _ => Err(MigrateError::Config(
                 "invalid migration approval detail format".into(),
             )),
         }
@@ -229,7 +229,7 @@ impl MigrationApprovalDetail {
     }
 }
 
-pub fn build_migration_approval_detail(dir: &Path, count: usize) -> Result<String, Error> {
+pub fn build_migration_approval_detail(dir: &Path, count: usize) -> Result<String, MigrateError> {
     Ok(MigrationApprovalDetail {
         count,
         dir_hash: hash_migrations_dir(dir)?,
@@ -237,7 +237,7 @@ pub fn build_migration_approval_detail(dir: &Path, count: usize) -> Result<Strin
     .format())
 }
 
-pub fn canonicalize_migration_approval_detail(dir: &Path, detail: &str) -> Result<String, Error> {
+pub fn canonicalize_migration_approval_detail(dir: &Path, detail: &str) -> Result<String, MigrateError> {
     // Try v2 JSON first
     if detail.starts_with('{') {
         return canonicalize_migration_detail(detail);

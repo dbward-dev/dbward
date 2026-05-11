@@ -10,13 +10,16 @@ keywords = ["database", "migration", "postgresql", "mysql"]
 categories = ["database"]
 
 [dependencies]
-dbward-core = { path = "../dbward-core", version = "0.1.0" }
+dbward-driver = { path = "../dbward-driver", version = "0.1.0" }
 tokio.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
+thiserror = "2"
 
 [dev-dependencies]
+dbward-driver = { path = "../dbward-driver" }
 testcontainers = { workspace = true }
 testcontainers-modules = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

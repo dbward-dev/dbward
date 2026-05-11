@@ -1,4 +1,5 @@
 mod approval;
+mod error;
 mod migrator;
 mod parser;
 
@@ -8,5 +9,6 @@ pub use approval::{
     canonicalize_migration_approval_detail, canonicalize_migration_detail,
     list_down_versions,
 };
+pub use error::MigrateError;
 pub use migrator::{LocalMigrator, MigrationResult, MigrationStatus, Migrator};
 pub use parser::Migration;
