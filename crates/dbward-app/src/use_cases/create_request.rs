@@ -50,6 +50,7 @@ pub struct CreateRequestOutput {
     pub status: RequestStatus,
     pub operation: Operation,
     pub is_existing: bool,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl CreateRequest {
@@ -79,14 +80,7 @@ impl CreateRequest {
             .authorize_scoped(user, perm, &input.database, &input.environment, &ResourceContext::Global)
             .map_err(AppError::Forbidden)?;
 
-        // 1b-2. SELECT cannot use share_with
-        if operation == Operation::ExecuteSelect {
-            if !input.share_with.is_empty() {
-                return Err(AppError::Validation("share_with is not allowed for SELECT queries".into()));
-            }
-        }
-
-        // 1b. Emergency requires reason
+        // 1b-2. Emergency requires reason
         if input.emergency && input.reason.is_none() {
             return Err(AppError::Validation("reason is required for emergency requests".into()));
         }
@@ -109,6 +103,7 @@ impl CreateRequest {
                     status: existing.status,
                     operation: existing.operation,
                     is_existing: true,
+                    expires_at: existing.expires_at,
                 });
             }
         }
@@ -244,7 +239,7 @@ impl CreateRequest {
             status
         };
 
-        Ok(CreateRequestOutput { id, status: final_status, operation, is_existing: false })
+        Ok(CreateRequestOutput { id, status: final_status, operation, is_existing: false, expires_at })
     }
 }
 

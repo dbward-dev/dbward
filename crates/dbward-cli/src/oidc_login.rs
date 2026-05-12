@@ -264,8 +264,7 @@ pub async fn logout() -> Result<(), String> {
 pub fn whoami() -> Result<(), String> {
     let path = credentials_path();
     if !path.exists() {
-        eprintln!("Not logged in. Run: dbward login");
-        return Ok(());
+        return Err("no OIDC credentials".into());
     }
 
     let creds: Credentials =
