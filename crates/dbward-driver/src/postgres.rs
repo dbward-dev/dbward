@@ -155,14 +155,14 @@ impl DatabaseDriver for PostgresDriver {
             return Err(DriverError::Cancelled);
         }
 
-        let all_rows = sqlx::query(sql).fetch_all(&mut *conn).await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-
+        let mut stream = sqlx::raw_sql(sql).fetch(&mut *conn);
         let mut rows = Vec::new();
         let mut total_bytes: usize = 0;
         let mut truncated = false;
         let mut truncation_reason = None;
-        for row in all_rows {
+
+        while let Some(row) = stream.try_next().await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))? {
             let json = pg_row_to_json(&row);
             total_bytes += json.to_string().len();
             if rows.len() >= MAX_RESULT_ROWS {

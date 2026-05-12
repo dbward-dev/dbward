@@ -1,7 +1,7 @@
 use futures::TryStreamExt;
-use sqlx::{Column, Row, TypeInfo};
+use sqlx::{Column, Row, TypeInfo, ValueRef};
 
-use crate::{CancelState, DatabaseDriver, DriverError, JsonMapping, QueryOutput, MAX_RESULT_BYTES, MAX_RESULT_ROWS};
+use crate::{text_to_json, CancelState, DatabaseDriver, DriverError, JsonMapping, QueryOutput, MAX_RESULT_BYTES, MAX_RESULT_ROWS};
 
 pub struct MysqlDriver {
     pool: sqlx::MySqlPool,
@@ -35,7 +35,7 @@ impl MysqlDriver {
 #[async_trait::async_trait]
 impl DatabaseDriver for MysqlDriver {
     async fn query(&self, sql: &str) -> Result<QueryOutput, DriverError> {
-        let mut stream = sqlx::query(sql).fetch(&self.pool);
+        let mut stream = sqlx::raw_sql(sql).fetch(&self.pool);
         let mut rows = Vec::new();
         let mut total_bytes: usize = 0;
         let mut truncated = false;
@@ -177,14 +177,14 @@ impl DatabaseDriver for MysqlDriver {
         }
 
         // Execute on same connection
-        let all_rows = sqlx::query(sql).fetch_all(&mut *conn).await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-
+        let mut stream = sqlx::raw_sql(sql).fetch(&mut *conn);
         let mut rows = Vec::new();
         let mut total_bytes: usize = 0;
         let mut truncated = false;
         let mut truncation_reason = None;
-        for row in all_rows {
+
+        while let Some(row) = stream.try_next().await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))? {
             let json = mysql_row_to_json(&row);
             total_bytes += json.to_string().len();
             if rows.len() >= MAX_RESULT_ROWS {
@@ -245,34 +245,17 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for col in row.columns() {
         let name = col.name();
-        let mapping = mysql_type_mapping(col.type_info().name());
-        let val: serde_json::Value = match mapping {
-            JsonMapping::Integer => row
-                .try_get::<i64, _>(name)
-                .map(Into::into)
-                .unwrap_or(serde_json::Value::Null),
-            JsonMapping::Float => row
-                .try_get::<f64, _>(name)
-                .map(|v| {
-                    serde_json::Number::from_f64(v)
-                        .map(serde_json::Value::Number)
-                        .unwrap_or(serde_json::Value::String(v.to_string()))
-                })
-                .unwrap_or(serde_json::Value::Null),
-            JsonMapping::Bool => row
-                .try_get::<bool, _>(name)
-                .map(Into::into)
-                .unwrap_or(serde_json::Value::Null),
-            JsonMapping::Json => row
-                .try_get::<String, _>(name)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or(serde_json::Value::Null),
-            JsonMapping::Binary => serde_json::Value::String("(binary data)".into()),
-            JsonMapping::Text => row
-                .try_get::<Option<String>, _>(name)
-                .map(|opt| opt.map(Into::into).unwrap_or(serde_json::Value::Null))
-                .unwrap_or_else(|_| serde_json::Value::String("(binary data)".into())),
+        let raw = row
+            .try_get_raw(col.ordinal())
+            .expect("column ordinal from row.columns() must be valid");
+        let val = if raw.is_null() {
+            serde_json::Value::Null
+        } else {
+            // With raw_sql (text protocol), all values are UTF-8 strings
+            match row.try_get::<String, _>(col.ordinal()) {
+                Ok(text) => text_to_json(&text, mysql_type_mapping(col.type_info().name())),
+                Err(_) => serde_json::Value::String("(binary data)".into()),
+            }
         };
         map.insert(name.to_string(), val);
     }

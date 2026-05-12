@@ -55,7 +55,7 @@ pub async fn connect(
 // Shared type conversion
 
 #[derive(Debug, Clone, Copy)]
-enum JsonMapping {
+pub(crate) enum JsonMapping {
     Integer,
     Float,
     Bool,
@@ -64,7 +64,7 @@ enum JsonMapping {
     Text,
 }
 
-fn text_to_json(text: &str, mapping: JsonMapping) -> serde_json::Value {
+pub(crate) fn text_to_json(text: &str, mapping: JsonMapping) -> serde_json::Value {
     match mapping {
         JsonMapping::Integer => text
             .parse::<i64>()
