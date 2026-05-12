@@ -20,7 +20,7 @@ pub(crate) fn print_request_list(requests: &[serde_json::Value]) {
         let id = r["id"].as_str().unwrap_or("?");
         let short_id = id[..id.len().min(8)].to_string();
         let status = r["status"].as_str().unwrap_or("?").to_string();
-        let user = r["created_by"].as_str().unwrap_or("?").to_string();
+        let user = r["requester"].as_str().unwrap_or("?").to_string();
         let env = r["environment"].as_str().unwrap_or("?").to_string();
         let op = r["operation"].as_str().unwrap_or("?").to_string();
         let detail = r["detail"].as_str().unwrap_or("");

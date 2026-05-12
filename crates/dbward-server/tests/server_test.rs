@@ -68,7 +68,7 @@ struct StubRequestRepo;
 impl RequestRepo for StubRequestRepo {
     fn insert(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> { Ok(()) }
     fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Request>, AppError> { Ok(None) }
-    fn list(&self, _: u32, _: u32) -> Result<(Vec<dbward_domain::entities::Request>, u32), AppError> { Ok((vec![], 0)) }
+    fn list(&self, _: u32, _: u32, _: Option<&str>) -> Result<(Vec<dbward_domain::entities::Request>, u32), AppError> { Ok((vec![], 0)) }
     fn find_by_idempotency_key(&self, _: &str) -> Result<Option<dbward_domain::entities::Request>, AppError> { Ok(None) }
     fn insert_approval(&self, _: &Approval) -> Result<(), AppError> { Ok(()) }
     fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> { Ok(vec![]) }

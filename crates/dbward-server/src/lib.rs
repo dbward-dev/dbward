@@ -105,6 +105,11 @@ pub async fn run_from_args(
             notifier: notifier.clone(),
             result_channel: Some(result_channel.clone()),
             request_notifier: None,
+            redaction_mode: match cfg.audit.redaction.as_str() {
+                "none" => dbward_infra::webhook::RedactionMode::None,
+                "full" => dbward_infra::webhook::RedactionMode::Full,
+                _ => dbward_infra::webhook::RedactionMode::Literals,
+            },
         },
     );
     let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> = Arc::new(

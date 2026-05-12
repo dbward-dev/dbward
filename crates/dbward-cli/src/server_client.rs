@@ -466,17 +466,18 @@ impl ServerClient {
         request_id: &str,
         comment: Option<&str>,
     ) -> Result<Value, ServerError> {
-        let mut req = self
+        let body = match comment {
+            Some(c) => serde_json::json!({ "comment": c }),
+            None => serde_json::json!({}),
+        };
+        let resp = self
             .client
             .post(format!(
                 "{}/api/requests/{}/approve",
                 self.base_url, request_id
             ))
-            .bearer_auth(&self.api_token);
-        if let Some(comment) = comment {
-            req = req.json(&serde_json::json!({ "comment": comment }));
-        }
-        let resp = req
+            .bearer_auth(&self.api_token)
+            .json(&body)
             .send()
             .await
             .map_err(|e| ServerError::from_response(0, format!("approve failed: {e}")))?;
@@ -489,17 +490,18 @@ impl ServerClient {
         request_id: &str,
         comment: Option<&str>,
     ) -> Result<Value, ServerError> {
-        let mut req = self
+        let body = match comment {
+            Some(c) => serde_json::json!({ "comment": c }),
+            None => serde_json::json!({}),
+        };
+        let resp = self
             .client
             .post(format!(
                 "{}/api/requests/{}/reject",
                 self.base_url, request_id
             ))
-            .bearer_auth(&self.api_token);
-        if let Some(comment) = comment {
-            req = req.json(&serde_json::json!({ "comment": comment }));
-        }
-        let resp = req
+            .bearer_auth(&self.api_token)
+            .json(&body)
             .send()
             .await
             .map_err(|e| ServerError::from_response(0, format!("reject failed: {e}")))?;
@@ -512,17 +514,18 @@ impl ServerClient {
         request_id: &str,
         reason: Option<&str>,
     ) -> Result<Value, ServerError> {
-        let mut req = self
+        let body = match reason {
+            Some(r) => serde_json::json!({ "reason": r }),
+            None => serde_json::json!({}),
+        };
+        let resp = self
             .client
             .post(format!(
                 "{}/api/requests/{}/cancel",
                 self.base_url, request_id
             ))
-            .bearer_auth(&self.api_token);
-        if let Some(reason) = reason {
-            req = req.json(&serde_json::json!({ "reason": reason }));
-        }
-        let resp = req
+            .bearer_auth(&self.api_token)
+            .json(&body)
             .send()
             .await
             .map_err(|e| ServerError::from_response(0, format!("cancel failed: {e}")))?;
