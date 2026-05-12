@@ -1236,10 +1236,10 @@ fn find_expired_pending_no_ttl_means_infinite() {
     assert!(!expired.contains(&"req-no-ttl".to_string()));
 }
 
-// --- 25. find_stale_dispatched: dispatched > 300s ago ---
+// --- 25. find_dispatched_older_than: dispatched > 300s ago ---
 
 #[test]
-fn find_stale_dispatched_timeout() {
+fn find_dispatched_older_than_timeout() {
     let conn = setup();
     register_db(&conn);
 
@@ -1270,7 +1270,7 @@ fn find_stale_dispatched_timeout() {
     repo.insert(&req).unwrap();
 
     let now = Utc::now().to_rfc3339();
-    let stale = repo.find_stale_dispatched(&now).unwrap();
+    let stale = repo.find_dispatched_older_than(&now).unwrap();
     assert!(stale.contains(&"req-stale-disp".to_string()));
 }
 

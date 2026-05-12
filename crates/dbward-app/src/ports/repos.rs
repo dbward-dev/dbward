@@ -35,7 +35,7 @@ pub trait RequestRepo: Send + Sync {
     // Background task methods
     fn find_expired_approved(&self, now: &str) -> Result<Vec<String>, AppError>;
     fn find_expired_pending(&self, now: &str) -> Result<Vec<String>, AppError>;
-    fn find_stale_dispatched(&self, threshold: &str) -> Result<Vec<String>, AppError>;
+    fn find_dispatched_older_than(&self, cutoff: &str) -> Result<Vec<String>, AppError>;
     fn mark_expired(&self, id: &str, now: &str) -> Result<bool, AppError>;
     /// Atomically marks request expired and records audit event in one transaction.
     fn mark_expired_and_record(&self, id: &str, audit_event: &AuditEvent, now: &str) -> Result<bool, AppError>;
