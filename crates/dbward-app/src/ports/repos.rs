@@ -169,6 +169,8 @@ pub trait PolicyRepo: Send + Sync {
     fn list_execution_policies(&self) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError>;
     fn delete_execution_policy(&self, id: &str) -> Result<bool, AppError>;
 
+    fn find_result_policy(&self, db: &DatabaseName, env: &Environment) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError>;
+
     fn create_role(&self, role: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError>;
     fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError>;
     fn get_roles_by_names(&self, names: &[String]) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError>;

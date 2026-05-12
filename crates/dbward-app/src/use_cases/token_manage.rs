@@ -209,6 +209,7 @@ mod tests {
         fn get_execution_policy(&self, _: &str) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(None) }
         fn list_execution_policies(&self) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(vec![]) }
         fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn find_result_policy(&self, _: &dbward_domain::values::DatabaseName, _: &dbward_domain::values::Environment) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> { Ok(None) }
         fn create_role(&self, _: &RoleDefinition) -> Result<(), AppError> { Ok(()) }
         fn list_roles(&self) -> Result<Vec<RoleDefinition>, AppError> { Ok(self.roles.clone()) }
         fn get_roles_by_names(&self, names: &[String]) -> Result<Vec<RoleDefinition>, AppError> {

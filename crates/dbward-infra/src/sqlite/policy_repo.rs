@@ -142,6 +142,57 @@ impl PolicyRepo for SqlitePolicyRepo {
         Ok(changed > 0)
     }
 
+    fn find_result_policy(&self, db: &DatabaseName, env: &Environment) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
+        let conn = self.conn.blocking_lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, database_name, environment, retention_days, delivery_mode, access_json FROM result_policies",
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, u32>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        }).map_err(|e| AppError::Internal(e.to_string()))?;
+
+        let mut best: Option<dbward_domain::policies::ResultPolicy> = None;
+        let mut best_score: u8 = 0;
+
+        for row in rows {
+            let (id, db_str, env_str, retention_days, delivery_str, access_json) =
+                row.map_err(|e| AppError::Internal(e.to_string()))?;
+            let policy_db = DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            let policy_env = Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
+
+            if !scope_matches_db(&policy_db, db) || !scope_matches_env(&policy_env, env) {
+                continue;
+            }
+            let score = specificity_score_ep(&policy_db, &policy_env, db, env);
+            if score > best_score || best.is_none() {
+                let delivery_mode: dbward_domain::policies::DeliveryMode =
+                    serde_json::from_value(serde_json::Value::String(delivery_str))
+                        .unwrap_or_default();
+                let access_strs: Vec<String> = serde_json::from_str(&access_json).unwrap_or_default();
+                let access = access_strs.iter()
+                    .filter_map(|s| dbward_domain::values::Selector::parse(s).ok())
+                    .collect();
+                best = Some(dbward_domain::policies::ResultPolicy {
+                    id,
+                    database: policy_db,
+                    environment: policy_env,
+                    retention_days,
+                    delivery_mode,
+                    access,
+                });
+                best_score = score;
+            }
+        }
+        Ok(best)
+    }
+
     fn create_role(&self, role: &RoleDefinition) -> Result<(), AppError> {
         let conn = self.conn.blocking_lock();
         let perms_json = serde_json::to_string(

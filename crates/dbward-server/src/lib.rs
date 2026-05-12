@@ -1,5 +1,6 @@
 pub mod background;
 pub mod config;
+pub mod metrics;
 pub mod middleware;
 pub mod routes;
 pub mod state;
@@ -129,6 +130,7 @@ pub async fn run_from_args(
         license_checker,
         clock,
         id_generator,
+        metrics: Arc::new(metrics::Metrics::new()),
         draining: draining.clone(),
     };
 

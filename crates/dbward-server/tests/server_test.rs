@@ -155,6 +155,7 @@ impl PolicyRepo for StubPolicyRepo {
     fn get_execution_policy(&self, _: &str) -> Result<Option<ExecutionPolicy>, AppError> { Ok(None) }
     fn list_execution_policies(&self) -> Result<Vec<ExecutionPolicy>, AppError> { Ok(vec![]) }
     fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+    fn find_result_policy(&self, _: &DatabaseName, _: &Environment) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> { Ok(None) }
     fn create_role(&self, _: &RoleDefinition) -> Result<(), AppError> { Ok(()) }
     fn list_roles(&self) -> Result<Vec<RoleDefinition>, AppError> { Ok(vec![]) }
     fn get_roles_by_names(&self, _: &[String]) -> Result<Vec<RoleDefinition>, AppError> { Ok(vec![]) }
@@ -269,6 +270,7 @@ fn test_state() -> AppState {
         license_checker: Arc::new(StubLicenseChecker),
         clock: Arc::new(StubClock),
         id_generator: Arc::new(StubIdGenerator),
+        metrics: Arc::new(dbward_server::metrics::Metrics::new()),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }
 }

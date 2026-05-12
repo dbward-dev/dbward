@@ -8,6 +8,8 @@ use dbward_app::ports::{
     WebhookRepo,
 };
 
+use crate::metrics::Metrics;
+
 #[derive(Clone)]
 pub struct AppState {
     // Auth
@@ -35,6 +37,8 @@ pub struct AppState {
     pub license_checker: Arc<dyn LicenseChecker>,
     pub clock: Arc<dyn Clock>,
     pub id_generator: Arc<dyn IdGenerator>,
+    // Metrics
+    pub metrics: Arc<Metrics>,
     // Shutdown
     pub draining: Arc<AtomicBool>,
 }

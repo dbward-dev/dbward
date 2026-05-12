@@ -314,6 +314,7 @@ pub async fn get_result(
         request_repo: state.request_repo.clone(),
         agent_repo: state.agent_repo.clone(),
         result_store: state.result_store.clone(),
+        policy_repo: state.policy_repo.clone(),
         clock: state.clock.clone(),
     };
 

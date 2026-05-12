@@ -7,6 +7,7 @@ mod agent;
 mod audit;
 mod databases;
 mod health;
+mod metrics;
 mod policies;
 mod requests;
 mod tokens;
@@ -76,6 +77,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/audit/verify", axum::routing::get(audit::verify_chain))
         // Databases
         .route("/api/databases", axum::routing::get(databases::list))
+        // Metrics
+        .route("/api/metrics", axum::routing::get(metrics::metrics))
         // Public key
         .route("/api/public-key", axum::routing::get(health::public_key))
         .layer(middleware::from_fn_with_state(state.clone(), super::middleware::auth::auth_middleware))
