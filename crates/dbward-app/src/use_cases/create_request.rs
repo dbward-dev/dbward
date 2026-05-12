@@ -19,6 +19,7 @@ pub struct CreateRequest {
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
+    pub default_approval_ttl_secs: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -156,6 +157,14 @@ impl CreateRequest {
         // 7. Create request
         let now = self.clock.now();
         let id = self.id_gen.generate();
+        let expires_at = if status == RequestStatus::Pending {
+            workflow.as_ref()
+                .and_then(|wf| wf.pending_ttl_secs)
+                .or(self.default_approval_ttl_secs)
+                .map(|secs| now + chrono::Duration::seconds(secs as i64))
+        } else {
+            None
+        };
         let request = Request {
             id: id.clone(),
             requester: user.subject_id.clone(),
@@ -176,7 +185,7 @@ impl CreateRequest {
             created_at: now,
             updated_at: now,
             resolved_at: None,
-            expires_at: None,
+            expires_at,
         };
         // 8. Persist request — atomic create+dispatch for auto-dispatch path
         let final_status = if matches!(status, RequestStatus::AutoApproved | RequestStatus::BreakGlass) {
@@ -343,6 +352,7 @@ mod tests {
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),
+            default_approval_ttl_secs: None,
         }
     }
 

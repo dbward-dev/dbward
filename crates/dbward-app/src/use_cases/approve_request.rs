@@ -206,6 +206,9 @@ fn find_matched_selector(user: &AuthUser, approvers: &[dbward_domain::policies::
             return ag.selector.to_string();
         }
     }
+    if user.roles.iter().any(|r| r.permissions.contains(&dbward_domain::auth::Permission::All)) {
+        return "admin_override".to_string();
+    }
     "unknown".to_string()
 }
 

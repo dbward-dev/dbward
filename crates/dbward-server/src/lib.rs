@@ -142,6 +142,7 @@ pub async fn run_from_args(
         clock,
         id_generator,
         metrics: Arc::new(metrics::Metrics::new()),
+        default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
         draining: draining.clone(),
     };
 

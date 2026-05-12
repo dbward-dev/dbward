@@ -637,11 +637,17 @@ async fn submit_and_wait(
 
     match status.as_str() {
         "dispatched" | "break_glass" | "running" => {
-            let resp = client
-                .wait_for_result(&req_id)
-                .await
-                .map_err(|e| e.to_string())?;
-            format_result(&resp)
+            match tokio::time::timeout(
+                Duration::from_secs(60),
+                client.wait_for_result(&req_id),
+            ).await {
+                Ok(Ok(resp)) => format_result(&resp),
+                Ok(Err(e)) => Err(e.to_string()),
+                Err(_) => Ok(format!(
+                    "Request {} is still executing. Use `dbward resume {}` to check the result.",
+                    req_id, req_id
+                )),
+            }
         }
         "executed" | "failed" => {
             let resp = client
@@ -653,11 +659,17 @@ async fn submit_and_wait(
         "approved" | "auto_approved" => {
             // Dispatch and wait
             client.dispatch(&req_id).await.map_err(|e| e.body.clone())?;
-            let resp = client
-                .wait_for_result(&req_id)
-                .await
-                .map_err(|e| e.to_string())?;
-            format_result(&resp)
+            match tokio::time::timeout(
+                Duration::from_secs(60),
+                client.wait_for_result(&req_id),
+            ).await {
+                Ok(Ok(resp)) => format_result(&resp),
+                Ok(Err(e)) => Err(e.to_string()),
+                Err(_) => Ok(format!(
+                    "Request {} is still executing. Use `dbward resume {}` to check the result.",
+                    req_id, req_id
+                )),
+            }
         }
         "pending" => Ok(format!(
             "Request {req_id} requires approval. \

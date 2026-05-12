@@ -92,6 +92,7 @@ pub async fn create(
         event_dispatcher: state.event_dispatcher.clone(),
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
+        default_approval_ttl_secs: state.default_approval_ttl_secs,
     };
 
     match uc.execute(input, &user) {
