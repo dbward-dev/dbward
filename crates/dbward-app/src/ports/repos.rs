@@ -19,10 +19,10 @@ pub trait RequestRepo: Send + Sync {
     /// Returns false if the request was not in an expected source state (optimistic lock).
     fn mark_approved(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     /// Atomically inserts approval and marks request as approved in one transaction.
-    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: chrono::DateTime<chrono::Utc>, audit_event: &AuditEvent) -> Result<bool, AppError>;
+    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_rejected(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     /// Atomically inserts rejection approval and marks request as rejected in one transaction.
-    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: chrono::DateTime<chrono::Utc>, audit_event: &AuditEvent) -> Result<bool, AppError>;
+    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_cancelled(&self, id: &str, actor: &str, reason: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_dispatched(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     /// Atomically inserts a request and marks it as dispatched in one transaction.

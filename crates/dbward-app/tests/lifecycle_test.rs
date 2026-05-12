@@ -76,7 +76,7 @@ impl RequestRepo for SharedRepo {
             Ok(false)
         }
     }
-    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: DateTime<Utc>, _audit_event: &AuditEvent) -> Result<bool, AppError> {
+    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         self.approvals.lock().unwrap().push(approval.clone());
         self.mark_approved(request_id, now)
     }
@@ -90,7 +90,7 @@ impl RequestRepo for SharedRepo {
             Ok(false)
         }
     }
-    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: DateTime<Utc>, _audit_event: &AuditEvent) -> Result<bool, AppError> {
+    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: DateTime<Utc>) -> Result<bool, AppError> {
         self.approvals.lock().unwrap().push(approval.clone());
         self.mark_rejected(request_id, now)
     }

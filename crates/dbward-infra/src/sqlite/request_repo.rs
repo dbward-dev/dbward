@@ -322,7 +322,7 @@ impl RequestRepo for SqliteRequestRepo {
         Ok(affected > 0)
     }
 
-    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: DateTime<Utc>, audit_event: &AuditEvent) -> Result<bool, AppError> {
+    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(map_err)?;
 
@@ -352,8 +352,6 @@ impl RequestRepo for SqliteRequestRepo {
             return Ok(false);
         }
 
-        insert_audit_in_tx(&tx, audit_event)?;
-
         tx.commit().map_err(map_err)?;
         Ok(true)
     }
@@ -369,7 +367,7 @@ impl RequestRepo for SqliteRequestRepo {
         Ok(affected > 0)
     }
 
-    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: DateTime<Utc>, audit_event: &AuditEvent) -> Result<bool, AppError> {
+    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: DateTime<Utc>) -> Result<bool, AppError> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(map_err)?;
 
@@ -398,8 +396,6 @@ impl RequestRepo for SqliteRequestRepo {
                 approval.created_at.to_rfc3339(),
             ],
         ).map_err(map_err)?;
-
-        insert_audit_in_tx(&tx, audit_event)?;
 
         tx.commit().map_err(map_err)?;
         Ok(true)

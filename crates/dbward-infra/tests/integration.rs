@@ -938,7 +938,7 @@ fn reject_and_record_success() {
     };
 
     let now = Utc::now();
-    let result = request_repo.reject_and_record("req-rej", &approval, now, &AuditEvent::simple("request.rejected", "approval", "admin-1", Some("req-rej"))).unwrap();
+    let result = request_repo.reject_and_record("req-rej", &approval, now).unwrap();
     assert!(result);
 
     let fetched = request_repo.get("req-rej").unwrap().unwrap();
@@ -994,7 +994,7 @@ fn reject_and_record_already_rejected() {
         created_at: Utc::now(),
     };
 
-    let result = request_repo.reject_and_record("req-rej2", &approval, Utc::now(), &AuditEvent::simple("request.rejected", "approval", "admin-1", Some("req-rej2"))).unwrap();
+    let result = request_repo.reject_and_record("req-rej2", &approval, Utc::now()).unwrap();
     assert!(!result);
 
     // No approval record inserted on failure

@@ -12,7 +12,47 @@ pub struct ServerConfig {
     pub workflows: Vec<WorkflowDef>,
     #[serde(default)]
     pub webhooks: Vec<WebhookDef>,
+    #[serde(default)]
+    pub retention: RetentionConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
+
+#[derive(Debug, Deserialize, Default)]
+pub struct RetentionConfig {
+    #[serde(default = "default_request_ttl")]
+    pub request_ttl_days: u64,
+    #[serde(default = "default_audit_ttl")]
+    pub audit_ttl_days: u64,
+    #[serde(default = "default_result_ttl")]
+    pub result_ttl_days: u64,
+    #[serde(default = "default_approval_ttl")]
+    pub approval_ttl_secs: u64,
+}
+
+fn default_request_ttl() -> u64 { 90 }
+fn default_audit_ttl() -> u64 { 365 }
+fn default_result_ttl() -> u64 { 30 }
+fn default_approval_ttl() -> u64 { 86400 }
+
+#[derive(Debug, Deserialize, Default)]
+pub struct AuthConfig {
+    #[serde(default = "default_auth_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub oidc: Option<OidcConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OidcConfig {
+    pub issuer_url: String,
+    pub audience: String,
+    #[serde(default)]
+    pub role_mappings: std::collections::HashMap<String, Vec<String>>,
+    pub default_role: Option<String>,
+}
+
+fn default_auth_mode() -> String { "token".into() }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ResultStorageConfig {
@@ -63,7 +103,29 @@ impl ServerConfig {
     pub fn load(path: &Path) -> Result<Self, String> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        toml::from_str(&content)
+        let expanded = expand_env_vars(&content)?;
+        toml::from_str(&expanded)
             .map_err(|e| format!("{}: {e}", path.display()))
     }
+}
+
+fn expand_env_vars(input: &str) -> Result<String, String> {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '$' && chars.peek() == Some(&'{') {
+            chars.next();
+            let mut var_name = String::new();
+            for ch in chars.by_ref() {
+                if ch == '}' { break; }
+                var_name.push(ch);
+            }
+            let val = std::env::var(&var_name)
+                .map_err(|_| format!("undefined environment variable: ${{{var_name}}}"))?;
+            result.push_str(&val);
+        } else {
+            result.push(c);
+        }
+    }
+    Ok(result)
 }

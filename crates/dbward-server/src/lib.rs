@@ -176,8 +176,24 @@ pub async fn run_from_args(
         sync_workflows(&state, &cfg.workflows)?;
     }
 
+    // BUG-28: Sync webhooks from config
+    sync_webhooks(&state, &cfg.webhooks)?;
+
+    // BUG-31: Initialize OIDC verifier if configured
+    if cfg.auth.mode == "oidc" || cfg.auth.mode == "both" {
+        if let Some(ref oidc_cfg) = cfg.auth.oidc {
+            let _oidc_verifier = dbward_infra::auth::OidcVerifier::new(
+                oidc_cfg.issuer_url.clone(),
+                oidc_cfg.audience.clone(),
+                "groups".to_string(),
+                None,
+            );
+            tracing::info!("OIDC verifier initialized (issuer={})", oidc_cfg.issuer_url);
+        }
+    }
+
     let addr: std::net::SocketAddr = listen.parse()?;
-    start(addr, state).await
+    start(addr, state, cfg.retention).await
 }
 
 fn register_databases(
@@ -277,6 +293,38 @@ fn sync_workflows(
     Ok(())
 }
 
+fn sync_webhooks(
+    state: &AppState,
+    webhooks: &[config::WebhookDef],
+) -> Result<(), Box<dyn std::error::Error>> {
+    use dbward_domain::entities::{Webhook, WebhookFormat, WebhookStatus};
+
+    // Delete all config-sourced webhooks
+    for i in 0..100 {
+        let _ = state.webhook_repo.delete(&format!("config-wh-{i}"));
+    }
+
+    for (i, wh) in webhooks.iter().enumerate() {
+        let webhook = Webhook {
+            id: format!("config-wh-{i}"),
+            url: wh.url.clone(),
+            events: wh.events.clone(),
+            format: WebhookFormat::Generic,
+            secret: wh.secret.clone(),
+            status: WebhookStatus::Active,
+            created_at: Some(chrono::Utc::now()),
+            updated_at: Some(chrono::Utc::now()),
+        };
+        state.webhook_repo.create(&webhook)?;
+    }
+
+    // Reload notifier to pick up new webhooks
+    if let Err(e) = state.notifier.reload() {
+        tracing::warn!("failed to reload webhooks after sync: {e}");
+    }
+    Ok(())
+}
+
 fn create_bootstrap_token(
     state: &AppState,
     subject_id: &str,
@@ -314,7 +362,7 @@ pub fn build_app(state: AppState) -> Router {
     routes::build_router(state)
 }
 
-pub async fn start(addr: std::net::SocketAddr, state: AppState) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn start(addr: std::net::SocketAddr, state: AppState, retention: config::RetentionConfig) -> Result<(), Box<dyn std::error::Error>> {
     let draining = state.draining.clone();
     let result_channel = state.result_channel.clone();
 
@@ -326,7 +374,7 @@ pub async fn start(addr: std::net::SocketAddr, state: AppState) -> Result<(), Bo
     }
 
     // Spawn background tasks
-    let bg_handle = background::spawn_background_tasks(state.clone(), draining.clone());
+    let bg_handle = background::spawn_background_tasks(state.clone(), draining.clone(), retention);
 
     let app = build_app(state);
     let listener = tokio::net::TcpListener::bind(addr).await?;

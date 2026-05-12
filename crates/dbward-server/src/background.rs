@@ -8,11 +8,13 @@ use tracing::info;
 use dbward_app::ports::WebhookEvent;
 use dbward_domain::entities::{ActorType, AuditEvent, EventCategory, EventOutcome};
 
+use crate::config::RetentionConfig;
 use crate::state::AppState;
 
 pub fn spawn_background_tasks(
     state: AppState,
     draining: Arc<AtomicBool>,
+    retention: RetentionConfig,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut tick = interval(TokioDuration::from_secs(60));
@@ -73,20 +75,20 @@ pub fn spawn_background_tasks(
             // Record purge (every 60 ticks = ~1 hour)
             purge_counter += 1;
             if purge_counter % 60 == 0 {
-                let ninety_days_ago = (now - Duration::days(90)).to_rfc3339();
-                let year_ago = (now - Duration::days(365)).to_rfc3339();
+                let request_cutoff = (now - Duration::days(retention.request_ttl_days as i64)).to_rfc3339();
+                let audit_cutoff = (now - Duration::days(retention.audit_ttl_days as i64)).to_rfc3339();
 
-                if let Ok(n) = state.token_repo.purge_revoked(&ninety_days_ago) {
+                if let Ok(n) = state.token_repo.purge_revoked(&request_cutoff) {
                     if n > 0 {
                         info!(count = n, "purged revoked tokens");
                     }
                 }
-                if let Ok(n) = state.audit_repo.purge_old(&year_ago) {
+                if let Ok(n) = state.audit_repo.purge_old(&audit_cutoff) {
                     if n > 0 {
                         info!(count = n, "purged old audit events");
                     }
                 }
-                if let Ok(n) = state.request_repo.purge_old_requests(&ninety_days_ago) {
+                if let Ok(n) = state.request_repo.purge_old_requests(&request_cutoff) {
                     if n > 0 {
                         info!(count = n, "purged old requests");
                     }

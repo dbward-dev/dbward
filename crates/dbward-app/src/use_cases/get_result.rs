@@ -127,9 +127,9 @@ mod tests {
         fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> { Ok(vec![]) }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
         fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn approve_and_mark_approved(&self, _: &Approval, _: &str, _: DateTime<Utc>, _: &AuditEvent) -> Result<bool, AppError> { Ok(true) }
+        fn approve_and_mark_approved(&self, _: &Approval, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn reject_and_record(&self, _: &str, _: &Approval, _: DateTime<Utc>, _: &AuditEvent) -> Result<bool, AppError> { Ok(true) }
+        fn reject_and_record(&self, _: &str, _: &Approval, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> { Ok(()) }

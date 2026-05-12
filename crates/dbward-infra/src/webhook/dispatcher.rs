@@ -188,12 +188,17 @@ impl EventDispatcher for CompositeEventDispatcher {
             EventMetadata::Expired => ("request_expired", "approval"),
         };
 
-        let audit_event = AuditEvent::simple(
+        let mut audit_event = AuditEvent::simple(
             event_type,
             category,
             &event.actor_id,
             Some(&event.request_id),
         );
+
+        if let EventMetadata::Created { ref detail, .. } = event.metadata {
+            audit_event.detail_raw = Some(detail.clone());
+        }
+
         let _ = self.audit.record(&audit_event);
 
         let webhook_event = WebhookEvent {

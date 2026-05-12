@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
-use dbward_domain::entities::{Approval, ApprovalAction, AuditEvent, RequestStatus};
+use dbward_domain::entities::{Approval, ApprovalAction, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
 use dbward_domain::services::{approval_checker, workflow_matcher};
 use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
@@ -177,8 +177,7 @@ impl ApproveRequest {
         let new_status = result.status();
 
         if all_satisfied {
-            let audit_event = AuditEvent::simple("request.approved", "approval", &user.subject_id, Some(&request.id));
-            let ok = self.request_repo.approve_and_mark_approved(&approval, &request.id, now, &audit_event)?;
+            let ok = self.request_repo.approve_and_mark_approved(&approval, &request.id, now)?;
             if !ok {
                 return Err(AppError::Conflict("concurrent status change".into()));
             }
@@ -264,13 +263,13 @@ mod tests {
             *self.marked_approved.lock().unwrap() = true;
             Ok(true)
         }
-        fn approve_and_mark_approved(&self, a: &Approval, _: &str, _: DateTime<Utc>, _: &AuditEvent) -> Result<bool, AppError> {
+        fn approve_and_mark_approved(&self, a: &Approval, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
             self.approvals.lock().unwrap().push(a.clone());
             *self.marked_approved.lock().unwrap() = true;
             Ok(true)
         }
         fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn reject_and_record(&self, _: &str, _: &Approval, _: DateTime<Utc>, _: &AuditEvent) -> Result<bool, AppError> { Ok(true) }
+        fn reject_and_record(&self, _: &str, _: &Approval, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
