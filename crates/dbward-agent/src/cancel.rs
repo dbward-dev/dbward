@@ -77,9 +77,26 @@ impl CancelToken {
                     false
                 }
             }
+        } else if url.starts_with("mysql://") {
+            let conn_id: u64 = match pid.parse() {
+                Ok(v) => v,
+                Err(_) => return false,
+            };
+            match dbward_driver::connect(url, Some(5)).await {
+                Ok(driver) => {
+                    if let Err(e) = driver.execute(&format!("KILL QUERY {conn_id}")).await {
+                        tracing::error!("KILL QUERY failed: {e}");
+                        return false;
+                    }
+                    true
+                }
+                Err(e) => {
+                    tracing::error!("cancel connection failed: {e}");
+                    false
+                }
+            }
         } else {
-            // MySQL: KILL QUERY not implemented (v0.1.1)
-            tracing::warn!("kill_query not implemented for MySQL; relying on statement_timeout");
+            tracing::warn!("kill_query not supported for this DB scheme");
             false
         }
     }
@@ -99,10 +116,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_kill_without_pg() {
+    async fn no_kill_without_url() {
         let state = CancelState::new();
         state.set_connection_id("12345".into());
-        let token = CancelToken::new(Some("mysql://localhost/db".into()), false, state.clone());
+        let token = CancelToken::new(None, false, state.clone());
+        assert!(!token.kill_query().await);
+    }
+
+    #[tokio::test]
+    async fn no_kill_without_connection_id() {
+        let state = CancelState::new();
+        let token = CancelToken::new(Some("postgres://localhost/db".into()), false, state);
+        // No connection_id set → returns false
+        assert!(!token.kill_query().await);
+    }
+
+    #[tokio::test]
+    async fn pg_kill_fails_gracefully_on_bad_connection() {
+        let state = CancelState::new();
+        state.set_connection_id("999".into());
+        let token = CancelToken::new(Some("postgres://invalid:1/x".into()), false, state);
+        // Connection fails → returns false (no panic)
+        assert!(!token.kill_query().await);
+    }
+
+    #[tokio::test]
+    async fn mysql_kill_fails_gracefully_on_bad_connection() {
+        let state = CancelState::new();
+        state.set_connection_id("999".into());
+        let token = CancelToken::new(Some("mysql://invalid:1/x".into()), false, state);
+        // Connection fails → returns false (no panic)
         assert!(!token.kill_query().await);
     }
 }
