@@ -2,7 +2,17 @@
 *.swp
 *.swo
 .DS_Store
+
+# Runtime generated
 .env
-db/migrations/
-dev/secrets/
+signing.pub
+signing.key
+dbward.toml
+*.db
+*.db-wal
+*.db-shm
+
+# Dev generated
 dev/tokens/
+dev/secrets/
+db/migrations/

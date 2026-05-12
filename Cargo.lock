@@ -718,6 +718,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sqlparser",
  "subtle",
  "tempfile",
  "thiserror",

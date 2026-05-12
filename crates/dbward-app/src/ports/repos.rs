@@ -10,7 +10,7 @@ use crate::error::AppError;
 pub trait RequestRepo: Send + Sync {
     fn insert(&self, req: &Request) -> Result<(), AppError>;
     fn get(&self, id: &str) -> Result<Option<Request>, AppError>;
-    fn list(&self, limit: u32, offset: u32) -> Result<(Vec<Request>, u32), AppError>;
+    fn list(&self, limit: u32, offset: u32, status: Option<&str>) -> Result<(Vec<Request>, u32), AppError>;
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError>;
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError>;
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError>;

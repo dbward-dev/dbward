@@ -45,6 +45,7 @@ uuid = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 url = "2"
+sqlparser = { version = "0.61", features = ["visitor"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

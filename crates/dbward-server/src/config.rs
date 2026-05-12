@@ -16,6 +16,8 @@ pub struct ServerConfig {
     pub retention: RetentionConfig,
     #[serde(default)]
     pub auth: AuthConfig,
+    #[serde(default)]
+    pub audit: AuditConfig,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -53,6 +55,14 @@ pub struct OidcConfig {
 }
 
 fn default_auth_mode() -> String { "token".into() }
+
+#[derive(Debug, Deserialize, Default)]
+pub struct AuditConfig {
+    #[serde(default = "default_redaction")]
+    pub redaction: String,
+}
+
+fn default_redaction() -> String { "literals".into() }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ResultStorageConfig {

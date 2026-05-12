@@ -224,13 +224,26 @@ impl RequestRepo for SqliteRequestRepo {
         }
     }
 
-    fn list(&self, limit: u32, offset: u32) -> Result<(Vec<Request>, u32), AppError> {
+    fn list(&self, limit: u32, offset: u32, status: Option<&str>) -> Result<(Vec<Request>, u32), AppError> {
         let conn = self.conn.lock().unwrap();
+        let (count_sql, query_sql) = if let Some(s) = status {
+            let total: u32 = conn
+                .query_row("SELECT COUNT(*) FROM requests WHERE status = ?1", params![s], |r| r.get(0))
+                .map_err(map_err)?;
+            let mut stmt = conn
+                .prepare("SELECT * FROM requests WHERE status = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3")
+                .map_err(map_err)?;
+            let rows = stmt.query_and_then(params![s, limit, offset], row_to_request).map_err(map_err)?;
+            let items = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
+            return Ok((items, total));
+        } else {
+            ("SELECT COUNT(*) FROM requests", "SELECT * FROM requests ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")
+        };
         let total: u32 = conn
-            .query_row("SELECT COUNT(*) FROM requests", [], |r| r.get(0))
+            .query_row(count_sql, [], |r| r.get(0))
             .map_err(map_err)?;
         let mut stmt = conn
-            .prepare("SELECT * FROM requests ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")
+            .prepare(query_sql)
             .map_err(map_err)?;
         let rows = stmt.query_and_then(params![limit, offset], row_to_request).map_err(map_err)?;
         let items = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
@@ -773,5 +786,32 @@ mod tests {
 
         let count = repo.cancel_all_for_user("user-1", Utc::now()).unwrap();
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn list_filters_by_status() {
+        let repo = setup();
+        let mut req = make_request();
+        req.id = "req-pending".into();
+        req.status = RequestStatus::Pending;
+        req.idempotency_key = Some("idem-1".into());
+        repo.insert(&req).unwrap();
+
+        let mut req2 = make_request();
+        req2.id = "req-dispatched".into();
+        req2.status = RequestStatus::Dispatched;
+        req2.idempotency_key = Some("idem-2".into());
+        repo.insert(&req2).unwrap();
+
+        let (all, _) = repo.list(10, 0, None).unwrap();
+        assert_eq!(all.len(), 2);
+
+        let (pending, _) = repo.list(10, 0, Some("pending")).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, "req-pending");
+
+        let (dispatched, _) = repo.list(10, 0, Some("dispatched")).unwrap();
+        assert_eq!(dispatched.len(), 1);
+        assert_eq!(dispatched[0].id, "req-dispatched");
     }
 }

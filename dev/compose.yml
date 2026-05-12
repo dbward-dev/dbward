@@ -6,8 +6,8 @@ x-security: &security
     - /tmp:size=64M
 
 x-dbward-build: &dbward-build
-  context: .
-  dockerfile: Dockerfile
+  context: ..
+  dockerfile: deploy/docker/Dockerfile
   target: runtime
 
 networks:
@@ -63,7 +63,7 @@ services:
     networks: [backend, frontend]
     volumes:
       - server-data:/data
-      - ./dev/${DBWARD_SERVER_CONFIG:-dbward-server.toml}:/config/dbward-server.toml:ro
+      - ./config/${DBWARD_SERVER_CONFIG:-server.toml}:/config/dbward-server.toml:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/health >/dev/null"]
       start_period: 10s
@@ -90,9 +90,9 @@ services:
         max-file: "3"
     networks: [backend]
     volumes:
-      - ./db/migrations:/workspace/db/migrations:ro
-      - ./dev/dbward-agent.toml:/config/dbward-agent.toml:ro
-      - ./dev/agent-entrypoint.sh:/config/agent-entrypoint.sh:ro
+      - ../db/migrations:/workspace/db/migrations:ro
+      - ./config/agent.toml:/config/dbward-agent.toml:ro
+      - ./scripts/agent-entrypoint.sh:/config/agent-entrypoint.sh:ro
       - server-data:/data:ro
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/dbward-agent-ready"]
@@ -146,7 +146,7 @@ services:
       - /config/dbward-agent.toml
     networks: [backend]
     volumes:
-      - ./dev/dbward-agent-mysql.toml:/config/dbward-agent.toml:ro
+      - ./config/agent-mysql.toml:/config/dbward-agent.toml:ro
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/dbward-agent-ready"]
       start_period: 30s
@@ -171,4 +171,4 @@ volumes:
 
 secrets:
   db_password:
-    file: ./dev/secrets/db_password.txt
+    file: ./secrets/db_password.txt

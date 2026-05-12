@@ -141,7 +141,7 @@ pub async fn list(
 
     let limit = params.limit.unwrap_or(50).min(100);
     let offset = params.offset.unwrap_or(0);
-    let (requests, total) = state.request_repo.list(limit, offset).map_err(map_error)?;
+    let (requests, total) = state.request_repo.list(limit, offset, params.status.as_deref()).map_err(map_error)?;
     // Non-admin users only see their own requests + pending requests they can approve
     let is_admin = user.roles.iter().any(|r| r.name == "admin");
     let can_approve = user.has_permission(dbward_domain::auth::Permission::RequestApprove);
@@ -172,6 +172,7 @@ pub async fn list(
 pub struct ListParams {
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+    pub status: Option<String>,
 }
 
 #[derive(serde::Deserialize)]

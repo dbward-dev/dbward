@@ -45,7 +45,7 @@ impl RequestRepo for SharedRepo {
     fn get(&self, id: &str) -> Result<Option<Request>, AppError> {
         Ok(self.requests.lock().unwrap().iter().find(|r| r.id == id).cloned())
     }
-    fn list(&self, _limit: u32, _offset: u32) -> Result<(Vec<Request>, u32), AppError> {
+    fn list(&self, _limit: u32, _offset: u32, _status: Option<&str>) -> Result<(Vec<Request>, u32), AppError> {
         let reqs = self.requests.lock().unwrap().clone();
         let total = reqs.len() as u32;
         Ok((reqs, total))

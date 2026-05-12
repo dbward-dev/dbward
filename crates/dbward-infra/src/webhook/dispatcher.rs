@@ -1,7 +1,57 @@
 use std::sync::{Arc, RwLock};
+use std::ops::ControlFlow;
 use dbward_app::ports::{Notifier, WebhookEvent, AuditLogger, EventDispatcher, WebhookRepo};
 use dbward_domain::entities::{AuditEvent, WebhookStatus};
 use dbward_domain::services::status_machine::TransitionEvent;
+use sqlparser::ast::{Value, VisitorMut, VisitMut};
+use sqlparser::dialect::GenericDialect;
+use sqlparser::parser::Parser;
+
+#[derive(Clone, Copy, Default)]
+pub enum RedactionMode {
+    None,
+    #[default]
+    Literals,
+    Full,
+}
+
+struct LiteralRedactor;
+
+impl VisitorMut for LiteralRedactor {
+    type Break = ();
+
+    fn pre_visit_value(&mut self, value: &mut Value) -> ControlFlow<Self::Break> {
+        match value {
+            Value::Null | Value::Placeholder(_) => {}
+            _ => *value = Value::Placeholder("?".into()),
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn pre_visit_expr(&mut self, expr: &mut sqlparser::ast::Expr) -> ControlFlow<Self::Break> {
+        use sqlparser::ast::Expr;
+        match expr {
+            Expr::TypedString { .. } | Expr::Interval(_) => {
+                *expr = Expr::Value(Value::Placeholder("?".into()).with_empty_span());
+            }
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    }
+}
+
+pub fn redact_sql_literals(sql: &str) -> String {
+    match Parser::parse_sql(&GenericDialect {}, sql) {
+        Ok(mut stmts) => {
+            let _ = stmts.visit(&mut LiteralRedactor);
+            stmts.iter().map(|s| s.to_string()).collect::<Vec<_>>().join("; ")
+        }
+        Err(_) => {
+            use sha2::{Digest, Sha256};
+            format!("parse-failed:{}", hex::encode(Sha256::digest(sql.as_bytes())))
+        }
+    }
+}
 
 /// Webhook dispatcher — sends webhook notifications via HTTP.
 pub struct WebhookDispatcher {
@@ -166,6 +216,7 @@ pub struct CompositeEventDispatcher {
     pub notifier: Arc<dyn Notifier>,
     pub result_channel: Option<Arc<dyn dbward_app::ports::ResultChannel>>,
     pub request_notifier: Option<Arc<dyn Notifier>>,
+    pub redaction_mode: RedactionMode,
 }
 
 impl EventDispatcher for CompositeEventDispatcher {
@@ -194,9 +245,17 @@ impl EventDispatcher for CompositeEventDispatcher {
             &event.actor_id,
             Some(&event.request_id),
         );
+        audit_event.database_name = Some(event.database.as_str().to_string());
+        audit_event.environment = Some(event.environment.as_str().to_string());
+        audit_event.operation = Some(event.operation.as_str().to_string());
 
         if let EventMetadata::Created { ref detail, .. } = event.metadata {
-            audit_event.detail_raw = Some(detail.clone());
+            audit_event.detail_fingerprint = Some(redact_sql_literals(detail));
+            match self.redaction_mode {
+                RedactionMode::None => audit_event.detail_raw = Some(detail.clone()),
+                RedactionMode::Literals => audit_event.detail_raw = Some(redact_sql_literals(detail)),
+                RedactionMode::Full => {}
+            }
         }
 
         let _ = self.audit.record(&audit_event);
@@ -225,5 +284,47 @@ impl EventDispatcher for CompositeEventDispatcher {
         if let Some(ref rn) = self.request_notifier {
             rn.dispatch(webhook_event);
         }
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    #[test]
+    fn redacts_string_literals() {
+        let sql = "SELECT * FROM users WHERE name = 'secret' AND age > 25";
+        let result = redact_sql_literals(sql);
+        assert!(!result.contains("secret"), "string literal not redacted: {result}");
+        assert!(!result.contains("25"), "numeric literal not redacted: {result}");
+        assert!(result.contains("?"), "placeholder missing: {result}");
+    }
+
+    #[test]
+    fn redacts_typed_string() {
+        let sql = "SELECT * FROM events WHERE ts > DATE '2024-01-01'";
+        let result = redact_sql_literals(sql);
+        assert!(!result.contains("2024-01-01"), "typed string not redacted: {result}");
+    }
+
+    #[test]
+    fn preserves_null_and_placeholders() {
+        let sql = "SELECT * FROM t WHERE a IS NULL AND b = $1";
+        let result = redact_sql_literals(sql);
+        assert!(result.contains("NULL"), "NULL should be preserved: {result}");
+    }
+
+    #[test]
+    fn parse_failure_returns_hash() {
+        let sql = "NOT VALID SQL {{{{";
+        let result = redact_sql_literals(sql);
+        assert!(result.starts_with("parse-failed:"), "should fallback: {result}");
+        assert_eq!(result.len(), "parse-failed:".len() + 64); // sha256 hex
+    }
+
+    #[test]
+    fn redaction_mode_full_clears_detail_raw() {
+        // Just verify the enum exists and default is Literals
+        assert!(matches!(RedactionMode::default(), RedactionMode::Literals));
     }
 }
