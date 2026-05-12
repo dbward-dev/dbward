@@ -1,6 +1,6 @@
 //! Self-update: download and replace the dbward binary from GitHub Releases.
 
-use dbward_core::Error;
+use crate::error::CliError as Error;
 
 const REPO_OWNER: &str = "metapox";
 const REPO_NAME: &str = "dbward";

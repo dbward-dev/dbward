@@ -1,5 +1,4 @@
-use dbward_core::Error;
-use dbward_core::token::ExecutionToken;
+use crate::error::CliError;
 use reqwest::Client;
 use serde_json::Value;
 
@@ -55,7 +54,7 @@ impl ServerError {
         }
     }
 
-    pub fn into_core_error(self, context: &str) -> Error {
+    pub fn into_cli_error(self, context: &str) -> CliError {
         let msg = self
             .error_message
             .clone()
@@ -64,7 +63,7 @@ impl ServerError {
         if let Some(hint) = &self.hint {
             out.push_str(&format!("\n  Hint: {hint}"));
         }
-        Error::Server(out)
+        CliError::Server(out)
     }
 }
 
@@ -101,21 +100,19 @@ impl ServerClient {
         }
     }
 
-    /// Parse HTTP response: check status first, then parse JSON.
-    async fn parse_response(&self, resp: reqwest::Response, context: &str) -> Result<Value, Error> {
+    async fn parse_response(&self, resp: reqwest::Response, context: &str) -> Result<Value, CliError> {
         let status = resp.status();
         let text = resp
             .text()
             .await
-            .map_err(|e| Error::Server(format!("{context}: {e}")))?;
+            .map_err(|e| CliError::Server(format!("{context}: {e}")))?;
         if !status.is_success() {
-            return Err(ServerError::from_response(status.as_u16(), text).into_core_error(context));
+            return Err(ServerError::from_response(status.as_u16(), text).into_cli_error(context));
         }
         serde_json::from_str(&text)
-            .map_err(|e| Error::Server(format!("{context}: invalid JSON: {e}")))
+            .map_err(|e| CliError::Server(format!("{context}: invalid JSON: {e}")))
     }
 
-    /// Parse HTTP response, returning ServerError on failure for caller to handle.
     async fn parse_response_detailed(&self, resp: reqwest::Response) -> Result<Value, ServerError> {
         let status = resp.status();
         let text = resp
@@ -128,11 +125,10 @@ impl ServerClient {
         serde_json::from_str(&text).map_err(|_| ServerError::from_response(status.as_u16(), text))
     }
 
-    /// Create a request and return (id, status, optional execution_token).
     pub async fn create_request(
         &self,
         req: CreateRequest<'_>,
-    ) -> Result<(String, String, Option<ExecutionToken>, Vec<String>), Error> {
+    ) -> Result<(String, String, Vec<String>), CliError> {
         let mut body = serde_json::json!({
             "operation": req.operation,
             "environment": req.environment,
@@ -166,24 +162,20 @@ impl ServerClient {
             .await
             .map_err(|_| {
                 ServerError::from_response(0, "create request failed".into())
-                    .into_core_error("create request")
+                    .into_cli_error("create request")
             })?;
 
         let body = self.parse_response(resp, "create request").await?;
 
         let cr: dbward_api_types::requests::CreateRequestResponse = serde_json::from_value(body)
-            .map_err(|e| Error::Server(format!("create request: invalid response: {e}")))?;
+            .map_err(|e| CliError::Server(format!("create request: invalid response: {e}")))?;
         let id = cr.id;
         let status = cr.status.as_str().to_string();
-        let token = cr
-            .execution_token
-            .and_then(|v| serde_json::from_value(v).ok());
         let approvers = cr.approvers;
 
-        Ok((id, status, token, approvers))
+        Ok((id, status, approvers))
     }
 
-    /// List all requests.
     pub async fn list_requests(
         &self,
         limit: Option<u32>,
@@ -191,7 +183,7 @@ impl ServerClient {
         database: Option<&str>,
         environment: Option<&str>,
         user: Option<&str>,
-    ) -> Result<Value, Error> {
+    ) -> Result<Value, CliError> {
         let mut url = format!("{}/api/requests", self.base_url);
         let mut query_parts: Vec<String> = Vec::new();
         if let Some(l) = limit {
@@ -218,13 +210,12 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Server(format!("list requests failed: {e}")))?;
+            .map_err(|e| CliError::Server(format!("list requests failed: {e}")))?;
 
         self.parse_response(resp, "list requests").await
     }
 
-    /// List pending requests the current user can approve.
-    pub async fn list_pending_for_me(&self, limit: Option<u32>) -> Result<Value, Error> {
+    pub async fn list_pending_for_me(&self, limit: Option<u32>) -> Result<Value, CliError> {
         let mut url = format!("{}/api/requests?pending_for_me=true", self.base_url);
         if let Some(l) = limit {
             url = format!("{url}&limit={l}");
@@ -235,18 +226,16 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Server(format!("list pending-for-me failed: {e}")))?;
+            .map_err(|e| CliError::Server(format!("list pending-for-me failed: {e}")))?;
 
         self.parse_response(resp, "list pending-for-me").await
     }
 
-    /// Get a single request by ID, optionally long-polling for status change.
-    pub async fn get_request(&self, request_id: &str) -> Result<Value, Error> {
+    pub async fn get_request(&self, request_id: &str) -> Result<Value, CliError> {
         self.get_request_with_wait(request_id, 0).await
     }
 
-    /// Get a single request by ID with long-poll wait (seconds).
-    pub async fn get_request_with_wait(&self, request_id: &str, wait: u64) -> Result<Value, Error> {
+    pub async fn get_request_with_wait(&self, request_id: &str, wait: u64) -> Result<Value, CliError> {
         let mut url = format!("{}/api/requests/{}", self.base_url, request_id);
         if wait > 0 {
             url = format!("{url}?wait={wait}");
@@ -257,12 +246,11 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Server(format!("get request failed: {e}")))?;
+            .map_err(|e| CliError::Server(format!("get request failed: {e}")))?;
 
         self.parse_response(resp, "get request").await
     }
 
-    /// Dispatch a request for execution (on-demand).
     pub async fn dispatch(&self, request_id: &str) -> Result<Value, ServerError> {
         let resp = self
             .client
@@ -278,8 +266,7 @@ impl ServerClient {
         self.parse_response_detailed(resp).await
     }
 
-    /// Wait for execution result via long poll.
-    pub async fn stream_result(&self, request_id: &str) -> Result<Value, Error> {
+    pub async fn stream_result(&self, request_id: &str) -> Result<Value, CliError> {
         let resp = self
             .client
             .get(format!(
@@ -289,16 +276,14 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Server(format!("stream result failed: {e}")))?;
+            .map_err(|e| CliError::Server(format!("stream result failed: {e}")))?;
 
         self.parse_response(resp, "stream result").await
     }
 
-    /// Wait for execution result via the existing request lifecycle.
-    pub async fn wait_for_result(&self, request_id: &str) -> Result<Value, Error> {
+    pub async fn wait_for_result(&self, request_id: &str) -> Result<Value, CliError> {
         eprintln!("Waiting for agent to execute...");
 
-        // Progress display task: poll status every 3s
         let progress_client = self.clone();
         let progress_id = request_id.to_string();
         let progress_handle = tokio::spawn(async move {
@@ -355,7 +340,7 @@ impl ServerClient {
                 None => {
                     eprintln!("\nInterrupted. Request {request_id} is still in progress.");
                     eprintln!("Run: dbward request resume {request_id}");
-                    break Err(Error::Server("interrupted".into()));
+                    break Err(CliError::Server("interrupted".into()));
                 }
             }
         };
@@ -364,12 +349,12 @@ impl ServerClient {
         result
     }
 
-    pub async fn get_terminal_result(&self, request_id: &str) -> Result<Value, Error> {
+    pub async fn get_terminal_result(&self, request_id: &str) -> Result<Value, CliError> {
         let req = self.get_request(request_id).await?;
         self.resolve_terminal_result(request_id, &req).await
     }
 
-    async fn get_request_result_fallback(&self, request_id: &str) -> Result<Option<Value>, Error> {
+    async fn get_request_result_fallback(&self, request_id: &str) -> Result<Option<Value>, CliError> {
         let mut req = self.get_request(request_id).await?;
 
         loop {
@@ -387,7 +372,6 @@ impl ServerClient {
                         .await?;
                 }
                 "approved" | "auto_approved" | "break_glass" => {
-                    // Auto-dispatch and continue polling
                     match self.dispatch(request_id).await {
                         Ok(_) => {
                             req = self
@@ -395,7 +379,7 @@ impl ServerClient {
                                 .await?;
                         }
                         Err(e) => {
-                            return Err(Error::Server(format!(
+                            return Err(CliError::Server(format!(
                                 "request {request_id} is approved but dispatch failed: {}. Run: dbward request resume {request_id}",
                                 e.body
                             )));
@@ -403,12 +387,12 @@ impl ServerClient {
                     }
                 }
                 "pending" => {
-                    return Err(Error::Server(format!(
+                    return Err(CliError::Server(format!(
                         "Request {request_id} requires approval. Check status: dbward request show {request_id}"
                     )));
                 }
                 _ => {
-                    return Err(Error::Server(format!(
+                    return Err(CliError::Server(format!(
                         "unexpected status: {status}. Try: dbward request resume {request_id}"
                     )));
                 }
@@ -416,7 +400,7 @@ impl ServerClient {
         }
     }
 
-    async fn resolve_terminal_result(&self, request_id: &str, req: &Value) -> Result<Value, Error> {
+    async fn resolve_terminal_result(&self, request_id: &str, req: &Value) -> Result<Value, CliError> {
         let status = req["status"].as_str().unwrap_or("");
         if let Some(payload) = Self::terminal_payload_from_request(req) {
             return Ok(payload);
@@ -430,7 +414,7 @@ impl ServerClient {
                 }
                 Err(err) => Err(err),
             },
-            _ => Err(Error::Server(format!(
+            _ => Err(CliError::Server(format!(
                 "unexpected status: {status}. Try: dbward request resume {request_id}"
             ))),
         }
@@ -452,9 +436,9 @@ impl ServerClient {
         None
     }
 
-    fn is_missing_result_content_error(err: &Error) -> bool {
+    fn is_missing_result_content_error(err: &CliError) -> bool {
         match err {
-            Error::Server(msg) => msg.contains("result not stored for this request"),
+            CliError::Server(msg) => msg.contains("result not stored for this request"),
             _ => false,
         }
     }
@@ -477,7 +461,6 @@ impl ServerClient {
         }
     }
 
-    /// Approve a request.
     pub async fn approve(
         &self,
         request_id: &str,
@@ -501,7 +484,6 @@ impl ServerClient {
         self.parse_response_detailed(resp).await
     }
 
-    /// Reject a request.
     pub async fn reject(
         &self,
         request_id: &str,
@@ -525,7 +507,6 @@ impl ServerClient {
         self.parse_response_detailed(resp).await
     }
 
-    /// Cancel a request.
     pub async fn cancel_request(
         &self,
         request_id: &str,
@@ -549,62 +530,32 @@ impl ServerClient {
         self.parse_response_detailed(resp).await
     }
 
-    /// List audit log entries.
-    pub async fn list_audit(
-        &self,
-        limit: Option<u32>,
-        user: Option<&str>,
-        operation: Option<&str>,
-        status: Option<&str>,
-    ) -> Result<Value, Error> {
-        let mut url = format!("{}/api/audit", self.base_url);
-        let mut parts: Vec<String> = Vec::new();
-        if let Some(l) = limit {
-            parts.push(format!("limit={l}"));
-        }
-        if let Some(u) = user {
-            parts.push(format!("user={u}"));
-        }
-        if let Some(o) = operation {
-            parts.push(format!("operation={o}"));
-        }
-        if let Some(s) = status {
-            parts.push(format!("status={s}"));
-        }
-        if !parts.is_empty() {
-            url = format!("{url}?{}", parts.join("&"));
-        }
-        let resp = self
-            .client
-            .get(&url)
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| Error::Server(format!("list audit failed: {e}")))?;
-
-        self.parse_response(resp, "list audit").await
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub async fn list_audit_events(
         &self,
         limit: Option<u32>,
         user: Option<&str>,
-        _operation: Option<&str>,
-        _status: Option<&str>,
+        operation: Option<&str>,
+        status: Option<&str>,
         event_type: Option<&str>,
         category: Option<&str>,
         outcome: Option<&str>,
         environment: Option<&str>,
         since: Option<&str>,
         until: Option<&str>,
-    ) -> Result<Value, Error> {
+    ) -> Result<Value, CliError> {
         let mut parts: Vec<String> = Vec::new();
         if let Some(l) = limit {
             parts.push(format!("limit={l}"));
         }
         if let Some(u) = user {
             parts.push(format!("actor_id={u}"));
+        }
+        if let Some(v) = operation {
+            parts.push(format!("operation={v}"));
+        }
+        if let Some(v) = status {
+            parts.push(format!("status={v}"));
         }
         if let Some(v) = event_type {
             parts.push(format!("event_type={v}"));
@@ -635,25 +586,22 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Server(format!("list audit events: {e}")))?;
+            .map_err(|e| CliError::Server(format!("list audit events: {e}")))?;
         self.parse_response(resp, "list audit events").await
     }
 
-    pub async fn get_json(&self, path: &str) -> Result<Value, Error> {
+    pub async fn get_json(&self, path: &str) -> Result<Value, CliError> {
         let resp = self
             .client
             .get(format!("{}{}", self.base_url, path))
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| Error::Server(format!("get {path}: {e}")))?;
+            .map_err(|e| CliError::Server(format!("get {path}: {e}")))?;
         self.parse_response(resp, path).await
     }
 
-    pub async fn get_result_content(
-        &self,
-        request_id: &str,
-    ) -> Result<serde_json::Value, dbward_core::Error> {
+    pub async fn get_result_content(&self, request_id: &str) -> Result<Value, CliError> {
         let resp = self
             .client
             .get(format!(
@@ -663,18 +611,18 @@ impl ServerClient {
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| dbward_core::Error::Server(format!("get result: {e}")))?;
+            .map_err(|e| CliError::Server(format!("get result: {e}")))?;
         self.parse_response(resp, "get result content").await
     }
 
-    pub async fn list_results(&self) -> Result<serde_json::Value, dbward_core::Error> {
+    pub async fn list_results(&self) -> Result<Value, CliError> {
         let resp = self
             .client
             .get(format!("{}/api/results", self.base_url))
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| dbward_core::Error::Server(format!("list results: {e}")))?;
+            .map_err(|e| CliError::Server(format!("list results: {e}")))?;
         self.parse_response(resp, "list results").await
     }
 }
@@ -702,22 +650,22 @@ mod tests {
     fn falls_back_when_error_body_is_not_json() {
         let err = ServerError::from_response(502, "<html>bad gateway</html>".into());
 
-        match err.into_core_error("dispatch") {
-            Error::Server(msg) => assert_eq!(msg, "dispatch: <html>bad gateway</html>"),
+        match err.into_cli_error("dispatch") {
+            CliError::Server(msg) => assert_eq!(msg, "dispatch: <html>bad gateway</html>"),
             other => panic!("unexpected error variant: {other:?}"),
         }
     }
 
     #[test]
-    fn hides_transport_error_details_in_core_error() {
+    fn hides_transport_error_details_in_cli_error() {
         let err = ServerError::from_response(
             0,
             "dispatch failed: error sending request for url (https://user:secret@example.com)"
                 .into(),
         );
 
-        match err.into_core_error("dispatch") {
-            Error::Server(msg) => {
+        match err.into_cli_error("dispatch") {
+            CliError::Server(msg) => {
                 assert!(
                     msg.contains("dispatch: request failed before receiving a server response")
                 );
@@ -811,7 +759,6 @@ mod tests {
         .await;
 
         server.abort();
-        // Must complete within timeout (not hang)
         assert!(result.is_ok(), "wait_for_result should not hang on stream failure");
     }
 }

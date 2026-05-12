@@ -1,0 +1,127 @@
+use clap::Subcommand;
+
+use crate::config::ClientConfig;
+use crate::display::*;
+use crate::error::CliError;
+use crate::server_client::{CreateRequest, ServerClient};
+
+use super::helpers::build_request_metadata;
+
+#[derive(Subcommand)]
+pub enum MigrateAction {
+    Up {
+        #[arg(long)]
+        count: Option<usize>,
+        #[arg(long)]
+        ticket: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long = "idempotency-key")]
+        idempotency_key: Option<String>,
+        #[arg(long = "share-with")]
+        share_with: Vec<String>,
+    },
+    Down {
+        #[arg(long, default_value = "1")]
+        count: usize,
+        #[arg(long)]
+        ticket: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long = "idempotency-key")]
+        idempotency_key: Option<String>,
+    },
+    Status {
+        #[arg(long)]
+        ticket: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
+        #[arg(long = "idempotency-key")]
+        idempotency_key: Option<String>,
+    },
+    Create { name: String },
+}
+
+pub async fn run_migrate(
+    sc: &ServerClient,
+    config: &ClientConfig,
+    db_name: &str,
+    env_str: &str,
+    json_output: bool,
+    action: &MigrateAction,
+    _selected_db: Option<&str>,
+) -> Result<(), CliError> {
+    let (operation, detail, metadata, idempotency_key, share_with) = match action {
+        MigrateAction::Up { count, ticket, repo, idempotency_key, share_with } => {
+            let migrations_dir = config.migrations_dir_for(db_name);
+            let mut d = dbward_migrate::build_migrate_up_detail(&migrations_dir, &[])
+                .map_err(|e| CliError::Other(e.to_string()))?;
+            d.max_count = *count;
+            let detail_str = d.to_detail_string().map_err(|e| CliError::Other(e.to_string()))?;
+            ("migrate_up", detail_str, build_request_metadata(ticket.as_deref(), repo.as_deref()), idempotency_key.as_deref(), share_with.as_slice())
+        }
+        MigrateAction::Down { count, ticket, repo, idempotency_key } => {
+            let migrations_dir = config.migrations_dir_for(db_name);
+            let all_down = dbward_migrate::list_down_versions(&migrations_dir)
+                .map_err(|e| CliError::Other(e.to_string()))?;
+            let mut d = dbward_migrate::build_migrate_down_detail(&migrations_dir, &all_down)
+                .map_err(|e| CliError::Other(e.to_string()))?;
+            d.max_count = Some(*count);
+            let detail_str = d.to_detail_string().map_err(|e| CliError::Other(e.to_string()))?;
+            ("migrate_down", detail_str, build_request_metadata(ticket.as_deref(), repo.as_deref()), idempotency_key.as_deref(), [].as_slice())
+        }
+        MigrateAction::Status { ticket, repo, idempotency_key } => {
+            ("migrate_status", String::new(), build_request_metadata(ticket.as_deref(), repo.as_deref()), idempotency_key.as_deref(), [].as_slice())
+        }
+        MigrateAction::Create { .. } => unreachable!(),
+    };
+
+    let sw = if share_with.is_empty() { None } else { Some(share_with) };
+    let (id, status, approvers) = sc
+        .create_request(CreateRequest {
+            operation,
+            environment: env_str,
+            database: db_name,
+            detail: &detail,
+            emergency: false,
+            reason: None,
+            metadata: metadata.as_ref(),
+            idempotency_key,
+            share_with: sw,
+            no_store: false,
+        })
+        .await?;
+
+    match status.as_str() {
+        "dispatched" | "break_glass" | "running" => {
+            let resp = sc.wait_for_result(&id).await?;
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                print_execution_result(&resp);
+            }
+        }
+        "pending" => {
+            eprintln!("Request {id} requires approval.");
+            if !approvers.is_empty() {
+                eprintln!("  Approvers: {}", approvers.join(", "));
+            }
+            eprintln!("Run: dbward request resume {id}");
+            std::process::exit(2);
+        }
+        "approved" | "auto_approved" => {
+            eprintln!("Request {id} is approved but not yet dispatched.");
+            eprintln!("Run: dbward request resume {id}");
+        }
+        "executed" | "failed" => {
+            let resp = sc.get_terminal_result(&id).await?;
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                print_execution_result(&resp);
+            }
+        }
+        _ => return Err(CliError::Server(format!("unexpected status: {status}"))),
+    }
+    Ok(())
+}

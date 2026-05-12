@@ -44,6 +44,11 @@ fn dirs_next() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".dbward");
     std::fs::create_dir_all(&dir).ok();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
     dir
 }
 

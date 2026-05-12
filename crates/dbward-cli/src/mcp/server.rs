@@ -1,6 +1,6 @@
-use crate::mcp_defs::*;
+use super::defs::*;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 
-use dbward_core::ClientConfig;
+use crate::config::ClientConfig;
 
 /// Elicitation result from client
 enum ElicitResult {
@@ -61,7 +61,7 @@ pub async fn run_stdio(
     config: ClientConfig,
     database: Option<&str>,
     client: crate::server_client::ServerClient,
-) -> Result<(), dbward_core::Error> {
+) -> Result<(), crate::error::CliError> {
     let db_name = config.resolve_database_name(database)?;
     let migrations_dir = config.migrations_dir_for(&db_name);
     let client = Arc::new(client);
@@ -121,7 +121,7 @@ pub async fn run_stdio(
                     }
                     Err(err) => {
                         workers.abort_all();
-                        return Err(dbward_core::Error::Server(format!("MCP worker task failed: {err}")));
+                        return Err(crate::error::CliError::Server(format!("MCP worker task failed: {err}")));
                     }
                 }
             }
@@ -267,9 +267,9 @@ pub async fn run_stdio(
     let _ = reader.await;
     match writer.await {
         Ok(Ok(())) => {}
-        Ok(Err(err)) => return Err(dbward_core::Error::Io(err)),
+        Ok(Err(err)) => return Err(crate::error::CliError::Io(err)),
         Err(err) => {
-            return Err(dbward_core::Error::Server(format!(
+            return Err(crate::error::CliError::Server(format!(
                 "MCP writer task failed: {err}"
             )));
         }
@@ -404,7 +404,7 @@ async fn handle_tools_call(
         }
         "dbward_migrate_create" => {
             let name = args["name"].as_str().unwrap_or("unnamed");
-            let migrator = dbward_migrate::Migrator::new_local(migrations_dir.to_path_buf());
+            let migrator = dbward_migrate::LocalMigrator::new(migrations_dir.to_path_buf());
             match migrator.create(name) {
                 Ok(path) => Ok(format!("Created: {}", path.display())),
                 Err(e) => Err(e.to_string()),
@@ -619,7 +619,7 @@ async fn submit_and_wait(
     detail: &str,
     reason: Option<&str>,
 ) -> Result<String, String> {
-    let (req_id, status, _token, _approvers) = client
+    let (req_id, status, _approvers) = client
         .create_request(crate::server_client::CreateRequest {
             operation,
             environment,
@@ -636,7 +636,23 @@ async fn submit_and_wait(
         .map_err(|e| e.to_string())?;
 
     match status.as_str() {
-        "dispatched" | "break_glass" => {
+        "dispatched" | "break_glass" | "running" => {
+            let resp = client
+                .wait_for_result(&req_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            format_result(&resp)
+        }
+        "executed" | "failed" => {
+            let resp = client
+                .get_terminal_result(&req_id)
+                .await
+                .map_err(|e| e.to_string())?;
+            format_result(&resp)
+        }
+        "approved" | "auto_approved" => {
+            // Dispatch and wait
+            client.dispatch(&req_id).await.map_err(|e| e.body.clone())?;
             let resp = client
                 .wait_for_result(&req_id)
                 .await

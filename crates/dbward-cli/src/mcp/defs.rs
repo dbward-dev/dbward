@@ -156,16 +156,16 @@ pub(crate) async fn handle_resources_read(
 ) -> Value {
     let uri = params["uri"].as_str().unwrap_or("");
     if uri.is_empty() {
-        return crate::mcp::jsonrpc_error(id, -32602, "Missing required parameter: uri");
+        return super::server::jsonrpc_error(id, -32602, "Missing required parameter: uri");
     }
 
     let content = match read_resource(uri, client).await {
         Ok(content) => content,
         Err(ResourceReadError::NotFound(message)) => {
-            return crate::mcp::jsonrpc_error(id, -32002, message);
+            return super::server::jsonrpc_error(id, -32002, message);
         }
         Err(ResourceReadError::Internal(message)) => {
-            return crate::mcp::jsonrpc_error(id, -32603, message);
+            return super::server::jsonrpc_error(id, -32603, message);
         }
     };
 
@@ -178,7 +178,7 @@ pub(crate) async fn handle_resources_read(
     })
 }
 
-enum ResourceReadError {
+pub(crate) enum ResourceReadError {
     NotFound(String),
     Internal(String),
 }
@@ -255,18 +255,18 @@ pub(crate) fn handle_prompts_get(
     let args = &params["arguments"];
 
     if name.is_empty() {
-        return crate::mcp::jsonrpc_error(id, -32602, "Missing required parameter: name");
+        return super::server::jsonrpc_error(id, -32602, "Missing required parameter: name");
     }
 
     let (description, messages) = match name {
         "review_migration" => {
             let file_path = match required_arg(args, "file_path") {
                 Ok(value) => value,
-                Err(message) => return crate::mcp::jsonrpc_error(id, -32602, message),
+                Err(message) => return super::server::jsonrpc_error(id, -32602, message),
             };
             let content = match read_migration_file(migrations_dir, file_path) {
                 Ok(content) => content,
-                Err(message) => return crate::mcp::jsonrpc_error(id, -32602, message),
+                Err(message) => return super::server::jsonrpc_error(id, -32602, message),
             };
             (
                 "Review a migration SQL file for safety issues",
@@ -280,7 +280,7 @@ pub(crate) fn handle_prompts_get(
         "explain_request" => {
             let request_id = match required_arg(args, "request_id") {
                 Ok(value) => value,
-                Err(message) => return crate::mcp::jsonrpc_error(id, -32602, message),
+                Err(message) => return super::server::jsonrpc_error(id, -32602, message),
             };
             (
                 "Explain what a request will do and its impact",
@@ -294,7 +294,7 @@ pub(crate) fn handle_prompts_get(
         "draft_migration" => {
             let description = match required_arg(args, "description") {
                 Ok(value) => value,
-                Err(message) => return crate::mcp::jsonrpc_error(id, -32602, message),
+                Err(message) => return super::server::jsonrpc_error(id, -32602, message),
             };
             (
                 "Generate migration SQL from a description",
@@ -308,11 +308,11 @@ pub(crate) fn handle_prompts_get(
         "draft_rollback" => {
             let file_path = match required_arg(args, "migration_file") {
                 Ok(value) => value,
-                Err(message) => return crate::mcp::jsonrpc_error(id, -32602, message),
+                Err(message) => return super::server::jsonrpc_error(id, -32602, message),
             };
             let content = match read_migration_file(migrations_dir, file_path) {
                 Ok(content) => content,
-                Err(message) => return crate::mcp::jsonrpc_error(id, -32602, message),
+                Err(message) => return super::server::jsonrpc_error(id, -32602, message),
             };
             (
                 "Generate rollback SQL for a migration",
@@ -332,7 +332,7 @@ pub(crate) fn handle_prompts_get(
         "prepare_approval_comment" => {
             let request_id = match required_arg(args, "request_id") {
                 Ok(value) => value,
-                Err(message) => return crate::mcp::jsonrpc_error(id, -32602, message),
+                Err(message) => return super::server::jsonrpc_error(id, -32602, message),
             };
             (
                 "Draft an approval comment for a request",
@@ -344,7 +344,7 @@ pub(crate) fn handle_prompts_get(
             )
         }
         _ => {
-            return crate::mcp::jsonrpc_error(id, -32602, format!("Unknown prompt: {name}"));
+            return super::server::jsonrpc_error(id, -32602, format!("Unknown prompt: {name}"));
         }
     };
 
@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn initialize_response_has_protocol_version() {
-        let resp = crate::mcp::handle_initialize(Some(json!(1)));
+        let resp = crate::mcp::server::handle_initialize(Some(json!(1)));
         assert_eq!(resp["result"]["protocolVersion"], "2025-11-05");
         assert_eq!(resp["result"]["serverInfo"]["name"], "dbward");
         assert_eq!(resp["result"]["capabilities"]["resources"], json!({}));

@@ -14,19 +14,15 @@ name = "dbward"
 path = "src/main.rs"
 
 [dependencies]
-dbward-core = { path = "../dbward-core", version = "0.1.0" }
 dbward-api-types = { path = "../dbward-api-types" }
 dbward-migrate = { path = "../dbward-migrate", version = "0.1.0" }
-dbward-server = { path = "../dbward-server", version = "0.1.0" }
-dbward-agent = { path = "../dbward-agent", version = "0.1.0" }
 clap = { version = "4", features = ["derive", "env"] }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
-rusqlite = { version = "0.35", features = ["bundled"] }
+thiserror.workspace = true
 reqwest = { version = "0.12", features = ["json"] }
-ed25519-dalek = "2"
 open = "5"
 base64 = "0.22"
 dirs = "6"
@@ -37,3 +33,4 @@ unicode-width = "0.2"
 flate2 = "1"
 tar = "0.4"
 tempfile = "3"
+regex = "1"
