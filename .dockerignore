@@ -1,4 +1,24 @@
+# Docker build context excludes
 target/
 .git/
 *.db
-dev-tokens/
+*.db-wal
+*.db-shm
+
+# Dev artifacts
+dev/tokens/
+dev/secrets/
+dev/e2e/
+dev/fixtures/
+dev/compose*.yml
+
+# Docs and examples (not needed in image)
+docs/
+examples/
+deploy/kubernetes/
+
+# Misc
+.DS_Store
+*.swp
+*.swo
+.env

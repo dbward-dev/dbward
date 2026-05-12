@@ -524,9 +524,11 @@ Key alerts:
 git clone https://github.com/metapox/dbward.git && cd dbward
 
 # Configure
-cat > dev/secrets/db_password.txt << 'EOF'
-your-secure-password
-EOF
+mkdir -p dev/secrets && echo "your-secure-password" > dev/secrets/db_password.txt
+
+# Start (from dev/ directory)
+cd dev
+docker compose up -d
 cat > .env << 'EOF'
 DATABASE_URL=postgres://user:pass@your-rds:5432/mydb
 DBWARD_AGENT_TOKEN=<generate after first start>
@@ -536,7 +538,7 @@ EOF
 chmod 600 .env
 
 # Create server.toml (minimal)
-cat > server.toml << 'EOF'
+cat > config/server.toml << 'EOF'
 [auth]
 mode = "token"
 
@@ -565,9 +567,8 @@ EOF
 docker compose up -d
 
 # Generate tokens
-docker compose exec dbward-server dbward server token create --user admin --role admin --data /data/dbward.db
-docker compose exec dbward-server dbward server token create --user agent --role agent --data /data/dbward.db
-# → Set DBWARD_AGENT_TOKEN in .env, then: docker compose restart dbward-agent
+docker compose exec dbward-server dbward server token create --user admin --role admin
+docker compose exec dbward-server dbward server token create --user agent --role agent
 ```
 
 ### Backup & Recovery
@@ -614,10 +615,26 @@ git pull && docker compose up -d --build
 ## Development
 
 ```bash
-# Prerequisites: Rust 1.88+, Docker (for integration tests)
+# Prerequisites: Rust 1.88+, Docker (for E2E tests)
+
+# Build
+cargo build --workspace
+
+# Unit tests
 cargo test --workspace
-cargo build --release
+
+# Dev environment (Docker)
+cd dev
+mkdir -p secrets && echo "dbward" > secrets/db_password.txt
+docker compose up -d
+./scripts/dev-init.sh
+
+# E2E tests
+./e2e/lifecycle.sh
+./e2e/security.sh
 ```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for full development setup.
 
 ## Documentation
 

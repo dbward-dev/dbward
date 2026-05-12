@@ -5,7 +5,7 @@
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
-source dev/e2e-helpers.sh
+source "$(dirname "$0")/helpers.sh"
 
 echo ""
 echo "=== E2E Security Tests ==="

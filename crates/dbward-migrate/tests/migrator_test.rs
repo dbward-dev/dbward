@@ -7,7 +7,7 @@ use dbward_driver;
 use dbward_migrate::Migrator;
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/migrations")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/migrations")
 }
 
 async fn setup() -> (

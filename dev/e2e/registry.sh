@@ -3,12 +3,13 @@
 # Tests that unregistered databases/environments are rejected
 
 set -euo pipefail
-source "$(dirname "$0")/e2e-helpers.sh"
+cd "$(dirname "$0")/.."
+source "$(dirname "$0")/helpers.sh"
 
 echo "=== Database Registry E2E ==="
 echo ""
 
-DEV_TOKEN=$(cat dev/tokens/alice.token)
+DEV_TOKEN=$(cat tokens/alice.token)
 
 # --- 1. List databases ---
 echo "--- List databases ---"
@@ -47,7 +48,7 @@ echo "--- Detail size limit (5MB) ---"
 STATUS=$(python3 -c "
 import urllib.request, json, os
 detail = 'X' * 6_000_000
-token = open('dev/tokens/alice.token').read().strip()
+token = open('tokens/alice.token').read().strip()
 data = json.dumps({'operation':'execute_query','environment':'development','database':'app','detail':detail}).encode()
 req = urllib.request.Request('http://localhost:13000/api/requests', data=data,
     headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
