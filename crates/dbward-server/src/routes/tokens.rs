@@ -56,6 +56,8 @@ pub async fn create(
         "token": output.token,
         "prefix": output.prefix,
         "subject_id": output.subject_id,
+        "expires_at": output.expires_at,
+        "permissions": output.permissions,
     }))))
 }
 

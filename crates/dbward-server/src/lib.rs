@@ -85,6 +85,10 @@ pub async fn run_from_args(
     let token_signer: Arc<dyn dbward_app::ports::TokenSigner> = Arc::new(
         dbward_infra::Ed25519TokenSigner::load_or_generate(data_dir)?,
     );
+    // M-11: Persist public key for external verification
+    let pub_key_path = data_dir.join("signing.pub");
+    std::fs::write(&pub_key_path, token_signer.public_key_hex())?;
+
     let result_channel: Arc<dyn dbward_app::ports::ResultChannel> = Arc::new(
         dbward_infra::InMemoryResultChannel::new(),
     );

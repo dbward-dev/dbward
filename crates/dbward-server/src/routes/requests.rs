@@ -173,15 +173,49 @@ pub struct ListParams {
     pub offset: Option<u32>,
 }
 
+#[derive(serde::Deserialize)]
+pub struct GetRequestQuery {
+    pub wait: Option<u64>,
+}
+
 pub async fn get(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<GetRequestQuery>,
 ) -> ApiResult {
     let req = match state.request_repo.get(&id) {
         Ok(Some(r)) => r,
         Ok(None) => return Err(map_error(AppError::NotFound("request not found".into()))),
         Err(e) => return Err(map_error(e)),
+    };
+
+    // M-13: Long-poll — wait for status change if non-terminal and wait specified
+    let req = if let Some(wait_secs) = query.wait {
+        use dbward_domain::entities::RequestStatus;
+        let is_terminal = matches!(req.status, RequestStatus::Executed | RequestStatus::Failed | RequestStatus::Rejected | RequestStatus::Cancelled | RequestStatus::Expired | RequestStatus::ExecutionLost);
+        if !is_terminal && wait_secs > 0 {
+            let wait_secs = wait_secs.min(120);
+            let original_status = req.status;
+            let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(wait_secs);
+            let mut current = req;
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                if tokio::time::Instant::now() >= deadline {
+                    break;
+                }
+                match state.request_repo.get(&id) {
+                    Ok(Some(r)) if r.status != original_status => { current = r; break; }
+                    Ok(Some(r)) => { current = r; }
+                    _ => break,
+                }
+            }
+            current
+        } else {
+            req
+        }
+    } else {
+        req
     };
 
     use dbward_domain::auth::{Permission, ResourceContext};
@@ -332,6 +366,7 @@ pub async fn dispatch(
         request_repo: state.request_repo.clone(),
         result_channel: state.result_channel.clone(),
         event_dispatcher: state.event_dispatcher.clone(),
+        policy_repo: state.policy_repo.clone(),
         clock: state.clock.clone(),
     };
 

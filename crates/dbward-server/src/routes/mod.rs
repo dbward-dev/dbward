@@ -14,6 +14,10 @@ mod tokens;
 mod users;
 mod webhooks;
 
+async fn not_implemented() -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::NOT_IMPLEMENTED, Json(serde_json::json!({"error": "not implemented", "hint": "this endpoint will be available in a future version"})))
+}
+
 fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
     let status = match &e {
         AppError::Forbidden(_) => StatusCode::FORBIDDEN,
@@ -79,16 +83,22 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/audit/verify", axum::routing::get(audit::verify_chain))
         // Databases
         .route("/api/databases", axum::routing::get(databases::list))
-        // Metrics
-        .route("/api/metrics", axum::routing::get(metrics::metrics))
         // Public key
         .route("/api/public-key", axum::routing::get(health::public_key))
+        // Stub endpoints (M-16)
+        .route("/api/results", axum::routing::get(not_implemented))
+        .route("/api/webhooks/{id}/test", axum::routing::post(not_implemented))
+        .route("/api/users/{id}", axum::routing::get(not_implemented))
+        .route("/api/users/{id}/role", axum::routing::post(not_implemented))
+        .route("/api/workflows/{id}", axum::routing::get(not_implemented).put(not_implemented))
+        .route("/api/execution-policies/{id}", axum::routing::get(not_implemented).put(not_implemented))
         .layer(middleware::from_fn_with_state(state.clone(), super::middleware::auth::auth_middleware))
         .with_state(state.clone());
 
     let public = Router::new()
         .route("/health", axum::routing::get(health::health))
         .route("/ready", axum::routing::get(health::ready))
+        .route("/metrics", axum::routing::get(metrics::metrics))
         .with_state(state);
 
     public.merge(authed)

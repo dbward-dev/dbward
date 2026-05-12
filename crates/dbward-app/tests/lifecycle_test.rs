@@ -338,6 +338,25 @@ impl LicenseChecker for FakeLicenseChecker {
     fn is_pro(&self) -> bool { false }
 }
 
+struct FakePolicyRepoForDispatch;
+impl PolicyRepo for FakePolicyRepoForDispatch {
+    fn create_workflow(&self, _: &dbward_domain::policies::workflow::Workflow) -> Result<(), AppError> { Ok(()) }
+    fn get_workflow(&self, _: &str) -> Result<Option<dbward_domain::policies::workflow::Workflow>, AppError> { Ok(None) }
+    fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::workflow::Workflow>, AppError> { Ok(vec![]) }
+    fn delete_workflow(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+    fn count_workflows(&self) -> Result<u32, AppError> { Ok(0) }
+    fn create_execution_policy(&self, _: &ExecutionPolicy) -> Result<(), AppError> { Ok(()) }
+    fn get_execution_policy(&self, _: &str) -> Result<Option<ExecutionPolicy>, AppError> { Ok(None) }
+    fn list_execution_policies(&self) -> Result<Vec<ExecutionPolicy>, AppError> { Ok(vec![]) }
+    fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+    fn find_result_policy(&self, _: &DatabaseName, _: &Environment) -> Result<Option<ResultPolicy>, AppError> { Ok(None) }
+    fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> { Ok(()) }
+    fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
+    fn get_roles_by_names(&self, _: &[String]) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
+    fn delete_role(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+    fn count_roles(&self) -> Result<u32, AppError> { Ok(0) }
+}
+
 struct TestHarness {
     repo: Arc<SharedRepo>,
     clock: Arc<FakeClock>,
@@ -420,6 +439,7 @@ impl TestHarness {
             request_repo: self.repo.clone(),
             result_channel: self.result_channel.clone(),
             event_dispatcher: self.event_dispatcher.clone(),
+            policy_repo: Arc::new(FakePolicyRepoForDispatch),
             clock: self.clock.clone(),
         }
     }

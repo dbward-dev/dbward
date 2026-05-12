@@ -13,6 +13,7 @@ pub struct DispatchRequest {
     pub request_repo: Arc<dyn RequestRepo>,
     pub result_channel: Arc<dyn ResultChannel>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
+    pub policy_repo: Arc<dyn PolicyRepo>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -100,7 +101,15 @@ impl DispatchRequest {
         }
 
         // Pre-create result slot so subscribers can wait before agent completes
-        self.result_channel.create_slot(&request.id);
+        // M-21: Skip streaming slot if policy says StoreOnly
+        let delivery_mode = self.policy_repo.find_result_policy(&request.database, &request.environment)
+            .ok()
+            .flatten()
+            .map(|p| p.delivery_mode)
+            .unwrap_or_default();
+        if delivery_mode != dbward_domain::policies::DeliveryMode::StoreOnly {
+            self.result_channel.create_slot(&request.id);
+        }
 
         result.commit(&*self.event_dispatcher);
 
@@ -146,6 +155,25 @@ mod tests {
         async fn publish(&self, _: &str, _: dbward_domain::values::ResultSummary) {}
         async fn subscribe(&self, _: &str, _: u64) -> Result<Option<dbward_domain::values::ResultSummary>, AppError> { Ok(None) }
         async fn notify_all(&self) {}
+    }
+
+    struct FakePolicyRepo;
+    impl PolicyRepo for FakePolicyRepo {
+        fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> { Ok(()) }
+        fn get_workflow(&self, _: &str) -> Result<Option<dbward_domain::policies::Workflow>, AppError> { Ok(None) }
+        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError> { Ok(vec![]) }
+        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn count_workflows(&self) -> Result<u32, AppError> { Ok(0) }
+        fn create_execution_policy(&self, _: &dbward_domain::policies::ExecutionPolicy) -> Result<(), AppError> { Ok(()) }
+        fn get_execution_policy(&self, _: &str) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(None) }
+        fn list_execution_policies(&self) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(vec![]) }
+        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn find_result_policy(&self, _: &DatabaseName, _: &Environment) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> { Ok(None) }
+        fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> { Ok(()) }
+        fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
+        fn get_roles_by_names(&self, _: &[String]) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
+        fn delete_role(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn count_roles(&self) -> Result<u32, AppError> { Ok(0) }
     }
 
     struct FakeRepo { request: Mutex<Option<Request>>, dispatched: Mutex<bool> }
@@ -195,7 +223,7 @@ mod tests {
     #[test]
     fn dispatch_approved_succeeds() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::Approved))), dispatched: Mutex::new(false) });
-        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), result_channel: Arc::new(FakeResultChannel), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
+        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), result_channel: Arc::new(FakeResultChannel), event_dispatcher: Arc::new(NoopDispatcher), policy_repo: Arc::new(FakePolicyRepo), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         let out = uc.execute(DispatchRequestInput { request_id: "req-001".into() }, &user).unwrap();
@@ -206,7 +234,7 @@ mod tests {
     #[test]
     fn dispatch_pending_fails() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::Pending))), dispatched: Mutex::new(false) });
-        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), result_channel: Arc::new(FakeResultChannel), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
+        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), result_channel: Arc::new(FakeResultChannel), event_dispatcher: Arc::new(NoopDispatcher), policy_repo: Arc::new(FakePolicyRepo), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         assert!(matches!(uc.execute(DispatchRequestInput { request_id: "req-001".into() }, &user), Err(AppError::Conflict(_))));
@@ -215,7 +243,7 @@ mod tests {
     #[test]
     fn dispatch_break_glass_succeeds() {
         let repo = Arc::new(FakeRepo { request: Mutex::new(Some(make_request(RequestStatus::BreakGlass))), dispatched: Mutex::new(false) });
-        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), result_channel: Arc::new(FakeResultChannel), event_dispatcher: Arc::new(NoopDispatcher), clock: Arc::new(FakeClock) };
+        let uc = DispatchRequest { authorizer: Arc::new(AllowAll), policy: Arc::new(FakePolicy), request_repo: repo.clone(), result_channel: Arc::new(FakeResultChannel), event_dispatcher: Arc::new(NoopDispatcher), policy_repo: Arc::new(FakePolicyRepo), clock: Arc::new(FakeClock) };
         let user = AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None };
 
         let out = uc.execute(DispatchRequestInput { request_id: "req-001".into() }, &user).unwrap();

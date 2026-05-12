@@ -36,6 +36,8 @@ pub struct TokenCreateOutput {
     pub token: String, // plaintext, shown only once
     pub prefix: String,
     pub subject_id: String,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub permissions: Vec<String>,
 }
 
 // --- List ---
@@ -127,7 +129,20 @@ impl TokenManage {
             "token_created", "token", &user.subject_id, Some(&id),
         ))?;
 
-        Ok(TokenCreateOutput { id, token: raw, prefix, subject_id: input.subject_id })
+        // Resolve permissions from assigned roles
+        let permissions: Vec<String> = if !token.roles.is_empty() {
+            self.policy_repo.get_roles_by_names(&token.roles)?
+                .iter()
+                .flat_map(|r| r.permissions.iter())
+                .map(|p| p.as_str().to_string())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect()
+        } else {
+            vec![]
+        };
+
+        Ok(TokenCreateOutput { id, token: raw, prefix, subject_id: input.subject_id, expires_at: input.expires_at, permissions })
     }
 
     pub fn list(&self, user: &AuthUser) -> Result<TokenListOutput, AppError> {
