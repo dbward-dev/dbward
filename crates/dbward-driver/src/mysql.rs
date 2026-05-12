@@ -159,6 +159,53 @@ impl DatabaseDriver for MysqlDriver {
                 .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         Ok(rows.into_iter().map(|(v,)| v).collect())
     }
+
+    async fn connection_id(&self) -> Result<String, DriverError> {
+        let id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok(id.to_string())
+    }
+
+    async fn set_timeout(&self, secs: u64) -> Result<(), DriverError> {
+        let ms = secs * 1000;
+        sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn query_isolated(&self, sql: &str, timeout_secs: u64) -> Result<(String, QueryOutput), DriverError> {
+        let mut conn = self.pool.acquire().await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let ms = timeout_secs * 1000;
+        sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
+            .execute(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
+            .fetch_one(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        // Use pool-level query (MySQL doesn't support raw_sql on connection easily)
+        let output = self.query(sql).await?;
+        Ok((id.to_string(), output))
+    }
+
+    async fn execute_isolated(&self, sql: &str, timeout_secs: u64) -> Result<(String, u64), DriverError> {
+        let mut conn = self.pool.acquire().await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let ms = timeout_secs * 1000;
+        sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
+            .execute(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
+            .fetch_one(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let result = sqlx::query(sql).execute(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok((id.to_string(), result.rows_affected()))
+    }
 }
 
 use sqlparser::dialect::MySqlDialect;

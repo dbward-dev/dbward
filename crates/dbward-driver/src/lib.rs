@@ -26,6 +26,16 @@ pub trait DatabaseDriver: Send + Sync {
     async fn revert_migration(&self, down_sql: &str, version: &str) -> Result<(), DriverError>;
     async fn ensure_migrations_table(&self) -> Result<(), DriverError>;
     async fn applied_versions(&self) -> Result<Vec<String>, DriverError>;
+    async fn connection_id(&self) -> Result<String, DriverError>;
+    async fn set_timeout(&self, secs: u64) -> Result<(), DriverError>;
+
+    /// Execute query on a dedicated connection with timeout set.
+    /// Returns (connection_id, result) — guarantees same connection for timeout+pid+query.
+    async fn query_isolated(&self, sql: &str, timeout_secs: u64) -> Result<(String, QueryOutput), DriverError>;
+
+    /// Execute statement on a dedicated connection with timeout set.
+    /// Returns (connection_id, rows_affected).
+    async fn execute_isolated(&self, sql: &str, timeout_secs: u64) -> Result<(String, u64), DriverError>;
 }
 
 pub async fn connect(

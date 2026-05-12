@@ -8,17 +8,19 @@ rust-version.workspace = true
 description = "dbward agent — executes approved DB operations"
 
 [dependencies]
-dbward-core = { path = "../dbward-core", version = "0.1.0" }
+dbward-driver = { path = "../dbward-driver", version = "0.1.0" }
 dbward-api-types = { path = "../dbward-api-types" }
-dbward-migrate = { path = "../dbward-migrate", version = "0.1.0" }
-tokio.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-toml.workspace = true
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
 reqwest = { version = "0.12", features = ["json"] }
-ed25519-dalek = "2"
-tracing.workspace = true
-tracing-subscriber.workspace = true
-tracing-appender.workspace = true
+ed25519-dalek = { version = "2", features = ["pkcs8"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+tracing-appender = { workspace = true }
 hex = "0.4"
-chrono.workspace = true
+chrono = { workspace = true }
+sha2 = "0.10"
+hostname = "0.4"

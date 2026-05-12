@@ -138,6 +138,76 @@ impl DatabaseDriver for PostgresDriver {
                 .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         Ok(rows.into_iter().map(|(v,)| v).collect())
     }
+
+    async fn connection_id(&self) -> Result<String, DriverError> {
+        let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok(pid.to_string())
+    }
+
+    async fn set_timeout(&self, secs: u64) -> Result<(), DriverError> {
+        let ms = secs * 1000;
+        sqlx::query(&format!("SET statement_timeout = {ms}"))
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn query_isolated(&self, sql: &str, timeout_secs: u64) -> Result<(String, QueryOutput), DriverError> {
+        // Create a dedicated 1-connection pool with timeout to guarantee isolation
+        let mut conn = self.pool.acquire().await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let ms = timeout_secs * 1000;
+        sqlx::query(&format!("SET statement_timeout = {ms}"))
+            .execute(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+            .fetch_one(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+        // Use fetch_all via sqlx::query to avoid raw_sql lifetime issues
+        let all_rows = sqlx::query(sql).fetch_all(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+        let mut rows = Vec::new();
+        let mut total_bytes: usize = 0;
+        let mut truncated = false;
+        let mut truncation_reason = None;
+        for row in all_rows {
+            let json = pg_row_to_json(&row);
+            total_bytes += json.to_string().len();
+            if rows.len() >= MAX_RESULT_ROWS {
+                truncated = true;
+                truncation_reason = Some(format!("max rows ({MAX_RESULT_ROWS})"));
+                break;
+            }
+            if total_bytes >= MAX_RESULT_BYTES {
+                truncated = true;
+                truncation_reason = Some(format!("max size ({MAX_RESULT_BYTES} bytes)"));
+                break;
+            }
+            rows.push(json);
+        }
+        Ok((pid.to_string(), QueryOutput { rows, truncated, truncation_reason }))
+    }
+
+    async fn execute_isolated(&self, sql: &str, timeout_secs: u64) -> Result<(String, u64), DriverError> {
+        let mut conn = self.pool.acquire().await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let ms = timeout_secs * 1000;
+        sqlx::query(&format!("SET statement_timeout = {ms}"))
+            .execute(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+            .fetch_one(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let result = sqlx::query(sql).execute(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok((pid.to_string(), result.rows_affected()))
+    }
 }
 
 fn pg_row_to_json(row: &sqlx::postgres::PgRow) -> serde_json::Value {

@@ -41,6 +41,8 @@ pub struct ClaimResponse {
     pub database: String,
     pub detail: serde_json::Value,
     pub execution_token: serde_json::Value,
+    #[serde(default)]
+    pub statement_timeout_secs: Option<u64>,
 }
 
 /// POST /api/agent/jobs/{id}/heartbeat — response
@@ -54,9 +56,9 @@ pub struct HeartbeatResponse {
 pub struct ResultBody {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
+    pub result_data: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+    pub error_message: Option<String>,
 }
 
 /// Agent status report sent with each poll.

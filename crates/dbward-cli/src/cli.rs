@@ -367,7 +367,9 @@ pub async fn run(cli: Cli) -> Result<(), dbward_core::Error> {
         } => {
             dbward_agent::init_logging();
             let agent_config = config_loader::load_agent(agent_config_path)?;
-            return dbward_agent::run(agent_config).await;
+            return dbward_agent::run(agent_config)
+                .await
+                .map_err(|e| dbward_core::Error::Server(e.to_string()));
         }
         Command::Dev { database_url, port } => {
             return run_dev(database_url, *port).await;
@@ -1594,29 +1596,24 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
     eprintln!();
 
     // Build agent config
-    let mut databases = std::collections::BTreeMap::new();
-    let mut dev_envs = std::collections::BTreeMap::new();
+    let mut databases = std::collections::HashMap::new();
+    let mut dev_envs = std::collections::HashMap::new();
     dev_envs.insert(
         "development".into(),
-        dbward_core::AgentDatabaseEnvConfig {
+        dbward_agent::config::DatabaseEntry {
             url: database_url.to_string(),
-            migrations_dir: None,
         },
     );
     databases.insert("app".into(), dev_envs);
-    let agent_config = dbward_core::AgentConfig {
-        agent_id: "dev-agent".into(),
-        poll_interval_ms: 500,
-        lease_duration_secs: 300,
-        drain_timeout_secs: 60,
-        max_concurrent_tasks: 2,
+    let agent_config = dbward_agent::AgentConfig {
+        agent_id: Some("dev-agent".into()),
+        poll_interval_ms: Some(500),
+        max_concurrent_tasks: Some(2),
+        drain_timeout_secs: Some(60),
         statement_timeout_secs: None,
-        server: dbward_core::AgentServerConfig {
+        server: dbward_agent::config::ServerConfig {
             url: server_url,
             agent_token: agent_token.clone(),
-        },
-        capabilities: dbward_core::AgentCapabilities {
-            operations: vec![],
         },
         databases,
     };
@@ -1633,7 +1630,9 @@ async fn run_dev(database_url: &str, port: u16) -> Result<(), dbward_core::Error
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 
     // Run agent (blocks until ctrl-c)
-    dbward_agent::run(agent_config).await
+    dbward_agent::run(agent_config)
+        .await
+        .map_err(|e| dbward_core::Error::Server(e.to_string()))
 }
 
 // ---------------------------------------------------------------------------

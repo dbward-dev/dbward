@@ -1,699 +1,216 @@
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
-use dbward_core::{AgentConfig, Engine, Error};
+use dbward_api_types::agent::{AgentStatusReport, PollRequest};
+use dbward_driver::DatabaseDriver;
+use tracing::{error, info, warn};
 
-use tokio::sync::Semaphore;
-use tracing::{Instrument, error, info, warn};
+use crate::client::AgentClient;
+use crate::config::{AgentConfig, DatabaseEntry};
+use crate::executor::JobExecutor;
+use crate::probes::ProbeGuard;
+use crate::AgentError;
 
-use crate::server_client::{ActiveJob, AgentClient, AgentStatus};
+struct InFlightGuard {
+    counter: Arc<AtomicU32>,
+}
 
-const ALIVE_PROBE_PATH: &str = "/tmp/dbward-agent-alive";
-const READY_PROBE_PATH: &str = "/tmp/dbward-agent-ready";
+impl InFlightGuard {
+    fn acquire(counter: &Arc<AtomicU32>) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        Self {
+            counter: counter.clone(),
+        }
+    }
+}
 
-/// Guard that decrements in_flight on drop (panic-safe).
-struct InFlightGuard(Arc<AtomicUsize>);
 impl Drop for InFlightGuard {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
+        self.counter.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
-/// Shared tracker for active jobs (for status reporting).
-type ActiveJobs = Arc<tokio::sync::Mutex<Vec<ActiveJob>>>;
+pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
+    let agent_id = config.agent_id();
+    let max_concurrent = config.max_concurrent_tasks();
+    let poll_interval = Duration::from_millis(config.poll_interval_ms());
+    let drain_timeout = Duration::from_secs(config.drain_timeout_secs());
+    let statement_timeout = config.statement_timeout_secs();
+    let operations = config.operations();
 
-/// Run the agent poll loop. Blocks until interrupted.
-pub async fn run(config: AgentConfig) -> Result<(), Error> {
-    let client = AgentClient::new(&config.server.url, &config.server.agent_token);
-    let poll_interval = Duration::from_millis(config.poll_interval_ms);
-    let draining = Arc::new(AtomicBool::new(false));
-    let in_flight = Arc::new(AtomicUsize::new(0));
-    let max_concurrent = config.max_concurrent_tasks.max(1) as usize;
-    let semaphore = Arc::new(Semaphore::new(max_concurrent));
-    let active_jobs: ActiveJobs = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    let started_at = std::time::Instant::now();
+    info!(agent_id, "starting agent");
 
-    // Fetch server's public key for token verification
-    let public_key = client.get_public_key().await?;
+    let client = Arc::new(AgentClient::new(&config.server.url, &config.server.agent_token)?);
 
-    // Verify DB connectivity for all configured (database, environment) pairs
+    // Fail-fast: fetch public key
+    let public_key = client.fetch_public_key().await?;
+    info!("public key fetched");
+
+    // Connect to all databases
+    let mut pools: HashMap<(String, String), Arc<dyn DatabaseDriver>> = HashMap::new();
+    let mut db_entries: HashMap<(String, String), DatabaseEntry> = HashMap::new();
     for (db_name, envs) in &config.databases {
-        for (env_name, env_config) in envs {
-            info!(database = %db_name, environment = %env_name, "verifying database connection");
-            let driver = dbward_core::driver::connect_with_timeout(
-                &env_config.url,
-                Some(config.statement_timeout_secs.unwrap_or(30)),
-            )
-            .await
-            .map_err(|e| {
-                Error::Config(format!(
-                    "failed to connect to database '{db_name}/{env_name}': {e}. Check url in agent config."
-                ))
-            })?;
-            drop(driver);
+        for (env_name, entry) in envs {
+            let driver = dbward_driver::connect(&entry.url, None)
+                .await
+                .map_err(|e| {
+                    AgentError::Config(format!(
+                        "database '{}' environment '{}': {}",
+                        db_name, env_name, e
+                    ))
+                })?;
+            pools.insert((db_name.clone(), env_name.clone()), driver);
+            db_entries.insert((db_name.clone(), env_name.clone()), entry.clone());
+            info!(database = db_name, environment = env_name, "connected");
         }
     }
+    let pools = Arc::new(pools);
+    let db_entries = Arc::new(db_entries);
 
-    // Verify server connectivity and agent token validity
-    let pairs = config.inferred_db_env_pairs();
-    let operations = if config.capabilities.operations.is_empty() {
-        vec!["execute_query".into(), "migrate_up".into(), "migrate_down".into(), "migrate_status".into()]
-    } else {
-        config.capabilities.operations.clone()
+    // Build capabilities for poll
+    let databases: Vec<String> = config.databases.keys().cloned().collect();
+    let environments: Vec<String> = config
+        .databases
+        .values()
+        .flat_map(|envs| envs.keys().cloned())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    // Initial poll to validate token
+    let init_req = PollRequest {
+        databases: databases.clone(),
+        environments: environments.clone(),
+        operations: operations.clone(),
+        limit: 0,
+        status: None,
     };
-    client
-        .poll_pairs(&pairs, &operations, 1, None)
-        .await
-        .map_err(|e| Error::Config(format!("server connection check failed: {e}")))?;
+    client.poll(&init_req).await?;
+    info!("initial poll successful, token valid");
 
-    write_probe(ALIVE_PROBE_PATH)?;
-    write_probe(READY_PROBE_PATH)?;
-    let _probe_guard = ProbeGuard;
+    // Probes
+    let probes = ProbeGuard::create("/tmp/dbward-agent-alive", "/tmp/dbward-agent-ready")?;
 
-    info!(
-        agent_id = %config.agent_id,
-        server = %config.server.url,
-        max_concurrent = max_concurrent,
-        "agent started, polling"
-    );
-
-    install_shutdown_task(draining.clone());
-    let mut drain_started_at = None;
-
-    let consecutive_failures = AtomicUsize::new(0);
-    let ready_removed = AtomicBool::new(false);
-
-    loop {
-        if draining.load(Ordering::SeqCst) {
-            if drain_started_at.is_none() {
-                drain_started_at = Some(tokio::time::Instant::now());
-                if let Err(err) = remove_probe(READY_PROBE_PATH) {
-                    warn!(%err, "failed to remove readiness probe");
-                }
-                info!("agent draining");
-            }
-            if should_exit_drain(&draining, &in_flight) {
-                info!("agent shut down");
-                return Ok(());
-            }
-            if drain_timed_out(drain_started_at, config.drain_timeout_secs) {
-                return Err(Error::Server(format!(
-                    "drain timed out after {}s",
-                    config.drain_timeout_secs
-                )));
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            continue;
-        }
-
-        poll_once(
-            &config,
-            &client,
-            &public_key,
-            &in_flight,
-            &semaphore,
-            &active_jobs,
-            &draining,
-            max_concurrent,
-            started_at.elapsed().as_secs(),
-            &consecutive_failures,
-            &ready_removed,
-        )
-        .await;
-        tokio::time::sleep(poll_interval).await;
-    }
-}
-
-const MAX_CONSECUTIVE_POLL_FAILURES: usize = 6;
-
-async fn poll_once(
-    config: &AgentConfig,
-    client: &AgentClient,
-    public_key: &ed25519_dalek::VerifyingKey,
-    in_flight: &Arc<AtomicUsize>,
-    semaphore: &Arc<Semaphore>,
-    active_jobs: &ActiveJobs,
-    draining: &Arc<AtomicBool>,
-    max_concurrent: usize,
-    uptime_secs: u64,
-    consecutive_failures: &AtomicUsize,
-    ready_removed: &AtomicBool,
-) {
-    // Only request as many jobs as we have capacity for
-    let available = semaphore.available_permits() as u32;
-    if available == 0 {
-        return;
-    }
-
-    let status = {
-        let jobs = active_jobs.lock().await;
-        AgentStatus {
-            in_flight: in_flight.load(Ordering::SeqCst) as u32,
-            max_concurrent: max_concurrent as u32,
-            draining: draining.load(Ordering::SeqCst),
-            uptime_secs,
-            active_jobs: jobs.clone(),
-        }
-    };
-
-    let jobs = match client
-        .poll_pairs(
-            &config.inferred_db_env_pairs(),
-            &if config.capabilities.operations.is_empty() {
-                vec!["execute_query".into(), "migrate_up".into(), "migrate_down".into(), "migrate_status".into()]
-            } else {
-                config.capabilities.operations.clone()
-            },
-            available,
-            Some(&status),
-        )
-        .await
-    {
-        Ok(j) => {
-            let prev = consecutive_failures.swap(0, Ordering::SeqCst);
-            if prev >= MAX_CONSECUTIVE_POLL_FAILURES && ready_removed.swap(false, Ordering::SeqCst)
-            {
-                if let Err(e) = write_probe(READY_PROBE_PATH) {
-                    warn!(%e, "failed to restore readiness probe");
-                } else {
-                    info!("readiness probe restored after recovery");
-                }
-            }
-            j
-        }
-        Err(e) => {
-            let count = consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1;
-            warn!(count, max = MAX_CONSECUTIVE_POLL_FAILURES, %e, "poll failed");
-            if count >= MAX_CONSECUTIVE_POLL_FAILURES && !ready_removed.swap(true, Ordering::SeqCst)
-            {
-                if let Err(re) = remove_probe(READY_PROBE_PATH) {
-                    warn!(%re, "failed to remove readiness probe");
-                } else {
-                    warn!(
-                        count,
-                        "readiness probe removed after consecutive poll failures"
-                    );
-                }
-            }
-            return;
-        }
-    };
-
-    for job in jobs {
-        let request_id = job.id.clone();
-
-        let permit = match semaphore.clone().try_acquire_owned() {
-            Ok(p) => p,
-            Err(_) => break, // no more capacity
-        };
-
-        let config = config.clone();
-        let client = client.clone();
-        let public_key = *public_key;
-        let in_flight = in_flight.clone();
-        let active_jobs = active_jobs.clone();
-
-        in_flight.fetch_add(1, Ordering::SeqCst);
-
-        // Track active job
-        let active_job = ActiveJob {
-            request_id: request_id.clone(),
-            operation: job.operation.clone(),
-            started_at: chrono::Utc::now().to_rfc3339(),
-        };
-        active_jobs.lock().await.push(active_job);
-
-        let span = tracing::info_span!("job", request_id = %request_id);
-        tokio::spawn(
-            async move {
-                let _guard = InFlightGuard(in_flight);
-
-                if let Err(e) = execute_job(&config, &client, &public_key, &request_id).await {
-                    error!(request_id = %request_id, %e, "job failed");
-                }
-
-                // Remove from active jobs
-                let mut jobs = active_jobs.lock().await;
-                jobs.retain(|j| j.request_id != request_id);
-
-                drop(permit);
-            }
-            .instrument(span),
-        );
-    }
-}
-
-async fn execute_job(
-    config: &AgentConfig,
-    client: &AgentClient,
-    public_key: &ed25519_dalek::VerifyingKey,
-    request_id: &str,
-) -> Result<(), Error> {
-    // Claim
-    let claim = client.claim(request_id, &config.agent_id).await?;
-    let exec_id = &claim.execution_id;
-    let operation = claim.operation.as_str();
-    let environment = claim.environment.as_str();
-    let database = claim.database.as_str();
-    let detail_value = &claim.detail;
-    let detail = detail_value.as_str().unwrap_or("");
-
-    info!(request_id, %operation, %database, "claimed job");
-
-    // Verify token
-    let token: dbward_core::token::ExecutionToken =
-        serde_json::from_value(claim.execution_token.clone())
-            .map_err(|e| Error::Server(format!("invalid execution_token: {e}")))?;
-
-    // Resolve DB and execute
-    let resolved = config.resolve_database(database, environment)?;
-    let expected_detail = match operation {
-        "migrate_up" | "migrate_down" if detail.starts_with('{') => {
-            // v2 JSON detail: canonicalize by re-serializing
-            dbward_migrate::canonicalize_migration_detail(detail)?
-        }
-        "migrate_up" | "migrate_down" => dbward_migrate::canonicalize_migration_approval_detail(
-            &resolved.migrations_dir,
-            detail,
-        )?,
-        _ => detail.to_string(),
-    };
-
-    dbward_core::token::verify_token(
-        &token,
-        public_key,
-        operation,
-        environment,
-        database,
-        &expected_detail,
-    )?;
-
-    let env = match environment {
-        "production" => dbward_core::Environment::Production,
-        "staging" => dbward_core::Environment::Staging,
-        "development" => dbward_core::Environment::Development,
-        other => dbward_core::Environment::Custom(other.to_string()),
-    };
-
-    // Cancel detection via heartbeat response
-    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let cancelled_clone = cancelled.clone();
-
-    // Heartbeat + cancel check task
-    let hb_client = client.clone();
-    let hb_exec_id = exec_id.to_string();
-    let cancel_check_interval = std::time::Duration::from_secs(2);
-    let hb_handle = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(cancel_check_interval);
-        interval.tick().await; // skip immediate first tick
-        loop {
-            interval.tick().await;
-            match hb_client.heartbeat(&hb_exec_id).await {
-                Ok(true) => {
-                    cancelled_clone.store(true, std::sync::atomic::Ordering::SeqCst);
-                    break;
-                }
-                Ok(false) => {}
-                Err(e) => {
-                    warn!(%e, "heartbeat failed");
-                }
-            }
-        }
-    });
-
-    let (result_value, success) = match execute_operation(&resolved, env, operation, detail, &token.requester_role, &token.requester_subject_id).await {
-        Ok(text) => {
-            let val: serde_json::Value =
-                serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
-            (Some(val), true)
-        }
-        Err(e) => {
-            let msg = e.to_string();
-            error!(request_id, error = %msg, "job execution failed");
-            hb_handle.abort();
-            send_result_with_retry(client, exec_id, false, None, Some(&msg)).await;
-            return Ok(());
-        }
-    };
-
-    hb_handle.abort();
-
-    if cancelled.load(std::sync::atomic::Ordering::SeqCst) {
-        warn!(request_id, "job was cancelled during execution");
-        send_result_with_retry(client, exec_id, false, None, Some("cancelled by user")).await;
-        return Ok(());
-    }
-
-    info!(request_id, "job execution completed");
-    send_result_with_retry(client, exec_id, success, result_value, None).await;
-    Ok(())
-}
-
-async fn send_result_with_retry(
-    client: &crate::server_client::AgentClient,
-    exec_id: &str,
-    success: bool,
-    result: Option<serde_json::Value>,
-    error: Option<&str>,
-) {
-    let mut backoff = std::time::Duration::from_secs(1);
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(300); // 5 min
-
-    loop {
-        match client
-            .send_result(exec_id, success, result.clone(), error)
-            .await
-        {
-            Ok(_) => return,
-            Err(e) => {
-                if tokio::time::Instant::now() + backoff > deadline {
-                    error!(%e, "result submit failed after retries");
-                    return;
-                }
-                warn!(%e, ?backoff, "result submit failed, retrying");
-                tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(std::time::Duration::from_secs(15));
-            }
-        }
-    }
-}
-
-fn install_shutdown_task(draining: std::sync::Arc<AtomicBool>) {
+    // Signal handling
+    let draining = Arc::new(AtomicBool::new(false));
+    let draining_signal = draining.clone();
     tokio::spawn(async move {
-        wait_for_shutdown_signal().await;
-        draining.store(true, Ordering::SeqCst);
-        if let Err(err) = remove_probe(READY_PROBE_PATH) {
-            warn!(%err, "failed to remove readiness probe");
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
+        let sigint = tokio::signal::ctrl_c();
+        tokio::select! {
+            _ = sigterm.recv() => {}
+            _ = sigint => {}
         }
+        info!("shutdown signal received, draining");
+        draining_signal.store(true, Ordering::Release);
     });
-}
 
-async fn wait_for_shutdown_signal() {
-    #[cfg(unix)]
-    {
-        let ctrl_c = tokio::signal::ctrl_c();
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut sigterm) => {
-                tokio::select! {
-                    _ = ctrl_c => {}
-                    _ = sigterm.recv() => {}
-                }
-            }
-            Err(err) => {
-                error!(%err, "failed to register SIGTERM handler");
-                if let Err(ctrl_c_err) = ctrl_c.await {
-                    error!(%ctrl_c_err, "failed while waiting for Ctrl-C");
-                }
-            }
+    let in_flight = Arc::new(AtomicU32::new(0));
+    let start_time = std::time::Instant::now();
+    let mut consecutive_failures: u32 = 0;
+
+    let executor = Arc::new(JobExecutor {
+        client: client.clone(),
+        public_key,
+        pools,
+        db_entries,
+        statement_timeout_secs: statement_timeout,
+    });
+
+    // Poll loop
+    loop {
+        if draining.load(Ordering::Acquire) {
+            // Medium Fix 1: remove readiness immediately on drain
+            probes.remove_readiness();
+            break;
         }
-    }
-    #[cfg(not(unix))]
-    {
-        if let Err(err) = tokio::signal::ctrl_c().await {
-            error!(%err, "failed while waiting for Ctrl-C");
-        }
-    }
-}
 
-fn should_exit_drain(draining: &AtomicBool, in_flight: &AtomicUsize) -> bool {
-    draining.load(Ordering::SeqCst) && in_flight.load(Ordering::SeqCst) == 0
-}
+        let current_in_flight = in_flight.load(Ordering::Relaxed);
+        let available = max_concurrent.saturating_sub(current_in_flight);
 
-fn drain_timed_out(started_at: Option<tokio::time::Instant>, drain_timeout_secs: u64) -> bool {
-    started_at.is_some_and(|started| started.elapsed() >= Duration::from_secs(drain_timeout_secs))
-}
-
-fn write_probe(path: &str) -> Result<(), Error> {
-    std::fs::write(path, b"ok").map_err(Error::Io)
-}
-
-fn remove_probe(path: &str) -> Result<(), Error> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(Error::Io(err)),
-    }
-}
-
-struct ProbeGuard;
-
-impl Drop for ProbeGuard {
-    fn drop(&mut self) {
-        if let Err(err) = remove_probe(ALIVE_PROBE_PATH) {
-            warn!(%err, "failed to remove liveness probe");
-        }
-        if let Err(err) = remove_probe(READY_PROBE_PATH) {
-            warn!(%err, "failed to remove readiness probe");
-        }
-    }
-}
-
-async fn execute_operation(
-    resolved: &dbward_core::ResolvedDatabaseConfig,
-    env: dbward_core::Environment,
-    operation: &str,
-    detail: &str,
-    requester_role: &str,
-    requester_subject_id: &str,
-) -> Result<String, Error> {
-    match operation {
-        "execute_query" => {
-            let mut engine = Engine::new(resolved, env).await?;
-            let result = engine.execute_query(requester_subject_id, requester_role, detail).await?;
-            let output = build_execute_output(&result);
-            if result.truncated {
-                // Keep truncated/truncation_reason already set above
-            }
-            serde_json::to_string_pretty(&output).map_err(|e| Error::Server(e.to_string()))
-        }
-        "migrate_up" => {
-            let engine = Engine::new(resolved, env).await?;
-            engine.driver().ensure_migrations_table().await?;
-            let detail_parsed = dbward_migrate::MigrationDetail::parse(detail)?;
-            let max_count = detail_parsed.max_count;
-            let applied = engine.driver().applied_versions().await?;
-
-            // Filter to pending only, then apply max_count limit
-            let pending: Vec<_> = detail_parsed.migrations
-                .iter()
-                .filter(|m| !applied.contains(&m.version))
-                .collect();
-            let to_apply: Vec<_> = match max_count {
-                Some(n) => pending.into_iter().take(n).collect(),
-                None => pending,
+        if available > 0 {
+            let req = PollRequest {
+                databases: databases.clone(),
+                environments: environments.clone(),
+                operations: operations.clone(),
+                limit: available,
+                status: Some(AgentStatusReport {
+                    in_flight: current_in_flight,
+                    max_concurrent: max_concurrent,
+                    draining: false,
+                    uptime_secs: start_time.elapsed().as_secs(),
+                    active_jobs: vec![],
+                }),
             };
 
-            let mut applied_versions = Vec::new();
-            for entry in &to_apply {
-                engine.driver().apply_migration(&entry.sql, &entry.version).await?;
-                applied_versions.push(entry.version.clone());
+            match client.poll(&req).await {
+                Ok(resp) => {
+                    if consecutive_failures >= 6 {
+                        // High Fix 3: restore readiness after recovery
+                        probes.restore_readiness();
+                    }
+                    consecutive_failures = 0;
+                    for job in resp.jobs {
+                        let guard = InFlightGuard::acquire(&in_flight);
+                        let exec = executor.clone();
+                        let drain_flag = draining.clone();
+                        tokio::spawn(async move {
+                            let _guard = guard;
+                            if let Err(e) = exec.execute_job(job, drain_flag).await {
+                                error!("job execution failed: {e}");
+                            }
+                        });
+                    }
+                }
+                Err(e) => {
+                    consecutive_failures += 1;
+                    warn!(consecutive_failures, "poll failed: {e}");
+                    if consecutive_failures >= 6 {
+                        probes.remove_readiness();
+                    }
+                }
             }
-
-            Ok(serde_json::json!({
-                "applied": applied_versions,
-                "skipped": detail_parsed.migrations.iter()
-                    .filter(|m| applied.contains(&m.version))
-                    .map(|m| m.version.clone())
-                    .collect::<Vec<_>>(),
-            }).to_string())
         }
-        "migrate_down" => {
-            let engine = Engine::new(resolved, env).await?;
-            engine.driver().ensure_migrations_table().await?;
-            let detail_parsed = dbward_migrate::MigrationDetail::parse(detail)?;
-            let max_count = detail_parsed.max_count.unwrap_or(1);
 
-            // Find applied versions that have down migrations available
-            let applied = engine.driver().applied_versions().await?;
-            let available_down: Vec<&dbward_migrate::MigrationEntry> = detail_parsed.migrations
-                .iter()
-                .filter(|m| applied.contains(&m.version))
-                .collect();
-
-            // Revert the last N applied (in reverse order)
-            let to_revert: Vec<_> = available_down.into_iter().rev().take(max_count).collect();
-            let mut rolled_back = Vec::new();
-            for entry in &to_revert {
-                engine.driver().revert_migration(&entry.sql, &entry.version).await?;
-                rolled_back.push(entry.version.clone());
-            }
-
-            Ok(serde_json::json!({
-                "rolled_back": rolled_back,
-            }).to_string())
-        }
-        "migrate_status" => {
-            let engine = Engine::new(resolved, env).await?;
-            engine.driver().ensure_migrations_table().await?;
-            let applied = engine.driver().applied_versions().await?;
-            Ok(serde_json::json!({"applied": applied, "database": resolved.name}).to_string())
-        }
-        _ => Err(Error::Server(format!("unsupported operation: {operation}"))),
+        tokio::time::sleep(poll_interval).await;
     }
-}
 
-fn build_execute_output(result: &dbward_core::QueryResult) -> serde_json::Value {
-    if result.query_type == dbward_core::QueryType::Select {
-        serde_json::json!({
-            "rows": result.rows,
-            "row_count": result.rows.len(),
-            "truncated": result.truncated,
-            "truncation_reason": result.truncation_reason,
-        })
-    } else if result.rows.is_empty() {
-        serde_json::json!({"rows_affected": result.rows_affected, "truncated": false})
-    } else {
-        serde_json::json!({
-            "rows": result.rows,
-            "row_count": result.rows.len(),
-            "truncated": result.truncated,
-            "truncation_reason": result.truncation_reason,
-        })
+    // Drain phase
+    info!("draining, waiting for in-flight jobs");
+    let drain_deadline = tokio::time::Instant::now() + drain_timeout;
+    while in_flight.load(Ordering::Relaxed) > 0 {
+        if tokio::time::Instant::now() >= drain_deadline {
+            error!("drain timeout exceeded");
+            drop(probes);
+            return Err(AgentError::DrainTimeout);
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
+
+    drop(probes);
+    info!("agent shutdown complete");
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbward_core::token::{ExecutionToken, hash_detail, token_message, verify_token};
-    use ed25519_dalek::{Signer, SigningKey};
 
     #[test]
-    fn drain_requires_flag_and_zero_inflight() {
-        let draining = AtomicBool::new(false);
-        let in_flight = AtomicUsize::new(0);
-        assert!(!should_exit_drain(&draining, &in_flight));
-
-        draining.store(true, Ordering::SeqCst);
-        in_flight.store(1, Ordering::SeqCst);
-        assert!(!should_exit_drain(&draining, &in_flight));
-
-        in_flight.store(0, Ordering::SeqCst);
-        assert!(should_exit_drain(&draining, &in_flight));
-    }
-
-    #[test]
-    fn probe_file_helpers_round_trip() {
-        let path = format!("/tmp/dbward-agent-test-{}", std::process::id());
-        remove_probe(&path).unwrap();
-        write_probe(&path).unwrap();
-        assert!(std::path::Path::new(&path).exists());
-        remove_probe(&path).unwrap();
-        assert!(!std::path::Path::new(&path).exists());
-    }
-
-    #[test]
-    fn migrate_token_rejected_when_migration_files_change() {
-        let dir = std::env::temp_dir().join(format!(
-            "dbward-agent-migrate-detail-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("20260501120000_create_users.sql");
-        std::fs::write(&path, "-- migrate:up\nSELECT 1;\n").unwrap();
-
-        let approved_detail = dbward_migrate::build_migration_approval_detail(&dir, 0).unwrap();
-        let detail_hash = hash_detail(&approved_detail);
-        let expires_at = "2999-01-01T00:00:00+00:00".to_string();
-        let message = token_message(
-            "req-1",
-            "migrate_up",
-            "production",
-            "default",
-            &detail_hash,
-            &expires_at,
-        );
-        let signing_key = SigningKey::from_bytes(&[7; 32]);
-        let signature = signing_key.sign(message.as_bytes());
-        let token = ExecutionToken {
-            request_id: "req-1".into(),
-            operation: "migrate_up".into(),
-            environment: "production".into(),
-            database: "default".into(),
-            detail_hash,
-            issued_at: "2026-01-01T00:00:00+00:00".into(),
-            expires_at,
-            signature: hex::encode(signature.to_bytes()),
-            requester_role: String::new(),
-            requester_subject_id: String::new(),
-        };
-
-        std::fs::write(&path, "-- migrate:up\nSELECT 2;\n").unwrap();
-        let current_detail =
-            dbward_migrate::canonicalize_migration_approval_detail(&dir, &approved_detail).unwrap();
-        let err = verify_token(
-            &token,
-            &signing_key.verifying_key(),
-            "migrate_up",
-            "production",
-            "default",
-            &current_detail,
-        )
-        .unwrap_err();
-
-        assert!(err.to_string().contains("detail_hash mismatch"));
-        std::fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn select_empty_returns_rows_array() {
-        let result = dbward_core::QueryResult {
-            query_type: dbward_core::QueryType::Select,
-            rows: vec![],
-            rows_affected: 0,
-            truncated: false,
-            truncation_reason: None,
-        };
-        let output = build_execute_output(&result);
-        assert!(output.get("rows").unwrap().as_array().unwrap().is_empty());
-        assert!(output.get("rows_affected").is_none());
-        assert_eq!(output["row_count"], 0);
-    }
-
-    #[test]
-    fn select_with_rows_returns_rows_and_count() {
-        let result = dbward_core::QueryResult {
-            query_type: dbward_core::QueryType::Select,
-            rows: vec![serde_json::json!({"id": 1}), serde_json::json!({"id": 2})],
-            rows_affected: 0,
-            truncated: false,
-            truncation_reason: None,
-        };
-        let output = build_execute_output(&result);
-        assert_eq!(output["rows"].as_array().unwrap().len(), 2);
-        assert_eq!(output["row_count"], 2);
-        assert!(output.get("rows_affected").is_none());
-    }
-
-    #[test]
-    fn dml_empty_rows_returns_rows_affected() {
-        let result = dbward_core::QueryResult {
-            query_type: dbward_core::QueryType::Insert,
-            rows: vec![],
-            rows_affected: 5,
-            truncated: false,
-            truncation_reason: None,
-        };
-        let output = build_execute_output(&result);
-        assert_eq!(output["rows_affected"], 5);
-        assert!(output.get("rows").is_none());
-    }
-
-    #[test]
-    fn dml_with_returning_rows_returns_rows() {
-        let result = dbward_core::QueryResult {
-            query_type: dbward_core::QueryType::Insert,
-            rows: vec![serde_json::json!({"id": 10})],
-            rows_affected: 1,
-            truncated: false,
-            truncation_reason: None,
-        };
-        let output = build_execute_output(&result);
-        assert_eq!(output["rows"].as_array().unwrap().len(), 1);
-        assert_eq!(output["row_count"], 1);
+    fn in_flight_guard() {
+        let counter = Arc::new(AtomicU32::new(0));
+        {
+            let _g1 = InFlightGuard::acquire(&counter);
+            assert_eq!(counter.load(Ordering::Relaxed), 1);
+            {
+                let _g2 = InFlightGuard::acquire(&counter);
+                assert_eq!(counter.load(Ordering::Relaxed), 2);
+            }
+            assert_eq!(counter.load(Ordering::Relaxed), 1);
+        }
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
     }
 }

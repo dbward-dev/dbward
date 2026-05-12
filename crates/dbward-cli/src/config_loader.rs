@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use dbward_core::{AgentConfig, ClientConfig, Error};
+use dbward_core::{ClientConfig, Error};
 
 pub fn load(config_path: &Path) -> Result<ClientConfig, Error> {
     let mut config = load_from_toml::<ClientConfig>(config_path)?;
@@ -8,11 +8,41 @@ pub fn load(config_path: &Path) -> Result<ClientConfig, Error> {
     Ok(config)
 }
 
-pub fn load_agent(config_path: &Path) -> Result<AgentConfig, Error> {
-    let mut config = load_from_toml::<AgentConfig>(config_path)?;
+pub fn load_agent(config_path: &Path) -> Result<dbward_agent::AgentConfig, Error> {
+    let mut config = load_from_toml::<dbward_core::AgentConfig>(config_path)?;
     config.resolve_relative_paths(config_base_dir(config_path)?);
     config.validate()?;
-    Ok(config)
+    Ok(core_to_agent_config(&config))
+}
+
+fn core_to_agent_config(core: &dbward_core::AgentConfig) -> dbward_agent::AgentConfig {
+    use dbward_agent::config::{DatabaseEntry, ServerConfig};
+    use std::collections::HashMap;
+
+    let databases: HashMap<String, HashMap<String, DatabaseEntry>> = core
+        .databases
+        .iter()
+        .map(|(db, envs)| {
+            let env_map = envs
+                .iter()
+                .map(|(env, cfg)| (env.clone(), DatabaseEntry { url: cfg.url.clone() }))
+                .collect();
+            (db.clone(), env_map)
+        })
+        .collect();
+
+    dbward_agent::AgentConfig {
+        agent_id: Some(core.agent_id.clone()),
+        poll_interval_ms: Some(core.poll_interval_ms),
+        max_concurrent_tasks: Some(core.max_concurrent_tasks),
+        drain_timeout_secs: Some(core.drain_timeout_secs),
+        statement_timeout_secs: core.statement_timeout_secs,
+        server: ServerConfig {
+            url: core.server.url.clone(),
+            agent_token: core.server.agent_token.clone(),
+        },
+        databases,
+    }
 }
 
 fn load_from_toml<T>(config_path: &Path) -> Result<T, Error>
