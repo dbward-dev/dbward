@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -26,6 +26,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 4 {
             conn.execute_batch(MIGRATION_V4)?;
+        }
+        if current < 5 {
+            conn.execute_batch(MIGRATION_V5)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -288,7 +291,7 @@ CREATE INDEX IF NOT EXISTS idx_pending_approvers_selector ON request_pending_app
 -- Seed built-in roles
 INSERT OR IGNORE INTO roles (name, permissions_json, databases_json, environments_json, built_in) VALUES
 ('admin', '[\"*\"]', '[\"*\"]', '[\"*\"]', 1),
-('developer', '[\"request.create\",\"request.create_select\",\"request.view\",\"request.cancel\",\"result.view\",\"token.revoke_own\"]', '[\"*\"]', '[\"*\"]', 1),
+('developer', '[\"request.create\",\"request.create_select\",\"request.view\",\"request.cancel\",\"request.dispatch\",\"result.view\",\"token.revoke_own\"]', '[\"*\"]', '[\"*\"]', 1),
 ('readonly', '[\"request.create_select\",\"request.view\",\"result.view\"]', '[\"*\"]', '[\"*\"]', 1),
 ('agent-default', '[\"agent.poll\",\"agent.claim\",\"agent.heartbeat\",\"agent.submit_result\"]', '[\"*\"]', '[\"*\"]', 1);
 ";
@@ -310,4 +313,9 @@ CREATE INDEX IF NOT EXISTS idx_pending_approvers_selector ON request_pending_app
 const MIGRATION_V4: &str = "
 CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_no_dup_approve
   ON approvals(request_id, actor_id, step_index) WHERE action = 'approve';
+";
+
+const MIGRATION_V5: &str = "
+UPDATE roles SET permissions_json = '[\"request.create\",\"request.create_select\",\"request.view\",\"request.cancel\",\"request.dispatch\",\"result.view\",\"token.revoke_own\"]'
+  WHERE name = 'developer' AND built_in = 1;
 ";

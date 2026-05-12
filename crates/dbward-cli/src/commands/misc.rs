@@ -8,14 +8,17 @@ pub async fn run_databases(sc: &ServerClient, _json_output: bool) -> Result<(), 
         if dbs.is_empty() {
             eprintln!("No databases registered.");
         } else {
+            // Group by database name to collect environments
+            use std::collections::BTreeMap;
+            let mut grouped: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+            for db in dbs {
+                let name = db["database"].as_str().unwrap_or("");
+                let env = db["environment"].as_str().unwrap_or("");
+                grouped.entry(name).or_default().push(env);
+            }
             println!("{:<20} ENVIRONMENTS", "NAME");
             println!("{:<20} {}", "----", "------------");
-            for db in dbs {
-                let name = db["name"].as_str().unwrap_or("");
-                let envs: Vec<&str> = db["environments"]
-                    .as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-                    .unwrap_or_default();
+            for (name, envs) in &grouped {
                 println!("{:<20} {}", name, envs.join(", "));
             }
         }

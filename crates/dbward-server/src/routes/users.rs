@@ -10,6 +10,18 @@ use crate::state::AppState;
 
 use super::map_error;
 
+pub async fn me(
+    Extension(user): Extension<AuthUser>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let role_names: Vec<&str> = user.roles.iter().map(|r| r.name.as_str()).collect();
+    (StatusCode::OK, Json(serde_json::json!({
+        "subject_id": user.subject_id,
+        "subject_type": user.subject_type,
+        "roles": role_names,
+        "groups": user.groups,
+    })))
+}
+
 pub async fn list(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,

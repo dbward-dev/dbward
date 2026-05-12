@@ -171,6 +171,7 @@ impl AgentSubmitResult {
             rows_affected: None,
             truncated: false,
             error_message: input.error_message.clone(),
+            result_data: if input.success { input.result_data.as_ref().map(|d| String::from_utf8_lossy(d).into_owned()) } else { None },
         };
         self.result_channel.publish(&execution.request_id, summary).await;
 

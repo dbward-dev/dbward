@@ -204,7 +204,37 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             return Ok(());
         }
         Command::Whoami => {
-            oidc_login::whoami().map_err(CliError::Auth)?;
+            // Try OIDC credentials first
+            if oidc_login::whoami().is_ok() {
+                return Ok(());
+            }
+            // Fall back to API token via server
+            let cfg = match config::load(&cli.config) {
+                Ok(c) => c,
+                Err(_) => {
+                    eprintln!("Not logged in and no config found. Run: dbward login or dbward init");
+                    return Ok(());
+                }
+            };
+            if let Some(ref token) = cfg.server.token {
+                let sc = ServerClient::new(&cfg.server.url, token);
+                match sc.get_json("/api/me").await {
+                    Ok(resp) => {
+                        let subject = resp["subject_id"].as_str().unwrap_or("unknown");
+                        let stype = resp["subject_type"].as_str().unwrap_or("unknown");
+                        let roles: Vec<&str> = resp["roles"].as_array()
+                            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                            .unwrap_or_default();
+                        println!("Subject: {subject} ({stype})");
+                        if !roles.is_empty() {
+                            println!("Roles: {}", roles.join(", "));
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to query server: {e}"),
+                }
+            } else {
+                eprintln!("Not logged in. Run: dbward login");
+            }
             return Ok(());
         }
         Command::Server { action } => return server::run_server_command(action).await,

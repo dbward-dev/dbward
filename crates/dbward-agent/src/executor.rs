@@ -109,13 +109,8 @@ impl JobExecutor {
     }
 
     fn verify_token(&self, claim: &ClaimResponse) -> Result<(), AgentError> {
-        let token: serde_json::Value = serde_json::from_value(claim.execution_token.clone())
-            .or_else(|_| {
-                claim.execution_token.as_str()
-                    .ok_or_else(|| AgentError::TokenVerification("token not a string or object".into()))
-                    .and_then(|s| serde_json::from_str(s)
-                        .map_err(|e| AgentError::TokenVerification(format!("invalid token JSON: {e}"))))
-            })?;
+        let token: serde_json::Value = serde_json::from_str(&claim.execution_token)
+            .map_err(|e| AgentError::TokenVerification(format!("invalid token JSON: {e}")))?;
 
         let sig_hex = token.get("signature")
             .and_then(|v| v.as_str())
@@ -150,9 +145,7 @@ impl JobExecutor {
         let expected_hash = token.get("detail_hash")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AgentError::TokenVerification("missing detail_hash".into()))?;
-        let detail_str = serde_json::to_string(&claim.detail)
-            .map_err(|e| AgentError::TokenVerification(format!("detail serialize: {e}")))?;
-        let actual_hash = hex::encode(Sha256::digest(detail_str.as_bytes()));
+        let actual_hash = hex::encode(Sha256::digest(claim.detail.as_bytes()));
         if actual_hash != expected_hash {
             return Err(AgentError::TokenVerification("detail_hash mismatch".into()));
         }
@@ -202,12 +195,9 @@ impl JobExecutor {
     }
 }
 
-fn extract_sql(detail: &serde_json::Value, _operation: &str) -> String {
-    detail
-        .get("sql")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string()
+fn extract_sql(detail: &str, _operation: &str) -> String {
+    // detail is the raw SQL string from the server
+    detail.to_string()
 }
 
 async fn run_cancellable(

@@ -49,8 +49,8 @@ pub struct ClaimResponse {
     pub operation: String,
     pub environment: String,
     pub database: String,
-    pub detail: serde_json::Value,
-    pub execution_token: serde_json::Value,
+    pub detail: String,
+    pub execution_token: String,
     #[serde(default)]
     pub statement_timeout_secs: Option<u64>,
 }

@@ -343,6 +343,7 @@ pub async fn stream_result(
                 "rows_affected": summary.rows_affected,
                 "truncated": summary.truncated,
                 "error_message": summary.error_message,
+                "result_data": summary.result_data,
             })))),
             None => Ok((StatusCode::NO_CONTENT, Json(json!({})))),
         },

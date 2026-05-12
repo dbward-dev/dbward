@@ -23,8 +23,8 @@ pub async fn run_audit(
         if json_output {
             println!("{}", serde_json::to_string_pretty(&resp)?);
         } else {
-            let count = resp["verified_events"].as_u64().unwrap_or(0);
-            let intact = resp["chain_intact"].as_bool().unwrap_or(false);
+            let count = resp["total_events"].as_u64().unwrap_or(0);
+            let intact = resp["valid"].as_bool().unwrap_or(false);
             if intact {
                 println!("✓ Hash chain intact ({count} events verified)");
             } else {
@@ -50,7 +50,7 @@ pub async fn run_audit(
         return Ok(());
     }
     if output == "json" {
-        println!("{}", serde_json::to_string_pretty(&body["audit_events"])?);
+        println!("{}", serde_json::to_string_pretty(&body["events"])?);
         return Ok(());
     }
     if output == "csv" {
@@ -64,7 +64,7 @@ pub async fn run_audit(
 
 fn print_audit_csv(body: &serde_json::Value) {
     let empty = vec![];
-    let entries = body["audit_events"].as_array().unwrap_or(&empty);
+    let entries = body["events"].as_array().unwrap_or(&empty);
     let total = body["total"].as_u64().unwrap_or(0);
     if total > entries.len() as u64 {
         eprintln!(
@@ -96,7 +96,7 @@ fn print_audit_csv(body: &serde_json::Value) {
 
 fn print_audit_table(body: &serde_json::Value) {
     let empty = vec![];
-    let entries = body["audit_events"].as_array().unwrap_or(&empty);
+    let entries = body["events"].as_array().unwrap_or(&empty);
     if entries.is_empty() {
         println!("No audit events.");
         return;

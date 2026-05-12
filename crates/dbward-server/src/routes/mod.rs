@@ -60,6 +60,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/tokens", axum::routing::post(tokens::create).get(tokens::list))
         .route("/api/tokens/{id}", axum::routing::delete(tokens::revoke))
         // Users
+        .route("/api/me", axum::routing::get(users::me))
         .route("/api/users", axum::routing::get(users::list))
         .route("/api/users/{id}/suspend", axum::routing::post(users::suspend))
         .route("/api/users/{id}/activate", axum::routing::post(users::activate))
