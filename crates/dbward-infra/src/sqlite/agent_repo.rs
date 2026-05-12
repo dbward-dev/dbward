@@ -278,8 +278,9 @@ impl AgentRepo for SqliteAgentRepo {
         result_manifest: Option<&ExecutionResult>,
         share_with: &[ResultAccess],
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let tx = conn.unchecked_transaction().map_err(|e| AppError::Internal(e.to_string()))?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
 
         let exec_status = if success { "completed" } else { "failed" };
         tx.execute(
@@ -354,8 +355,9 @@ impl AgentRepo for SqliteAgentRepo {
     fn mark_execution_lost_and_record(&self, execution_id: &str, request_id: &str, audit_event: &AuditEvent, now: &str) -> Result<bool, AppError> {
         use sha2::{Digest, Sha256};
 
-        let conn = self.conn.lock().unwrap();
-        let tx = conn.unchecked_transaction().map_err(|e| AppError::Internal(e.to_string()))?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         let n1 = tx.execute(
             "UPDATE executions SET status = 'failed', finished_at = ?2 WHERE id = ?1 AND status IN ('claimed', 'running')",
             rusqlite::params![execution_id, now],

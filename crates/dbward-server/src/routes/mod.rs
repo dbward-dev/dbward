@@ -1,4 +1,4 @@
-use axum::{http::StatusCode, middleware, Json, Router};
+use axum::{extract::DefaultBodyLimit, http::StatusCode, middleware, Json, Router};
 use dbward_app::error::AppError;
 
 use crate::state::AppState;
@@ -54,7 +54,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/agent/poll", axum::routing::post(agent::poll))
         .route("/api/agent/jobs/{id}/claim", axum::routing::post(agent::claim))
         .route("/api/agent/jobs/{id}/heartbeat", axum::routing::post(agent::heartbeat))
-        .route("/api/agent/jobs/{id}/result", axum::routing::post(agent::submit_result))
+        .route("/api/agent/jobs/{id}/result", axum::routing::post(agent::submit_result).layer(DefaultBodyLimit::max(10 * 1024 * 1024)))
         .route("/api/agents", axum::routing::get(agent::list_agents))
         // Tokens
         .route("/api/tokens", axum::routing::post(tokens::create).get(tokens::list))

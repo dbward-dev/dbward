@@ -150,6 +150,9 @@ fn is_private_ip(ip: &std::net::IpAddr) -> bool {
                 || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
         }
         std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return v4.is_loopback() || v4.is_private() || v4.is_link_local();
+            }
             v6.is_loopback() || v6.is_unspecified()
                 || (v6.segments()[0] & 0xfe00) == 0xfc00
                 || (v6.segments()[0] & 0xffc0) == 0xfe80

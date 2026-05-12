@@ -18,8 +18,9 @@ impl AuditLogger for SqliteAuditLogger {
     fn record(&self, event: &AuditEvent) -> Result<(), AppError> {
         use sha2::{Digest, Sha256};
 
-        let conn = self.conn.lock().unwrap();
-        let tx = conn.unchecked_transaction().map_err(|e| AppError::Internal(e.to_string()))?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
 
         // Get last hash for chain continuity
         let prev_hash: Option<String> = tx.query_row(

@@ -323,8 +323,8 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: DateTime<Utc>, audit_event: &AuditEvent) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let tx = conn.unchecked_transaction().map_err(map_err)?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(map_err)?;
 
         tx.execute(
             "INSERT INTO approvals (id, request_id, action, actor_id, matched_selector, step_index, comment, created_at)
@@ -370,8 +370,8 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn reject_and_record(&self, request_id: &str, approval: &Approval, now: DateTime<Utc>, audit_event: &AuditEvent) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let tx = conn.unchecked_transaction().map_err(map_err)?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(map_err)?;
 
         let now_str = now.to_rfc3339();
         let affected = tx.execute(
@@ -558,8 +558,8 @@ impl RequestRepo for SqliteRequestRepo {
     fn mark_expired_and_record(&self, id: &str, audit_event: &AuditEvent, now: &str) -> Result<bool, AppError> {
         use sha2::{Digest, Sha256};
 
-        let conn = self.conn.lock().unwrap();
-        let tx = conn.unchecked_transaction().map_err(map_err)?;
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(map_err)?;
 
         let n = tx.execute(
             "UPDATE requests SET status = 'expired', updated_at = ?2 WHERE id = ?1 AND status IN ('approved', 'pending')",

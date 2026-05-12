@@ -41,14 +41,19 @@ impl TokenRepo for SqliteTokenRepo {
     fn verify(&self, prefix: &str, hash: &str) -> Result<Option<Token>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE token_prefix = ?1 AND token_hash = ?2 AND status = 'active'",
+            "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE token_prefix = ?1 AND status = 'active'",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
-        let result = stmt.query_row(rusqlite::params![prefix, hash], row_to_token);
-        match result {
-            Ok(t) => Ok(Some(t)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(AppError::Internal(e.to_string())),
+        let rows = stmt.query_map(rusqlite::params![prefix], row_to_token)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+
+        use subtle::ConstantTimeEq;
+        for row in rows {
+            let token = row.map_err(|e| AppError::Internal(e.to_string()))?;
+            if token.token_hash.as_bytes().ct_eq(hash.as_bytes()).into() {
+                return Ok(Some(token));
+            }
         }
+        Ok(None)
     }
 
     fn list(&self) -> Result<Vec<Token>, AppError> {

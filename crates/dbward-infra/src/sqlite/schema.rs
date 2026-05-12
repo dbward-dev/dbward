@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -23,6 +23,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 3 {
             conn.execute_batch(MIGRATION_V3)?;
+        }
+        if current < 4 {
+            conn.execute_batch(MIGRATION_V4)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -106,6 +109,8 @@ CREATE TABLE IF NOT EXISTS approvals (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_approvals_request_id ON approvals(request_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_no_dup_approve
+  ON approvals(request_id, actor_id, step_index) WHERE action = 'approve';
 
 -- Executions (1:N per request, tracks each attempt)
 CREATE TABLE IF NOT EXISTS executions (
@@ -300,4 +305,9 @@ CREATE TABLE IF NOT EXISTS request_pending_approvers (
     PRIMARY KEY (request_id, selector, step_index)
 );
 CREATE INDEX IF NOT EXISTS idx_pending_approvers_selector ON request_pending_approvers(selector);
+";
+
+const MIGRATION_V4: &str = "
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_no_dup_approve
+  ON approvals(request_id, actor_id, step_index) WHERE action = 'approve';
 ";

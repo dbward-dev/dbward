@@ -15,7 +15,9 @@ pub struct Token {
     pub id: String,
     pub subject_type: SubjectType,
     pub subject_id: String,
+    #[serde(skip_serializing)]
     pub token_hash: String,
+    #[serde(skip_serializing)]
     pub token_prefix: String,
     pub roles: Vec<String>,
     pub groups: Vec<String>,
