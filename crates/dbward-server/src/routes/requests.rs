@@ -123,6 +123,7 @@ pub async fn create(
                     "operation": out.operation.as_str(),
                     "approvers": approvers,
                     "idempotent": out.is_existing,
+                    "expires_at": out.expires_at,
                 })),
             ))
         },
