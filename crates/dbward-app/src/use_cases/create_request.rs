@@ -77,13 +77,10 @@ impl CreateRequest {
             .authorize_scoped(user, perm, &input.database, &input.environment, &ResourceContext::Global)
             .map_err(AppError::Forbidden)?;
 
-        // 1b-2. SELECT cannot use share_with or emergency
+        // 1b-2. SELECT cannot use share_with
         if operation == Operation::ExecuteSelect {
             if !input.share_with.is_empty() {
                 return Err(AppError::Validation("share_with is not allowed for SELECT queries".into()));
-            }
-            if input.emergency {
-                return Err(AppError::Validation("emergency is not allowed for SELECT queries".into()));
             }
         }
 
@@ -116,9 +113,16 @@ impl CreateRequest {
         // 4. Workflow evaluation
         let workflow = self.policy.evaluate_workflow(&input.database, &input.environment, operation)?;
         let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
+        // Fail-closed: no workflow configured = reject (unless break-glass)
         let decision = if workflow.is_none() {
-            // No matching workflow → auto_approve (no approval steps needed)
-            workflow_matcher::ApprovalDecision::AutoApproved
+            if input.emergency {
+                workflow_matcher::ApprovalDecision::AutoApproved
+            } else {
+                return Err(AppError::Validation(format!(
+                    "no workflow configured for {}/{}",
+                    input.database, input.environment
+                )));
+            }
         } else {
             workflow_matcher::evaluate(
                 workflow.as_ref(),
@@ -256,7 +260,23 @@ mod tests {
 
     struct FakePolicy;
     impl PolicyEvaluator for FakePolicy {
-        fn evaluate_workflow(&self, _: &DatabaseName, _: &Environment, _: Operation) -> Result<Option<dbward_domain::policies::Workflow>, AppError> { Ok(None) }
+        fn evaluate_workflow(&self, _: &DatabaseName, _: &Environment, _: Operation) -> Result<Option<dbward_domain::policies::Workflow>, AppError> {
+            Ok(Some(dbward_domain::policies::Workflow {
+                id: "test-wf".into(),
+                database: DatabaseName::wildcard(),
+                environment: Environment::wildcard(),
+                operations: vec![],
+                steps: vec![],
+                skip_approval_for: vec![],
+                require_reason: false,
+                allow_self_approve: false,
+                allow_same_approver_across_steps: false,
+                pending_ttl_secs: None,
+                approval_ttl_secs: None,
+                created_at: None,
+                updated_at: None,
+            }))
+        }
         fn get_execution_policy(&self, _: &DatabaseName, _: &Environment) -> dbward_domain::policies::ExecutionPolicy { Default::default() }
     }
 
@@ -360,7 +380,7 @@ mod tests {
         let uc = make_uc(Arc::new(AllowAll));
         let result = uc.execute(make_input(), &make_user()).unwrap();
         assert_eq!(result.id, "test-id-001");
-        // No workflow → auto_approved → dispatched
+        // Workflow with empty steps → auto-approved → dispatched
         assert_eq!(result.status, RequestStatus::Dispatched);
     }
 

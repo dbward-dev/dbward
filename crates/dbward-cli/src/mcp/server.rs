@@ -436,7 +436,7 @@ async fn handle_tools_call(
                     if let Some(progress) = v.get("approval_progress") {
                         format_approval_progress(req_id, &v["status"], progress)
                     } else {
-                        "No workflow assigned (auto-approved)".to_string()
+                        "No workflow configured (break-glass)".to_string()
                     }
                 })
                 .map_err(|e| e.to_string())
@@ -507,7 +507,7 @@ async fn handle_tools_call(
                 Ok(format!(
                     "To execute '{op}' on {db} ({env_arg}):\n\
                      Check if a workflow exists: [[workflows]] with database=\"{db}\" or \"*\", environment=\"{env_arg}\" or \"*\"\n\
-                     If no workflow matches → auto-approved.\n\
+                     If no workflow matches → rejected (fail-closed).\n\
                      If workflow has steps → approval required from specified roles/groups.\n\
                      Use 'dbward_who_can_approve' with a request_id for specific approval path."
                 ))

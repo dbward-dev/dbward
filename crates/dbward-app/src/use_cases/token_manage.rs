@@ -97,7 +97,7 @@ impl TokenManage {
 
         // Generate token
         let raw = format!("dbw_{}", Uuid::new_v4().simple());
-        let prefix = raw[..8].to_string();
+        let prefix = raw[4..12].to_string();
         let hash = hex::encode(Sha256::digest(raw.as_bytes()));
 
         let now = self.clock.now();
@@ -197,6 +197,7 @@ mod tests {
         fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn activate(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
         fn is_suspended(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+        fn ensure_exists(&self, _: &str) -> Result<(), AppError> { Ok(()) }
     }
     struct FakePolicyRepo { roles: Vec<RoleDefinition> }
     impl PolicyRepo for FakePolicyRepo {

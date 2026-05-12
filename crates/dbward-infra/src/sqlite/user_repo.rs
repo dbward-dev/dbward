@@ -88,6 +88,16 @@ impl UserRepo for SqliteUserRepo {
         let status: Option<String> = conn.query_row("SELECT status FROM users WHERE id = ?1", rusqlite::params![user_id], |r| r.get(0)).ok();
         Ok(status.as_deref() == Some("suspended"))
     }
+
+    fn ensure_exists(&self, subject_id: &str) -> Result<(), AppError> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT OR IGNORE INTO users (id, groups_json, status, created_at, updated_at) VALUES (?1, '[]', 'active', ?2, ?2)",
+            rusqlite::params![subject_id, now],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(())
+    }
 }
 
 fn parse_user_status(s: &str) -> UserStatus {

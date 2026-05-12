@@ -51,10 +51,10 @@ impl ApproveRequest {
             )));
         }
 
-        // 3. Parse workflow snapshot
+        // 3. Parse workflow snapshot (fail-closed: all pending requests have a workflow)
         let workflow: Workflow = request.workflow_snapshot_json.as_deref()
             .and_then(|json| serde_json::from_str(json).ok())
-            .ok_or_else(|| AppError::Conflict("request has no approval workflow (auto-approved)".into()))?;
+            .ok_or_else(|| AppError::Conflict("request has no approval workflow".into()))?;
 
         // 4. Get existing approvals
         let approvals = self.request_repo.get_approvals(&request.id)?;

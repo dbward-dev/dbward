@@ -53,7 +53,7 @@ impl RejectRequest {
 
         if !is_requester {
             let wf = workflow.as_ref()
-                .ok_or_else(|| AppError::Conflict("request has no approval workflow (auto-approved)".into()))?;
+                .ok_or_else(|| AppError::Conflict("request has no workflow snapshot".into()))?;
 
             if current_step_index >= wf.steps.len() as u32 {
                 return Err(AppError::Conflict("all steps already satisfied".into()));

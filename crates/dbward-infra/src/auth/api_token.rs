@@ -72,6 +72,9 @@ impl TokenVerifier for ApiTokenVerifier {
             ));
         }
 
+        // Auto-create user on first auth
+        self.user_repo.ensure_exists(&token.subject_id).map_err(|e| AuthError::Internal(e.to_string()))?;
+
         Ok(AuthUser {
             subject_id: token.subject_id,
             subject_type: token.subject_type,

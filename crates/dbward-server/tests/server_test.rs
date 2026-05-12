@@ -124,6 +124,7 @@ impl UserRepo for StubUserRepo {
     fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn activate(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn is_suspended(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+    fn ensure_exists(&self, _: &str) -> Result<(), AppError> { Ok(()) }
 }
 
 struct StubTokenRepo;

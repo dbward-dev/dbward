@@ -100,6 +100,8 @@ pub trait UserRepo: Send + Sync {
     fn suspend(&self, user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn activate(&self, user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn is_suspended(&self, user_id: &str) -> Result<bool, AppError>;
+    /// Auto-create user record on first auth if not exists.
+    fn ensure_exists(&self, subject_id: &str) -> Result<(), AppError>;
 }
 
 // --- TokenRepo ---

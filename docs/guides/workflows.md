@@ -4,7 +4,7 @@ Workflows define who must approve a database operation before it executes. Confi
 
 ## Basic concepts
 
-- **No workflow match = auto-approve** (the operation executes immediately)
+- **No workflow match = request rejected (fail-closed). Use steps=[] for auto-approve** (the operation executes immediately)
 - **Workflow match = approval required** (one or more people must approve)
 - Workflows are scoped by **database × environment × operation**
 
@@ -194,7 +194,7 @@ When a request comes in, dbward finds the most specific matching workflow:
 4. `database + *`
 5. `* + *`
 
-**No match = auto-approve.**
+**No match = rejected (fail-closed). Define steps=[] for auto-approve.**
 
 ### Example
 
@@ -224,7 +224,7 @@ environment = "development"
 | `migrate_up` on `primary` / `production` | Rule B | Wildcard database, matching env |
 | `execute_query` on `analytics` / `production` | Rule B | Wildcard database, matching env |
 | `execute_query` on `primary` / `development` | Rule C | Development auto-approve |
-| `execute_query` on `primary` / `staging` | None → auto-approve | No matching rule |
+| `execute_query` on `primary` / `staging` | None → rejected | No matching rule (fail-closed) |
 
 ---
 

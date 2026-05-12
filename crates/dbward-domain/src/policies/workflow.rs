@@ -27,11 +27,17 @@ pub struct Workflow {
     pub id: String,
     pub database: DatabaseName,
     pub environment: Environment,
+    #[serde(default)]
     pub operations: Vec<Operation>,
+    #[serde(default)]
     pub steps: Vec<WorkflowStep>,
+    #[serde(default)]
     pub skip_approval_for: Vec<Selector>,
+    #[serde(default)]
     pub require_reason: bool,
+    #[serde(default)]
     pub allow_self_approve: bool,
+    #[serde(default)]
     pub allow_same_approver_across_steps: bool,
     /// How long a request can stay pending before expiring.
     pub pending_ttl_secs: Option<u64>,
