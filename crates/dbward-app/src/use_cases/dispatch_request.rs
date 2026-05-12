@@ -156,7 +156,7 @@ mod tests {
     impl RequestRepo for FakeRepo {
         fn insert(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
         fn get(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(self.request.lock().unwrap().clone()) }
-        fn list(&self, _: u32, _: u32) -> Result<Vec<Request>, AppError> { Ok(vec![]) }
+        fn list(&self, _: u32, _: u32) -> Result<(Vec<Request>, u32), AppError> { Ok((vec![], 0)) }
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(None) }
         fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> { Ok(()) }
         fn get_approvals(&self, _: &str) -> Result<Vec<dbward_domain::entities::Approval>, AppError> { Ok(vec![]) }

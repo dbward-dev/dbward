@@ -77,6 +77,16 @@ impl CreateRequest {
             .authorize_scoped(user, perm, &input.database, &input.environment, &ResourceContext::Global)
             .map_err(AppError::Forbidden)?;
 
+        // 1b-2. SELECT cannot use share_with or emergency
+        if operation == Operation::ExecuteSelect {
+            if !input.share_with.is_empty() {
+                return Err(AppError::Validation("share_with is not allowed for SELECT queries".into()));
+            }
+            if input.emergency {
+                return Err(AppError::Validation("emergency is not allowed for SELECT queries".into()));
+            }
+        }
+
         // 1b. Emergency requires reason
         if input.emergency && input.reason.is_none() {
             return Err(AppError::Validation("reason is required for emergency requests".into()));
@@ -254,7 +264,7 @@ mod tests {
     impl RequestRepo for FakeRequestRepo {
         fn insert(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
         fn get(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(None) }
-        fn list(&self, _: u32, _: u32) -> Result<Vec<Request>, AppError> { Ok(vec![]) }
+        fn list(&self, _: u32, _: u32) -> Result<(Vec<Request>, u32), AppError> { Ok((vec![], 0)) }
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(None) }
         fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> { Ok(()) }
         fn get_approvals(&self, _: &str) -> Result<Vec<dbward_domain::entities::Approval>, AppError> { Ok(vec![]) }

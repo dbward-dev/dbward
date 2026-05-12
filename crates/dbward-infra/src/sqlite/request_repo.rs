@@ -224,13 +224,17 @@ impl RequestRepo for SqliteRequestRepo {
         }
     }
 
-    fn list(&self, limit: u32, offset: u32) -> Result<Vec<Request>, AppError> {
+    fn list(&self, limit: u32, offset: u32) -> Result<(Vec<Request>, u32), AppError> {
         let conn = self.conn.blocking_lock();
+        let total: u32 = conn
+            .query_row("SELECT COUNT(*) FROM requests", [], |r| r.get(0))
+            .map_err(map_err)?;
         let mut stmt = conn
             .prepare("SELECT * FROM requests ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")
             .map_err(map_err)?;
         let rows = stmt.query_and_then(params![limit, offset], row_to_request).map_err(map_err)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+        let items = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
+        Ok((items, total))
     }
 
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {

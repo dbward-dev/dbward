@@ -27,6 +27,21 @@ pub enum AppError {
     Internal(String),
 }
 
+impl AppError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            AppError::Forbidden(_) => "forbidden",
+            AppError::Auth(e) => e.code(),
+            AppError::NotFound(_) => "request.not_found",
+            AppError::Conflict(_) => "request.conflict",
+            AppError::Gone(_) => "request.gone",
+            AppError::Validation(_) => "validation.failed",
+            AppError::PlanLimit(_) => "policy.limit_exceeded",
+            AppError::Internal(_) => "internal_error",
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AuthzError {
     #[error("permission denied: {permission} — {reason}")]
@@ -61,4 +76,19 @@ pub enum AuthError {
 
     #[error("internal: {0}")]
     Internal(String),
+}
+
+impl AuthError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            AuthError::MissingToken => "auth.missing_token",
+            AuthError::InvalidToken => "auth.invalid_token",
+            AuthError::TokenExpired => "auth.token_expired",
+            AuthError::TokenRevoked => "auth.token_revoked",
+            AuthError::UserSuspended => "auth.user_suspended",
+            AuthError::OidcNotConfigured => "auth.oidc_not_configured",
+            AuthError::OidcVerificationFailed(_) => "auth.oidc_failed",
+            AuthError::Internal(_) => "internal_error",
+        }
+    }
 }

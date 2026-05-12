@@ -10,7 +10,10 @@ pub struct ConfigRoleResolver {
     role_bindings: HashMap<String, Vec<String>>,
     user_bindings: HashMap<String, Vec<String>>,
     default_role: Option<String>,
+    policy_repo: Option<Arc<dyn dbward_app::ports::PolicyRepo>>,
 }
+
+use std::sync::Arc;
 
 /// Returns built-in role definitions that are always available.
 fn builtin_roles() -> Vec<(String, ResolvedRole)> {
@@ -67,6 +70,16 @@ impl ConfigRoleResolver {
         user_bindings: HashMap<String, Vec<String>>,
         default_role: Option<String>,
     ) -> Self {
+        Self::with_policy_repo(role_definitions, role_bindings, user_bindings, default_role, None)
+    }
+
+    pub fn with_policy_repo(
+        role_definitions: Vec<RoleDefinition>,
+        role_bindings: HashMap<String, Vec<String>>,
+        user_bindings: HashMap<String, Vec<String>>,
+        default_role: Option<String>,
+        policy_repo: Option<Arc<dyn dbward_app::ports::PolicyRepo>>,
+    ) -> Self {
         let mut roles = HashMap::new();
         // Insert built-in roles first (can be overridden by config)
         for (name, resolved) in builtin_roles() {
@@ -86,6 +99,7 @@ impl ConfigRoleResolver {
             role_bindings,
             user_bindings,
             default_role,
+            policy_repo,
         }
     }
 }
@@ -127,10 +141,32 @@ impl RoleResolver for ConfigRoleResolver {
             }
         }
 
-        let resolved: Vec<ResolvedRole> = role_names
-            .into_iter()
-            .filter_map(|name| self.roles.get(&name).cloned())
-            .collect();
+        // Resolve from config first, then fall back to PolicyRepo for DB-stored roles
+        let mut resolved: Vec<ResolvedRole> = Vec::new();
+        let mut unresolved: Vec<String> = Vec::new();
+        for name in &role_names {
+            if let Some(r) = self.roles.get(name) {
+                resolved.push(r.clone());
+            } else {
+                unresolved.push(name.clone());
+            }
+        }
+
+        // Query PolicyRepo for unresolved role names
+        if !unresolved.is_empty() {
+            if let Some(ref repo) = self.policy_repo {
+                if let Ok(defs) = repo.get_roles_by_names(&unresolved) {
+                    for def in defs {
+                        resolved.push(ResolvedRole {
+                            name: def.name.clone(),
+                            permissions: def.permissions.into_iter().collect(),
+                            databases: def.databases,
+                            environments: def.environments,
+                        });
+                    }
+                }
+            }
+        }
 
         Ok(resolved)
     }

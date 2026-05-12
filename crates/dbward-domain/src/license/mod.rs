@@ -16,6 +16,7 @@ pub struct PlanLimits {
     pub max_webhooks: usize,
     pub max_execution_policies: usize,
     pub max_tokens: usize,
+    pub max_roles: usize,
 }
 
 impl PlanLimits {
@@ -26,6 +27,7 @@ impl PlanLimits {
         max_webhooks: 3,
         max_execution_policies: 3,
         max_tokens: 10,
+        max_roles: 8,
     };
 }
 

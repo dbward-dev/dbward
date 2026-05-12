@@ -2,8 +2,15 @@ use axum::{extract::Request, extract::State, http::StatusCode, middleware::Next,
 use dbward_app::error::AuthError;
 use dbward_domain::auth::{AuthUser, SubjectType};
 use dbward_domain::entities::{User, UserStatus};
+use std::sync::Mutex;
+use std::collections::HashMap;
 
 use crate::state::AppState;
+
+/// Cache of recent login_success audit events to avoid spamming on every request.
+/// Key: subject_id, Value: last audit timestamp.
+static LOGIN_AUDIT_CACHE: std::sync::LazyLock<Mutex<HashMap<String, std::time::Instant>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn auth_error_response(e: AuthError) -> (StatusCode, String) {
     match e {
@@ -110,6 +117,29 @@ pub async fn auth_middleware(
                 log_auth_failure(&state, &e);
                 auth_error_response(e)
             })?;
+
+        // Emit login_success audit (cached for 1 hour per subject)
+        {
+            let should_emit = {
+                let cache = LOGIN_AUDIT_CACHE.lock().unwrap();
+                cache.get(&subject_id)
+                    .map_or(true, |t| t.elapsed() > std::time::Duration::from_secs(3600))
+            };
+            if should_emit {
+                let event = dbward_domain::entities::AuditEvent::simple(
+                    "login_success", "auth", &subject_id, None,
+                );
+                let _ = state.audit_logger.record(&event);
+                let mut cache = LOGIN_AUDIT_CACHE.lock().unwrap();
+                // Evict stale entries if cache is too large
+                if cache.len() > 10_000 {
+                    let cutoff = std::time::Duration::from_secs(3600);
+                    cache.retain(|_, t| t.elapsed() < cutoff);
+                }
+                cache.insert(subject_id.clone(), std::time::Instant::now());
+            }
+        }
+
         AuthUser {
             subject_id,
             subject_type: SubjectType::User,

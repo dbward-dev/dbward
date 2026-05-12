@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission};
-use dbward_domain::entities::{Agent, AgentStatus, DatabaseCapability};
+use dbward_domain::entities::{Agent, AgentStatus, AuditEvent, DatabaseCapability};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::error::AppError;
@@ -10,6 +10,8 @@ use crate::ports::*;
 pub struct AgentPoll {
     pub authorizer: Arc<dyn Authorizer>,
     pub agent_repo: Arc<dyn AgentRepo>,
+    pub audit_logger: Arc<dyn AuditLogger>,
+    pub license_checker: Arc<dyn LicenseChecker>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -40,7 +42,19 @@ impl AgentPoll {
         self.authorizer.authorize_global(user, Permission::AgentPoll)
             .map_err(AppError::Forbidden)?;
 
-        // 2. Upsert agent (register/update last_seen + status)
+        // 2. Check if this is a new agent registration
+        let existing = self.agent_repo.get(&user.subject_id)?;
+        let is_new = existing.is_none();
+
+        // 2b. Free tier agent limit
+        if is_new {
+            let agents = self.agent_repo.list()?;
+            if agents.len() as u32 >= self.license_checker.max_agents() {
+                return Err(AppError::PlanLimit("agent limit reached".into()));
+            }
+        }
+
+        // 3. Upsert agent (register/update last_seen + status)
         let now = self.clock.now();
         let agent = Agent {
             id: user.subject_id.clone(),
@@ -54,22 +68,32 @@ impl AgentPoll {
         };
         self.agent_repo.upsert(&agent)?;
 
-        // 3. Find dispatched jobs matching capabilities
+        // 3b. Emit audit event for new agent registration
+        if is_new {
+            let _ = self.audit_logger.record(&AuditEvent::simple(
+                "agent_registered",
+                "agent",
+                &user.subject_id,
+                Some(&user.subject_id),
+            ));
+        }
+
+        // 4. Find dispatched jobs matching capabilities
         let pairs: Vec<(DatabaseName, Environment)> = input.capabilities.iter()
             .map(|c| (c.database.clone(), c.environment.clone()))
             .collect();
         let mut jobs = self.agent_repo.find_dispatched_jobs(&pairs)?;
 
-        // 4. Filter by operations (if specified)
+        // 5. Filter by operations (if specified)
         if !input.operations.is_empty() {
             jobs.retain(|r| input.operations.contains(&r.operation));
         }
 
-        // 5. Apply limit
+        // 6. Apply limit
         let limit = input.limit.unwrap_or(10).min(20) as usize;
         jobs.truncate(limit);
 
-        // 6. Map to output
+        // 7. Map to output
         let poll_jobs = jobs.into_iter().map(|r| PollJob {
             id: r.id,
             created_by: r.requester,

@@ -25,10 +25,23 @@ fn require_agent(user: &AuthUser) -> Result<(), (StatusCode, Json<serde_json::Va
 
 #[derive(Deserialize)]
 pub struct PollBody {
-    pub capabilities: Vec<dbward_domain::entities::DatabaseCapability>,
+    pub capabilities: PollBodyCapabilities,
+    pub limit: Option<u32>,
+    #[serde(default)]
+    pub status: Option<PollBodyStatus>,
+}
+
+#[derive(Deserialize)]
+pub struct PollBodyCapabilities {
+    pub databases: Vec<String>,
+    #[serde(default)]
+    pub environments: Vec<String>,
     #[serde(default)]
     pub operations: Vec<dbward_domain::values::Operation>,
-    pub limit: Option<u32>,
+}
+
+#[derive(Deserialize)]
+pub struct PollBodyStatus {
     #[serde(default)]
     pub in_flight: u32,
     #[serde(default = "default_max_concurrent")]
@@ -49,18 +62,41 @@ pub async fn poll(
     }
 
     require_agent(&user)?;
+
+    // Convert PollBodyCapabilities to Vec<DatabaseCapability>
+    use dbward_domain::entities::DatabaseCapability;
+    use dbward_domain::values::{DatabaseName, Environment};
+    let envs = if body.capabilities.environments.is_empty() {
+        vec![Environment::wildcard()]
+    } else {
+        body.capabilities.environments.iter()
+            .filter_map(|e| Environment::new(e).ok())
+            .collect()
+    };
+    let capabilities: Vec<DatabaseCapability> = body.capabilities.databases.iter()
+        .filter_map(|d| DatabaseName::new(d).ok())
+        .flat_map(|db| envs.iter().map(move |env| DatabaseCapability { database: db.clone(), environment: env.clone() }))
+        .collect();
+
+    let (in_flight, max_concurrent) = match body.status {
+        Some(ref s) => (s.in_flight, s.max_concurrent),
+        None => (0, 4),
+    };
+
     let uc = AgentPoll {
         authorizer: state.authorizer.clone(),
         agent_repo: state.agent_repo.clone(),
+        audit_logger: state.audit_logger.clone(),
+        license_checker: state.license_checker.clone(),
         clock: state.clock.clone(),
     };
     let output = uc.execute(
         AgentPollInput {
-            capabilities: body.capabilities,
-            operations: body.operations,
+            capabilities,
+            operations: body.capabilities.operations,
             limit: body.limit,
-            in_flight: body.in_flight,
-            max_concurrent: body.max_concurrent,
+            in_flight,
+            max_concurrent,
         },
         &user,
     ).map_err(map_error)?;

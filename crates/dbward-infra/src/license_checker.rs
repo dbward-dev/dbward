@@ -25,7 +25,11 @@ impl LicenseChecker for LicenseCheckerImpl {
     }
 
     fn max_roles(&self) -> u32 {
-        if self.license.is_pro() { u32::MAX } else { 8 }
+        self.license.limits().map_or(u32::MAX, |l| l.max_roles as u32)
+    }
+
+    fn max_agents(&self) -> u32 {
+        self.license.limits().map_or(u32::MAX, |l| l.max_agents as u32)
     }
 
     fn is_pro(&self) -> bool {

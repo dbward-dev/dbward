@@ -69,7 +69,7 @@ pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyE
         });
     }
 
-    let parser_dialect: &dyn sqlparser::dialect::Dialect = match dialect {
+    let _parser_dialect: &dyn sqlparser::dialect::Dialect = match dialect {
         Dialect::PostgreSql => &PostgreSqlDialect {},
         Dialect::MySql => &MySqlDialect {},
     };
@@ -82,16 +82,23 @@ pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyE
         });
     }
 
-    let statements = match Parser::parse_sql(parser_dialect, trimmed) {
-        Ok(stmts) => stmts,
-        Err(_) => {
-            // Parse failure → fail-closed: treat as DML (requires approval)
-            return Ok(Classification {
-                operation: Operation::ExecuteDml,
-                dml_reason: Some(DmlReason::ParseFailure),
-                statement_count: 1,
-                statements: vec![trimmed.to_string()],
-            });
+    // Parse directly — MAX_SQL_BYTES (1MB) limit above prevents pathological inputs
+    let statements = {
+        let d: &dyn sqlparser::dialect::Dialect = match dialect {
+            Dialect::PostgreSql => &PostgreSqlDialect {},
+            Dialect::MySql => &MySqlDialect {},
+        };
+        match Parser::parse_sql(d, trimmed) {
+            Ok(stmts) => stmts,
+            Err(_) => {
+                // Parse failure → fail-closed: treat as DML (requires approval)
+                return Ok(Classification {
+                    operation: Operation::ExecuteDml,
+                    dml_reason: Some(DmlReason::ParseFailure),
+                    statement_count: 1,
+                    statements: vec![trimmed.to_string()],
+                });
+            }
         }
     };
 

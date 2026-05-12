@@ -26,6 +26,7 @@ impl StreamResult {
         let request = self.request_repo.get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
+        // Live stream access: only requester + admin + ResultPolicy.access (NOT share_with)
         self.authorizer.authorize_scoped(
             user,
             Permission::ResultView,
@@ -33,7 +34,7 @@ impl StreamResult {
             &request.environment,
             &ResourceContext::Result {
                 requester_id: request.requester.clone(),
-                access_selectors: request.share_with.clone(),
+                access_selectors: vec![], // share_with excluded from live stream
             },
         ).map_err(AppError::Forbidden)?;
 

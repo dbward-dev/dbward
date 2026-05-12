@@ -10,7 +10,7 @@ use crate::error::AppError;
 pub trait RequestRepo: Send + Sync {
     fn insert(&self, req: &Request) -> Result<(), AppError>;
     fn get(&self, id: &str) -> Result<Option<Request>, AppError>;
-    fn list(&self, limit: u32, offset: u32) -> Result<Vec<Request>, AppError>;
+    fn list(&self, limit: u32, offset: u32) -> Result<(Vec<Request>, u32), AppError>;
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError>;
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError>;
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError>;
@@ -85,6 +85,10 @@ pub trait AgentRepo: Send + Sync {
     fn mark_execution_lost(&self, execution_id: &str, request_id: &str, now: &str) -> Result<bool, AppError>;
     /// Atomically marks execution lost and records audit event in one transaction.
     fn mark_execution_lost_and_record(&self, execution_id: &str, request_id: &str, audit_event: &AuditEvent, now: &str) -> Result<bool, AppError>;
+    /// Returns (result_id, storage_key) for results past their expires_at.
+    fn find_expired_results(&self, now: &str) -> Result<Vec<(String, String)>, AppError>;
+    /// Delete a result record by id.
+    fn delete_result(&self, result_id: &str) -> Result<(), AppError>;
 }
 
 // --- UserRepo ---
@@ -190,6 +194,7 @@ pub trait LicenseChecker: Send + Sync {
     fn max_workflows(&self) -> u32;
     fn max_webhooks(&self) -> u32;
     fn max_roles(&self) -> u32;
+    fn max_agents(&self) -> u32;
     fn is_pro(&self) -> bool;
 }
 

@@ -11,7 +11,7 @@ pub use postgres::PostgresDriver;
 use std::sync::Arc;
 
 pub const MAX_RESULT_ROWS: usize = 10_000;
-pub const MAX_RESULT_BYTES: usize = 50 * 1024 * 1024;
+pub const MAX_RESULT_BYTES: usize = 10 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct QueryOutput {

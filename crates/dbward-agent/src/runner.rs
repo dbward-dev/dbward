@@ -81,9 +81,12 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
 
     // Initial poll to validate token
     let init_req = PollRequest {
-        databases: databases.clone(),
-        environments: environments.clone(),
-        operations: operations.clone(),
+        agent_id: None,
+        capabilities: dbward_api_types::agent::PollCapabilities {
+            databases: databases.clone(),
+            environments: environments.clone(),
+            operations: operations.clone(),
+        },
         limit: 0,
         status: None,
     };
@@ -133,9 +136,12 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
 
         if available > 0 {
             let req = PollRequest {
-                databases: databases.clone(),
-                environments: environments.clone(),
-                operations: operations.clone(),
+                agent_id: None,
+                capabilities: dbward_api_types::agent::PollCapabilities {
+                    databases: databases.clone(),
+                    environments: environments.clone(),
+                    operations: operations.clone(),
+                },
                 limit: available,
                 status: Some(AgentStatusReport {
                     in_flight: current_in_flight,

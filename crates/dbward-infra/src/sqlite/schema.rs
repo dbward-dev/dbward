@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -20,6 +20,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         // Incremental migrations
         if current < 2 {
             conn.execute_batch(MIGRATION_V2)?;
+        }
+        if current < 3 {
+            conn.execute_batch(MIGRATION_V3)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -268,6 +271,15 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 INSERT OR IGNORE INTO schema_version (version, applied_at) VALUES (1, datetime('now'));
 
+-- Pending approvers (populated when request enters pending state)
+CREATE TABLE IF NOT EXISTS request_pending_approvers (
+    request_id TEXT NOT NULL REFERENCES requests(id),
+    selector TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    PRIMARY KEY (request_id, selector, step_index)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_approvers_selector ON request_pending_approvers(selector);
+
 -- Seed built-in roles
 INSERT OR IGNORE INTO roles (name, permissions_json, databases_json, environments_json, built_in) VALUES
 ('admin', '[\"*\"]', '[\"*\"]', '[\"*\"]', 1),
@@ -278,4 +290,14 @@ INSERT OR IGNORE INTO roles (name, permissions_json, databases_json, environment
 
 const MIGRATION_V2: &str = "
 CREATE UNIQUE INDEX IF NOT EXISTS idx_executions_unique_claim ON executions(request_id) WHERE status = 'claimed';
+";
+
+const MIGRATION_V3: &str = "
+CREATE TABLE IF NOT EXISTS request_pending_approvers (
+    request_id TEXT NOT NULL REFERENCES requests(id),
+    selector TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    PRIMARY KEY (request_id, selector, step_index)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_approvers_selector ON request_pending_approvers(selector);
 ";

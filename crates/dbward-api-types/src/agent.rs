@@ -3,13 +3,23 @@ use serde::{Deserialize, Serialize};
 /// POST /api/agent/poll — request body
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PollRequest {
-    pub databases: Vec<String>,
-    pub environments: Vec<String>,
-    pub operations: Vec<String>,
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    pub capabilities: PollCapabilities,
+    #[serde(default)]
+    pub status: Option<AgentStatusReport>,
     #[serde(default = "default_limit")]
     pub limit: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<AgentStatusReport>,
+}
+
+/// Capabilities declared by the agent.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PollCapabilities {
+    pub databases: Vec<String>,
+    #[serde(default)]
+    pub environments: Vec<String>,
+    #[serde(default)]
+    pub operations: Vec<String>,
 }
 
 fn default_limit() -> u32 {

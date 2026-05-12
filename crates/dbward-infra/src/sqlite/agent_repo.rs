@@ -409,6 +409,26 @@ impl AgentRepo for SqliteAgentRepo {
         tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(true)
     }
+
+    fn find_expired_results(&self, now: &str) -> Result<Vec<(String, String)>, AppError> {
+        let conn = self.conn.blocking_lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, storage_key FROM results WHERE datetime(expires_at) < datetime(?1)"
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        let rows = stmt.query_map(rusqlite::params![now], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }).map_err(|e| AppError::Internal(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| AppError::Internal(e.to_string()))
+    }
+
+    fn delete_result(&self, result_id: &str) -> Result<(), AppError> {
+        let conn = self.conn.blocking_lock();
+        conn.execute("DELETE FROM result_access WHERE result_id = ?1", rusqlite::params![result_id])
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        conn.execute("DELETE FROM results WHERE id = ?1", rusqlite::params![result_id])
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(())
+    }
 }
 
 // --- helpers ---

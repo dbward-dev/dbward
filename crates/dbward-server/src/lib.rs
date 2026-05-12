@@ -57,11 +57,12 @@ pub async fn run_from_args(
         ),
     );
     let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new(
-        dbward_infra::auth::ConfigRoleResolver::new(
+        dbward_infra::auth::ConfigRoleResolver::with_policy_repo(
             vec![],
             HashMap::new(),
             HashMap::new(),
             None,
+            Some(policy_repo.clone()),
         ),
     );
     let authorizer: Arc<dyn dbward_app::ports::Authorizer> = Arc::new(
@@ -88,12 +89,18 @@ pub async fn run_from_args(
         dbward_infra::InMemoryResultChannel::new(),
     );
     let notifier: Arc<dyn dbward_app::ports::Notifier> = Arc::new(
-        dbward_infra::webhook::WebhookDispatcher::new(vec![]),
+        dbward_infra::webhook::WebhookDispatcher::with_repo(webhook_repo.clone()),
     );
+    // Load initial webhooks from DB
+    if let Err(e) = notifier.reload() {
+        tracing::warn!("failed to load webhooks on startup: {e}");
+    }
     let event_dispatcher: Arc<dyn dbward_app::ports::EventDispatcher> = Arc::new(
         dbward_infra::webhook::CompositeEventDispatcher {
             audit: audit_logger.clone(),
             notifier: notifier.clone(),
+            result_channel: Some(result_channel.clone()),
+            request_notifier: None,
         },
     );
     let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> = Arc::new(

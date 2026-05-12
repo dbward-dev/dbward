@@ -138,7 +138,7 @@ impl AgentSubmitResult {
             &user.subject_id,
             Some(&execution.id),
         );
-        let request_updated = self.agent_repo.complete_execution(
+        let request_updated = match self.agent_repo.complete_execution(
             &execution.id,
             &execution.request_id,
             input.success,
@@ -146,7 +146,23 @@ impl AgentSubmitResult {
             &audit_event,
             result_manifest.as_ref(),
             &share_with_records,
-        )?;
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                // Compensate: delete orphaned storage object
+                if let Some(ref rm) = result_manifest {
+                    if let Err(del_err) = self.result_store.delete(&rm.storage_key).await {
+                        tracing::error!(key = %rm.storage_key, error = %del_err, "compensation delete failed for stored result");
+                    }
+                } else if !input.success {
+                    let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
+                    if let Err(del_err) = self.result_store.delete(&storage_key).await {
+                        tracing::error!(key = %storage_key, error = %del_err, "compensation delete failed for error result");
+                    }
+                }
+                return Err(e);
+            }
+        };
 
         // 9. Publish result to long-poll channel
         let summary = ResultSummary {

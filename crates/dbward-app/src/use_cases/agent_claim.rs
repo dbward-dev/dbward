@@ -80,6 +80,28 @@ impl AgentClaim {
             }));
         }
 
+        // 4b. Operation capability verification
+        let agent_entity = self.agent_repo.get(&input.agent_id)?;
+        if let Some(ref _agent) = agent_entity {
+            // Agent's registered operations are checked via the poll filter;
+            // here we verify the request operation is supported by the agent's declared scope
+            let op_supported = match request.operation {
+                Operation::MigrateUp | Operation::MigrateDown => {
+                    // Migration requires explicit database capability (not wildcard)
+                    input.agent_databases.iter().any(|cap| {
+                        cap.database == request.database || cap.database.is_wildcard()
+                    })
+                }
+                _ => true,
+            };
+            if !op_supported {
+                return Err(AppError::Forbidden(crate::error::AuthzError::Forbidden {
+                    permission: Permission::AgentClaim,
+                    reason: "agent.capability_mismatch: operation not supported".into(),
+                }));
+            }
+        }
+
         // 5. Migration exclusion: no concurrent migrate on same (db, env)
         if matches!(request.operation, Operation::MigrateUp | Operation::MigrateDown) {
             if self.agent_repo.has_running_migration(&request.database, &request.environment, &request.id)? {

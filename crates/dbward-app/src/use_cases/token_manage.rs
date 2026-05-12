@@ -224,6 +224,7 @@ mod tests {
         fn max_workflows(&self) -> u32 { 5 }
         fn max_webhooks(&self) -> u32 { 3 }
         fn max_roles(&self) -> u32 { 8 }
+        fn max_agents(&self) -> u32 { 3 }
         fn is_pro(&self) -> bool { false }
     }
     struct FakeAudit;

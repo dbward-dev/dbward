@@ -35,6 +35,7 @@ fn make_uc(state: &AppState) -> WebhookManage {
         ssrf_validator: state.ssrf_validator.clone(),
         license: state.license_checker.clone(),
         audit: state.audit_logger.clone(),
+        notifier: state.notifier.clone(),
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
     }

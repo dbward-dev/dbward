@@ -12,6 +12,7 @@ pub struct WebhookManage {
     pub ssrf_validator: Arc<dyn SsrfValidator>,
     pub license: Arc<dyn LicenseChecker>,
     pub audit: Arc<dyn AuditLogger>,
+    pub notifier: Arc<dyn Notifier>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
 }
@@ -77,6 +78,9 @@ impl WebhookManage {
         // Audit
         self.audit.record(&AuditEvent::simple("webhook_created", "policy", &user.subject_id, Some(&webhook.id)))?;
 
+        // Reload dispatcher config
+        let _ = self.notifier.reload();
+
         Ok(webhook)
     }
 
@@ -115,6 +119,9 @@ impl WebhookManage {
         self.webhook_repo.update(&webhook)?;
         self.audit.record(&AuditEvent::simple("webhook_updated", "policy", &user.subject_id, Some(&webhook.id)))?;
 
+        // Reload dispatcher config
+        let _ = self.notifier.reload();
+
         Ok(webhook)
     }
 
@@ -138,6 +145,10 @@ impl WebhookManage {
             .ok_or_else(|| AppError::NotFound("webhook not found".into()))?;
         self.webhook_repo.delete(&input.id)?;
         self.audit.record(&AuditEvent::simple("webhook_deleted", "policy", &user.subject_id, Some(&input.id)))?;
+
+        // Reload dispatcher config
+        let _ = self.notifier.reload();
+
         Ok(())
     }
 }
@@ -166,11 +177,16 @@ mod tests {
         fn max_workflows(&self) -> u32 { 5 }
         fn max_webhooks(&self) -> u32 { 3 }
         fn max_roles(&self) -> u32 { 8 }
+        fn max_agents(&self) -> u32 { 3 }
         fn is_pro(&self) -> bool { false }
     }
     struct FakeAudit;
     impl AuditLogger for FakeAudit {
         fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> { Ok(()) }
+    }
+    struct FakeNotifier;
+    impl Notifier for FakeNotifier {
+        fn dispatch(&self, _: WebhookEvent) {}
     }
     struct FakeWebhookRepo;
     impl WebhookRepo for FakeWebhookRepo {
@@ -194,6 +210,7 @@ mod tests {
             ssrf_validator: Arc::new(AllowSsrf),
             license: Arc::new(FakeLicense),
             audit: Arc::new(FakeAudit),
+            notifier: Arc::new(FakeNotifier),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),
         }

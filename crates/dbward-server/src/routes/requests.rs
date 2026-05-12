@@ -18,16 +18,17 @@ use crate::state::AppState;
 type ApiResult = Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)>;
 
 fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
-    let (status, code) = match &e {
-        AppError::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
-        AppError::Auth(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
-        AppError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
-        AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
-        AppError::Gone(_) => (StatusCode::GONE, "gone"),
-        AppError::Validation(_) => (StatusCode::BAD_REQUEST, "validation_error"),
-        AppError::PlanLimit(_) => (StatusCode::PAYMENT_REQUIRED, "plan_limit_reached"),
-        AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+    let status = match &e {
+        AppError::Forbidden(_) => StatusCode::FORBIDDEN,
+        AppError::Auth(_) => StatusCode::UNAUTHORIZED,
+        AppError::NotFound(_) => StatusCode::NOT_FOUND,
+        AppError::Conflict(_) => StatusCode::CONFLICT,
+        AppError::Gone(_) => StatusCode::GONE,
+        AppError::Validation(_) => StatusCode::BAD_REQUEST,
+        AppError::PlanLimit(_) => StatusCode::PAYMENT_REQUIRED,
+        AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
+    let code = e.code();
     let message = match &e {
         AppError::Internal(_) => "internal server error".to_string(),
         other => other.to_string(),
@@ -130,7 +131,7 @@ pub async fn list(
 
     let limit = params.limit.unwrap_or(50).min(100);
     let offset = params.offset.unwrap_or(0);
-    let requests = state.request_repo.list(limit, offset).map_err(map_error)?;
+    let (requests, total) = state.request_repo.list(limit, offset).map_err(map_error)?;
     // Non-admin users only see their own requests
     let is_admin = user.roles.iter().any(|r| r.name == "admin");
     let items: Vec<serde_json::Value> = requests.iter()
@@ -144,7 +145,8 @@ pub async fn list(
         "status": r.status.as_str(),
         "created_at": r.created_at,
     })).collect();
-    Ok((StatusCode::OK, Json(json!({"requests": items}))))
+    let effective_total = if is_admin { total } else { items.len() as u32 };
+    Ok((StatusCode::OK, Json(json!({"requests": items, "total": effective_total, "limit": limit, "offset": offset}))))
 }
 
 #[derive(serde::Deserialize)]

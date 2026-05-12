@@ -45,8 +45,10 @@ impl RequestRepo for SharedRepo {
     fn get(&self, id: &str) -> Result<Option<Request>, AppError> {
         Ok(self.requests.lock().unwrap().iter().find(|r| r.id == id).cloned())
     }
-    fn list(&self, _limit: u32, _offset: u32) -> Result<Vec<Request>, AppError> {
-        Ok(self.requests.lock().unwrap().clone())
+    fn list(&self, _limit: u32, _offset: u32) -> Result<(Vec<Request>, u32), AppError> {
+        let reqs = self.requests.lock().unwrap().clone();
+        let total = reqs.len() as u32;
+        Ok((reqs, total))
     }
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {
         Ok(self.requests.lock().unwrap().iter()
@@ -317,6 +319,21 @@ impl ResultChannel for FakeResultChannel {
     async fn notify_all(&self) {}
 }
 
+struct FakeAuditLogger;
+impl AuditLogger for FakeAuditLogger {
+    fn record(&self, _: &AuditEvent) -> Result<(), AppError> { Ok(()) }
+}
+
+struct FakeLicenseChecker;
+impl LicenseChecker for FakeLicenseChecker {
+    fn max_tokens(&self) -> u32 { 10 }
+    fn max_workflows(&self) -> u32 { 5 }
+    fn max_webhooks(&self) -> u32 { 3 }
+    fn max_roles(&self) -> u32 { 8 }
+    fn max_agents(&self) -> u32 { 3 }
+    fn is_pro(&self) -> bool { false }
+}
+
 struct TestHarness {
     repo: Arc<SharedRepo>,
     clock: Arc<FakeClock>,
@@ -326,6 +343,8 @@ struct TestHarness {
     event_dispatcher: Arc<RecordingDispatcher>,
     db_registry: Arc<dyn DatabaseRegistry>,
     result_channel: Arc<dyn ResultChannel>,
+    audit_logger: Arc<dyn AuditLogger>,
+    license_checker: Arc<dyn LicenseChecker>,
 }
 
 impl TestHarness {
@@ -339,6 +358,8 @@ impl TestHarness {
             event_dispatcher: Arc::new(RecordingDispatcher::new()),
             db_registry: Arc::new(FakeDbRegistry),
             result_channel: Arc::new(FakeResultChannel),
+            audit_logger: Arc::new(FakeAuditLogger),
+            license_checker: Arc::new(FakeLicenseChecker),
         }
     }
 
@@ -715,6 +736,8 @@ impl AgentRepo for SharedAgentRepo {
     fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
     fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
     fn mark_execution_lost_and_record(&self, _: &str, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
+    fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
+    fn delete_result(&self, _: &str) -> Result<(), AppError> { Ok(()) }
 }
 
 struct FakeTokenSigner;
@@ -765,6 +788,8 @@ fn agent_full_flow_poll_claim_heartbeat() {
     let poll_uc = AgentPoll {
         authorizer: h.authorizer.clone(),
         agent_repo: agent_repo.clone(),
+        audit_logger: h.audit_logger.clone(),
+        license_checker: h.license_checker.clone(),
         clock: h.clock.clone(),
     };
     let poll_result = poll_uc.execute(

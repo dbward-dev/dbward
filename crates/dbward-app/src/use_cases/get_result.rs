@@ -121,7 +121,7 @@ mod tests {
     impl RequestRepo for FakeRequestRepo {
         fn get(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(self.request.lock().unwrap().clone()) }
         fn insert(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
-        fn list(&self, _: u32, _: u32) -> Result<Vec<Request>, AppError> { Ok(vec![]) }
+        fn list(&self, _: u32, _: u32) -> Result<(Vec<Request>, u32), AppError> { Ok((vec![], 0)) }
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(None) }
         fn insert_approval(&self, _: &Approval) -> Result<(), AppError> { Ok(()) }
         fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> { Ok(vec![]) }
@@ -167,6 +167,8 @@ mod tests {
         fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
         fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
         fn mark_execution_lost_and_record(&self, _: &str, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
+        fn delete_result(&self, _: &str) -> Result<(), AppError> { Ok(()) }
     }
 
     struct FakeResultStore { data: Mutex<Vec<u8>> }

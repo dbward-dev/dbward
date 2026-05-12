@@ -1,12 +1,13 @@
-use std::sync::Arc;
-use dbward_app::ports::{Notifier, WebhookEvent, AuditLogger, EventDispatcher};
-use dbward_domain::entities::AuditEvent;
+use std::sync::{Arc, RwLock};
+use dbward_app::ports::{Notifier, WebhookEvent, AuditLogger, EventDispatcher, WebhookRepo};
+use dbward_domain::entities::{AuditEvent, WebhookStatus};
 use dbward_domain::services::status_machine::TransitionEvent;
 
 /// Webhook dispatcher — sends webhook notifications via HTTP.
 pub struct WebhookDispatcher {
     client: reqwest::Client,
-    hooks: Vec<WebhookConfig>,
+    hooks: RwLock<Vec<WebhookConfig>>,
+    webhook_repo: Option<Arc<dyn WebhookRepo>>,
 }
 
 #[derive(Clone)]
@@ -20,18 +21,32 @@ pub struct WebhookConfig {
 impl WebhookDispatcher {
     pub fn new(hooks: Vec<WebhookConfig>) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_default();
-        Self { client, hooks }
+        Self { client, hooks: RwLock::new(hooks), webhook_repo: None }
+    }
+
+    pub fn with_repo(webhook_repo: Arc<dyn WebhookRepo>) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap_or_default();
+        Self { client, hooks: RwLock::new(vec![]), webhook_repo: Some(webhook_repo) }
     }
 }
 
 impl Notifier for WebhookDispatcher {
     fn dispatch(&self, event: WebhookEvent) {
-        for hook in &self.hooks {
-            if !hook.events.contains(&event.event_type) && !hook.events.contains(&"*".to_string()) {
+        let hooks = self.hooks.read().unwrap();
+        for hook in hooks.iter() {
+            // Empty events list = subscribe to all events
+            if !hook.events.is_empty()
+                && !hook.events.contains(&event.event_type)
+                && !hook.events.contains(&"*".to_string())
+            {
                 continue;
             }
             let client = self.client.clone();
@@ -50,6 +65,24 @@ impl Notifier for WebhookDispatcher {
                 let _ = send_with_retry(&client, &url, &body, secret.as_deref()).await;
             });
         }
+    }
+
+    fn reload(&self) -> Result<(), dbward_app::error::AppError> {
+        if let Some(ref repo) = self.webhook_repo {
+            let webhooks = repo.list()?;
+            let configs: Vec<WebhookConfig> = webhooks.into_iter()
+                .filter(|w| w.status == WebhookStatus::Active)
+                .map(|w| WebhookConfig {
+                    url: w.url,
+                    events: w.events,
+                    format: format!("{:?}", w.format).to_lowercase(),
+                    secret: w.secret,
+                })
+                .collect();
+            let mut hooks = self.hooks.write().unwrap();
+            *hooks = configs;
+        }
+        Ok(())
     }
 }
 
@@ -128,6 +161,8 @@ fn is_private_ip(ip: &std::net::IpAddr) -> bool {
 pub struct CompositeEventDispatcher {
     pub audit: Arc<dyn AuditLogger>,
     pub notifier: Arc<dyn Notifier>,
+    pub result_channel: Option<Arc<dyn dbward_app::ports::ResultChannel>>,
+    pub request_notifier: Option<Arc<dyn Notifier>>,
 }
 
 impl EventDispatcher for CompositeEventDispatcher {
@@ -166,6 +201,20 @@ impl EventDispatcher for CompositeEventDispatcher {
             actor: Some(event.actor_id.clone()),
             detail: None,
         };
-        self.notifier.dispatch(webhook_event);
+        self.notifier.dispatch(webhook_event.clone());
+
+        // Create result channel slot when request is dispatched
+        if let Some(ref rc) = self.result_channel {
+            if matches!(&event.metadata, EventMetadata::Dispatched) {
+                let rc = rc.clone();
+                let request_id = event.request_id.clone();
+                tokio::spawn(async move { rc.create_slot(&request_id).await });
+            }
+        }
+
+        // Fan out to additional subscribers (ADR-004)
+        if let Some(ref rn) = self.request_notifier {
+            rn.dispatch(webhook_event);
+        }
     }
 }

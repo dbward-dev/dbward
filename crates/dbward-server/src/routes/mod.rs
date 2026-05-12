@@ -15,16 +15,17 @@ mod users;
 mod webhooks;
 
 fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
-    let (status, code) = match &e {
-        AppError::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
-        AppError::Auth(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
-        AppError::NotFound(_) => (StatusCode::NOT_FOUND, "not_found"),
-        AppError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
-        AppError::Gone(_) => (StatusCode::GONE, "gone"),
-        AppError::Validation(_) => (StatusCode::BAD_REQUEST, "validation_error"),
-        AppError::PlanLimit(_) => (StatusCode::PAYMENT_REQUIRED, "plan_limit_reached"),
-        AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
+    let status = match &e {
+        AppError::Forbidden(_) => StatusCode::FORBIDDEN,
+        AppError::Auth(_) => StatusCode::UNAUTHORIZED,
+        AppError::NotFound(_) => StatusCode::NOT_FOUND,
+        AppError::Conflict(_) => StatusCode::CONFLICT,
+        AppError::Gone(_) => StatusCode::GONE,
+        AppError::Validation(_) => StatusCode::BAD_REQUEST,
+        AppError::PlanLimit(_) => StatusCode::PAYMENT_REQUIRED,
+        AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
+    let code = e.code();
     let message = match &e {
         AppError::Internal(_) => "internal server error".to_string(),
         other => other.to_string(),

@@ -92,6 +92,9 @@ pub fn spawn_background_tasks(
                     }
                 }
 
+                // Purge expired result storage
+                purge_expired_results(&state).await;
+
                 // WAL checkpoint after purge
                 if let Err(e) = state.request_repo.wal_checkpoint() {
                     tracing::warn!(error = %e, "WAL checkpoint failed");
@@ -128,4 +131,21 @@ fn emit_webhook(state: &AppState, event_type: &str, request_id: &str) {
         actor: Some("system".to_string()),
         detail: None,
     });
+}
+
+async fn purge_expired_results(state: &AppState) {
+    let now_str = state.clock.now().to_rfc3339();
+    let expired = match state.agent_repo.find_expired_results(&now_str) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let mut count = 0u32;
+    for (result_id, storage_key) in expired {
+        let _ = state.result_store.delete(&storage_key).await;
+        let _ = state.agent_repo.delete_result(&result_id);
+        count += 1;
+    }
+    if count > 0 {
+        info!(count, "purged expired results from storage");
+    }
 }

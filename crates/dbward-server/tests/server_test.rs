@@ -68,7 +68,7 @@ struct StubRequestRepo;
 impl RequestRepo for StubRequestRepo {
     fn insert(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> { Ok(()) }
     fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Request>, AppError> { Ok(None) }
-    fn list(&self, _: u32, _: u32) -> Result<Vec<dbward_domain::entities::Request>, AppError> { Ok(vec![]) }
+    fn list(&self, _: u32, _: u32) -> Result<(Vec<dbward_domain::entities::Request>, u32), AppError> { Ok((vec![], 0)) }
     fn find_by_idempotency_key(&self, _: &str) -> Result<Option<dbward_domain::entities::Request>, AppError> { Ok(None) }
     fn insert_approval(&self, _: &Approval) -> Result<(), AppError> { Ok(()) }
     fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> { Ok(vec![]) }
@@ -112,6 +112,8 @@ impl AgentRepo for StubAgentRepo {
     fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
     fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
     fn mark_execution_lost_and_record(&self, _: &str, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
+    fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
+    fn delete_result(&self, _: &str) -> Result<(), AppError> { Ok(()) }
 }
 
 struct StubUserRepo;
@@ -234,6 +236,7 @@ impl LicenseChecker for StubLicenseChecker {
     fn max_workflows(&self) -> u32 { 5 }
     fn max_webhooks(&self) -> u32 { 3 }
     fn max_roles(&self) -> u32 { 3 }
+    fn max_agents(&self) -> u32 { 3 }
     fn is_pro(&self) -> bool { false }
 }
 
