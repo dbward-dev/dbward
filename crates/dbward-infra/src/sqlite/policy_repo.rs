@@ -22,7 +22,7 @@ impl SqlitePolicyRepo {
 
 impl PolicyRepo for SqlitePolicyRepo {
     fn create_workflow(&self, wf: &Workflow) -> Result<(), AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let operations_json = serde_json::to_string(&wf.operations).map_err(|e| AppError::Internal(e.to_string()))?;
         let steps_json = serde_json::to_string(&wf.steps).map_err(|e| AppError::Internal(e.to_string()))?;
         let skip_json = serde_json::to_string(&wf.skip_approval_for).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -47,7 +47,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     }
 
     fn get_workflow(&self, id: &str) -> Result<Option<Workflow>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs
              FROM workflows WHERE id = ?1",
@@ -61,7 +61,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     }
 
     fn list_workflows(&self) -> Result<Vec<Workflow>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs FROM workflows",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -75,21 +75,21 @@ impl PolicyRepo for SqlitePolicyRepo {
     }
 
     fn delete_workflow(&self, id: &str) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let changed = conn.execute("DELETE FROM workflows WHERE id = ?1", params![id])
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(changed > 0)
     }
 
     fn count_workflows(&self) -> Result<u32, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let count: u32 = conn.query_row("SELECT COUNT(*) FROM workflows", [], |row| row.get(0))
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(count)
     }
 
     fn create_execution_policy(&self, ep: &ExecutionPolicy) -> Result<(), AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -108,7 +108,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     }
 
     fn get_execution_policy(&self, id: &str) -> Result<Option<ExecutionPolicy>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs
              FROM execution_policies WHERE id = ?1",
@@ -122,7 +122,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     }
 
     fn list_execution_policies(&self) -> Result<Vec<ExecutionPolicy>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs FROM execution_policies",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -136,14 +136,14 @@ impl PolicyRepo for SqlitePolicyRepo {
     }
 
     fn delete_execution_policy(&self, id: &str) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let changed = conn.execute("DELETE FROM execution_policies WHERE id = ?1", params![id])
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(changed > 0)
     }
 
     fn find_result_policy(&self, db: &DatabaseName, env: &Environment) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, database_name, environment, retention_days, delivery_mode, access_json FROM result_policies",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -196,7 +196,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     }
 
     fn create_role(&self, role: &RoleDefinition) -> Result<(), AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let perms_json = serde_json::to_string(
             &role.permissions.iter().map(|p| p.as_str()).collect::<Vec<_>>()
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -215,7 +215,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     }
 
     fn list_roles(&self) -> Result<Vec<RoleDefinition>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT name, permissions_json, databases_json, environments_json FROM roles",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -232,7 +232,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         if names.is_empty() {
             return Ok(Vec::new());
         }
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let placeholders = std::iter::repeat("?").take(names.len()).collect::<Vec<_>>().join(",");
         let sql = format!(
             "SELECT name, permissions_json, databases_json, environments_json FROM roles WHERE name IN ({})",
@@ -250,14 +250,14 @@ impl PolicyRepo for SqlitePolicyRepo {
     }
 
     fn delete_role(&self, name: &str) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let changed = conn.execute("DELETE FROM roles WHERE name = ?1 AND built_in = 0", params![name])
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(changed > 0)
     }
 
     fn count_roles(&self) -> Result<u32, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let count: u32 = conn.query_row("SELECT COUNT(*) FROM roles", [], |row| row.get(0))
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(count)
@@ -284,7 +284,7 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
         op: Operation,
     ) -> Result<Option<Workflow>, AppError> {
         let workflows = {
-            let conn = self.conn.blocking_lock();
+            let conn = self.conn.lock().unwrap();
             let mut stmt = conn.prepare(
                 "SELECT id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs FROM workflows",
             ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -302,7 +302,7 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
 
     fn get_execution_policy(&self, db: &DatabaseName, env: &Environment) -> ExecutionPolicy {
         let policies = {
-            let conn = self.conn.blocking_lock();
+            let conn = self.conn.lock().unwrap();
             let mut stmt = match conn.prepare(
                 "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs FROM execution_policies",
             ) {

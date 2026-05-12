@@ -54,6 +54,7 @@ services:
       - 0.0.0.0:3000
       - --config
       - /config/dbward-server.toml
+      - --dev-bootstrap
     logging:
       driver: json-file
       options:
@@ -81,10 +82,7 @@ services:
   dbward-agent:
     build: *dbward-build
     <<: *security
-    entrypoint: ["dbward-agent"]
-    command:
-      - --config
-      - /config/dbward-agent.toml
+    entrypoint: ["/bin/sh", "/config/agent-entrypoint.sh"]
     logging:
       driver: json-file
       options:
@@ -94,6 +92,8 @@ services:
     volumes:
       - ./db/migrations:/workspace/db/migrations:ro
       - ./dev/dbward-agent.toml:/config/dbward-agent.toml:ro
+      - ./dev/agent-entrypoint.sh:/config/agent-entrypoint.sh:ro
+      - server-data:/data:ro
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/dbward-agent-ready"]
       start_period: 30s

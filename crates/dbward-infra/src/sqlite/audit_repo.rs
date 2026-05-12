@@ -18,7 +18,7 @@ impl AuditLogger for SqliteAuditLogger {
     fn record(&self, event: &AuditEvent) -> Result<(), AppError> {
         use sha2::{Digest, Sha256};
 
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction().map_err(|e| AppError::Internal(e.to_string()))?;
 
         // Get last hash for chain continuity
@@ -85,7 +85,7 @@ impl SqliteAuditRepo {
 
 impl AuditRepo for SqliteAuditRepo {
     fn list(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
 
         let mut conditions: Vec<String> = Vec::new();
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -157,7 +157,7 @@ impl AuditRepo for SqliteAuditRepo {
     fn verify_chain(&self) -> Result<AuditVerifyResult, AppError> {
         use sha2::{Digest, Sha256};
 
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, event_type, actor_id, created_at, prev_hash, event_hash, outcome, request_id, operation, database_name, environment, reason, detail_raw, metadata_json FROM audit_events ORDER BY rowid ASC"
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -216,7 +216,7 @@ impl AuditRepo for SqliteAuditRepo {
     }
 
     fn purge_old(&self, before: &str) -> Result<u32, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let n = conn.execute(
             "DELETE FROM audit_events WHERE created_at < ?1",
             rusqlite::params![before],

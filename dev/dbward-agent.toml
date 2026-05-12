@@ -5,7 +5,7 @@ max_concurrent_tasks = 4
 
 [server]
 url = "http://dbward-server:3000"
-agent_token = "__DBWARD_AGENT_TOKEN__"
+agent_token = "${DBWARD_AGENT_TOKEN}"
 
 [databases.app.development]
 url = "postgres://dbward:dbward@postgres:5432/dbward_dev"

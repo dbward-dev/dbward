@@ -234,7 +234,7 @@ async fn do_execute(
     cancel: &CancelState,
 ) -> Result<String, AgentError> {
     match operation {
-        "query" => {
+        "query" | "execute_select" => {
             let output = driver.query_cancellable(sql, timeout_secs, cancel).await?;
             Ok(serde_json::to_string(&serde_json::json!({
                 "rows": output.rows,

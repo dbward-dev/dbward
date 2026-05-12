@@ -13,7 +13,7 @@ fn setup() -> DbConn {
 }
 
 fn register_db(conn: &DbConn) {
-    conn.blocking_lock()
+    conn.lock().unwrap()
         .execute(
             "INSERT INTO databases (id, name, environment, created_at) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params!["app:production", "app", "production", Utc::now().to_rfc3339()],
@@ -184,7 +184,7 @@ fn audit_chain_detects_broken_link() {
 
     // Tamper with the DB directly (simulate attacker modifying actor_id)
     {
-        let c = conn.blocking_lock();
+        let c = conn.lock().unwrap();
         c.execute("UPDATE audit_events SET actor_id = 'hacked' WHERE rowid = 1", []).unwrap();
     }
 

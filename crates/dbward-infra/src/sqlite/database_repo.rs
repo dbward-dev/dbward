@@ -15,7 +15,7 @@ impl SqliteDatabaseRegistry {
 
 impl DatabaseRegistry for SqliteDatabaseRegistry {
     fn exists(&self, db: &DatabaseName, env: &Environment) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let id = format!("{}:{}", db, env);
         let result: Result<String, _> = conn.query_row(
             "SELECT id FROM databases WHERE id = ?1",
@@ -30,7 +30,7 @@ impl DatabaseRegistry for SqliteDatabaseRegistry {
     }
 
     fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT name, environment FROM databases")
             .map_err(|e| AppError::Internal(e.to_string()))?;
         let rows = stmt.query_map([], |row| {

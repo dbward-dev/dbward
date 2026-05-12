@@ -86,10 +86,11 @@ impl AgentConfig {
     pub fn operations(&self) -> Vec<String> {
         self.operations.clone().unwrap_or_else(|| {
             vec![
-                "query".into(),
-                "execute".into(),
+                "execute_select".into(),
+                "execute_dml".into(),
                 "migrate_up".into(),
                 "migrate_down".into(),
+                "migrate_status".into(),
             ]
         })
     }

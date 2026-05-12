@@ -146,15 +146,31 @@ pub async fn run_from_args(
         register_databases(&conn, &cfg.databases)?;
         sync_workflows(&state, &cfg.workflows)?;
 
-        let admin_token = create_bootstrap_token(&state, "admin", "admin", false)?;
-        let dev_token = create_bootstrap_token(&state, "developer", "developer", false)?;
-        let agent_token = create_bootstrap_token(&state, "agent", "admin", true)?;
-        let tokens = serde_json::json!({
-            "admin": admin_token,
-            "developer": dev_token,
-            "agent": agent_token,
-        });
-        println!("{}", serde_json::to_string(&tokens)?);
+        let data_dir = std::path::Path::new(data).parent().unwrap_or(std::path::Path::new("."));
+        let agent_token_path = data_dir.join("agent-token");
+
+        // Idempotent: skip if already bootstrapped
+        if agent_token_path.exists() {
+            eprintln!("[bootstrap] tokens already exist, skipping creation");
+        } else {
+            let admin_token = create_bootstrap_token(&state, "admin", "admin", false)?;
+            let dev_token = create_bootstrap_token(&state, "developer", "developer", false)?;
+            let agent_token = create_bootstrap_token(&state, "agent", "admin", true)?;
+            let tokens = serde_json::json!({
+                "admin": admin_token,
+                "developer": dev_token,
+                "agent": agent_token,
+            });
+            println!("{}", serde_json::to_string(&tokens)?);
+
+            // Write agent token to file for Docker agent container
+            std::fs::write(&agent_token_path, &agent_token)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&agent_token_path, std::fs::Permissions::from_mode(0o600))?;
+            }
+        }
     } else {
         register_databases(&conn, &cfg.databases)?;
         sync_workflows(&state, &cfg.workflows)?;
@@ -168,7 +184,7 @@ fn register_databases(
     conn: &dbward_infra::sqlite::DbConn,
     databases: &[config::DatabaseDef],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let c = conn.blocking_lock();
+    let c = conn.lock().unwrap();
     for db in databases {
         for env in &db.environments {
             let id = format!("{}:{}", db.name, env);
@@ -215,7 +231,13 @@ fn sync_workflows(
             created_at: None,
             updated_at: None,
         };
-        state.policy_repo.create_workflow(&workflow)?;
+        // Idempotent: ignore UNIQUE constraint violations (workflow already exists)
+        if let Err(e) = state.policy_repo.create_workflow(&workflow) {
+            let msg = e.to_string();
+            if !msg.contains("UNIQUE constraint") {
+                return Err(format!("sync workflow: {e}").into());
+            }
+        }
     }
     Ok(())
 }

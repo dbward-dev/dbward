@@ -12,6 +12,8 @@ pub struct LocalResultStore {
 
 impl LocalResultStore {
     pub fn new(root_dir: &str) -> Result<Self, AppError> {
+        std::fs::create_dir_all(root_dir)
+            .map_err(|e| AppError::Internal(format!("create result dir: {e}")))?;
         let store = LocalFileSystem::new_with_prefix(root_dir)
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(Self { store: Arc::new(store) })

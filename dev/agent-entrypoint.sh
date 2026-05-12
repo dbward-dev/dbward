@@ -1,18 +1,13 @@
 #!/bin/sh
 set -eu
 
-token_file="/tokens/agent.token"
-config_in="/config/dbward-agent.toml"
-config_out="/tmp/dbward-agent.toml"
+# Wait for bootstrap token file from server
+TOKEN_FILE="/data/agent-token"
+echo "[agent-entrypoint] waiting for $TOKEN_FILE..."
+while [ ! -f "$TOKEN_FILE" ]; do
+    sleep 1
+done
 
-if [ ! -f "$token_file" ]; then
-    echo "missing token file: $token_file" >&2
-    exit 1
-fi
-
-token="$(cat "$token_file")"
-escaped_token="$(printf '%s' "$token" | sed 's/[\\/&]/\\&/g')"
-
-sed "s/__DBWARD_AGENT_TOKEN__/${escaped_token}/" "$config_in" > "$config_out"
-
-exec dbward agent --config "$config_out"
+export DBWARD_AGENT_TOKEN="$(cat "$TOKEN_FILE")"
+echo "[agent-entrypoint] token loaded, starting agent"
+exec dbward-agent --config /config/dbward-agent.toml

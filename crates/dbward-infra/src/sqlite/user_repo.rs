@@ -14,7 +14,7 @@ impl SqliteUserRepo {
 
 impl UserRepo for SqliteUserRepo {
     fn get(&self, user_id: &str) -> Result<Option<User>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT id, display_name, email, groups_json, status, last_seen_at, created_at, updated_at FROM users WHERE id = ?1").map_err(|e| AppError::Internal(e.to_string()))?;
         let result = stmt.query_row(rusqlite::params![user_id], |row| {
             Ok(User {
@@ -37,7 +37,7 @@ impl UserRepo for SqliteUserRepo {
     }
 
     fn upsert(&self, user: &User) -> Result<(), AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO users (id, display_name, email, groups_json, status, last_seen_at, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, email=excluded.email, groups_json=excluded.groups_json, last_seen_at=excluded.last_seen_at, updated_at=excluded.updated_at",
             rusqlite::params![
@@ -53,7 +53,7 @@ impl UserRepo for SqliteUserRepo {
     }
 
     fn list(&self) -> Result<Vec<User>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT id, display_name, email, groups_json, status, last_seen_at, created_at, updated_at FROM users ORDER BY created_at DESC").map_err(|e| AppError::Internal(e.to_string()))?;
         let rows = stmt.query_map([], |row| {
             Ok(User {
@@ -72,19 +72,19 @@ impl UserRepo for SqliteUserRepo {
     }
 
     fn suspend(&self, user_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let n = conn.execute("UPDATE users SET status = 'suspended', updated_at = ?1 WHERE id = ?2 AND status = 'active'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(n > 0)
     }
 
     fn activate(&self, user_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let n = conn.execute("UPDATE users SET status = 'active', updated_at = ?1 WHERE id = ?2 AND status = 'suspended'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(n > 0)
     }
 
     fn is_suspended(&self, user_id: &str) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let status: Option<String> = conn.query_row("SELECT status FROM users WHERE id = ?1", rusqlite::params![user_id], |r| r.get(0)).ok();
         Ok(status.as_deref() == Some("suspended"))
     }

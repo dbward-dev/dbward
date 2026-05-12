@@ -179,7 +179,7 @@ fn row_to_request(row: &rusqlite::Row<'_>) -> Result<Request, rusqlite::Error> {
 
 impl RequestRepo for SqliteRequestRepo {
     fn insert(&self, req: &Request) -> Result<(), AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let db_id = database_id(&req.database, &req.environment);
         let share_with_json = serde_json::to_string(&req.share_with)
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -213,7 +213,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn get(&self, id: &str) -> Result<Option<Request>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare("SELECT * FROM requests WHERE id = ?1")
             .map_err(map_err)?;
@@ -225,7 +225,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn list(&self, limit: u32, offset: u32) -> Result<(Vec<Request>, u32), AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let total: u32 = conn
             .query_row("SELECT COUNT(*) FROM requests", [], |r| r.get(0))
             .map_err(map_err)?;
@@ -238,7 +238,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare("SELECT * FROM requests WHERE idempotency_key = ?1")
             .map_err(map_err)?;
@@ -250,7 +250,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO approvals (id, request_id, action, actor_id, matched_selector, step_index, comment, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -269,7 +269,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare("SELECT * FROM approvals WHERE request_id = ?1 ORDER BY created_at ASC")
             .map_err(map_err)?;
@@ -300,7 +300,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn count_executions(&self, request_id: &str) -> Result<u32, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let count: u32 = conn
             .query_row(
                 "SELECT COUNT(*) FROM executions WHERE request_id = ?1",
@@ -312,7 +312,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn mark_approved(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'approved', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending'",
@@ -323,7 +323,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: DateTime<Utc>, audit_event: &AuditEvent) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction().map_err(map_err)?;
 
         tx.execute(
@@ -359,7 +359,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn mark_rejected(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'rejected', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending'",
@@ -370,7 +370,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn reject_and_record(&self, request_id: &str, approval: &Approval, now: DateTime<Utc>, audit_event: &AuditEvent) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction().map_err(map_err)?;
 
         let now_str = now.to_rfc3339();
@@ -406,7 +406,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn mark_cancelled(&self, id: &str, actor: &str, reason: Option<&str>, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'cancelled', cancelled_by = ?2, cancel_reason = ?3, updated_at = ?4, resolved_at = ?4
@@ -418,7 +418,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn mark_dispatched(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'dispatched', updated_at = ?2 WHERE id = ?1 AND status IN ('approved', 'auto_approved', 'break_glass', 'executed', 'failed', 'execution_lost')",
@@ -429,7 +429,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn create_and_dispatch(&self, req: &Request) -> Result<(), AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction().map_err(map_err)?;
         let db_id = database_id(&req.database, &req.environment);
         let share_with_json = serde_json::to_string(&req.share_with)
@@ -471,7 +471,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn mark_running(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'running', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
@@ -482,7 +482,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn mark_executed(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'executed', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'running'",
@@ -493,7 +493,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn mark_failed(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'failed', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'running'",
@@ -504,7 +504,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn cancel_all_for_user(&self, user_id: &str, now: DateTime<Utc>) -> Result<u32, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'cancelled', updated_at = ?2, resolved_at = ?2
@@ -516,7 +516,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn find_expired_approved(&self, now: &str) -> Result<Vec<String>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id FROM requests WHERE status = 'approved' \
              AND datetime(updated_at, '+' || COALESCE(json_extract(workflow_snapshot_json, '$.approval_ttl_secs'), 86400) || ' seconds') < datetime(?1)"
@@ -526,7 +526,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn find_expired_pending(&self, now: &str) -> Result<Vec<String>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id FROM requests WHERE status = 'pending' \
              AND workflow_snapshot_json IS NOT NULL \
@@ -538,7 +538,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn find_stale_dispatched(&self, threshold: &str) -> Result<Vec<String>, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id FROM requests WHERE status = 'dispatched' AND datetime(updated_at, '+300 seconds') < datetime(?1)"
         ).map_err(map_err)?;
@@ -547,7 +547,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn mark_expired(&self, id: &str, now: &str) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let n = conn.execute(
             "UPDATE requests SET status = 'expired', updated_at = ?2 WHERE id = ?1 AND status IN ('approved', 'pending')",
             params![id, now],
@@ -558,7 +558,7 @@ impl RequestRepo for SqliteRequestRepo {
     fn mark_expired_and_record(&self, id: &str, audit_event: &AuditEvent, now: &str) -> Result<bool, AppError> {
         use sha2::{Digest, Sha256};
 
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let tx = conn.unchecked_transaction().map_err(map_err)?;
 
         let n = tx.execute(
@@ -612,7 +612,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let n = conn.execute(
             "UPDATE requests SET status = 'approved', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
             params![id, now],
@@ -621,7 +621,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn purge_old_requests(&self, before: &str) -> Result<u32, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let n = conn.execute(
             "DELETE FROM requests WHERE status IN ('executed', 'failed', 'expired', 'cancelled') AND updated_at < ?1",
             params![before],
@@ -630,7 +630,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn count_by_status(&self, status: &str) -> Result<u32, AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         let count: u32 = conn.query_row(
             "SELECT COUNT(*) FROM requests WHERE status = ?1",
             params![status],
@@ -640,7 +640,7 @@ impl RequestRepo for SqliteRequestRepo {
     }
 
     fn wal_checkpoint(&self) -> Result<(), AppError> {
-        let conn = self.conn.blocking_lock();
+        let conn = self.conn.lock().unwrap();
         conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").map_err(map_err)?;
         Ok(())
     }
@@ -680,7 +680,7 @@ mod tests {
         let conn = open_memory().unwrap();
         // Insert the database record (FK constraint)
         {
-            let c = conn.blocking_lock();
+            let c = conn.lock().unwrap();
             c.execute(
                 "INSERT INTO databases (id, name, environment, created_at) VALUES ('app:production', 'app', 'production', '2024-01-01T00:00:00Z')",
                 [],
