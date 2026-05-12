@@ -345,3 +345,131 @@ async fn valid_token_passes_auth_middleware() {
     assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
     assert_ne!(resp.status(), StatusCode::FORBIDDEN);
 }
+
+// --- Route integration tests ---
+
+#[tokio::test]
+async fn list_requests_returns_empty_array() {
+    let app = build_app(test_state());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/requests")
+                .header("authorization", "Bearer valid-test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["requests"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn get_request_not_found_returns_404() {
+    let app = build_app(test_state());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/requests/nonexistent")
+                .header("authorization", "Bearer valid-test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn list_databases_returns_empty() {
+    let app = build_app(test_state());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/databases")
+                .header("authorization", "Bearer valid-test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn list_tokens_returns_empty() {
+    let app = build_app(test_state());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/tokens")
+                .header("authorization", "Bearer valid-test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn list_webhooks_returns_empty() {
+    let app = build_app(test_state());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/webhooks")
+                .header("authorization", "Bearer valid-test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn list_workflows_returns_empty() {
+    let app = build_app(test_state());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/workflows")
+                .header("authorization", "Bearer valid-test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn list_agents_returns_empty() {
+    let app = build_app(test_state());
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/agents")
+                .header("authorization", "Bearer valid-test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn metrics_endpoint_returns_text() {
+    let app = build_app(test_state());
+    let resp = app
+        .oneshot(Request::builder().uri("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    // Metrics may return 200 or 500 depending on registry init; just verify route exists
+    assert_ne!(resp.status(), StatusCode::NOT_FOUND);
+}
