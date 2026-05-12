@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -15,6 +15,12 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
     let current: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current == 0 {
         conn.execute_batch(SCHEMA_SQL)?;
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    } else if current < SCHEMA_VERSION {
+        // Incremental migrations
+        if current < 2 {
+            conn.execute_batch(MIGRATION_V2)?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())
@@ -113,6 +119,7 @@ CREATE TABLE IF NOT EXISTS executions (
 );
 CREATE INDEX IF NOT EXISTS idx_executions_request_id ON executions(request_id);
 CREATE INDEX IF NOT EXISTS idx_executions_status ON executions(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_executions_unique_claim ON executions(request_id) WHERE status = 'claimed';
 
 -- Execution results (1:1 per execution)
 CREATE TABLE IF NOT EXISTS results (
@@ -267,4 +274,8 @@ INSERT OR IGNORE INTO roles (name, permissions_json, databases_json, environment
 ('developer', '[\"request.create\",\"request.create_select\",\"request.view\",\"request.cancel\",\"result.view\",\"token.revoke_own\"]', '[\"*\"]', '[\"*\"]', 1),
 ('readonly', '[\"request.create_select\",\"request.view\",\"result.view\"]', '[\"*\"]', '[\"*\"]', 1),
 ('agent-default', '[\"agent.poll\",\"agent.claim\",\"agent.heartbeat\",\"agent.submit_result\"]', '[\"*\"]', '[\"*\"]', 1);
+";
+
+const MIGRATION_V2: &str = "
+CREATE UNIQUE INDEX IF NOT EXISTS idx_executions_unique_claim ON executions(request_id) WHERE status = 'claimed';
 ";

@@ -10,6 +10,7 @@ use crate::error::AppError;
 pub trait RequestRepo: Send + Sync {
     fn insert(&self, req: &Request) -> Result<(), AppError>;
     fn get(&self, id: &str) -> Result<Option<Request>, AppError>;
+    fn list(&self, limit: u32, offset: u32) -> Result<Vec<Request>, AppError>;
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError>;
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError>;
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError>;
@@ -18,10 +19,10 @@ pub trait RequestRepo: Send + Sync {
     /// Returns false if the request was not in an expected source state (optimistic lock).
     fn mark_approved(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     /// Atomically inserts approval and marks request as approved in one transaction.
-    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: chrono::DateTime<chrono::Utc>, audit_event: &AuditEvent) -> Result<bool, AppError>;
     fn mark_rejected(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     /// Atomically inserts rejection approval and marks request as rejected in one transaction.
-    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: chrono::DateTime<chrono::Utc>, audit_event: &AuditEvent) -> Result<bool, AppError>;
     fn mark_cancelled(&self, id: &str, actor: &str, reason: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_dispatched(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     /// Atomically inserts a request and marks it as dispatched in one transaction.
@@ -66,6 +67,7 @@ pub trait AgentRepo: Send + Sync {
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError>;
     /// Atomically updates execution status (Completed/Failed) and request status (executed/failed).
+    /// Also inserts audit event, result manifest, and result_access records in the same TX.
     /// Returns false if request was cancelled (request update skipped).
     fn complete_execution(
         &self,
@@ -73,6 +75,9 @@ pub trait AgentRepo: Send + Sync {
         request_id: &str,
         success: bool,
         now: chrono::DateTime<chrono::Utc>,
+        audit_event: &AuditEvent,
+        result_manifest: Option<&ExecutionResult>,
+        share_with: &[ResultAccess],
     ) -> Result<bool, AppError>;
 
     // Background task methods

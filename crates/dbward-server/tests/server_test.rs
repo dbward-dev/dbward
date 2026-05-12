@@ -68,14 +68,15 @@ struct StubRequestRepo;
 impl RequestRepo for StubRequestRepo {
     fn insert(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> { Ok(()) }
     fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Request>, AppError> { Ok(None) }
+    fn list(&self, _: u32, _: u32) -> Result<Vec<dbward_domain::entities::Request>, AppError> { Ok(vec![]) }
     fn find_by_idempotency_key(&self, _: &str) -> Result<Option<dbward_domain::entities::Request>, AppError> { Ok(None) }
     fn insert_approval(&self, _: &Approval) -> Result<(), AppError> { Ok(()) }
     fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> { Ok(vec![]) }
     fn count_executions(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
     fn mark_approved(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-    fn approve_and_mark_approved(&self, _: &Approval, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+    fn approve_and_mark_approved(&self, _: &Approval, _: &str, _: chrono::DateTime<chrono::Utc>, _: &AuditEvent) -> Result<bool, AppError> { Ok(true) }
     fn mark_rejected(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-    fn reject_and_record(&self, _: &str, _: &Approval, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+    fn reject_and_record(&self, _: &str, _: &Approval, _: chrono::DateTime<chrono::Utc>, _: &AuditEvent) -> Result<bool, AppError> { Ok(true) }
     fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn mark_dispatched(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
     fn create_and_dispatch(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> { Ok(()) }
@@ -107,7 +108,7 @@ impl AgentRepo for StubAgentRepo {
     fn has_running_migration(&self, _: &DatabaseName, _: &Environment, _: &str) -> Result<bool, AppError> { Ok(false) }
     fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> { Ok(vec![]) }
     fn claim_and_mark_running(&self, _: &Execution, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-    fn complete_execution(&self, _: &str, _: &str, _: bool, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+    fn complete_execution(&self, _: &str, _: &str, _: bool, _: chrono::DateTime<chrono::Utc>, _: &AuditEvent, _: Option<&dbward_domain::entities::ExecutionResult>, _: &[dbward_domain::entities::ResultAccess]) -> Result<bool, AppError> { Ok(true) }
     fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
     fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
     fn mark_execution_lost_and_record(&self, _: &str, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }

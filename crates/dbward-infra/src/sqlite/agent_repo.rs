@@ -274,6 +274,9 @@ impl AgentRepo for SqliteAgentRepo {
         request_id: &str,
         success: bool,
         now: chrono::DateTime<chrono::Utc>,
+        audit_event: &AuditEvent,
+        result_manifest: Option<&ExecutionResult>,
+        share_with: &[ResultAccess],
     ) -> Result<bool, AppError> {
         let conn = self.conn.blocking_lock();
         let tx = conn.unchecked_transaction().map_err(|e| AppError::Internal(e.to_string()))?;
@@ -289,6 +292,31 @@ impl AgentRepo for SqliteAgentRepo {
             "UPDATE requests SET status = ?1, updated_at = ?2 WHERE id = ?3 AND status = 'running'",
             params![req_status, now.to_rfc3339(), request_id],
         ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+        // H-22: Insert result manifest
+        if let Some(rm) = result_manifest {
+            tx.execute(
+                "INSERT INTO results (id, request_id, execution_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, truncated, truncation_reason, stored_at, expires_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    rm.id, rm.request_id, rm.execution_id, rm.storage_backend, rm.storage_key,
+                    rm.content_length as i64, rm.checksum_sha256, rm.retention_days,
+                    "stored", rm.truncated as i64, rm.truncation_reason,
+                    rm.stored_at.to_rfc3339(), rm.expires_at.to_rfc3339(),
+                ],
+            ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+            // C-2: Insert result_access records
+            for ra in share_with {
+                tx.execute(
+                    "INSERT INTO result_access (id, result_id, selector_type, selector_value) VALUES (?1, ?2, ?3, ?4)",
+                    params![ra.id, ra.result_id, selector_type_str(ra.selector_type), ra.selector_value],
+                ).map_err(|e| AppError::Internal(e.to_string()))?;
+            }
+        }
+
+        // H-21: Insert audit event in same TX
+        insert_audit_in_agent_tx(&tx, audit_event)?;
 
         tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(updated > 0)
@@ -384,6 +412,57 @@ impl AgentRepo for SqliteAgentRepo {
 }
 
 // --- helpers ---
+
+fn insert_audit_in_agent_tx(tx: &rusqlite::Transaction<'_>, audit_event: &AuditEvent) -> Result<(), AppError> {
+    use sha2::{Digest, Sha256};
+
+    let prev_hash: Option<String> = tx.query_row(
+        "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
+        [],
+        |row| row.get(0),
+    ).ok();
+    let id = uuid::Uuid::new_v4().to_string();
+    let hash_input = format!(
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        id, audit_event.event_type, audit_event.actor_id,
+        audit_event.created_at.to_rfc3339(),
+        prev_hash.as_deref().unwrap_or(""),
+        "success",
+        audit_event.request_id.as_deref().unwrap_or(""),
+        audit_event.operation.as_deref().unwrap_or(""),
+        audit_event.database_name.as_deref().unwrap_or(""),
+        audit_event.environment.as_deref().unwrap_or(""),
+        audit_event.reason.as_deref().unwrap_or(""),
+        audit_event.detail_raw.as_deref().unwrap_or(""),
+        audit_event.metadata_json,
+    );
+    let event_hash = hex::encode(Sha256::digest(hash_input.as_bytes()));
+    tx.execute(
+        "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
+        params![
+            id, audit_event.event_type, "execution",
+            audit_event.event_version, "success",
+            audit_event.actor_id, "agent",
+            audit_event.resource_type, audit_event.resource_id,
+            audit_event.peer_ip, audit_event.client_ip, audit_event.client_ip_source,
+            audit_event.request_id, audit_event.operation,
+            audit_event.database_name, audit_event.environment,
+            audit_event.detail_fingerprint, audit_event.detail_raw, audit_event.reason,
+            audit_event.metadata_json, prev_hash, event_hash,
+            audit_event.created_at.to_rfc3339(),
+        ],
+    ).map_err(|e| AppError::Internal(e.to_string()))?;
+    Ok(())
+}
+
+fn selector_type_str(st: SelectorType) -> &'static str {
+    match st {
+        SelectorType::Requester => "requester",
+        SelectorType::Role => "role",
+        SelectorType::Group => "group",
+        SelectorType::User => "user",
+    }
+}
 
 fn agent_status_str(s: AgentStatus) -> &'static str {
     match s {

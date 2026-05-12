@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
-use dbward_domain::entities::{Approval, ApprovalAction, RequestStatus};
+use dbward_domain::entities::{Approval, ApprovalAction, AuditEvent, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
 use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 
@@ -53,7 +53,7 @@ impl RejectRequest {
 
         if !is_requester {
             let wf = workflow.as_ref()
-                .ok_or_else(|| AppError::Internal("missing workflow snapshot".into()))?;
+                .ok_or_else(|| AppError::Conflict("request has no approval workflow (auto-approved)".into()))?;
 
             if current_step_index >= wf.steps.len() as u32 {
                 return Err(AppError::Conflict("all steps already satisfied".into()));
@@ -125,7 +125,8 @@ impl RejectRequest {
             created_at: now,
         };
 
-        let ok = self.request_repo.reject_and_record(&request.id, &approval, now)?;
+        let audit_event = AuditEvent::simple("request.rejected", "approval", &user.subject_id, Some(&request.id));
+        let ok = self.request_repo.reject_and_record(&request.id, &approval, now, &audit_event)?;
         if !ok {
             return Err(AppError::Conflict("concurrent status change".into()));
         }
@@ -148,6 +149,7 @@ mod tests {
     use dbward_domain::auth::SubjectType;
     use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
     use dbward_domain::entities::Request;
+    use dbward_domain::entities::AuditEvent;
     use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
     use chrono::{DateTime, Utc};
     use std::sync::Mutex;
@@ -166,14 +168,15 @@ mod tests {
     impl RequestRepo for FakeRepo {
         fn insert(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
         fn get(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(self.request.lock().unwrap().clone()) }
+        fn list(&self, _: u32, _: u32) -> Result<Vec<Request>, AppError> { Ok(vec![]) }
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(None) }
         fn insert_approval(&self, _: &Approval) -> Result<(), AppError> { Ok(()) }
         fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> { Ok(vec![]) }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
         fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn approve_and_mark_approved(&self, _: &Approval, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn approve_and_mark_approved(&self, _: &Approval, _: &str, _: DateTime<Utc>, _: &AuditEvent) -> Result<bool, AppError> { Ok(true) }
         fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { *self.rejected.lock().unwrap() = true; Ok(true) }
-        fn reject_and_record(&self, _: &str, _: &Approval, _: DateTime<Utc>) -> Result<bool, AppError> { *self.rejected.lock().unwrap() = true; Ok(true) }
+        fn reject_and_record(&self, _: &str, _: &Approval, _: DateTime<Utc>, _: &AuditEvent) -> Result<bool, AppError> { *self.rejected.lock().unwrap() = true; Ok(true) }
         fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> { Ok(()) }

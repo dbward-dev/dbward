@@ -104,14 +104,15 @@ mod tests {
     impl RequestRepo for FakeRepo {
         fn insert(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
         fn get(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(self.request.lock().unwrap().clone()) }
+        fn list(&self, _: u32, _: u32) -> Result<Vec<Request>, AppError> { Ok(vec![]) }
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(None) }
         fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> { Ok(()) }
         fn get_approvals(&self, _: &str) -> Result<Vec<dbward_domain::entities::Approval>, AppError> { Ok(vec![]) }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
         fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn approve_and_mark_approved(&self, _: &dbward_domain::entities::Approval, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn approve_and_mark_approved(&self, _: &dbward_domain::entities::Approval, _: &str, _: DateTime<Utc>, _: &dbward_domain::entities::AuditEvent) -> Result<bool, AppError> { Ok(true) }
         fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn reject_and_record(&self, _: &str, _: &dbward_domain::entities::Approval, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn reject_and_record(&self, _: &str, _: &dbward_domain::entities::Approval, _: DateTime<Utc>, _: &dbward_domain::entities::AuditEvent) -> Result<bool, AppError> { Ok(true) }
         fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: DateTime<Utc>) -> Result<bool, AppError> { *self.cancelled.lock().unwrap() = true; Ok(true) }
         fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> { Ok(()) }

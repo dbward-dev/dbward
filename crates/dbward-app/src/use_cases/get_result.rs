@@ -28,7 +28,7 @@ impl GetResult {
         let request = self.request_repo.get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
-        if !matches!(request.status, RequestStatus::Executed | RequestStatus::Failed) {
+        if !matches!(request.status, RequestStatus::Executed | RequestStatus::Failed | RequestStatus::ExecutionLost) {
             return Err(AppError::NotFound("result not available".into()));
         }
 
@@ -121,14 +121,15 @@ mod tests {
     impl RequestRepo for FakeRequestRepo {
         fn get(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(self.request.lock().unwrap().clone()) }
         fn insert(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
+        fn list(&self, _: u32, _: u32) -> Result<Vec<Request>, AppError> { Ok(vec![]) }
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(None) }
         fn insert_approval(&self, _: &Approval) -> Result<(), AppError> { Ok(()) }
         fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> { Ok(vec![]) }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
         fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn approve_and_mark_approved(&self, _: &Approval, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn approve_and_mark_approved(&self, _: &Approval, _: &str, _: DateTime<Utc>, _: &AuditEvent) -> Result<bool, AppError> { Ok(true) }
         fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn reject_and_record(&self, _: &str, _: &Approval, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn reject_and_record(&self, _: &str, _: &Approval, _: DateTime<Utc>, _: &AuditEvent) -> Result<bool, AppError> { Ok(true) }
         fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
@@ -162,7 +163,7 @@ mod tests {
         fn find_dispatched_jobs(&self, _: &[(DatabaseName, Environment)]) -> Result<Vec<Request>, AppError> { Ok(vec![]) }
         fn has_running_migration(&self, _: &DatabaseName, _: &Environment, _: &str) -> Result<bool, AppError> { Ok(false) }
         fn claim_and_mark_running(&self, _: &Execution, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn complete_execution(&self, _: &str, _: &str, _: bool, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn complete_execution(&self, _: &str, _: &str, _: bool, _: DateTime<Utc>, _: &AuditEvent, _: Option<&ExecutionResult>, _: &[ResultAccess]) -> Result<bool, AppError> { Ok(true) }
         fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
         fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
         fn mark_execution_lost_and_record(&self, _: &str, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }

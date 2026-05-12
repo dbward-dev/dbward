@@ -655,7 +655,7 @@ fn complete_execution_success() {
     agent_repo.create_execution(&execution).unwrap();
 
     let now = Utc::now();
-    let result = agent_repo.complete_execution("exec-ce-ok", "req-ce-ok", true, now).unwrap();
+    let result = agent_repo.complete_execution("exec-ce-ok", "req-ce-ok", true, now, &AuditEvent::simple("execution.completed", "execution", "agent-1", Some("exec-ce-ok")), None, &[]).unwrap();
     assert!(result);
 
     let fetched_exec = agent_repo.get_execution("exec-ce-ok").unwrap().unwrap();
@@ -715,7 +715,7 @@ fn complete_execution_failure() {
     agent_repo.create_execution(&execution).unwrap();
 
     let now = Utc::now();
-    let result = agent_repo.complete_execution("exec-ce-fail", "req-ce-fail", false, now).unwrap();
+    let result = agent_repo.complete_execution("exec-ce-fail", "req-ce-fail", false, now, &AuditEvent::simple("execution.failed", "execution", "agent-1", Some("exec-ce-fail")), None, &[]).unwrap();
     assert!(result);
 
     let fetched_exec = agent_repo.get_execution("exec-ce-fail").unwrap().unwrap();
@@ -774,7 +774,7 @@ fn complete_execution_cancelled_request() {
     agent_repo.create_execution(&execution).unwrap();
 
     let now = Utc::now();
-    let result = agent_repo.complete_execution("exec-ce-cancel", "req-ce-cancel", true, now).unwrap();
+    let result = agent_repo.complete_execution("exec-ce-cancel", "req-ce-cancel", true, now, &AuditEvent::simple("execution.completed", "execution", "agent-1", Some("exec-ce-cancel")), None, &[]).unwrap();
     assert!(!result);
 
     // Execution is still updated
@@ -835,7 +835,7 @@ fn complete_execution_already_completed() {
     agent_repo.create_execution(&execution).unwrap();
 
     let now = Utc::now();
-    let result = agent_repo.complete_execution("exec-ce-done", "req-ce-done", true, now).unwrap();
+    let result = agent_repo.complete_execution("exec-ce-done", "req-ce-done", true, now, &AuditEvent::simple("execution.completed", "execution", "agent-1", Some("exec-ce-done")), None, &[]).unwrap();
     assert!(!result);
 
     // Execution still updated
@@ -927,7 +927,7 @@ fn reject_and_record_success() {
     };
 
     let now = Utc::now();
-    let result = request_repo.reject_and_record("req-rej", &approval, now).unwrap();
+    let result = request_repo.reject_and_record("req-rej", &approval, now, &AuditEvent::simple("request.rejected", "approval", "admin-1", Some("req-rej"))).unwrap();
     assert!(result);
 
     let fetched = request_repo.get("req-rej").unwrap().unwrap();
@@ -983,7 +983,7 @@ fn reject_and_record_already_rejected() {
         created_at: Utc::now(),
     };
 
-    let result = request_repo.reject_and_record("req-rej2", &approval, Utc::now()).unwrap();
+    let result = request_repo.reject_and_record("req-rej2", &approval, Utc::now(), &AuditEvent::simple("request.rejected", "approval", "admin-1", Some("req-rej2"))).unwrap();
     assert!(!result);
 
     // No approval record inserted on failure

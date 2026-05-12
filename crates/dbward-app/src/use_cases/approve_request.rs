@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
-use dbward_domain::entities::{Approval, ApprovalAction, RequestStatus};
+use dbward_domain::entities::{Approval, ApprovalAction, AuditEvent, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
 use dbward_domain::services::{approval_checker, workflow_matcher};
 use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
@@ -54,7 +54,7 @@ impl ApproveRequest {
         // 3. Parse workflow snapshot
         let workflow: Workflow = request.workflow_snapshot_json.as_deref()
             .and_then(|json| serde_json::from_str(json).ok())
-            .ok_or_else(|| AppError::Internal("missing workflow snapshot".into()))?;
+            .ok_or_else(|| AppError::Conflict("request has no approval workflow (auto-approved)".into()))?;
 
         // 4. Get existing approvals
         let approvals = self.request_repo.get_approvals(&request.id)?;
@@ -177,7 +177,8 @@ impl ApproveRequest {
         let new_status = result.status();
 
         if all_satisfied {
-            let ok = self.request_repo.approve_and_mark_approved(&approval, &request.id, now)?;
+            let audit_event = AuditEvent::simple("request.approved", "approval", &user.subject_id, Some(&request.id));
+            let ok = self.request_repo.approve_and_mark_approved(&approval, &request.id, now, &audit_event)?;
             if !ok {
                 return Err(AppError::Conflict("concurrent status change".into()));
             }
@@ -249,6 +250,7 @@ mod tests {
         fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
             Ok(self.request.lock().unwrap().clone())
         }
+        fn list(&self, _: u32, _: u32) -> Result<Vec<Request>, AppError> { Ok(vec![]) }
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(None) }
         fn insert_approval(&self, a: &Approval) -> Result<(), AppError> {
             self.approvals.lock().unwrap().push(a.clone());
@@ -262,13 +264,13 @@ mod tests {
             *self.marked_approved.lock().unwrap() = true;
             Ok(true)
         }
-        fn approve_and_mark_approved(&self, a: &Approval, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+        fn approve_and_mark_approved(&self, a: &Approval, _: &str, _: DateTime<Utc>, _: &AuditEvent) -> Result<bool, AppError> {
             self.approvals.lock().unwrap().push(a.clone());
             *self.marked_approved.lock().unwrap() = true;
             Ok(true)
         }
         fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn reject_and_record(&self, _: &str, _: &Approval, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn reject_and_record(&self, _: &str, _: &Approval, _: DateTime<Utc>, _: &AuditEvent) -> Result<bool, AppError> { Ok(true) }
         fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
         fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> { Ok(()) }

@@ -45,6 +45,9 @@ impl RequestRepo for SharedRepo {
     fn get(&self, id: &str) -> Result<Option<Request>, AppError> {
         Ok(self.requests.lock().unwrap().iter().find(|r| r.id == id).cloned())
     }
+    fn list(&self, _limit: u32, _offset: u32) -> Result<Vec<Request>, AppError> {
+        Ok(self.requests.lock().unwrap().clone())
+    }
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {
         Ok(self.requests.lock().unwrap().iter()
             .find(|r| r.idempotency_key.as_deref() == Some(key)).cloned())
@@ -71,7 +74,7 @@ impl RequestRepo for SharedRepo {
             Ok(false)
         }
     }
-    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: DateTime<Utc>, _audit_event: &AuditEvent) -> Result<bool, AppError> {
         self.approvals.lock().unwrap().push(approval.clone());
         self.mark_approved(request_id, now)
     }
@@ -85,7 +88,7 @@ impl RequestRepo for SharedRepo {
             Ok(false)
         }
     }
-    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: DateTime<Utc>) -> Result<bool, AppError> {
+    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: DateTime<Utc>, _audit_event: &AuditEvent) -> Result<bool, AppError> {
         self.approvals.lock().unwrap().push(approval.clone());
         self.mark_rejected(request_id, now)
     }
@@ -694,7 +697,7 @@ impl AgentRepo for SharedAgentRepo {
         }
         Ok(true)
     }
-    fn complete_execution(&self, execution_id: &str, request_id: &str, success: bool, now: DateTime<Utc>) -> Result<bool, AppError> {
+    fn complete_execution(&self, execution_id: &str, request_id: &str, success: bool, now: DateTime<Utc>, _audit_event: &AuditEvent, _result_manifest: Option<&ExecutionResult>, _share_with: &[ResultAccess]) -> Result<bool, AppError> {
         let mut execs = self.executions.lock().unwrap();
         if let Some(e) = execs.iter_mut().find(|e| e.id == execution_id) {
             e.status = if success { ExecutionStatus::Completed } else { ExecutionStatus::Failed };

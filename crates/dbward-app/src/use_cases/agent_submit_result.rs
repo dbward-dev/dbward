@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
-use dbward_domain::entities::{ExecutionStatus, RequestStatus};
+use dbward_domain::entities::{AuditEvent, ExecutionResult, ExecutionStatus, RequestStatus, ResultAccess, SelectorType};
 use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 use dbward_domain::values::ResultSummary;
 
@@ -81,10 +81,29 @@ impl AgentSubmitResult {
         let new_request_status = result.status();
 
         // 7. Store result to external storage
+        let mut result_manifest: Option<ExecutionResult> = None;
+        let data_len: u64;
         if input.success && !request.no_store {
             if let Some(data) = &input.result_data {
                 let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
                 self.result_store.put(&storage_key, data).await?;
+                data_len = data.len() as u64;
+                let stored_at = self.clock.now();
+                result_manifest = Some(ExecutionResult {
+                    id: format!("res-{}", execution.id),
+                    request_id: execution.request_id.clone(),
+                    execution_id: execution.id.clone(),
+                    storage_backend: "local".to_string(),
+                    storage_key,
+                    content_length: data_len,
+                    checksum_sha256: String::new(),
+                    retention_days: 30,
+                    status: dbward_domain::entities::ResultStatus::Stored,
+                    truncated: false,
+                    truncation_reason: None,
+                    stored_at,
+                    expires_at: stored_at + chrono::Duration::days(30),
+                });
             }
         } else if !input.success {
             // Store failure info
@@ -96,13 +115,37 @@ impl AgentSubmitResult {
             self.result_store.put(&storage_key, err_json.to_string().as_bytes()).await?;
         }
 
-        // 8. Atomically update execution + request status
+        // Build share_with ResultAccess records
+        let share_with_records: Vec<ResultAccess> = if let Some(ref rm) = result_manifest {
+            request.share_with.iter().enumerate().map(|(i, sel)| {
+                let (st, sv) = parse_selector_for_access(sel);
+                ResultAccess {
+                    id: format!("{}-ra-{}", rm.id, i),
+                    result_id: rm.id.clone(),
+                    selector_type: st,
+                    selector_value: sv,
+                }
+            }).collect()
+        } else {
+            vec![]
+        };
+
+        // 8. Atomically update execution + request status + audit + result manifest
         let now = self.clock.now();
+        let audit_event = AuditEvent::simple(
+            if input.success { "execution.completed" } else { "execution.failed" },
+            "execution",
+            &user.subject_id,
+            Some(&execution.id),
+        );
         let request_updated = self.agent_repo.complete_execution(
             &execution.id,
             &execution.request_id,
             input.success,
             now,
+            &audit_event,
+            result_manifest.as_ref(),
+            &share_with_records,
         )?;
 
         // 9. Publish result to long-poll channel
@@ -128,5 +171,17 @@ impl AgentSubmitResult {
             request_id: execution.request_id,
             status: final_status,
         })
+    }
+}
+
+fn parse_selector_for_access(sel: &str) -> (SelectorType, String) {
+    if let Some(val) = sel.strip_prefix("role:") {
+        (SelectorType::Role, val.to_string())
+    } else if let Some(val) = sel.strip_prefix("group:") {
+        (SelectorType::Group, val.to_string())
+    } else if let Some(val) = sel.strip_prefix("user:") {
+        (SelectorType::User, val.to_string())
+    } else {
+        (SelectorType::User, sel.to_string())
     }
 }

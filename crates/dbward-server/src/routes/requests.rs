@@ -88,25 +88,69 @@ pub async fn create(
     };
 
     match uc.execute(input, &user) {
-        Ok(out) => Ok((
-            StatusCode::CREATED,
-            Json(json!({
-                "id": out.id,
-                "status": out.status.as_str(),
-                "operation": out.operation.as_str(),
-            })),
-        )),
+        Ok(out) => {
+            // Extract approvers from workflow snapshot if pending
+            let approvers: Vec<String> = if out.status == dbward_domain::entities::RequestStatus::Pending {
+                // Re-read the request to get workflow_snapshot
+                state.request_repo.get(&out.id).ok().flatten()
+                    .and_then(|r| r.workflow_snapshot_json)
+                    .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                    .and_then(|v| v.get("steps")?.as_array()?.first()?.get("approvers")?.as_array().cloned())
+                    .map(|arr| arr.iter().filter_map(|a| {
+                        a.get("selector").and_then(|s| s.as_str()).map(String::from)
+                            .or_else(|| Some(a.get("selector")?.to_string()))
+                    }).collect())
+                    .unwrap_or_default()
+            } else {
+                vec![]
+            };
+
+            Ok((
+                StatusCode::CREATED,
+                Json(json!({
+                    "id": out.id,
+                    "status": out.status.as_str(),
+                    "operation": out.operation.as_str(),
+                    "approvers": approvers,
+                })),
+            ))
+        },
         Err(e) => Err(map_error(e)),
     }
 }
 
 pub async fn list(
     State(state): State<AppState>,
-    Extension(_user): Extension<AuthUser>,
+    Extension(user): Extension<AuthUser>,
+    axum::extract::Query(params): axum::extract::Query<ListParams>,
 ) -> ApiResult {
-    // RequestRepo doesn't have a list method yet; return empty list
-    let _ = state;
-    Ok((StatusCode::OK, Json(json!({"requests": []}))))
+    // Require request.view permission
+    state.authorizer.authorize_global(&user, dbward_domain::auth::Permission::RequestView)
+        .map_err(|e| (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))))?;
+
+    let limit = params.limit.unwrap_or(50).min(100);
+    let offset = params.offset.unwrap_or(0);
+    let requests = state.request_repo.list(limit, offset).map_err(map_error)?;
+    // Non-admin users only see their own requests
+    let is_admin = user.roles.iter().any(|r| r.name == "admin");
+    let items: Vec<serde_json::Value> = requests.iter()
+        .filter(|r| is_admin || r.requester == user.subject_id)
+        .map(|r| json!({
+        "id": r.id,
+        "requester": r.requester,
+        "database": r.database,
+        "environment": r.environment,
+        "operation": r.operation.as_str(),
+        "status": r.status.as_str(),
+        "created_at": r.created_at,
+    })).collect();
+    Ok((StatusCode::OK, Json(json!({"requests": items}))))
+}
+
+#[derive(serde::Deserialize)]
+pub struct ListParams {
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
 }
 
 pub async fn get(
