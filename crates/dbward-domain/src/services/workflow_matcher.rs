@@ -238,6 +238,11 @@ pub fn is_step_satisfied(step: &WorkflowStep, step_index: u32, approvals: &[Appr
         .filter(|a| a.step_index == step_index && a.action == ApprovalAction::Approve)
         .collect();
 
+    // Admin override satisfies the entire step
+    if step_approvals.iter().any(|a| a.matched_selector == "admin_override") {
+        return true;
+    }
+
     match step.mode {
         WorkflowStepMode::All => {
             step.approvers.iter().all(|ag| {
@@ -260,6 +265,10 @@ pub fn is_step_satisfied(step: &WorkflowStep, step_index: u32, approvals: &[Appr
 
 /// Check if all steps are satisfied.
 pub fn all_steps_satisfied(steps: &[WorkflowStep], approvals: &[Approval]) -> bool {
+    // Admin override satisfies ALL steps
+    if approvals.iter().any(|a| a.action == ApprovalAction::Approve && a.matched_selector == "admin_override") {
+        return true;
+    }
     steps.iter().enumerate().all(|(i, step)| is_step_satisfied(step, i as u32, approvals))
 }
 

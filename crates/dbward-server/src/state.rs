@@ -39,6 +39,8 @@ pub struct AppState {
     pub id_generator: Arc<dyn IdGenerator>,
     // Metrics
     pub metrics: Arc<Metrics>,
+    // Config
+    pub default_approval_ttl_secs: Option<u64>,
     // Shutdown
     pub draining: Arc<AtomicBool>,
 }

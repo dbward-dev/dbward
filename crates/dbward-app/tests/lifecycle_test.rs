@@ -400,6 +400,7 @@ impl TestHarness {
             event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
             id_gen: self.id_gen.clone(),
+            default_approval_ttl_secs: Some(3600),
         }
     }
 

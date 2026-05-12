@@ -277,6 +277,7 @@ fn test_state() -> AppState {
         id_generator: Arc::new(StubIdGenerator),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        default_approval_ttl_secs: Some(3600),
     }
 }
 
