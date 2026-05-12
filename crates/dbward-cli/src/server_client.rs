@@ -2,6 +2,11 @@ use crate::error::CliError;
 use reqwest::Client;
 use serde_json::Value;
 
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) { self.0.abort(); }
+}
+
 const MAX_ERROR_BODY_PREVIEW: usize = 200;
 const REQUEST_STATUS_WAIT_SECS: u64 = 30;
 
@@ -286,7 +291,7 @@ impl ServerClient {
 
         let progress_client = self.clone();
         let progress_id = request_id.to_string();
-        let progress_handle = tokio::spawn(async move {
+        let _progress_guard = AbortOnDrop(tokio::spawn(async move {
             let mut last_status = String::new();
             let start = std::time::Instant::now();
             loop {
@@ -322,7 +327,7 @@ impl ServerClient {
                     last_status = status;
                 }
             }
-        });
+        }));
 
         let result = loop {
             let result = tokio::select! {
@@ -345,7 +350,7 @@ impl ServerClient {
             }
         };
 
-        progress_handle.abort();
+        
         result
     }
 

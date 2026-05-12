@@ -211,8 +211,9 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             // Fall back to API token via server
             let cfg = match config::load(&cli.config) {
                 Ok(c) => c,
-                Err(_) => {
-                    eprintln!("Not logged in and no config found. Run: dbward login or dbward init");
+                Err(e) => {
+                    eprintln!("Not logged in. Config error: {e}");
+                    eprintln!("Run: dbward login or dbward init");
                     return Ok(());
                 }
             };
