@@ -201,8 +201,13 @@ fn sync_workflows(
     state: &AppState,
     workflows: &[config::WorkflowDef],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use dbward_domain::policies::Workflow;
-    use dbward_domain::values::{DatabaseName, Environment};
+    use dbward_domain::policies::{Workflow, WorkflowStep, WorkflowStepMode, ApproverGroup};
+    use dbward_domain::values::{DatabaseName, Environment, Selector};
+
+    // Clean all config-sourced workflows first (handles reorder/removal)
+    for i in 0..100 {
+        let _ = state.policy_repo.delete_workflow(&format!("config-wf-{i}"));
+    }
 
     for (i, wf) in workflows.iter().enumerate() {
         let id = format!("config-wf-{i}");
@@ -216,12 +221,46 @@ fn sync_workflows(
         } else {
             Environment::new(&wf.environment).map_err(|e| format!("workflow env: {e}"))?
         };
+
+        // Parse operations from config (empty = catchall, which is intentional)
+        let mut operations: Vec<dbward_domain::values::Operation> = Vec::new();
+        for op_str in &wf.operations {
+            let op = op_str.parse::<dbward_domain::values::Operation>()
+                .map_err(|_| format!("workflow {}: unknown operation '{op_str}'", id))?;
+            operations.push(op);
+        }
+
+        // Parse steps from config JSON values
+        let steps: Vec<WorkflowStep> = wf.steps.iter().map(|step_val| {
+            let mode = match step_val.get("mode").and_then(|m| m.as_str()) {
+                Some("any") => WorkflowStepMode::Any,
+                _ => WorkflowStepMode::All,
+            };
+            let approvers: Vec<ApproverGroup> = step_val.get("approvers")
+                .and_then(|a| a.as_array())
+                .map(|arr| arr.iter().filter_map(|a| {
+                    let min = a.get("min").and_then(|m| m.as_u64()).unwrap_or(1) as u32;
+                    let selector = if let Some(role) = a.get("role").and_then(|r| r.as_str()) {
+                        Some(Selector::Role(role.into()))
+                    } else if let Some(group) = a.get("group").and_then(|g| g.as_str()) {
+                        Some(Selector::Group(group.into()))
+                    } else if let Some(user) = a.get("user").and_then(|u| u.as_str()) {
+                        Some(Selector::User(user.into()))
+                    } else {
+                        None
+                    };
+                    selector.map(|s| ApproverGroup { selector: s, min })
+                }).collect())
+                .unwrap_or_default();
+            WorkflowStep { approvers, mode }
+        }).collect();
+
         let workflow = Workflow {
             id,
             database: db,
             environment: env,
-            operations: vec![],
-            steps: vec![],
+            operations,
+            steps,
             skip_approval_for: vec![],
             require_reason: wf.require_reason,
             allow_self_approve: false,
@@ -231,12 +270,8 @@ fn sync_workflows(
             created_at: None,
             updated_at: None,
         };
-        // Idempotent: ignore UNIQUE constraint violations (workflow already exists)
         if let Err(e) = state.policy_repo.create_workflow(&workflow) {
-            let msg = e.to_string();
-            if !msg.contains("UNIQUE constraint") {
-                return Err(format!("sync workflow: {e}").into());
-            }
+            return Err(format!("sync workflow: {e}").into());
         }
     }
     Ok(())
