@@ -632,6 +632,7 @@ name = "dbward-agent"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "clap",
  "dbward-api-types",
  "dbward-driver",
  "ed25519-dalek",
@@ -773,16 +774,23 @@ dependencies = [
  "async-trait",
  "axum",
  "chrono",
+ "clap",
  "dbward-app",
  "dbward-domain",
+ "dbward-infra",
+ "hex",
  "http-body-util",
  "hyper",
+ "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
+ "toml",
  "tower",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

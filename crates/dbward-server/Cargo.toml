@@ -7,16 +7,27 @@ repository.workspace = true
 rust-version.workspace = true
 description = "Thin axum HTTP layer wiring dbward-app use cases"
 
+[[bin]]
+name = "dbward-server"
+path = "src/main.rs"
+
 [dependencies]
 dbward-app = { path = "../dbward-app" }
 dbward-domain = { path = "../dbward-domain" }
+dbward-infra = { path = "../dbward-infra" }
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.35", features = ["bundled"] }
 axum = "0.8"
 chrono.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
+hex = "0.4"
+toml = { workspace = true }
 tower-http = { version = "0.6", features = ["cors"] }
 tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

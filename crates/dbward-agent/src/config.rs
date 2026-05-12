@@ -29,6 +29,12 @@ pub struct DatabaseEntry {
 }
 
 impl AgentConfig {
+    pub fn load_from_file(path: &std::path::Path) -> Result<Self, AgentError> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| AgentError::Config(format!("{}: {e}", path.display())))?;
+        Self::from_toml(&content)
+    }
+
     pub fn from_toml(input: &str) -> Result<Self, AgentError> {
         let expanded = expand_env_vars(input);
         let config: Self =
