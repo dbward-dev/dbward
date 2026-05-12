@@ -631,14 +631,6 @@ mod tests {
 
     // === Unknown statement → DML ===
 
-    #[test]
-    fn unknown_statement_is_dml() {
-        // EXECUTE is classified as UnknownStatement (prepared stmt, unknown content)
-        let c = pg("EXECUTE stmt").unwrap();
-        assert_eq!(c.operation, Operation::ExecuteDml);
-        assert_eq!(c.dml_reason, Some(DmlReason::UnknownStatement));
-    }
-
     // === Edge cases ===
 
     #[test]

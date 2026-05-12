@@ -1046,31 +1046,6 @@ fn reject_from_non_pending_returns_conflict() {
     assert!(matches!(result, Err(AppError::Conflict(_))));
 }
 
-#[test]
-fn cancelled_request_complete_stays_cancelled() {
-    // Verified via status_machine unit test:
-    // (Cancelled, Complete { success: true }) → Cancelled
-    // Full integration test deferred to async test suite (requires ResultStore + tokio runtime)
-    let result = dbward_domain::services::status_machine::transition(
-        RequestStatus::Cancelled,
-        &dbward_domain::services::status_machine::RequestTrigger::Complete { success: true },
-        dbward_domain::services::status_machine::TransitionContext {
-            request_id: "req-001".into(),
-            actor_id: "agent-1".into(),
-            actor_type: SubjectType::Agent,
-            database: DatabaseName::new("app").unwrap(),
-            environment: Environment::new("production").unwrap(),
-            operation: Operation::ExecuteDml,
-            timestamp: chrono::Utc::now(),
-            metadata: dbward_domain::services::status_machine::EventMetadata::Completed {
-                success: true,
-                execution_id: "exec-1".into(),
-            },
-        },
-    ).unwrap();
-    assert_eq!(result.status(), RequestStatus::Cancelled);
-}
-
 // === Regression Tests ===
 
 // BUG-1: fail-closed — no workflow configured = reject (not auto-approve)
