@@ -8,4 +8,3 @@ description = "Shared API request/response types for dbward server, CLI, and age
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-dbward-core = { path = "../dbward-core" }

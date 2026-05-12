@@ -46,9 +46,8 @@ services:
   dbward-server:
     build: *dbward-build
     <<: *security
+    entrypoint: ["dbward-server"]
     command:
-      - server
-      - start
       - --data
       - /data/dbward.db
       - --listen
@@ -82,7 +81,10 @@ services:
   dbward-agent:
     build: *dbward-build
     <<: *security
-    entrypoint: ["/bin/sh", "/scripts/agent-entrypoint.sh"]
+    entrypoint: ["dbward-agent"]
+    command:
+      - --config
+      - /config/dbward-agent.toml
     logging:
       driver: json-file
       options:
@@ -91,9 +93,14 @@ services:
     networks: [backend]
     volumes:
       - ./db/migrations:/workspace/db/migrations:ro
-      - ./dev/tokens:/tokens:ro
       - ./dev/dbward-agent.toml:/config/dbward-agent.toml:ro
-      - ./dev/agent-entrypoint.sh:/scripts/agent-entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/dbward-agent-ready"]
+      start_period: 30s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 90s
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,12 +140,20 @@ services:
     build: *dbward-build
     profiles: [mysql]
     <<: *security
-    entrypoint: ["/bin/sh", "/scripts/agent-entrypoint.sh"]
+    entrypoint: ["dbward-agent"]
+    command:
+      - --config
+      - /config/dbward-agent.toml
     networks: [backend]
     volumes:
-      - ./dev/tokens:/tokens:ro
       - ./dev/dbward-agent-mysql.toml:/config/dbward-agent.toml:ro
-      - ./dev/agent-entrypoint.sh:/scripts/agent-entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/dbward-agent-ready"]
+      start_period: 30s
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 90s
     depends_on:
       mysql:
         condition: service_healthy

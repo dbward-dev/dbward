@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::RequestStatus;
+/// Request status as returned by the API.
+pub type RequestStatus = String;
 
 /// POST /api/requests — request body
 #[derive(Debug, Serialize, Deserialize)]

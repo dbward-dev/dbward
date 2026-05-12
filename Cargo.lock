@@ -654,7 +654,6 @@ dependencies = [
 name = "dbward-api-types"
 version = "0.1.0"
 dependencies = [
- "dbward-core",
  "serde",
  "serde_json",
 ]
@@ -671,32 +670,6 @@ dependencies = [
  "sha2",
  "thiserror",
  "tokio",
- "uuid",
-]
-
-[[package]]
-name = "dbward-core"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "dbward-migrate",
- "ed25519-dalek",
- "futures",
- "hex",
- "rand 0.8.6",
- "regex",
- "serde",
- "serde_json",
- "sha2",
- "sqlparser",
- "sqlx",
- "tempfile",
- "testcontainers",
- "testcontainers-modules",
- "thiserror",
- "tokio",
- "toml",
  "uuid",
 ]
 
