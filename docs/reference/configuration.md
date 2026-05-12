@@ -164,7 +164,7 @@ agent_token = "${DBWARD_AGENT_TOKEN}"
 [capabilities]
 databases = ["app"]
 environments = ["production", "staging"]
-operations = ["*"]                # "*" = all
+operations = ["*"]                # "*" = all (execute_select, execute_dml, migrate_up, migrate_down, migrate_status)
 
 [databases.app]
 url = "${DATABASE_URL}"

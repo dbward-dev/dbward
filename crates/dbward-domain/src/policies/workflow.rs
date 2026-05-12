@@ -116,4 +116,15 @@ mod tests {
         assert!(w.matches_operation(Operation::ExecuteDml));
         assert!(!w.matches_operation(Operation::ExecuteSelect));
     }
+
+    #[test]
+    fn workflow_deserialize_minimal() {
+        let json = r#"{"id":"w1","database":"*","environment":"*"}"#;
+        let wf: Workflow = serde_json::from_str(json).unwrap();
+        assert_eq!(wf.id, "w1");
+        assert!(wf.steps.is_empty());
+        assert!(!wf.require_reason);
+        assert!(wf.operations.is_empty());
+        assert!(!wf.allow_self_approve);
+    }
 }

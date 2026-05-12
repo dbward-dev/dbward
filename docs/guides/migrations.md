@@ -71,7 +71,7 @@ dbward migrate down --count 2
 
 ## Approval flow
 
-Migrations go through the same workflow as `execute_query`. If your production workflow requires approval:
+Migrations go through the same workflow as `execute_select`. If your production workflow requires approval:
 
 ```bash
 $ dbward -e production migrate up

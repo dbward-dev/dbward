@@ -14,7 +14,7 @@ POST /api/requests
 
 ```json
 {
-  "operation": "execute_query",
+  "operation": "execute_select",
   "environment": "production",
   "database": "app",
   "detail": "SELECT count(*) FROM users",
@@ -29,7 +29,7 @@ Response (201):
 {
   "id": "req_a1b2c3",
   "status": "pending",
-  "operation": "execute_query",
+  "operation": "execute_select",
   "environment": "production",
   "database": "app",
   "created_at": "2026-05-08T12:00:00Z"

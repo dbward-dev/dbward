@@ -59,7 +59,7 @@ Steps execute in order. Step 2 only becomes active after step 1 is satisfied.
 [[workflows]]
 database = "primary"
 environment = "production"
-operations = ["execute_query"]
+operations = ["execute_select", "execute_dml"]
 
 # Step 1: Team lead review
 [[workflows.steps]]
@@ -133,7 +133,7 @@ min = 2    # Two DBAs must approve
 [[workflows]]
 database = "primary"
 environment = "production"
-operations = ["execute_query"]       # Filter by operation (empty = all)
+operations = ["execute_select", "execute_dml"]  # Filter by operation (empty = all)
 require_reason = true                # Force users to provide --reason (default: false)
 allow_self_approve = false           # Requester cannot approve own request (default: false)
 allow_same_approver_across_steps = false  # Same person can't approve in multiple steps (default: false)
@@ -144,7 +144,8 @@ allow_same_approver_across_steps = false  # Same person can't approve in multipl
 | Value | Matches |
 |-------|---------|
 | `[]` (empty/omitted) | All operations |
-| `["execute_query"]` | Ad-hoc SQL only |
+| `["execute_select"]` | SELECT queries only |
+| `["execute_dml"]` | DML (INSERT/UPDATE/DELETE) only |
 | `["migrate_up", "migrate_down"]` | Migrations only |
 
 ### `allow_self_approve`
@@ -203,7 +204,7 @@ When a request comes in, dbward finds the most specific matching workflow:
 [[workflows]]
 database = "primary"
 environment = "production"
-operations = ["execute_query"]
+operations = ["execute_dml"]
 # ... steps ...
 
 # Rule B: All production operations need admin
@@ -220,11 +221,11 @@ environment = "development"
 
 | Request | Matches | Why |
 |---------|---------|-----|
-| `execute_query` on `primary` / `production` | Rule A | Most specific (database + env + operation) |
+| `execute_dml` on `primary` / `production` | Rule A | Most specific (database + env + operation) |
 | `migrate_up` on `primary` / `production` | Rule B | Wildcard database, matching env |
-| `execute_query` on `analytics` / `production` | Rule B | Wildcard database, matching env |
-| `execute_query` on `primary` / `development` | Rule C | Development auto-approve |
-| `execute_query` on `primary` / `staging` | None → rejected | No matching rule (fail-closed) |
+| `execute_select` on `analytics` / `production` | Rule B | Wildcard database, matching env |
+| `execute_select` on `primary` / `development` | Rule C | Development auto-approve |
+| `execute_select` on `primary` / `staging` | None → rejected | No matching rule (fail-closed) |
 
 ---
 

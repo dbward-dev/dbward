@@ -8,7 +8,7 @@ use chrono::{DateTime, Duration, Utc};
 use dbward_domain::auth::{AuthUser, Permission, ResolvedRole, ResourceContext, SubjectType};
 use dbward_domain::entities::*;
 use dbward_domain::policies::workflow::*;
-use dbward_domain::policies::ExecutionPolicy;
+use dbward_domain::policies::{ExecutionPolicy, ResultPolicy};
 use dbward_domain::values::*;
 
 use dbward_app::error::{AppError, AuthzError};
@@ -1022,4 +1022,114 @@ fn cancelled_request_complete_stays_cancelled() {
         },
     ).unwrap();
     assert_eq!(result.status(), RequestStatus::Cancelled);
+}
+
+// === Regression Tests ===
+
+// BUG-1: fail-closed — no workflow configured = reject (not auto-approve)
+#[test]
+fn no_workflow_configured_rejects_non_emergency() {
+    let h = TestHarness::new(None); // PolicyEvaluator returns None
+    let requester = make_user("alice", &["developer"]);
+    let input = make_input(); // emergency = false
+
+    let result = h.create_uc().execute(input, &requester);
+    match result {
+        Err(AppError::Validation(msg)) => assert!(msg.contains("no workflow configured"), "unexpected msg: {msg}"),
+        Err(e) => panic!("expected Validation error, got: {e:?}"),
+        Ok(_) => panic!("expected Validation error, got Ok"),
+    }
+}
+
+// BUG-1: break-glass exception — no workflow + emergency = success
+#[test]
+fn no_workflow_configured_allows_break_glass() {
+    let h = TestHarness::new(None); // PolicyEvaluator returns None
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.emergency = true;
+    input.reason = Some("incident #999".into());
+
+    let created = h.create_uc().execute(input, &requester).unwrap();
+    assert_eq!(created.status, RequestStatus::Dispatched);
+
+    let events = h.event_dispatcher.events();
+    assert_eq!(events[0].new_status, RequestStatus::BreakGlass);
+}
+
+// BUG-6: Token prefix = raw[4..12]
+#[test]
+fn token_prefix_is_raw_4_to_12() {
+    use dbward_app::use_cases::token_manage::{TokenManage, TokenCreateInput};
+
+    struct FakeTokenRepo(std::sync::Mutex<Vec<dbward_domain::entities::Token>>);
+    impl TokenRepo for FakeTokenRepo {
+        fn create(&self, t: &dbward_domain::entities::Token) -> Result<(), AppError> {
+            self.0.lock().unwrap().push(t.clone()); Ok(())
+        }
+        fn verify(&self, _: &str, _: &str) -> Result<Option<dbward_domain::entities::Token>, AppError> { Ok(None) }
+        fn list(&self) -> Result<Vec<dbward_domain::entities::Token>, AppError> { Ok(vec![]) }
+        fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Token>, AppError> { Ok(None) }
+        fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn revoke_all_for_user(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError> { Ok(0) }
+        fn count_active(&self) -> Result<u32, AppError> { Ok(0) }
+        fn purge_revoked(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+    }
+
+    struct FakeUserRepoNotSuspended;
+    impl UserRepo for FakeUserRepoNotSuspended {
+        fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> { Ok(None) }
+        fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> { Ok(()) }
+        fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> { Ok(vec![]) }
+        fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn activate(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn is_suspended(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+        fn ensure_exists(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+    }
+
+    struct FakePolicyRepoForToken;
+    impl PolicyRepo for FakePolicyRepoForToken {
+        fn create_workflow(&self, _: &dbward_domain::policies::workflow::Workflow) -> Result<(), AppError> { Ok(()) }
+        fn get_workflow(&self, _: &str) -> Result<Option<dbward_domain::policies::workflow::Workflow>, AppError> { Ok(None) }
+        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::workflow::Workflow>, AppError> { Ok(vec![]) }
+        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn count_workflows(&self) -> Result<u32, AppError> { Ok(0) }
+        fn create_execution_policy(&self, _: &dbward_domain::policies::ExecutionPolicy) -> Result<(), AppError> { Ok(()) }
+        fn get_execution_policy(&self, _: &str) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(None) }
+        fn list_execution_policies(&self) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(vec![]) }
+        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn find_result_policy(&self, _: &DatabaseName, _: &Environment) -> Result<Option<ResultPolicy>, AppError> { Ok(None) }
+        fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> { Ok(()) }
+        fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
+        fn get_roles_by_names(&self, _: &[String]) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
+        fn delete_role(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn count_roles(&self) -> Result<u32, AppError> { Ok(0) }
+    }
+
+    let token_repo = Arc::new(FakeTokenRepo(std::sync::Mutex::new(vec![])));
+    let uc = TokenManage {
+        authorizer: Arc::new(AllowAll),
+        token_repo: token_repo.clone(),
+        user_repo: Arc::new(FakeUserRepoNotSuspended),
+        policy_repo: Arc::new(FakePolicyRepoForToken),
+        license: Arc::new(FakeLicenseChecker),
+        audit: Arc::new(FakeAuditLogger),
+        clock: Arc::new(FakeClock::new()),
+        id_gen: Arc::new(SeqIdGen::new()),
+    };
+
+    let admin = make_user("admin", &["admin"]);
+    let output = uc.create(TokenCreateInput {
+        subject_id: "bob".into(),
+        subject_type: "user".into(),
+        name: Some("test-token".into()),
+        roles: vec![],
+        groups: vec![],
+        expires_at: None,
+    }, &admin).unwrap();
+
+    // Token format: "dbw_{uuid}" → prefix = raw[4..12]
+    assert!(output.token.starts_with("dbw_"));
+    let expected_prefix = &output.token[4..12];
+    assert_eq!(output.prefix, expected_prefix);
 }

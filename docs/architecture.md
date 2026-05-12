@@ -139,7 +139,7 @@ Determine whether an operation requires approval:
 [[workflows]]
 database = "primary"
 environment = "production"
-operations = ["execute_query", "migrate_up", "migrate_down"]
+operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down"]
 
 [[workflows.steps]]
 type = "approval"
@@ -285,7 +285,7 @@ agent_token = "dbw_agent_xxx"
 [capabilities]
 environments = ["development", "staging", "production"]
 databases = ["primary", "analytics"]
-operations = ["execute_query", "migrate_up", "migrate_down", "migrate_status"]
+operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "migrate_status"]
 
 [databases.primary]
 url = "postgres://user:pass@db-primary:5432/app"

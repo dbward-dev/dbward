@@ -1327,3 +1327,78 @@ fn find_expired_leases_past() {
     let expired = agent_repo.find_expired_leases(&now).unwrap();
     assert!(expired.iter().any(|(eid, _)| eid == "exec-lease-exp"));
 }
+
+// --- 27. SEC-4: Duplicate approval prevention (UNIQUE index) ---
+
+#[test]
+fn duplicate_approve_same_actor_step_rejected() {
+    let conn = setup();
+    register_db(&conn);
+
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    // Insert a pending request
+    let req = Request {
+        id: "req-dup-appr".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "UPDATE t SET x=1".into(),
+        status: RequestStatus::Pending,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    // First approval succeeds
+    let a1 = Approval {
+        id: "apr-dup-1".into(),
+        request_id: "req-dup-appr".into(),
+        action: ApprovalAction::Approve,
+        actor_id: "bob".into(),
+        matched_selector: "role:dba".into(),
+        step_index: 0,
+        comment: None,
+        created_at: Utc::now(),
+    };
+    request_repo.insert_approval(&a1).unwrap();
+
+    // Second approval with same (request_id, actor_id, step_index, action=approve) → UNIQUE violation
+    let a2 = Approval {
+        id: "apr-dup-2".into(),
+        request_id: "req-dup-appr".into(),
+        action: ApprovalAction::Approve,
+        actor_id: "bob".into(),
+        matched_selector: "role:dba".into(),
+        step_index: 0,
+        comment: Some("second attempt".into()),
+        created_at: Utc::now(),
+    };
+    let result = request_repo.insert_approval(&a2);
+    assert!(result.is_err(), "duplicate approve should be rejected by UNIQUE index");
+
+    // Reject with same (request_id, actor_id, step_index) still works (index is WHERE action='approve')
+    let a3 = Approval {
+        id: "apr-dup-3".into(),
+        request_id: "req-dup-appr".into(),
+        action: ApprovalAction::Reject,
+        actor_id: "bob".into(),
+        matched_selector: "role:dba".into(),
+        step_index: 0,
+        comment: None,
+        created_at: Utc::now(),
+    };
+    request_repo.insert_approval(&a3).unwrap();
+}
