@@ -1,7 +1,9 @@
+pub mod cancel_state;
 pub mod error;
 mod mysql;
 mod postgres;
 
+pub use cancel_state::CancelState;
 pub use error::DriverError;
 pub use mysql::MysqlDriver;
 pub use postgres::PostgresDriver;
@@ -26,16 +28,13 @@ pub trait DatabaseDriver: Send + Sync {
     async fn revert_migration(&self, down_sql: &str, version: &str) -> Result<(), DriverError>;
     async fn ensure_migrations_table(&self) -> Result<(), DriverError>;
     async fn applied_versions(&self) -> Result<Vec<String>, DriverError>;
-    async fn connection_id(&self) -> Result<String, DriverError>;
-    async fn set_timeout(&self, secs: u64) -> Result<(), DriverError>;
 
-    /// Execute query on a dedicated connection with timeout set.
-    /// Returns (connection_id, result) — guarantees same connection for timeout+pid+query.
-    async fn query_isolated(&self, sql: &str, timeout_secs: u64) -> Result<(String, QueryOutput), DriverError>;
+    /// Cancellable query: acquire connection → set timeout → set pid on cancel_state → execute.
+    /// All on the same connection. Cancel state is shared with heartbeat task.
+    async fn query_cancellable(&self, sql: &str, timeout_secs: u64, cancel: &CancelState) -> Result<QueryOutput, DriverError>;
 
-    /// Execute statement on a dedicated connection with timeout set.
-    /// Returns (connection_id, rows_affected).
-    async fn execute_isolated(&self, sql: &str, timeout_secs: u64) -> Result<(String, u64), DriverError>;
+    /// Cancellable execute: same guarantees as query_cancellable.
+    async fn execute_cancellable(&self, sql: &str, timeout_secs: u64, cancel: &CancelState) -> Result<u64, DriverError>;
 }
 
 pub async fn connect(

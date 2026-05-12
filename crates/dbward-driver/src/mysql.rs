@@ -1,7 +1,7 @@
 use futures::TryStreamExt;
 use sqlx::{Column, Row, TypeInfo};
 
-use crate::{DatabaseDriver, DriverError, JsonMapping, QueryOutput, MAX_RESULT_BYTES, MAX_RESULT_ROWS};
+use crate::{CancelState, DatabaseDriver, DriverError, JsonMapping, QueryOutput, MAX_RESULT_BYTES, MAX_RESULT_ROWS};
 
 pub struct MysqlDriver {
     pool: sqlx::MySqlPool,
@@ -160,24 +160,7 @@ impl DatabaseDriver for MysqlDriver {
         Ok(rows.into_iter().map(|(v,)| v).collect())
     }
 
-    async fn connection_id(&self) -> Result<String, DriverError> {
-        let id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        Ok(id.to_string())
-    }
-
-    async fn set_timeout(&self, secs: u64) -> Result<(), DriverError> {
-        let ms = secs * 1000;
-        sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        Ok(())
-    }
-
-    async fn query_isolated(&self, sql: &str, timeout_secs: u64) -> Result<(String, QueryOutput), DriverError> {
+    async fn query_cancellable(&self, sql: &str, timeout_secs: u64, cancel: &CancelState) -> Result<QueryOutput, DriverError> {
         let mut conn = self.pool.acquire().await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
         let ms = timeout_secs * 1000;
@@ -187,12 +170,39 @@ impl DatabaseDriver for MysqlDriver {
         let id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
             .fetch_one(&mut *conn).await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        // Use pool-level query (MySQL doesn't support raw_sql on connection easily)
-        let output = self.query(sql).await?;
-        Ok((id.to_string(), output))
+        cancel.set_connection_id(id.to_string());
+
+        if cancel.is_cancelled() {
+            return Err(DriverError::Cancelled);
+        }
+
+        // Execute on same connection
+        let all_rows = sqlx::query(sql).fetch_all(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+        let mut rows = Vec::new();
+        let mut total_bytes: usize = 0;
+        let mut truncated = false;
+        let mut truncation_reason = None;
+        for row in all_rows {
+            let json = mysql_row_to_json(&row);
+            total_bytes += json.to_string().len();
+            if rows.len() >= MAX_RESULT_ROWS {
+                truncated = true;
+                truncation_reason = Some(format!("max rows ({MAX_RESULT_ROWS})"));
+                break;
+            }
+            if total_bytes >= MAX_RESULT_BYTES {
+                truncated = true;
+                truncation_reason = Some(format!("max size ({MAX_RESULT_BYTES} bytes)"));
+                break;
+            }
+            rows.push(json);
+        }
+        Ok(QueryOutput { rows, truncated, truncation_reason })
     }
 
-    async fn execute_isolated(&self, sql: &str, timeout_secs: u64) -> Result<(String, u64), DriverError> {
+    async fn execute_cancellable(&self, sql: &str, timeout_secs: u64, cancel: &CancelState) -> Result<u64, DriverError> {
         let mut conn = self.pool.acquire().await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
         let ms = timeout_secs * 1000;
@@ -202,9 +212,15 @@ impl DatabaseDriver for MysqlDriver {
         let id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
             .fetch_one(&mut *conn).await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        cancel.set_connection_id(id.to_string());
+
+        if cancel.is_cancelled() {
+            return Err(DriverError::Cancelled);
+        }
+
         let result = sqlx::query(sql).execute(&mut *conn).await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        Ok((id.to_string(), result.rows_affected()))
+        Ok(result.rows_affected())
     }
 }
 

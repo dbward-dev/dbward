@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dbward_api_types::agent::{ClaimResponse, Job, ResultBody};
-use dbward_driver::DatabaseDriver;
+use dbward_driver::{CancelState, DatabaseDriver};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
 use tracing::{debug, error, info, warn};
@@ -47,31 +47,29 @@ impl JobExecutor {
         let timeout_secs = claim.statement_timeout_secs.unwrap_or(self.statement_timeout_secs);
         let is_migration = claim.operation.starts_with("migrate");
 
-        // CancelToken with actual db_url for PG cancel
-        let db_url = self.db_entries.get(&pool_key).map(|e| e.url.clone());
-        let cancel_token = CancelToken::new(db_url, is_migration);
+        // CancelState shared between driver and heartbeat
+        let cancel_state = CancelState::new();
 
-        // Heartbeat task uses execution_id (not request_id)
+        // CancelToken orchestrates kill logic (agent-side)
+        let db_url = self.db_entries.get(&pool_key).map(|e| e.url.clone());
+        let cancel_token = CancelToken::new(db_url, is_migration, cancel_state.clone());
+
+        // Heartbeat task uses execution_id
         let execution_id = claim.execution_id.clone();
         let heartbeat_client = self.client.clone();
-        let heartbeat_cancel = cancel_token.clone();
+        let heartbeat_token = cancel_token.clone();
         let heartbeat_handle = tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(2));
             interval.tick().await;
             loop {
                 interval.tick().await;
-                if heartbeat_cancel.is_cancelled() {
+                if heartbeat_token.is_cancelled() {
                     break;
                 }
                 match heartbeat_client.heartbeat(&execution_id).await {
                     Ok(resp) if resp.cancelled => {
                         warn!(execution_id = %execution_id, "cancellation requested by server");
-                        heartbeat_cancel.cancel();
-                        // 2s grace period before kill
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        if let Err(e) = heartbeat_cancel.kill_query().await {
-                            error!("kill_query failed: {e}");
-                        }
+                        heartbeat_token.trigger_cancel().await;
                         break;
                     }
                     Err(e) => {
@@ -83,7 +81,7 @@ impl JobExecutor {
         });
 
         let sql = extract_sql(&claim.detail, &claim.operation);
-        let result = execute_cancellable(driver, &claim.operation, &sql, timeout_secs, &cancel_token).await;
+        let result = run_cancellable(driver, &claim.operation, &sql, timeout_secs, &cancel_state).await;
 
         heartbeat_handle.abort();
 
@@ -100,16 +98,13 @@ impl JobExecutor {
             },
         };
 
-        // Submit using execution_id
         self.submit_with_retry(&claim.execution_id, &body).await;
         Ok(())
     }
 
     fn verify_token(&self, claim: &ClaimResponse) -> Result<(), AgentError> {
-        // Server token is a JSON string (flat structure, not nested payload/signature)
         let token: serde_json::Value = serde_json::from_value(claim.execution_token.clone())
             .or_else(|_| {
-                // Token might be a string that needs parsing
                 claim.execution_token.as_str()
                     .ok_or_else(|| AgentError::TokenVerification("token not a string or object".into()))
                     .and_then(|s| serde_json::from_str(s)
@@ -120,7 +115,6 @@ impl JobExecutor {
             .and_then(|v| v.as_str())
             .ok_or_else(|| AgentError::TokenVerification("missing signature".into()))?;
 
-        // Verify expires_at (RFC3339 string)
         let expires_at = token.get("expires_at")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AgentError::TokenVerification("missing expires_at".into()))?;
@@ -130,7 +124,6 @@ impl JobExecutor {
             return Err(AgentError::TokenVerification("token expired".into()));
         }
 
-        // Verify fields match claim
         let token_request_id = token.get("request_id").and_then(|v| v.as_str());
         if token_request_id != Some(&claim.request_id) {
             return Err(AgentError::TokenVerification("request_id mismatch".into()));
@@ -148,7 +141,6 @@ impl JobExecutor {
             return Err(AgentError::TokenVerification("environment mismatch".into()));
         }
 
-        // Verify detail_hash = SHA-256 of full detail string (matches server's sha256_hex(&request.detail))
         let expected_hash = token.get("detail_hash")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AgentError::TokenVerification("missing detail_hash".into()))?;
@@ -159,8 +151,6 @@ impl JobExecutor {
             return Err(AgentError::TokenVerification("detail_hash mismatch".into()));
         }
 
-        // Verify Ed25519 signature over pipe-delimited message
-        // Format: request_id|operation|environment|database|detail_hash|expires_at|requester_role|requester_subject_id
         let requester_role = token.get("requester_role").and_then(|v| v.as_str()).unwrap_or("");
         let requester_subject = token.get("requester_subject_id").and_then(|v| v.as_str()).unwrap_or("");
         let message = format!(
@@ -214,54 +204,41 @@ fn extract_sql(detail: &serde_json::Value, _operation: &str) -> String {
         .to_string()
 }
 
-async fn execute_cancellable(
+async fn run_cancellable(
     driver: &Arc<dyn DatabaseDriver>,
     operation: &str,
     sql: &str,
     timeout_secs: u64,
-    cancel_token: &CancelToken,
+    cancel: &CancelState,
 ) -> Result<String, AgentError> {
-    // Get connection_id BEFORE executing so cancel can kill during execution
-    match driver.connection_id().await {
-        Ok(id) => cancel_token.set_connection_id(id),
-        Err(e) => warn!("failed to get connection_id for cancel: {e}"),
-    }
-
     tokio::select! {
         biased;
-        result = execute_isolated(driver, operation, sql, timeout_secs) => result,
-        _ = cancel_token.wait_for_kill() => {
+        result = do_execute(driver, operation, sql, timeout_secs, cancel) => result,
+        _ = cancel.wait_for_kill() => {
             Err(AgentError::Driver(dbward_driver::DriverError::Cancelled))
         }
     }
 }
 
-async fn execute_isolated(
+async fn do_execute(
     driver: &Arc<dyn DatabaseDriver>,
     operation: &str,
     sql: &str,
     timeout_secs: u64,
+    cancel: &CancelState,
 ) -> Result<String, AgentError> {
     match operation {
         "query" => {
-            let (_pid, output) = driver.query_isolated(sql, timeout_secs).await?;
+            let output = driver.query_cancellable(sql, timeout_secs, cancel).await?;
             Ok(serde_json::to_string(&serde_json::json!({
                 "rows": output.rows,
                 "truncated": output.truncated,
                 "truncation_reason": output.truncation_reason,
             })).unwrap())
         }
-        "execute" => {
-            let (_pid, affected) = driver.execute_isolated(sql, timeout_secs).await?;
+        _ => {
+            let affected = driver.execute_cancellable(sql, timeout_secs, cancel).await?;
             Ok(serde_json::to_string(&serde_json::json!({ "rows_affected": affected })).unwrap())
-        }
-        "migrate_up" | "migrate_down" => {
-            let (_pid, _) = driver.execute_isolated(sql, timeout_secs).await?;
-            Ok(serde_json::to_string(&serde_json::json!({ "applied": true })).unwrap())
-        }
-        other => {
-            let (_pid, affected) = driver.execute_isolated(sql, timeout_secs).await?;
-            Ok(serde_json::to_string(&serde_json::json!({ "operation": other, "rows_affected": affected })).unwrap())
         }
     }
 }

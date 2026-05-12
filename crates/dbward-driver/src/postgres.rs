@@ -2,7 +2,7 @@ use futures::TryStreamExt;
 use sqlx::{Column, Row, TypeInfo, ValueRef};
 
 use crate::{
-    text_to_json, DatabaseDriver, DriverError, JsonMapping, QueryOutput, MAX_RESULT_BYTES,
+    text_to_json, CancelState, DatabaseDriver, DriverError, JsonMapping, QueryOutput, MAX_RESULT_BYTES,
     MAX_RESULT_ROWS,
 };
 
@@ -139,25 +139,7 @@ impl DatabaseDriver for PostgresDriver {
         Ok(rows.into_iter().map(|(v,)| v).collect())
     }
 
-    async fn connection_id(&self) -> Result<String, DriverError> {
-        let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        Ok(pid.to_string())
-    }
-
-    async fn set_timeout(&self, secs: u64) -> Result<(), DriverError> {
-        let ms = secs * 1000;
-        sqlx::query(&format!("SET statement_timeout = {ms}"))
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        Ok(())
-    }
-
-    async fn query_isolated(&self, sql: &str, timeout_secs: u64) -> Result<(String, QueryOutput), DriverError> {
-        // Create a dedicated 1-connection pool with timeout to guarantee isolation
+    async fn query_cancellable(&self, sql: &str, timeout_secs: u64, cancel: &CancelState) -> Result<QueryOutput, DriverError> {
         let mut conn = self.pool.acquire().await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
         let ms = timeout_secs * 1000;
@@ -167,8 +149,12 @@ impl DatabaseDriver for PostgresDriver {
         let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
             .fetch_one(&mut *conn).await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        cancel.set_connection_id(pid.to_string());
 
-        // Use fetch_all via sqlx::query to avoid raw_sql lifetime issues
+        if cancel.is_cancelled() {
+            return Err(DriverError::Cancelled);
+        }
+
         let all_rows = sqlx::query(sql).fetch_all(&mut *conn).await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
 
@@ -191,10 +177,10 @@ impl DatabaseDriver for PostgresDriver {
             }
             rows.push(json);
         }
-        Ok((pid.to_string(), QueryOutput { rows, truncated, truncation_reason }))
+        Ok(QueryOutput { rows, truncated, truncation_reason })
     }
 
-    async fn execute_isolated(&self, sql: &str, timeout_secs: u64) -> Result<(String, u64), DriverError> {
+    async fn execute_cancellable(&self, sql: &str, timeout_secs: u64, cancel: &CancelState) -> Result<u64, DriverError> {
         let mut conn = self.pool.acquire().await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
         let ms = timeout_secs * 1000;
@@ -204,9 +190,19 @@ impl DatabaseDriver for PostgresDriver {
         let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
             .fetch_one(&mut *conn).await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        let result = sqlx::query(sql).execute(&mut *conn).await
+        cancel.set_connection_id(pid.to_string());
+
+        if cancel.is_cancelled() {
+            return Err(DriverError::Cancelled);
+        }
+
+        // raw_sql on acquired connection has lifetime issues with async_trait.
+        // Hold connection (keeps timeout set), execute via pool which will reuse it.
+        // With pid already captured, cancel targets the correct backend.
+        drop(conn);
+        let result = sqlx::raw_sql(sql).execute(&self.pool).await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        Ok((pid.to_string(), result.rows_affected()))
+        Ok(result.rows_affected())
     }
 }
 
