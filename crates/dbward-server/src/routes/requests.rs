@@ -106,13 +106,16 @@ pub async fn create(
                 vec![]
             };
 
+            let status_code = if out.is_existing { StatusCode::OK } else { StatusCode::CREATED };
+
             Ok((
-                StatusCode::CREATED,
+                status_code,
                 Json(json!({
                     "id": out.id,
                     "status": out.status.as_str(),
                     "operation": out.operation.as_str(),
                     "approvers": approvers,
+                    "idempotent": out.is_existing,
                 })),
             ))
         },

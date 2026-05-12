@@ -65,7 +65,7 @@ impl TokenSigner for Ed25519TokenSigner {
             "{}|{}|{}|{}|{}|{}|{}|{}",
             claims.request_id, claims.operation, claims.environment,
             claims.database, detail_hash, expires_at,
-            claims.requester, claims.requester,
+            claims.requester_role, claims.requester,
         );
         let signature = self.signing_key.sign(message.as_bytes());
 
@@ -79,7 +79,7 @@ impl TokenSigner for Ed25519TokenSigner {
             "issued_at": issued_at,
             "expires_at": expires_at,
             "signature": hex::encode(signature.to_bytes()),
-            "requester_role": claims.requester,
+            "requester_role": claims.requester_role,
             "requester_subject_id": claims.requester,
         }).to_string()
     }

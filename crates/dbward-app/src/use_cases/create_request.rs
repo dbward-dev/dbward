@@ -48,6 +48,7 @@ pub struct CreateRequestOutput {
     pub id: String,
     pub status: RequestStatus,
     pub operation: Operation,
+    pub is_existing: bool,
 }
 
 impl CreateRequest {
@@ -106,6 +107,7 @@ impl CreateRequest {
                     id: existing.id,
                     status: existing.status,
                     operation: existing.operation,
+                    is_existing: true,
                 });
             }
         }
@@ -233,7 +235,7 @@ impl CreateRequest {
             status
         };
 
-        Ok(CreateRequestOutput { id, status: final_status, operation })
+        Ok(CreateRequestOutput { id, status: final_status, operation, is_existing: false })
     }
 }
 

@@ -70,11 +70,13 @@ pub async fn poll(
         vec![Environment::wildcard()]
     } else {
         body.capabilities.environments.iter()
-            .filter_map(|e| Environment::new(e).ok())
-            .collect()
+            .map(|e| Environment::new(e).map_err(|_| map_error(dbward_app::error::AppError::Validation(format!("invalid environment: {e}")))))
+            .collect::<Result<Vec<_>, _>>()?
     };
-    let capabilities: Vec<DatabaseCapability> = body.capabilities.databases.iter()
-        .filter_map(|d| DatabaseName::new(d).ok())
+    let databases: Vec<DatabaseName> = body.capabilities.databases.iter()
+        .map(|d| DatabaseName::new(d).map_err(|_| map_error(dbward_app::error::AppError::Validation(format!("invalid database: {d}")))))
+        .collect::<Result<Vec<_>, _>>()?;
+    let capabilities: Vec<DatabaseCapability> = databases.iter()
         .flat_map(|db| envs.iter().map(move |env| DatabaseCapability { database: db.clone(), environment: env.clone() }))
         .collect();
 
@@ -136,6 +138,8 @@ pub async fn claim(
         event_dispatcher: state.event_dispatcher.clone(),
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
+        user_repo: state.user_repo.clone(),
+        role_resolver: state.role_resolver.clone(),
     };
     let output = uc.execute(
         AgentClaimInput {

@@ -48,7 +48,11 @@ impl OidcVerifier {
     }
 
     async fn refresh_keys(&self) -> Result<(), AuthError> {
-        let resp = reqwest::get(&self.jwks_uri).await
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|e| AuthError::Internal(format!("HTTP client build failed: {e}")))?;
+        let resp = client.get(&self.jwks_uri).send().await
             .map_err(|e| AuthError::Internal(format!("JWKS fetch failed: {e}")))?;
         let jwks: serde_json::Value = resp.json().await
             .map_err(|e| AuthError::Internal(format!("JWKS parse failed: {e}")))?;

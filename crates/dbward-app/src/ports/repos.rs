@@ -240,6 +240,7 @@ pub struct ExecutionTokenClaims {
     pub environment: String,
     pub detail_hash: String,
     pub requester: String,
+    pub requester_role: String,
 }
 
 // --- Notifier ---

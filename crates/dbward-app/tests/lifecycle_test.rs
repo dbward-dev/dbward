@@ -754,6 +754,24 @@ impl TokenSigner for FakeTokenSigner {
     fn public_key_hex(&self) -> String { "fake".into() }
 }
 
+struct FakeUserRepoForAgent;
+impl UserRepo for FakeUserRepoForAgent {
+    fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> { Ok(None) }
+    fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> { Ok(()) }
+    fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> { Ok(vec![]) }
+    fn suspend(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+    fn activate(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+    fn is_suspended(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+    fn ensure_exists(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+}
+
+struct FakeRoleResolverForAgent;
+impl RoleResolver for FakeRoleResolverForAgent {
+    fn resolve(&self, _: &str, _: dbward_domain::auth::SubjectType, _: &[String]) -> Result<Vec<dbward_domain::auth::ResolvedRole>, dbward_app::error::AuthError> {
+        Ok(vec![dbward_domain::auth::ResolvedRole { name: "developer".into(), permissions: Default::default(), databases: vec![], environments: vec![] }])
+    }
+}
+
 fn make_agent_user(id: &str) -> AuthUser {
     AuthUser {
         subject_id: id.to_string(),
@@ -815,6 +833,8 @@ fn agent_full_flow_poll_claim_heartbeat() {
         event_dispatcher: h.event_dispatcher.clone(),
         clock: h.clock.clone(),
         id_gen: h.id_gen.clone(),
+        user_repo: Arc::new(FakeUserRepoForAgent),
+        role_resolver: Arc::new(FakeRoleResolverForAgent),
     };
     let claim_result = claim_uc.execute(
         AgentClaimInput { request_id: created.id.clone(), agent_id: "agent-1".into(), agent_databases: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }] },
@@ -869,6 +889,8 @@ fn heartbeat_detects_cancelled_request() {
         event_dispatcher: h.event_dispatcher.clone(),
         clock: h.clock.clone(),
         id_gen: h.id_gen.clone(),
+        user_repo: Arc::new(FakeUserRepoForAgent),
+        role_resolver: Arc::new(FakeRoleResolverForAgent),
     };
     let claim_result = claim_uc.execute(AgentClaimInput { request_id: created.id.clone(), agent_id: "agent-1".into(), agent_databases: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }] }, &agent).unwrap();
 

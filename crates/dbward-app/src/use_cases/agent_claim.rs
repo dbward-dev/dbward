@@ -21,6 +21,8 @@ pub struct AgentClaim {
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
+    pub user_repo: Arc<dyn UserRepo>,
+    pub role_resolver: Arc<dyn RoleResolver>,
 }
 
 pub struct AgentClaimInput {
@@ -126,6 +128,16 @@ impl AgentClaim {
 
         // 10. Sign execution token (SHA-256 for detail_hash)
         let detail_hash = sha256_hex(&request.detail);
+        let requester_groups = self.user_repo.get(&request.requester)?
+            .map(|u| u.groups)
+            .unwrap_or_default();
+        let requester_role = self.role_resolver.resolve(
+            &request.requester,
+            dbward_domain::auth::SubjectType::User,
+            &requester_groups,
+        ).ok()
+            .and_then(|roles| roles.first().map(|r| r.name.clone()))
+            .unwrap_or_else(|| "unknown".into());
         let token = self.token_signer.sign(&ExecutionTokenClaims {
             request_id: request.id.clone(),
             operation: request.operation.as_str().to_string(),
@@ -133,6 +145,7 @@ impl AgentClaim {
             environment: request.environment.as_str().to_string(),
             detail_hash,
             requester: request.requester.clone(),
+            requester_role,
         });
 
         let execution = Execution {
