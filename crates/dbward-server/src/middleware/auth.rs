@@ -87,6 +87,7 @@ pub async fn auth_middleware(
             display_name: None,
             email: None,
             groups: groups.clone(),
+            roles: vec![],
             status: UserStatus::Active,
             last_seen_at: Some(now),
             created_at: now,

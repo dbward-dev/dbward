@@ -186,6 +186,8 @@ impl PolicyRepo for SqlitePolicyRepo {
                     retention_days,
                     delivery_mode,
                     access,
+                    created_at: None,
+                    updated_at: None,
                 });
                 best_score = score;
             }
@@ -389,6 +391,8 @@ fn row_to_workflow(row: &rusqlite::Row) -> rusqlite::Result<Result<Workflow, App
             allow_same_approver_across_steps: allow_same,
             pending_ttl_secs: pending_ttl.map(|v| v as u64),
             approval_ttl_secs: approval_ttl.map(|v| v as u64),
+            created_at: None,
+            updated_at: None,
         })
     })())
 }
@@ -415,6 +419,8 @@ fn row_to_execution_policy(row: &rusqlite::Row) -> rusqlite::Result<Result<Execu
             retry_on_failure: retry,
             statement_timeout_secs: timeout,
             max_statement_timeout_secs: max_timeout,
+            created_at: None,
+            updated_at: None,
         })
     })())
 }

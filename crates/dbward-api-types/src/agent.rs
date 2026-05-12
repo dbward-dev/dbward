@@ -69,6 +69,12 @@ pub struct ResultBody {
     pub result_data: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows_affected: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_rows: Option<u64>,
 }
 
 /// Agent status report sent with each poll.

@@ -277,6 +277,8 @@ mod tests {
                     retention_days: 7, // 7 days < 10 days ago → expired
                     delivery_mode: dbward_domain::policies::DeliveryMode::Both,
                     access: vec![],
+                    created_at: None,
+                    updated_at: None,
                 })),
             }),
             clock: Arc::new(FakeClock { now }),
@@ -306,6 +308,8 @@ mod tests {
                     retention_days: 30,
                     delivery_mode: dbward_domain::policies::DeliveryMode::Both,
                     access: vec![Selector::Role("dba".into())],
+                    created_at: None,
+                    updated_at: None,
                 })),
             }),
             clock: Arc::new(FakeClock { now }),

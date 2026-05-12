@@ -110,5 +110,7 @@ fn row_to_webhook(row: &rusqlite::Row) -> rusqlite::Result<Webhook> {
         format: parse_format(&format_s),
         secret: row.get(4)?,
         status: parse_wh_status(&status_s),
+        created_at: None,
+        updated_at: None,
     })
 }

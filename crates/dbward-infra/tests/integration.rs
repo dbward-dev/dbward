@@ -222,6 +222,8 @@ fn policy_evaluator_4_level_workflow_priority() {
         allow_same_approver_across_steps: false,
         pending_ttl_secs: None,
         approval_ttl_secs: None,
+        created_at: None,
+        updated_at: None,
     }).unwrap();
 
     // Level 3: (app, *)
@@ -237,6 +239,8 @@ fn policy_evaluator_4_level_workflow_priority() {
         allow_same_approver_across_steps: false,
         pending_ttl_secs: None,
         approval_ttl_secs: None,
+        created_at: None,
+        updated_at: None,
     }).unwrap();
 
     // Level 2: (*, production)
@@ -252,6 +256,8 @@ fn policy_evaluator_4_level_workflow_priority() {
         allow_same_approver_across_steps: false,
         pending_ttl_secs: None,
         approval_ttl_secs: None,
+        created_at: None,
+        updated_at: None,
     }).unwrap();
 
     // Level 1 (highest): (app, production)
@@ -267,6 +273,8 @@ fn policy_evaluator_4_level_workflow_priority() {
         allow_same_approver_across_steps: false,
         pending_ttl_secs: None,
         approval_ttl_secs: None,
+        created_at: None,
+        updated_at: None,
     }).unwrap();
 
     let db = DatabaseName::new("app").unwrap();
@@ -471,6 +479,8 @@ fn webhook_crud_lifecycle() {
         format: WebhookFormat::Slack,
         secret: Some("s3cr3t".into()),
         status: WebhookStatus::Active,
+        created_at: None,
+        updated_at: None,
     };
     repo.create(&wh).unwrap();
 
@@ -509,6 +519,7 @@ fn user_suspend_and_request_cancel() {
         display_name: Some("Alice".into()),
         email: Some("alice@example.com".into()),
         groups: vec!["engineering".into()],
+        roles: vec![],
         status: UserStatus::Active,
         last_seen_at: None,
         created_at: Utc::now(),

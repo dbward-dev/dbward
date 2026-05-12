@@ -14,6 +14,8 @@ pub struct User {
     pub display_name: Option<String>,
     pub email: Option<String>,
     pub groups: Vec<String>,
+    #[serde(default)]
+    pub roles: Vec<String>,
     pub status: UserStatus,
     pub last_seen_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,

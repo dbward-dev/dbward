@@ -251,6 +251,8 @@ fn single_step_workflow() -> Workflow {
         allow_same_approver_across_steps: true,
         pending_ttl_secs: None,
         approval_ttl_secs: Some(3600),
+        created_at: None,
+        updated_at: None,
     }
 }
 
@@ -276,6 +278,8 @@ fn two_step_workflow() -> Workflow {
         allow_same_approver_across_steps: true,
         pending_ttl_secs: None,
         approval_ttl_secs: Some(3600),
+        created_at: None,
+        updated_at: None,
     }
 }
 
@@ -567,6 +571,8 @@ fn auto_approved_request_dispatches_directly() {
         allow_same_approver_across_steps: true,
         pending_ttl_secs: None,
         approval_ttl_secs: None,
+        created_at: None,
+        updated_at: None,
     };
     let h = TestHarness::new(Some(auto_wf));
     let requester = make_user("alice", &["developer"]);
@@ -956,6 +962,8 @@ fn event_dispatcher_records_auto_approved_two_events() {
         allow_same_approver_across_steps: true,
         pending_ttl_secs: None,
         approval_ttl_secs: None,
+        created_at: None,
+        updated_at: None,
     };
     let h = TestHarness::new(Some(auto_wf));
     let requester = make_user("alice", &["developer"]);

@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::values::{DatabaseName, Environment, Operation, Selector};
@@ -36,6 +37,10 @@ pub struct Workflow {
     pub pending_ttl_secs: Option<u64>,
     /// How long after approval the request remains valid for dispatch.
     pub approval_ttl_secs: Option<u64>,
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 impl Workflow {
@@ -68,6 +73,8 @@ mod tests {
             allow_same_approver_across_steps: false,
             pending_ttl_secs: None,
             approval_ttl_secs: None,
+            created_at: None,
+            updated_at: None,
         }
     }
 

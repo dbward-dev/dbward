@@ -90,11 +90,17 @@ impl JobExecutor {
                 success: true,
                 result_data: Some(value),
                 error_message: None,
+                rows_affected: None,
+                truncated: None,
+                total_rows: None,
             },
             Err(e) => ResultBody {
                 success: false,
                 result_data: None,
                 error_message: Some(e.to_string()),
+                rows_affected: None,
+                truncated: None,
+                total_rows: None,
             },
         };
 

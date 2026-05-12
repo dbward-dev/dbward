@@ -72,6 +72,8 @@ impl WebhookManage {
             },
             secret: input.secret,
             status: dbward_domain::entities::WebhookStatus::Active,
+            created_at: None,
+            updated_at: None,
         };
         self.webhook_repo.create(&webhook)?;
 
@@ -192,7 +194,7 @@ mod tests {
     impl WebhookRepo for FakeWebhookRepo {
         fn create(&self, _: &Webhook) -> Result<(), AppError> { Ok(()) }
         fn get(&self, _: &str) -> Result<Option<Webhook>, AppError> {
-            Ok(Some(Webhook { id: "wh-1".into(), url: "https://example.com".into(), events: vec![], format: WebhookFormat::Generic, secret: None, status: WebhookStatus::Active }))
+            Ok(Some(Webhook { id: "wh-1".into(), url: "https://example.com".into(), events: vec![], format: WebhookFormat::Generic, secret: None, status: WebhookStatus::Active, created_at: None, updated_at: None }))
         }
         fn list(&self) -> Result<Vec<Webhook>, AppError> { Ok(vec![]) }
         fn update(&self, _: &Webhook) -> Result<(), AppError> { Ok(()) }

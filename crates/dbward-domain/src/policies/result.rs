@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::values::{DatabaseName, Environment, Selector};
@@ -25,4 +26,8 @@ pub struct ResultPolicy {
     pub retention_days: u32,
     pub delivery_mode: DeliveryMode,
     pub access: Vec<Selector>,
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
 }
