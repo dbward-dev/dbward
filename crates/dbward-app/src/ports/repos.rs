@@ -204,7 +204,7 @@ pub trait LicenseChecker: Send + Sync {
 
 #[async_trait]
 pub trait ResultChannel: Send + Sync {
-    async fn create_slot(&self, request_id: &str);
+    fn create_slot(&self, request_id: &str);
     async fn publish(&self, request_id: &str, summary: ResultSummary);
     async fn subscribe(&self, request_id: &str, timeout_secs: u64) -> Result<Option<ResultSummary>, AppError>;
     async fn notify_all(&self);

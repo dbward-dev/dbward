@@ -204,7 +204,7 @@ impl ResultStore for StubResultStore {
 struct StubResultChannel;
 #[async_trait]
 impl ResultChannel for StubResultChannel {
-    async fn create_slot(&self, _: &str) {}
+    fn create_slot(&self, _: &str) {}
     async fn publish(&self, _: &str, _: ResultSummary) {}
     async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> { Ok(None) }
     async fn notify_all(&self) {}

@@ -100,11 +100,7 @@ impl DispatchRequest {
         }
 
         // Pre-create result slot so subscribers can wait before agent completes
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            let rc = self.result_channel.clone();
-            let rid = request.id.clone();
-            handle.spawn(async move { rc.create_slot(&rid).await });
-        }
+        self.result_channel.create_slot(&request.id);
 
         result.commit(&*self.event_dispatcher);
 
@@ -146,7 +142,7 @@ mod tests {
     struct FakeResultChannel;
     #[async_trait]
     impl ResultChannel for FakeResultChannel {
-        async fn create_slot(&self, _: &str) {}
+        fn create_slot(&self, _: &str) {}
         async fn publish(&self, _: &str, _: dbward_domain::values::ResultSummary) {}
         async fn subscribe(&self, _: &str, _: u64) -> Result<Option<dbward_domain::values::ResultSummary>, AppError> { Ok(None) }
         async fn notify_all(&self) {}

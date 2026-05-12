@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 5;
+const SCHEMA_VERSION: u32 = 6;
 
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -29,6 +29,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 5 {
             conn.execute_batch(MIGRATION_V5)?;
+        }
+        if current < 6 {
+            conn.execute_batch(MIGRATION_V6)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -318,4 +321,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_no_dup_approve
 const MIGRATION_V5: &str = "
 UPDATE roles SET permissions_json = '[\"request.create\",\"request.create_select\",\"request.view\",\"request.cancel\",\"request.dispatch\",\"result.view\",\"token.revoke_own\"]'
   WHERE name = 'developer' AND built_in = 1;
+";
+
+const MIGRATION_V6: &str = "
+-- CHECK constraints (SQLite enforces these on INSERT/UPDATE)
+-- audit_events: hash length validation
+CREATE TRIGGER IF NOT EXISTS chk_audit_event_hash_insert
+BEFORE INSERT ON audit_events
+BEGIN
+    SELECT RAISE(ABORT, 'event_hash must be 64 chars')
+    WHERE length(NEW.event_hash) != 64;
+    SELECT RAISE(ABORT, 'prev_hash must be 64 chars or NULL')
+    WHERE NEW.prev_hash IS NOT NULL AND length(NEW.prev_hash) != 64;
+END;
+
+-- requests: status validation
+CREATE TRIGGER IF NOT EXISTS chk_requests_status_insert
+BEFORE INSERT ON requests
+BEGIN
+    SELECT RAISE(ABORT, 'invalid request status')
+    WHERE NEW.status NOT IN ('pending','approved','rejected','dispatched','completed','cancelled','failed','auto_approved','break_glass','running','executed','expired','execution_lost');
+END;
+
+CREATE TRIGGER IF NOT EXISTS chk_requests_status_update
+BEFORE UPDATE OF status ON requests
+BEGIN
+    SELECT RAISE(ABORT, 'invalid request status')
+    WHERE NEW.status NOT IN ('pending','approved','rejected','dispatched','completed','cancelled','failed','auto_approved','break_glass','running','executed','expired','execution_lost');
+END;
+
+-- Partial indexes
+CREATE INDEX IF NOT EXISTS idx_requests_dispatched ON requests(status) WHERE status = 'dispatched';
+CREATE INDEX IF NOT EXISTS idx_requests_pending ON requests(status) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_requests_claimed ON executions(status) WHERE status = 'claimed';
 ";

@@ -209,14 +209,15 @@ impl EventDispatcher for CompositeEventDispatcher {
             actor: Some(event.actor_id.clone()),
             detail: None,
         };
-        self.notifier.dispatch(webhook_event.clone());
+        // Dispatched events do not trigger webhooks
+        if event_type != "request_dispatched" {
+            self.notifier.dispatch(webhook_event.clone());
+        }
 
         // Create result channel slot when request is dispatched
         if let Some(ref rc) = self.result_channel {
             if matches!(&event.metadata, EventMetadata::Dispatched) {
-                let rc = rc.clone();
-                let request_id = event.request_id.clone();
-                tokio::spawn(async move { rc.create_slot(&request_id).await });
+                rc.create_slot(&event.request_id);
             }
         }
 

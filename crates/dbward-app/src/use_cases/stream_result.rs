@@ -38,6 +38,20 @@ impl StreamResult {
             },
         ).map_err(AppError::Forbidden)?;
 
+        // Terminal state: return stored result if available
+        if request.status.is_terminal() {
+            let success = matches!(request.status, dbward_domain::entities::RequestStatus::Executed);
+            let data = ResultSummary {
+                execution_id: String::new(),
+                success,
+                rows_affected: None,
+                truncated: false,
+                error_message: if !success { Some(format!("request {}", request.status.as_str())) } else { None },
+                result_data: None,
+            };
+            return Ok(StreamResultOutput { data: Some(data) });
+        }
+
         let timeout = input.timeout_secs.unwrap_or(300);
         let data = self.result_channel.subscribe(&input.request_id, timeout).await?;
 

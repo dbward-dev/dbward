@@ -29,11 +29,17 @@ fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
         AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     let code = e.code();
+    let hint: Option<String> = match &e {
+        AppError::Forbidden(_) => Some("check your role permissions".into()),
+        AppError::Conflict(_) => Some("request may have been modified concurrently".into()),
+        AppError::Validation(msg) => Some(msg.clone()),
+        _ => None,
+    };
     let message = match &e {
         AppError::Internal(_) => "internal server error".to_string(),
         other => other.to_string(),
     };
-    (status, Json(json!({"error": message, "code": code})))
+    (status, Json(json!({"error": message, "code": code, "hint": hint})))
 }
 
 pub async fn create(
@@ -135,10 +141,19 @@ pub async fn list(
     let limit = params.limit.unwrap_or(50).min(100);
     let offset = params.offset.unwrap_or(0);
     let (requests, total) = state.request_repo.list(limit, offset).map_err(map_error)?;
-    // Non-admin users only see their own requests
+    // Non-admin users only see their own requests + pending requests they can approve
     let is_admin = user.roles.iter().any(|r| r.name == "admin");
+    let can_approve = user.has_permission(dbward_domain::auth::Permission::RequestApprove);
     let items: Vec<serde_json::Value> = requests.iter()
-        .filter(|r| is_admin || r.requester == user.subject_id)
+        .filter(|r| {
+            if is_admin { return true; }
+            if r.requester == user.subject_id { return true; }
+            // Approvers see pending requests
+            if can_approve && r.status == dbward_domain::entities::RequestStatus::Pending {
+                return true;
+            }
+            false
+        })
         .map(|r| json!({
         "id": r.id,
         "requester": r.requester,
@@ -178,9 +193,9 @@ pub async fn get(
         &req.environment,
         &ResourceContext::Request { requester_id: req.requester.clone() },
     );
-    if scoped_ok.is_err() {
+    let is_approver_view = if scoped_ok.is_err() {
         // Approvers can view pending requests they need to act on (scoped to matching db/env)
-        let is_approver_view = req.status == RequestStatus::Pending
+        let approver = req.status == RequestStatus::Pending
             && state.authorizer.authorize_scoped(
                 &user,
                 Permission::RequestApprove,
@@ -188,10 +203,19 @@ pub async fn get(
                 &req.environment,
                 &ResourceContext::Global,
             ).is_ok();
-        if !is_approver_view {
+        if !approver {
             return Err(map_error(AppError::Forbidden(scoped_ok.unwrap_err())));
         }
-    }
+        true
+    } else {
+        false
+    };
+
+    let detail = if is_approver_view && user.subject_id != req.requester {
+        "[redacted - approve to view]".to_string()
+    } else {
+        req.detail.clone()
+    };
 
     Ok((StatusCode::OK, Json(json!({
         "id": req.id,
@@ -199,7 +223,7 @@ pub async fn get(
         "database": req.database,
         "environment": req.environment,
         "operation": req.operation.as_str(),
-        "detail": req.detail,
+        "detail": detail,
         "status": req.status.as_str(),
         "emergency": req.emergency,
         "reason": req.reason,
@@ -371,9 +395,12 @@ pub async fn get_result(
     let input = get_result::GetResultInput { request_id: id };
 
     match uc.execute(input, &user).await {
-        Ok(out) => Ok((StatusCode::OK, Json(json!({
-            "data": base64_encode(&out.data),
-        })))),
+        Ok(out) => {
+            // Return stored data as JSON directly
+            let json_value: serde_json::Value = serde_json::from_slice(&out.data)
+                .unwrap_or_else(|_| json!({"raw": base64_encode(&out.data)}));
+            Ok((StatusCode::OK, Json(json_value)))
+        }
         Err(e) => Err(map_error(e)),
     }
 }

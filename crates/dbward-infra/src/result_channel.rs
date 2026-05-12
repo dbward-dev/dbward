@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -16,19 +16,19 @@ struct ResultSlot {
 }
 
 pub struct InMemoryResultChannel {
-    slots: Arc<Mutex<HashMap<String, Arc<ResultSlot>>>>,
+    slots: Arc<StdMutex<HashMap<String, Arc<ResultSlot>>>>,
 }
 
 impl InMemoryResultChannel {
     pub fn new() -> Self {
-        Self { slots: Arc::new(Mutex::new(HashMap::new())) }
+        Self { slots: Arc::new(StdMutex::new(HashMap::new())) }
     }
 }
 
 #[async_trait]
 impl ResultChannel for InMemoryResultChannel {
-    async fn create_slot(&self, request_id: &str) {
-        let mut slots = self.slots.lock().await;
+    fn create_slot(&self, request_id: &str) {
+        let mut slots = self.slots.lock().unwrap();
         slots.retain(|_, s| s.created_at.elapsed().as_secs() < 600);
         slots.insert(request_id.to_string(), Arc::new(ResultSlot {
             data: Mutex::new(None),
@@ -38,24 +38,26 @@ impl ResultChannel for InMemoryResultChannel {
     }
 
     async fn publish(&self, request_id: &str, summary: ResultSummary) {
-        let mut slots = self.slots.lock().await;
-        let slot = slots.entry(request_id.to_string()).or_insert_with(|| {
-            Arc::new(ResultSlot {
-                data: Mutex::new(None),
-                notify: Notify::new(),
-                created_at: Instant::now(),
-            })
-        });
+        let slot = {
+            let mut slots = self.slots.lock().unwrap();
+            slots.entry(request_id.to_string()).or_insert_with(|| {
+                Arc::new(ResultSlot {
+                    data: Mutex::new(None),
+                    notify: Notify::new(),
+                    created_at: Instant::now(),
+                })
+            }).clone()
+        };
         *slot.data.lock().await = Some(summary);
         slot.notify.notify_waiters();
     }
 
     async fn subscribe(&self, request_id: &str, timeout_secs: u64) -> Result<Option<ResultSummary>, AppError> {
         let slot = {
-            let mut slots = self.slots.lock().await;
+            let mut slots = self.slots.lock().unwrap();
             slots.entry(request_id.to_string()).or_insert_with(|| {
                 Arc::new(ResultSlot {
-                    data: tokio::sync::Mutex::new(None),
+                    data: Mutex::new(None),
                     notify: Notify::new(),
                     created_at: Instant::now(),
                 })
@@ -81,7 +83,7 @@ impl ResultChannel for InMemoryResultChannel {
     }
 
     async fn notify_all(&self) {
-        let slots = self.slots.lock().await;
+        let slots = self.slots.lock().unwrap();
         for slot in slots.values() {
             slot.notify.notify_waiters();
         }
