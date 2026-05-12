@@ -42,7 +42,10 @@ impl AgentClient {
                 body,
             });
         }
-        let hex_str: String = resp.text().await?;
+        let body: serde_json::Value = resp.json().await
+            .map_err(|e| AgentError::TokenVerification(format!("invalid response: {e}")))?;
+        let hex_str = body["public_key"].as_str()
+            .ok_or_else(|| AgentError::TokenVerification("missing public_key field".into()))?;
         let bytes = hex::decode(hex_str.trim())
             .map_err(|e| AgentError::TokenVerification(format!("invalid public key hex: {e}")))?;
         let key_bytes: [u8; 32] = bytes.try_into().map_err(|_| {
