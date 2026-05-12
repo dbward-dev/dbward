@@ -3,12 +3,12 @@
 services:
   postgres:
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:15432:5432"
     networks: [backend, frontend]
 
   dbward-server:
     ports:
-      - "127.0.0.1:13000:3000"
+      - "127.0.0.1:13001:3000"
     environment:
       DBWARD_LICENSE_KEY: "${DBWARD_LICENSE_KEY:-}"
 

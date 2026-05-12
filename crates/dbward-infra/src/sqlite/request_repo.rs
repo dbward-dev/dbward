@@ -533,12 +533,12 @@ impl RequestRepo for SqliteRequestRepo {
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
     }
 
-    fn find_stale_dispatched(&self, threshold: &str) -> Result<Vec<String>, AppError> {
+    fn find_dispatched_older_than(&self, cutoff: &str) -> Result<Vec<String>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id FROM requests WHERE status = 'dispatched' AND datetime(updated_at, '+300 seconds') < datetime(?1)"
+            "SELECT id FROM requests WHERE status = 'dispatched' AND datetime(updated_at) < datetime(?1)"
         ).map_err(map_err)?;
-        let rows = stmt.query_map(params![threshold], |row| row.get(0)).map_err(map_err)?;
+        let rows = stmt.query_map(params![cutoff], |row| row.get(0)).map_err(map_err)?;
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
     }
 

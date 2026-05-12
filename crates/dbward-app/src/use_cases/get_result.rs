@@ -139,7 +139,7 @@ mod tests {
         fn cancel_all_for_user(&self, _: &str, _: DateTime<Utc>) -> Result<u32, AppError> { Ok(0) }
         fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
         fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-        fn find_stale_dispatched(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
         fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
         fn mark_expired_and_record(&self, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
         fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }

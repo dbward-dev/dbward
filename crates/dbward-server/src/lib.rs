@@ -371,14 +371,20 @@ pub async fn start(addr: std::net::SocketAddr, state: AppState, retention: confi
     let result_channel = state.result_channel.clone();
 
     // Startup recovery: warn about in-flight requests
-    let dispatched = state.request_repo.count_by_status("dispatched").unwrap_or(0);
-    let running = state.request_repo.count_by_status("running").unwrap_or(0);
+    let dispatched = state.request_repo.count_by_status("dispatched").unwrap_or_else(|e| {
+        tracing::error!(error = %e, "failed to count dispatched requests on startup");
+        0
+    });
+    let running = state.request_repo.count_by_status("running").unwrap_or_else(|e| {
+        tracing::error!(error = %e, "failed to count running requests on startup");
+        0
+    });
     if dispatched > 0 || running > 0 {
         tracing::warn!(dispatched, running, "in-flight requests detected on startup");
     }
 
     // Spawn background tasks
-    let bg_handle = background::spawn_background_tasks(state.clone(), draining.clone(), retention);
+    let (bg_shutdown, mut bg_set) = background::spawn_background_tasks(state.clone(), draining.clone(), retention);
 
     let app = build_app(state);
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -388,6 +394,7 @@ pub async fn start(addr: std::net::SocketAddr, state: AppState, retention: confi
         wait_for_signal().await;
         tracing::info!("shutdown signal received, entering drain mode");
         draining.store(true, Ordering::SeqCst);
+        bg_shutdown.cancel();
         result_channel.notify_all().await;
         tracing::info!("draining for 20 seconds...");
         tokio::time::sleep(Duration::from_secs(20)).await;
@@ -397,7 +404,14 @@ pub async fn start(addr: std::net::SocketAddr, state: AppState, retention: confi
         .with_graceful_shutdown(shutdown_fut)
         .await?;
 
-    bg_handle.abort();
+    // Collect background task results (detect panics)
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while let Ok(Some(result)) = tokio::time::timeout_at(deadline, bg_set.join_next()).await {
+        if let Err(e) = result {
+            tracing::error!(error = %e, "background task panicked");
+        }
+    }
+    bg_set.abort_all();
     tracing::info!("server stopped");
     Ok(())
 }

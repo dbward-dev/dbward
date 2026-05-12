@@ -2,8 +2,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::Duration;
-use tokio::time::{interval, Duration as TokioDuration};
-use tracing::info;
+use tokio::task::JoinSet;
+use tokio::time::{interval, interval_at, Duration as TokioDuration, Instant};
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info, warn};
 
 use dbward_app::ports::WebhookEvent;
 use dbward_domain::entities::{ActorType, AuditEvent, EventCategory, EventOutcome};
@@ -11,100 +13,316 @@ use dbward_domain::entities::{ActorType, AuditEvent, EventCategory, EventOutcome
 use crate::config::RetentionConfig;
 use crate::state::AppState;
 
+// --- Constants ---
+
+const LEASE_RECLAIM_INTERVAL: TokioDuration = TokioDuration::from_secs(60);
+const TTL_EXPIRY_INTERVAL: TokioDuration = TokioDuration::from_secs(60);
+const DISPATCH_TIMEOUT_INTERVAL: TokioDuration = TokioDuration::from_secs(60);
+const RECORD_PURGE_INTERVAL: TokioDuration = TokioDuration::from_secs(3600);
+const WAL_CHECKPOINT_INTERVAL: TokioDuration = TokioDuration::from_secs(3600);
+const DISPATCH_TIMEOUT_SECS: i64 = 300;
+
+// --- TickResult ---
+
+#[derive(Default, Debug)]
+pub(crate) struct TickResult {
+    pub processed: u32,
+    pub failed: u32,
+}
+
+// --- Public entry point ---
+
 pub fn spawn_background_tasks(
     state: AppState,
     draining: Arc<AtomicBool>,
     retention: RetentionConfig,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut tick = interval(TokioDuration::from_secs(60));
-        let mut purge_counter: u64 = 0;
+) -> (CancellationToken, JoinSet<()>) {
+    let shutdown = CancellationToken::new();
+    let mut set = JoinSet::new();
 
+    set.spawn(lease_reclaim_loop(state.clone(), shutdown.clone()));
+    set.spawn(ttl_expiry_loop(state.clone(), shutdown.clone()));
+    set.spawn(dispatch_timeout_loop(state.clone(), shutdown.clone()));
+    set.spawn(record_purge_loop(state.clone(), shutdown.clone(), retention));
+    set.spawn(wal_checkpoint_loop(state.clone(), shutdown.clone()));
+
+    // Bridge: when draining is set externally, also cancel background tasks
+    let shutdown_bridge = shutdown.clone();
+    let draining_bridge = draining;
+    set.spawn(async move {
         loop {
-            tick.tick().await;
-            if draining.load(Ordering::SeqCst) {
+            tokio::time::sleep(TokioDuration::from_millis(500)).await;
+            if draining_bridge.load(Ordering::SeqCst) {
+                shutdown_bridge.cancel();
                 break;
             }
+        }
+    });
 
-            let now = state.clock.now();
-            let now_str = now.to_rfc3339();
+    (shutdown, set)
+}
 
-            // Lease reclaim
-            if let Ok(expired) = state.agent_repo.find_expired_leases(&now_str) {
-                for (exec_id, req_id) in expired {
-                    let audit = make_audit_event("execution_lost", EventCategory::Agent, &req_id);
-                    if let Ok(true) = state.agent_repo.mark_execution_lost_and_record(&exec_id, &req_id, &audit, &now_str) {
-                        info!(execution_id = %exec_id, request_id = %req_id, "lease expired, marked execution_lost");
-                        emit_webhook(&state, "execution_lost", &req_id);
-                    }
+// --- Lease Reclaim ---
+
+async fn lease_reclaim_loop(state: AppState, shutdown: CancellationToken) {
+    let mut ticker = interval(LEASE_RECLAIM_INTERVAL);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                let r = run_lease_reclaim_once(&state).await;
+                if r.processed > 0 || r.failed > 0 {
+                    info!(task = "lease_reclaim", processed = r.processed, failed = r.failed, "tick completed");
                 }
             }
+            _ = shutdown.cancelled() => break,
+        }
+    }
+}
 
-            // Approval TTL expiry
-            if let Ok(ids) = state.request_repo.find_expired_approved(&now_str) {
-                for id in ids {
-                    let audit = make_audit_event("request_expired", EventCategory::Approval, &id);
-                    if let Ok(true) = state.request_repo.mark_expired_and_record(&id, &audit, &now_str) {
-                        info!(request_id = %id, "approval TTL expired");
-                        emit_webhook(&state, "request_expired", &id);
-                    }
+pub(crate) async fn run_lease_reclaim_once(state: &AppState) -> TickResult {
+    let mut result = TickResult::default();
+    let now_str = state.clock.now().to_rfc3339();
+
+    let expired = match state.agent_repo.find_expired_leases(&now_str) {
+        Ok(v) => v,
+        Err(e) => {
+            error!(task = "lease_reclaim", error = %e, "db query failed");
+            result.failed += 1;
+            return result;
+        }
+    };
+
+    for (exec_id, req_id) in expired {
+        let audit = make_audit_event("execution_lost", EventCategory::Agent, &req_id);
+        match state.agent_repo.mark_execution_lost_and_record(&exec_id, &req_id, &audit, &now_str) {
+            Ok(true) => {
+                result.processed += 1;
+                emit_webhook(state, "execution_lost", &req_id);
+            }
+            Ok(false) => {} // already processed
+            Err(e) => {
+                result.failed += 1;
+                error!(task = "lease_reclaim", execution_id = %exec_id, error = %e, "failed to mark execution_lost");
+            }
+        }
+    }
+    result
+}
+
+// --- TTL Expiry ---
+
+async fn ttl_expiry_loop(state: AppState, shutdown: CancellationToken) {
+    let mut ticker = interval(TTL_EXPIRY_INTERVAL);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                let r = run_ttl_expiry_once(&state).await;
+                if r.processed > 0 || r.failed > 0 {
+                    info!(task = "ttl_expiry", processed = r.processed, failed = r.failed, "tick completed");
                 }
             }
+            _ = shutdown.cancelled() => break,
+        }
+    }
+}
 
-            // Pending TTL expiry
-            if let Ok(ids) = state.request_repo.find_expired_pending(&now_str) {
-                for id in ids {
-                    let audit = make_audit_event("request_expired", EventCategory::Approval, &id);
-                    if let Ok(true) = state.request_repo.mark_expired_and_record(&id, &audit, &now_str) {
-                        info!(request_id = %id, "pending TTL expired");
-                        emit_webhook(&state, "request_expired", &id);
+pub(crate) async fn run_ttl_expiry_once(state: &AppState) -> TickResult {
+    let mut result = TickResult::default();
+    let now_str = state.clock.now().to_rfc3339();
+
+    // Approval TTL
+    match state.request_repo.find_expired_approved(&now_str) {
+        Ok(ids) => {
+            for id in ids {
+                let audit = make_audit_event("request_expired", EventCategory::Approval, &id);
+                match state.request_repo.mark_expired_and_record(&id, &audit, &now_str) {
+                    Ok(true) => {
+                        result.processed += 1;
+                        emit_webhook(state, "request_expired", &id);
                     }
-                }
-            }
-
-            // Dispatch timeout (300s)
-            if let Ok(ids) = state.request_repo.find_stale_dispatched(&now_str) {
-                for id in ids {
-                    if let Ok(true) = state.request_repo.mark_approved_from_dispatched(&id, &now_str) {
-                        info!(request_id = %id, "dispatch timeout, reverted to approved");
-                        emit_audit(&state, "dispatch_timeout", EventCategory::Approval, &id);
+                    Ok(false) => {}
+                    Err(e) => {
+                        result.failed += 1;
+                        error!(task = "ttl_expiry", request_id = %id, error = %e, "failed to expire approved request");
                     }
-                }
-            }
-
-            // Record purge (every 60 ticks = ~1 hour)
-            purge_counter += 1;
-            if purge_counter % 60 == 0 {
-                let request_cutoff = (now - Duration::days(retention.request_ttl_days as i64)).to_rfc3339();
-                let audit_cutoff = (now - Duration::days(retention.audit_ttl_days as i64)).to_rfc3339();
-
-                if let Ok(n) = state.token_repo.purge_revoked(&request_cutoff) {
-                    if n > 0 {
-                        info!(count = n, "purged revoked tokens");
-                    }
-                }
-                if let Ok(n) = state.audit_repo.purge_old(&audit_cutoff) {
-                    if n > 0 {
-                        info!(count = n, "purged old audit events");
-                    }
-                }
-                if let Ok(n) = state.request_repo.purge_old_requests(&request_cutoff) {
-                    if n > 0 {
-                        info!(count = n, "purged old requests");
-                    }
-                }
-
-                // Purge expired result storage
-                purge_expired_results(&state).await;
-
-                // WAL checkpoint after purge
-                if let Err(e) = state.request_repo.wal_checkpoint() {
-                    tracing::warn!(error = %e, "WAL checkpoint failed");
                 }
             }
         }
-    })
+        Err(e) => {
+            error!(task = "ttl_expiry", error = %e, "find_expired_approved failed");
+            result.failed += 1;
+        }
+    }
+
+    // Pending TTL
+    match state.request_repo.find_expired_pending(&now_str) {
+        Ok(ids) => {
+            for id in ids {
+                let audit = make_audit_event("request_expired", EventCategory::Approval, &id);
+                match state.request_repo.mark_expired_and_record(&id, &audit, &now_str) {
+                    Ok(true) => {
+                        result.processed += 1;
+                        emit_webhook(state, "request_expired", &id);
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        result.failed += 1;
+                        error!(task = "ttl_expiry", request_id = %id, error = %e, "failed to expire pending request");
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            error!(task = "ttl_expiry", error = %e, "find_expired_pending failed");
+            result.failed += 1;
+        }
+    }
+
+    result
 }
+
+// --- Dispatch Timeout ---
+
+async fn dispatch_timeout_loop(state: AppState, shutdown: CancellationToken) {
+    let mut ticker = interval(DISPATCH_TIMEOUT_INTERVAL);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                let r = run_dispatch_timeout_once(&state).await;
+                if r.processed > 0 || r.failed > 0 {
+                    info!(task = "dispatch_timeout", processed = r.processed, failed = r.failed, "tick completed");
+                }
+            }
+            _ = shutdown.cancelled() => break,
+        }
+    }
+}
+
+pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
+    let mut result = TickResult::default();
+    let now = state.clock.now();
+    let cutoff = (now - Duration::seconds(DISPATCH_TIMEOUT_SECS)).to_rfc3339();
+    let now_str = now.to_rfc3339();
+
+    let ids = match state.request_repo.find_dispatched_older_than(&cutoff) {
+        Ok(v) => v,
+        Err(e) => {
+            error!(task = "dispatch_timeout", error = %e, "db query failed");
+            result.failed += 1;
+            return result;
+        }
+    };
+
+    for id in ids {
+        match state.request_repo.mark_approved_from_dispatched(&id, &now_str) {
+            Ok(true) => {
+                result.processed += 1;
+                emit_audit(state, "dispatch_timeout", EventCategory::Approval, &id);
+            }
+            Ok(false) => {}
+            Err(e) => {
+                result.failed += 1;
+                error!(task = "dispatch_timeout", request_id = %id, error = %e, "failed to revert to approved");
+            }
+        }
+    }
+    result
+}
+
+// --- Record Purge ---
+
+async fn record_purge_loop(state: AppState, shutdown: CancellationToken, retention: RetentionConfig) {
+    // Delay first execution by one interval
+    let start = Instant::now() + RECORD_PURGE_INTERVAL;
+    let mut ticker = interval_at(start, RECORD_PURGE_INTERVAL);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                let r = run_record_purge_once(&state, &retention).await;
+                info!(task = "record_purge", processed = r.processed, failed = r.failed, "tick completed");
+            }
+            _ = shutdown.cancelled() => break,
+        }
+    }
+}
+
+pub(crate) async fn run_record_purge_once(state: &AppState, retention: &RetentionConfig) -> TickResult {
+    let mut result = TickResult::default();
+    let now = state.clock.now();
+    let request_cutoff = (now - Duration::days(retention.request_ttl_days as i64)).to_rfc3339();
+    let audit_cutoff = (now - Duration::days(retention.audit_ttl_days as i64)).to_rfc3339();
+
+    // Revoked tokens
+    match state.token_repo.purge_revoked(&request_cutoff) {
+        Ok(n) => { if n > 0 { result.processed += n as u32; info!(task = "record_purge", count = n, "purged revoked tokens"); } }
+        Err(e) => { result.failed += 1; error!(task = "record_purge", error = %e, "purge_revoked failed"); }
+    }
+
+    // Old audit events
+    match state.audit_repo.purge_old(&audit_cutoff) {
+        Ok(n) => { if n > 0 { result.processed += n as u32; info!(task = "record_purge", count = n, "purged old audit events"); } }
+        Err(e) => { result.failed += 1; error!(task = "record_purge", error = %e, "purge_old audit failed"); }
+    }
+
+    // Old requests
+    match state.request_repo.purge_old_requests(&request_cutoff) {
+        Ok(n) => { if n > 0 { result.processed += n as u32; info!(task = "record_purge", count = n, "purged old requests"); } }
+        Err(e) => { result.failed += 1; error!(task = "record_purge", error = %e, "purge_old_requests failed"); }
+    }
+
+    // Expired results (storage delete → DB delete)
+    let now_str = now.to_rfc3339();
+    match state.agent_repo.find_expired_results(&now_str) {
+        Ok(expired) => {
+            for (result_id, storage_key) in expired {
+                match state.result_store.delete(&storage_key).await {
+                    Ok(()) => {
+                        // Storage deleted successfully → safe to remove DB record
+                        if let Err(e) = state.agent_repo.delete_result(&result_id) {
+                            error!(task = "record_purge", result_id = %result_id, error = %e, "db delete failed after storage delete");
+                            result.failed += 1;
+                        } else {
+                            result.processed += 1;
+                        }
+                    }
+                    Err(e) => {
+                        // Storage delete failed → keep DB record for retry next cycle
+                        warn!(task = "record_purge", result_id = %result_id, error = %e, "storage delete failed, will retry");
+                        result.failed += 1;
+                    }
+                }
+            }
+        }
+        Err(e) => { result.failed += 1; error!(task = "record_purge", error = %e, "find_expired_results failed"); }
+    }
+
+    result
+}
+
+// --- WAL Checkpoint ---
+
+async fn wal_checkpoint_loop(state: AppState, shutdown: CancellationToken) {
+    let start = Instant::now() + WAL_CHECKPOINT_INTERVAL;
+    let mut ticker = interval_at(start, WAL_CHECKPOINT_INTERVAL);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                run_wal_checkpoint_once(&state);
+            }
+            _ = shutdown.cancelled() => break,
+        }
+    }
+}
+
+pub(crate) fn run_wal_checkpoint_once(state: &AppState) {
+    if let Err(e) = state.request_repo.wal_checkpoint() {
+        error!(task = "wal_checkpoint", error = %e, "WAL checkpoint failed");
+    } else {
+        info!(task = "wal_checkpoint", "checkpoint completed");
+    }
+}
+
+// --- Helpers ---
 
 fn emit_audit(state: &AppState, event_type: &str, category: EventCategory, request_id: &str) {
     let mut event = AuditEvent::simple(event_type, "approval", "system", Some(request_id));
@@ -112,7 +330,9 @@ fn emit_audit(state: &AppState, event_type: &str, category: EventCategory, reque
     event.request_id = Some(request_id.to_string());
     event.outcome = EventOutcome::Success;
     event.event_category = category;
-    let _ = state.audit_logger.record(&event);
+    if let Err(e) = state.audit_logger.record(&event) {
+        error!(task = "background", request_id = %request_id, error = %e, "audit record failed");
+    }
 }
 
 fn make_audit_event(event_type: &str, category: EventCategory, request_id: &str) -> AuditEvent {
@@ -133,21 +353,4 @@ fn emit_webhook(state: &AppState, event_type: &str, request_id: &str) {
         actor: Some("system".to_string()),
         detail: None,
     });
-}
-
-async fn purge_expired_results(state: &AppState) {
-    let now_str = state.clock.now().to_rfc3339();
-    let expired = match state.agent_repo.find_expired_results(&now_str) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-    let mut count = 0u32;
-    for (result_id, storage_key) in expired {
-        let _ = state.result_store.delete(&storage_key).await;
-        let _ = state.agent_repo.delete_result(&result_id);
-        count += 1;
-    }
-    if count > 0 {
-        info!(count, "purged expired results from storage");
-    }
 }
