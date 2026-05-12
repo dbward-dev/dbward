@@ -1,6 +1,6 @@
 #!/bin/bash
 # E2E test helpers — source this from other e2e scripts
-# Usage: source dev/e2e-helpers.sh
+# Usage: source "$(dirname "$0")/helpers.sh"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

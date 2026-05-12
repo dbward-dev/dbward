@@ -3,7 +3,8 @@
 # Tests users table, role enforcement, disable flow
 
 set -euo pipefail
-source "$(dirname "$0")/e2e-helpers.sh"
+cd "$(dirname "$0")/.."
+source "$(dirname "$0")/helpers.sh"
 
 # Use unique names per run to avoid conflicts
 TS=$(date +%s)
@@ -11,7 +12,7 @@ TS=$(date +%s)
 echo "=== User Management E2E ==="
 echo ""
 
-ADMIN_TOKEN=$(cat dev/tokens/bob.token)
+ADMIN_TOKEN=$(cat tokens/bob.token)
 
 # --- 1. Create readonly user ---
 echo "--- Readonly user ---"
