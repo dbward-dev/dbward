@@ -38,41 +38,50 @@ impl CancelToken {
         // ADR-003: never kill during migration
         if self.is_migration {
             tracing::info!("migration in progress, skipping kill (statement_timeout only)");
-            self.cancel_state.notify_killed();
+            // Don't notify — let query finish naturally or timeout
             return;
         }
 
-        if let Err(e) = self.kill_query().await {
-            tracing::error!("kill_query failed: {e}");
+        let killed = self.kill_query().await;
+        if killed {
+            self.cancel_state.notify_killed();
         }
-        self.cancel_state.notify_killed();
+        // If not killed (MySQL, no pid, etc.), don't notify — query runs to timeout
     }
 
-    async fn kill_query(&self) -> Result<(), crate::AgentError> {
-        if self.is_migration {
-            return Ok(());
-        }
+    /// Returns true if kill was actually performed (PG only for now).
+    async fn kill_query(&self) -> bool {
         let Some(pid) = self.cancel_state.connection_id() else {
-            return Ok(());
+            return false;
         };
         let Some(url) = &self.db_url else {
             tracing::warn!("no db_url for cancel");
-            return Ok(());
+            return false;
         };
 
         if url.starts_with("postgres://") || url.starts_with("postgresql://") {
-            let pid_int: i32 = pid.parse().map_err(|_| {
-                crate::AgentError::Config(format!("invalid pid: {pid}"))
-            })?;
-            let driver = dbward_driver::connect(url, Some(5)).await?;
-            driver.execute(&format!("SELECT pg_cancel_backend({pid_int})")).await?;
+            let pid_int: i32 = match pid.parse() {
+                Ok(v) => v,
+                Err(_) => return false,
+            };
+            match dbward_driver::connect(url, Some(5)).await {
+                Ok(driver) => {
+                    if let Err(e) = driver.execute(&format!("SELECT pg_cancel_backend({pid_int})")).await {
+                        tracing::error!("pg_cancel_backend failed: {e}");
+                        return false;
+                    }
+                    true
+                }
+                Err(e) => {
+                    tracing::error!("cancel connection failed: {e}");
+                    false
+                }
+            }
         } else {
-            // MySQL: KILL QUERY not implemented yet (v0.1.1)
-            // Do NOT notify_killed — let statement timeout handle it
+            // MySQL: KILL QUERY not implemented (v0.1.1)
             tracing::warn!("kill_query not implemented for MySQL; relying on statement_timeout");
-            return Ok(());
+            false
         }
-        Ok(())
     }
 }
 
@@ -90,11 +99,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn migration_skips_kill() {
+    async fn no_kill_without_pg() {
         let state = CancelState::new();
         state.set_connection_id("12345".into());
-        let token = CancelToken::new(Some("postgres://localhost/db".into()), true, state.clone());
-        // Directly test kill_query skips for migration
-        assert!(token.kill_query().await.is_ok());
+        let token = CancelToken::new(Some("mysql://localhost/db".into()), false, state.clone());
+        assert!(!token.kill_query().await);
     }
 }

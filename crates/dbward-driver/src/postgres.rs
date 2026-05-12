@@ -196,11 +196,7 @@ impl DatabaseDriver for PostgresDriver {
             return Err(DriverError::Cancelled);
         }
 
-        // raw_sql on acquired connection has lifetime issues with async_trait.
-        // Hold connection (keeps timeout set), execute via pool which will reuse it.
-        // With pid already captured, cancel targets the correct backend.
-        drop(conn);
-        let result = sqlx::raw_sql(sql).execute(&self.pool).await
+        let result = sqlx::query(sql).execute(&mut *conn).await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         Ok(result.rows_affected())
     }
