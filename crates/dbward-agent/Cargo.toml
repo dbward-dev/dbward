@@ -8,8 +8,6 @@ repository.workspace = true
 [[bin]]
 name = "dbward-agent"
 path = "src/main.rs"
-rust-version.workspace = true
-description = "dbward agent — executes approved DB operations"
 
 [dependencies]
 dbward-driver = { path = "../dbward-driver", version = "0.1.0" }

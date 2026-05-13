@@ -1,5 +1,5 @@
 use futures::TryStreamExt;
-use sqlx::{Column, Row, TypeInfo, ValueRef};
+use sqlx::{Column, TypeInfo, ValueRef};
 use std::time::Duration;
 
 use crate::{
@@ -327,11 +327,11 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
         let val = if raw.is_null() {
             serde_json::Value::Null
         } else {
-            // SAFETY: try_get_unchecked bypasses sqlx's type compatibility check but does not
-            // cause UB. MySQL text protocol (COM_QUERY via raw_sql) sends all values as UTF-8
-            // strings regardless of column type. sqlx's checked Decode<String> rejects non-TEXT
-            // types, so we bypass the check to access the raw string value.
-            let text: Result<String, _> = unsafe { row.try_get_unchecked(col.ordinal()) };
+            // try_get_unchecked bypasses sqlx's type compatibility check.
+            // MySQL text protocol (COM_QUERY via raw_sql) sends all values as UTF-8
+            // strings regardless of column type. sqlx's checked Decode<String> rejects
+            // non-TEXT types, so we bypass the check to access the raw string value.
+            let text: Result<String, _> = row.try_get_unchecked(col.ordinal());
             match text {
                 Ok(s) => text_to_json(&s, mysql_type_mapping(col.type_info().name())),
                 Err(_) => serde_json::Value::String("(binary data)".into()),
