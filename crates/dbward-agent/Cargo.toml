@@ -20,7 +20,7 @@ toml = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 thiserror = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-ed25519-dalek = { version = "2", features = ["pkcs8"] }
+ed25519-dalek = { version = "2", features = ["pkcs8", "rand_core"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 tracing-appender = { workspace = true }
@@ -28,3 +28,6 @@ hex = "0.4"
 chrono = { workspace = true }
 sha2 = "0.10"
 hostname = "0.4"
+
+[dev-dependencies]
+rand = "0.8"
