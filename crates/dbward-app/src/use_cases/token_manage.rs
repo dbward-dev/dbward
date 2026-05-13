@@ -111,7 +111,7 @@ impl TokenManage {
         }
 
         // Generate token
-        let raw = format!("dbw_{}", self.id_gen.generate().replace('-', ""));
+        let raw = self.token_gen.generate_token_value();
         let prefix = if raw.len() >= 12 { raw[4..12].to_string() } else { raw.chars().take(8).collect() };
         let hash = hex::encode(Sha256::digest(raw.as_bytes()));
 
