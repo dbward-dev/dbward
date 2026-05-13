@@ -706,25 +706,48 @@ impl RequestRepo for SqliteRequestRepo {
     fn list_results_for_user(
         &self,
         user_id: &str,
+        groups: &[String],
+        roles: &[String],
         limit: u32,
     ) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare(
-                "SELECT r.request_id, db.name, db.environment, req.operation,
-                        r.stored_at, r.content_length
-                 FROM results r
-                 JOIN requests req ON req.id = r.request_id
-                 JOIN databases db ON db.id = req.database_id
-                 LEFT JOIN result_access ra ON ra.result_id = r.id
-                 WHERE req.requester = ?1 OR ra.selector_value = ?1
-                 GROUP BY r.id
-                 ORDER BY r.stored_at DESC
-                 LIMIT ?2",
-            )
-            .map_err(map_err)?;
+        // Build dynamic WHERE clause for selector matching
+        let mut conditions = vec![
+            "req.requester = ?1".to_string(),
+            "(ra.selector_type = 'user' AND ra.selector_value = ?1)".to_string(),
+        ];
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+            Box::new(user_id.to_string()),
+            Box::new(limit),
+        ];
+        let mut idx = 3; // ?1=user_id, ?2=limit, ?3+
+        for g in groups {
+            conditions.push(format!("(ra.selector_type = 'group' AND ra.selector_value = ?{idx})"));
+            params.push(Box::new(g.clone()));
+            idx += 1;
+        }
+        for r in roles {
+            conditions.push(format!("(ra.selector_type = 'role' AND ra.selector_value = ?{idx})"));
+            params.push(Box::new(r.clone()));
+            idx += 1;
+        }
+        let where_clause = conditions.join(" OR ");
+        let sql = format!(
+            "SELECT r.request_id, db.name, db.environment, req.operation,
+                    r.stored_at, r.content_length
+             FROM results r
+             JOIN requests req ON req.id = r.request_id
+             JOIN databases db ON db.id = req.database_id
+             LEFT JOIN result_access ra ON ra.result_id = r.id
+             WHERE {where_clause}
+             GROUP BY r.id
+             ORDER BY r.stored_at DESC
+             LIMIT ?2"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(map_err)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt
-            .query_map(rusqlite::params![user_id, limit], |row| {
+            .query_map(param_refs.as_slice(), |row| {
                 Ok(dbward_app::ports::repos::StoredResultEntry {
                     request_id: row.get(0)?,
                     database: row.get(1)?,

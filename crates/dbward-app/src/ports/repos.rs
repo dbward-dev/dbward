@@ -85,6 +85,8 @@ pub trait RequestRepo: Send + Sync {
     fn list_results_for_user(
         &self,
         user_id: &str,
+        groups: &[String],
+        roles: &[String],
         limit: u32,
     ) -> Result<Vec<StoredResultEntry>, AppError>;
 }

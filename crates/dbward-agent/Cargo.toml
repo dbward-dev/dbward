@@ -13,6 +13,7 @@ description = "dbward agent — executes approved DB operations"
 
 [dependencies]
 dbward-driver = { path = "../dbward-driver", version = "0.1.0" }
+dbward-migrate = { path = "../dbward-migrate" }
 dbward-api-types = { path = "../dbward-api-types" }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true }

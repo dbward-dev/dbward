@@ -19,29 +19,50 @@ type ApiResult =
     Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)>;
 
 /// Check if user can approve a pending request by parsing its workflow snapshot.
-/// Simplified: checks first step only. Multi-step workflows with completed steps
-/// may show false positives, but never false negatives for single-step workflows.
-fn can_approve_request(user: &AuthUser, request: &dbward_domain::entities::Request) -> bool {
-    use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep};
+fn can_approve_request(
+    user: &AuthUser,
+    request: &dbward_domain::entities::Request,
+    request_repo: &dyn dbward_app::ports::RequestRepo,
+) -> bool {
+    use dbward_domain::entities::ApprovalAction;
+    use dbward_domain::policies::workflow::Workflow;
     use dbward_domain::services::approval_checker::is_approvable_by;
+    use dbward_domain::services::workflow_matcher::find_current_step;
 
     let snapshot = match &request.workflow_snapshot_json {
         Some(json) => json,
         None => return false,
     };
-    let steps: Vec<WorkflowStep> = match serde_json::from_str::<serde_json::Value>(snapshot)
-        .ok()
-        .and_then(|v| serde_json::from_value(v.get("steps")?.clone()).ok())
-    {
-        Some(s) => s,
-        None => return false,
+    let workflow: Workflow = match serde_json::from_str(snapshot) {
+        Ok(w) => w,
+        Err(_) => return false,
     };
-    // Current step = first unapproved step (simplified: use step 0)
-    let step = match steps.first() {
-        Some(s) => s,
-        None => return false,
-    };
-    is_approvable_by(user, &step.approvers, &request.requester, &[], false, true)
+    if workflow.steps.is_empty() {
+        return false;
+    }
+    let approvals = request_repo.get_approvals(&request.id).unwrap_or_default();
+    let current = find_current_step(&workflow.steps, &approvals) as usize;
+    if current >= workflow.steps.len() {
+        return false;
+    }
+    // Already approved this step?
+    if approvals.iter().any(|a| a.step_index as usize == current && a.actor_id == user.subject_id && a.action == ApprovalAction::Approve) {
+        return false;
+    }
+    let step = &workflow.steps[current];
+    let prev_ids: Vec<String> = approvals
+        .iter()
+        .filter(|a| (a.step_index as usize) < current && a.action == ApprovalAction::Approve)
+        .map(|a| a.actor_id.clone())
+        .collect();
+    is_approvable_by(
+        user,
+        &step.approvers,
+        &request.requester,
+        &prev_ids,
+        workflow.allow_self_approve,
+        workflow.allow_same_approver_across_steps,
+    )
 }
 
 fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
@@ -227,7 +248,7 @@ pub async fn list(
         .filter(|r| {
             // pending_for_me: only show requests the caller can actually approve
             if pending_for_me {
-                return can_approve_request(&user, r);
+                return can_approve_request(&user, r, state.request_repo.as_ref());
             }
             if is_admin {
                 return true;
@@ -647,7 +668,7 @@ pub async fn list_results(
 ) -> ApiResult {
     let results = state
         .request_repo
-        .list_results_for_user(&user.subject_id, 50)
+        .list_results_for_user(&user.subject_id, &user.groups, &user.roles.iter().map(|r| r.name.clone()).collect::<Vec<_>>(), 50)
         .map_err(map_error)?;
     let items: Vec<serde_json::Value> = results
         .iter()

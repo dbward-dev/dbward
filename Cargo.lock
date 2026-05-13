@@ -635,6 +635,7 @@ dependencies = [
  "clap",
  "dbward-api-types",
  "dbward-driver",
+ "dbward-migrate",
  "ed25519-dalek",
  "hex",
  "hostname",

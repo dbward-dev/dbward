@@ -258,6 +258,34 @@ async fn do_execute(
             }))
             .unwrap())
         }
+        "migrate_up" => {
+            let detail = dbward_migrate::MigrationDetail::parse(sql)
+                .map_err(|e| AgentError::Driver(dbward_driver::DriverError::QueryFailed(e.to_string())))?;
+            driver.ensure_migrations_table().await?;
+            let mut applied = vec![];
+            for entry in &detail.migrations {
+                if cancel.is_cancelled() {
+                    return Err(AgentError::Driver(dbward_driver::DriverError::Cancelled));
+                }
+                driver.apply_migration(&entry.sql, &entry.version).await?;
+                applied.push(&entry.version);
+            }
+            Ok(serde_json::json!({"applied": applied}).to_string())
+        }
+        "migrate_down" => {
+            let detail = dbward_migrate::MigrationDetail::parse(sql)
+                .map_err(|e| AgentError::Driver(dbward_driver::DriverError::QueryFailed(e.to_string())))?;
+            driver.ensure_migrations_table().await?;
+            let mut reverted = vec![];
+            for entry in detail.migrations.iter().rev() {
+                if cancel.is_cancelled() {
+                    return Err(AgentError::Driver(dbward_driver::DriverError::Cancelled));
+                }
+                driver.revert_migration(&entry.sql, &entry.version).await?;
+                reverted.push(&entry.version);
+            }
+            Ok(serde_json::json!({"reverted": reverted}).to_string())
+        }
         _ => {
             let affected = driver
                 .execute_cancellable(sql, timeout_secs, cancel)
