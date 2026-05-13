@@ -18,6 +18,15 @@ pub trait RequestRepo: Send + Sync {
         user: Option<&str>,
     ) -> Result<(Vec<Request>, u32), AppError>;
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError>;
+    /// List pending requests approvable by user (via denormalized pending_approvers table).
+    fn list_pending_for_user(
+        &self,
+        user_id: &str,
+        groups: &[String],
+        roles: &[String],
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<Request>, u32), AppError>;
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError>;
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError>;
     fn count_executions(&self, request_id: &str) -> Result<u32, AppError>;

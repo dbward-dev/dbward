@@ -262,8 +262,13 @@ async fn do_execute(
             let detail = dbward_migrate::MigrationDetail::parse(sql)
                 .map_err(|e| AgentError::Driver(dbward_driver::DriverError::QueryFailed(e.to_string())))?;
             driver.ensure_migrations_table().await?;
+            let already = driver.applied_versions().await?;
+            let pending: Vec<_> = detail.migrations.iter()
+                .filter(|e| !already.contains(&e.version))
+                .take(detail.max_count.unwrap_or(usize::MAX))
+                .collect();
             let mut applied = vec![];
-            for entry in &detail.migrations {
+            for entry in &pending {
                 if cancel.is_cancelled() {
                     return Err(AgentError::Driver(dbward_driver::DriverError::Cancelled));
                 }
@@ -276,8 +281,13 @@ async fn do_execute(
             let detail = dbward_migrate::MigrationDetail::parse(sql)
                 .map_err(|e| AgentError::Driver(dbward_driver::DriverError::QueryFailed(e.to_string())))?;
             driver.ensure_migrations_table().await?;
+            let already = driver.applied_versions().await?;
+            let to_revert: Vec<_> = detail.migrations.iter().rev()
+                .filter(|e| already.contains(&e.version))
+                .take(detail.max_count.unwrap_or(usize::MAX))
+                .collect();
             let mut reverted = vec![];
-            for entry in detail.migrations.iter().rev() {
+            for entry in &to_revert {
                 if cancel.is_cancelled() {
                     return Err(AgentError::Driver(dbward_driver::DriverError::Cancelled));
                 }

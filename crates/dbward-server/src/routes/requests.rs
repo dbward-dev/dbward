@@ -19,52 +19,6 @@ type ApiResult =
     Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)>;
 
 /// Check if user can approve a pending request by parsing its workflow snapshot.
-fn can_approve_request(
-    user: &AuthUser,
-    request: &dbward_domain::entities::Request,
-    request_repo: &dyn dbward_app::ports::RequestRepo,
-) -> bool {
-    use dbward_domain::entities::ApprovalAction;
-    use dbward_domain::policies::workflow::Workflow;
-    use dbward_domain::services::approval_checker::is_approvable_by;
-    use dbward_domain::services::workflow_matcher::find_current_step;
-
-    let snapshot = match &request.workflow_snapshot_json {
-        Some(json) => json,
-        None => return false,
-    };
-    let workflow: Workflow = match serde_json::from_str(snapshot) {
-        Ok(w) => w,
-        Err(_) => return false,
-    };
-    if workflow.steps.is_empty() {
-        return false;
-    }
-    let approvals = request_repo.get_approvals(&request.id).unwrap_or_default();
-    let current = find_current_step(&workflow.steps, &approvals) as usize;
-    if current >= workflow.steps.len() {
-        return false;
-    }
-    // Already approved this step?
-    if approvals.iter().any(|a| a.step_index as usize == current && a.actor_id == user.subject_id && a.action == ApprovalAction::Approve) {
-        return false;
-    }
-    let step = &workflow.steps[current];
-    let prev_ids: Vec<String> = approvals
-        .iter()
-        .filter(|a| (a.step_index as usize) < current && a.action == ApprovalAction::Approve)
-        .map(|a| a.actor_id.clone())
-        .collect();
-    is_approvable_by(
-        user,
-        &step.approvers,
-        &request.requester,
-        &prev_ids,
-        workflow.allow_self_approve,
-        workflow.allow_same_approver_across_steps,
-    )
-}
-
 fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
     let status = match &e {
         AppError::Forbidden(_) => StatusCode::FORBIDDEN,
@@ -228,17 +182,37 @@ pub async fn list(
     let limit = params.limit.unwrap_or(50).min(100);
     let offset = params.offset.unwrap_or(0);
     let pending_for_me = params.pending_for_me.unwrap_or(false);
-    let status_filter = if pending_for_me {
-        Some("pending")
-    } else {
-        params.status.as_deref()
-    };
-    // For pending_for_me, fetch all pending (post-filter reduces count)
-    let fetch_limit = if pending_for_me { 1000 } else { limit };
-    let fetch_offset = if pending_for_me { 0 } else { offset };
+
+    // pending_for_me uses denormalized table (no N+1)
+    if pending_for_me {
+        let roles: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
+        let (requests, total) = state
+            .request_repo
+            .list_pending_for_user(&user.subject_id, &user.groups, &roles, limit, offset)
+            .map_err(map_error)?;
+        let items: Vec<serde_json::Value> = requests
+            .iter()
+            .map(|r| {
+                json!({
+                    "id": r.id,
+                    "requester": r.requester,
+                    "database": r.database,
+                    "environment": r.environment,
+                    "operation": r.operation.as_str(),
+                    "status": r.status.as_str(),
+                    "created_at": r.created_at,
+                })
+            })
+            .collect();
+        return Ok((
+            StatusCode::OK,
+            Json(json!({"requests": items, "total": total, "limit": limit, "offset": offset})),
+        ));
+    }
+
     let (requests, total) = state
         .request_repo
-        .list(fetch_limit, fetch_offset, status_filter, params.user.as_deref())
+        .list(limit, offset, params.status.as_deref(), params.user.as_deref())
         .map_err(map_error)?;
     // Non-admin users only see their own requests + pending requests they can approve
     let is_admin = user.roles.iter().any(|r| r.name == "admin");
@@ -246,17 +220,12 @@ pub async fn list(
     let items: Vec<serde_json::Value> = requests
         .iter()
         .filter(|r| {
-            // pending_for_me: only show requests the caller can actually approve
-            if pending_for_me {
-                return can_approve_request(&user, r, state.request_repo.as_ref());
-            }
             if is_admin {
                 return true;
             }
             if r.requester == user.subject_id {
                 return true;
             }
-            // Approvers see pending requests
             if can_approve && r.status == dbward_domain::entities::RequestStatus::Pending {
                 return true;
             }
@@ -274,17 +243,11 @@ pub async fn list(
             })
         })
         .collect();
-    let effective_total = if is_admin && !pending_for_me { total } else { items.len() as u32 };
-    let final_items = if pending_for_me {
-        items.into_iter().skip(offset as usize).take(limit as usize).collect::<Vec<_>>()
-    } else {
-        items
-    };
-    let final_total = if pending_for_me { effective_total } else { effective_total };
+    let effective_total = if is_admin { total } else { items.len() as u32 };
     Ok((
         StatusCode::OK,
         Json(
-            json!({"requests": final_items, "total": final_total, "limit": limit, "offset": offset}),
+            json!({"requests": items, "total": effective_total, "limit": limit, "offset": offset}),
         ),
     ))
 }

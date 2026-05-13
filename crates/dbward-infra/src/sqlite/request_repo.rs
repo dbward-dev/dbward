@@ -26,6 +26,60 @@ fn database_id(db: &DatabaseName, env: &Environment) -> String {
     format!("{}:{}", db.as_str(), env.as_str())
 }
 
+/// Populate request_pending_approvers from workflow snapshot at given step.
+fn populate_pending_approvers(
+    conn: &rusqlite::Connection,
+    request_id: &str,
+    workflow_snapshot_json: &Option<String>,
+    step_index: u32,
+) -> Result<(), AppError> {
+    conn.execute(
+        "DELETE FROM request_pending_approvers WHERE request_id = ?1",
+        rusqlite::params![request_id],
+    )
+    .map_err(map_err)?;
+    if let Some(json) = workflow_snapshot_json {
+        if let Ok(workflow) =
+            serde_json::from_str::<dbward_domain::policies::workflow::Workflow>(json)
+        {
+            if let Some(step) = workflow.steps.get(step_index as usize) {
+                for approver in &step.approvers {
+                    let selector = approver.selector.to_string();
+                    conn.execute(
+                        "INSERT OR IGNORE INTO request_pending_approvers (request_id, selector, step_index) VALUES (?1, ?2, ?3)",
+                        rusqlite::params![request_id, selector, step_index],
+                    )
+                    .map_err(map_err)?;
+                }
+            }
+        }
+    }
+    // Also add roles that have approve permission (Permission::All or RequestApprove)
+    let mut stmt = conn
+        .prepare("SELECT name, permissions_json FROM roles")
+        .map_err(map_err)?;
+    let approve_roles: Vec<String> = stmt
+        .query_map([], |row| {
+            let name: String = row.get(0)?;
+            let perms: String = row.get(1)?;
+            Ok((name, perms))
+        })
+        .map_err(map_err)?
+        .filter_map(|r| r.ok())
+        .filter(|(_, perms)| perms.contains("\"*\"") || perms.contains("request.approve"))
+        .map(|(name, _)| name)
+        .collect();
+    for role in &approve_roles {
+        let selector = format!("role:{role}");
+        conn.execute(
+            "INSERT OR IGNORE INTO request_pending_approvers (request_id, selector, step_index) VALUES (?1, ?2, ?3)",
+            rusqlite::params![request_id, selector, step_index],
+        )
+        .map_err(map_err)?;
+    }
+    Ok(())
+}
+
 fn parse_database_id(id: &str) -> Result<(DatabaseName, Environment), AppError> {
     let (name, env) = id
         .split_once(':')
@@ -177,6 +231,9 @@ impl RequestRepo for SqliteRequestRepo {
                 req.expires_at.map(|t| t.to_rfc3339()),
             ],
         ).map_err(map_err)?;
+        if req.status == RequestStatus::Pending {
+            populate_pending_approvers(&conn, &req.id, &req.workflow_snapshot_json, 0)?;
+        }
         Ok(())
     }
 
@@ -248,6 +305,62 @@ impl RequestRepo for SqliteRequestRepo {
         Ok((items, total))
     }
 
+    fn list_pending_for_user(
+        &self,
+        user_id: &str,
+        groups: &[String],
+        roles: &[String],
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<Request>, u32), AppError> {
+        let conn = self.conn.lock().unwrap();
+        // Build selector list: user:X, group:G1, group:G2, role:R1, role:R2
+        let mut selectors = vec![format!("user:{user_id}")];
+        for g in groups {
+            selectors.push(format!("group:{g}"));
+        }
+        for r in roles {
+            selectors.push(format!("role:{r}"));
+        }
+        // ?1..N = selectors
+        let placeholders: String = selectors
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        let count_sql = format!(
+            "SELECT COUNT(DISTINCT r.id) FROM requests r
+             JOIN request_pending_approvers rpa ON r.id = rpa.request_id
+             WHERE r.status = 'pending' AND rpa.selector IN ({placeholders})"
+        );
+        let query_sql = format!(
+            "SELECT DISTINCT r.* FROM requests r
+             JOIN request_pending_approvers rpa ON r.id = rpa.request_id
+             WHERE r.status = 'pending' AND rpa.selector IN ({placeholders})
+             ORDER BY r.created_at DESC
+             LIMIT {} OFFSET {}",
+            limit, offset
+        );
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> =
+            selectors.into_iter().map(|s| Box::new(s) as Box<dyn rusqlite::types::ToSql>).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+
+        let total: u32 = conn
+            .query_row(&count_sql, param_refs.as_slice(), |row| row.get(0))
+            .map_err(map_err)?;
+
+        let mut stmt = conn.prepare(&query_sql).map_err(map_err)?;
+        let rows = stmt
+            .query_and_then(param_refs.as_slice(), row_to_request)
+            .map_err(map_err)?;
+        let requests: Vec<Request> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_err)?;
+        Ok((requests, total))
+    }
+
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -278,6 +391,16 @@ impl RequestRepo for SqliteRequestRepo {
                 approval.created_at.to_rfc3339(),
             ],
         ).map_err(map_err)?;
+        // Update pending_approvers to next step
+        let snapshot: Option<String> = conn
+            .query_row(
+                "SELECT workflow_snapshot_json FROM requests WHERE id = ?1",
+                params![approval.request_id],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten();
+        populate_pending_approvers(&conn, &approval.request_id, &snapshot, approval.step_index + 1)?;
         Ok(())
     }
 
@@ -379,6 +502,11 @@ impl RequestRepo for SqliteRequestRepo {
             drop(tx);
             return Ok(false);
         }
+
+        tx.execute(
+            "DELETE FROM request_pending_approvers WHERE request_id = ?1",
+            params![request_id],
+        ).map_err(map_err)?;
 
         tx.commit().map_err(map_err)?;
         Ok(true)

@@ -173,6 +173,9 @@ mod tests {
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
             Ok(None)
         }
+        fn list_pending_for_user(&self, _: &str, _: &[String], _: &[String], _: u32, _: u32) -> Result<(Vec<Request>, u32), AppError> {
+            Ok((vec![], 0))
+        }
         fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> {
             Ok(())
         }
