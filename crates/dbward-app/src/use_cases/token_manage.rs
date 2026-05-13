@@ -143,6 +143,7 @@ impl TokenManage {
                 "token",
                 &user.subject_id,
                 Some(&id),
+                self.clock.now(),
             ))?;
 
         // Resolve permissions from assigned roles
@@ -208,6 +209,7 @@ impl TokenManage {
                 "token",
                 &user.subject_id,
                 Some(&input.token_id),
+                self.clock.now(),
             ))?;
 
         Ok(TokenRevokeOutput {

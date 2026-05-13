@@ -18,6 +18,7 @@ fn make_uc(state: &AppState) -> PolicyManage {
         policy_repo: state.policy_repo.clone(),
         license: state.license_checker.clone(),
         audit: state.audit_logger.clone(),
+        clock: state.clock.clone(),
     }
 }
 

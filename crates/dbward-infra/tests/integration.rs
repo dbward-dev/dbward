@@ -750,6 +750,7 @@ fn complete_execution_success() {
                 "execution",
                 "agent-1",
                 Some("exec-ce-ok"),
+                now,
             ),
             None,
             &[],
@@ -825,6 +826,7 @@ fn complete_execution_failure() {
                 "execution",
                 "agent-1",
                 Some("exec-ce-fail"),
+                now,
             ),
             None,
             &[],
@@ -899,6 +901,7 @@ fn complete_execution_cancelled_request() {
                 "execution",
                 "agent-1",
                 Some("exec-ce-cancel"),
+                now,
             ),
             None,
             &[],
@@ -975,6 +978,7 @@ fn complete_execution_already_completed() {
                 "execution",
                 "agent-1",
                 Some("exec-ce-done"),
+                now,
             ),
             None,
             &[],
@@ -1732,6 +1736,7 @@ fn audit_list_with_filter() {
             "query",
             "alice",
             Some("req-1"),
+            Utc::now(),
         ))
         .unwrap();
     logger
@@ -1740,6 +1745,7 @@ fn audit_list_with_filter() {
             "request",
             "bob",
             Some("req-2"),
+            Utc::now(),
         ))
         .unwrap();
 
@@ -1767,7 +1773,7 @@ fn audit_purge_old() {
     let repo = SqliteAuditRepo::new(conn.clone());
 
     logger
-        .record(&AuditEvent::simple("test", "test", "x", None))
+        .record(&AuditEvent::simple("test", "test", "x", None, Utc::now()))
         .unwrap();
     // Nothing old enough to purge
     assert_eq!(repo.purge_old("2000-01-01T00:00:00Z").unwrap(), 0);

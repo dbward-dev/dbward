@@ -79,6 +79,7 @@ impl AuditEvent {
         category: &str,
         actor_id: &str,
         resource_id: Option<&str>,
+        timestamp: DateTime<Utc>,
     ) -> Self {
         Self {
             id: String::new(), // filled by infra
@@ -103,7 +104,7 @@ impl AuditEvent {
             metadata_json: "{}".to_string(),
             prev_hash: None,
             event_hash: String::new(), // filled by infra
-            created_at: Utc::now(),
+            created_at: timestamp,
         }
     }
 }

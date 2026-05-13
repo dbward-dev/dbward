@@ -173,6 +173,7 @@ impl AgentSubmitResult {
             "execution",
             &user.subject_id,
             Some(&execution.id),
+            now,
         );
         audit_event.database_name = Some(request.database.to_string());
         audit_event.environment = Some(request.environment.to_string());

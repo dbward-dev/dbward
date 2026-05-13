@@ -143,7 +143,7 @@ mod tests {
     struct FakeAuditRepo;
     impl AuditRepo for FakeAuditRepo {
         fn list(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, AppError> {
-            let mut ev = AuditEvent::simple("query_executed", "query", "alice", Some("req-1"));
+            let mut ev = AuditEvent::simple("query_executed", "query", "alice", Some("req-1"), chrono::Utc::now());
             ev.detail_raw = Some("SELECT 1".into());
             if let Some(ref actor) = filter.actor_id {
                 if actor != "alice" {

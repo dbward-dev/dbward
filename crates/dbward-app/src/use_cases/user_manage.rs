@@ -69,6 +69,7 @@ impl UserManage {
             "identity",
             &user.subject_id,
             Some(&input.user_id),
+            self.clock.now(),
         ))?;
 
         Ok(UserSuspendOutput {
@@ -95,6 +96,7 @@ impl UserManage {
             "identity",
             &user.subject_id,
             Some(user_id),
+            self.clock.now(),
         ))?;
 
         Ok(())

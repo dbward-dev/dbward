@@ -176,6 +176,7 @@ pub async fn run_from_args(
     if let Err(e) = notifier.reload() {
         tracing::warn!("failed to load webhooks on startup: {e}");
     }
+    let clock: Arc<dyn dbward_app::ports::Clock> = Arc::new(dbward_infra::UtcClock);
     let event_dispatcher: Arc<dyn dbward_app::ports::EventDispatcher> =
         Arc::new(dbward_infra::webhook::CompositeEventDispatcher {
             audit: audit_logger.clone(),
@@ -187,13 +188,13 @@ pub async fn run_from_args(
                 "full" => dbward_infra::webhook::RedactionMode::Full,
                 _ => dbward_infra::webhook::RedactionMode::Literals,
             },
+            clock: clock.clone(),
         });
     let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> =
         Arc::new(dbward_infra::webhook::SsrfGuard);
     let license_checker: Arc<dyn dbward_app::ports::LicenseChecker> = Arc::new(
         dbward_infra::LicenseCheckerImpl::new(dbward_domain::license::License::default()),
     );
-    let clock: Arc<dyn dbward_app::ports::Clock> = Arc::new(dbward_infra::UtcClock);
     let id_generator: Arc<dyn dbward_app::ports::IdGenerator> =
         Arc::new(dbward_infra::UuidGenerator);
 

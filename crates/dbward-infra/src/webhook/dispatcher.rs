@@ -282,6 +282,7 @@ pub struct CompositeEventDispatcher {
     pub result_channel: Option<Arc<dyn dbward_app::ports::ResultChannel>>,
     pub request_notifier: Option<Arc<dyn Notifier>>,
     pub redaction_mode: RedactionMode,
+    pub clock: Arc<dyn dbward_app::ports::Clock>,
 }
 
 impl EventDispatcher for CompositeEventDispatcher {
@@ -315,6 +316,7 @@ impl EventDispatcher for CompositeEventDispatcher {
             category,
             &event.actor_id,
             Some(&event.request_id),
+            self.clock.now(),
         );
         audit_event.database_name = Some(event.database.as_str().to_string());
         audit_event.environment = Some(event.environment.as_str().to_string());

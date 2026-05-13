@@ -81,6 +81,7 @@ impl AgentPoll {
                 "agent",
                 &user.subject_id,
                 Some(&user.subject_id),
+                self.clock.now(),
             ));
         }
 

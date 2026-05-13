@@ -12,6 +12,7 @@ pub struct PolicyManage {
     pub policy_repo: Arc<dyn PolicyRepo>,
     pub license: Arc<dyn LicenseChecker>,
     pub audit: Arc<dyn AuditLogger>,
+    pub clock: Arc<dyn Clock>,
 }
 
 // --- Workflow ---
@@ -31,6 +32,7 @@ impl PolicyManage {
             "policy",
             &user.subject_id,
             Some(&wf.id),
+            self.clock.now(),
         ))?;
         Ok(wf)
     }
@@ -55,6 +57,7 @@ impl PolicyManage {
             "policy",
             &user.subject_id,
             Some(id),
+            self.clock.now(),
         ))?;
         Ok(())
     }
@@ -79,6 +82,7 @@ impl PolicyManage {
             "policy",
             &user.subject_id,
             None,
+            self.clock.now(),
         ))?;
         Ok(ep)
     }
@@ -127,6 +131,7 @@ impl PolicyManage {
             "policy",
             &user.subject_id,
             Some(&role.name),
+            self.clock.now(),
         ))?;
         Ok(role)
     }
@@ -226,6 +231,13 @@ mod tests {
     impl AuditLogger for FakeAudit {
         fn record(&self, _: &AuditEvent) -> Result<(), AppError> {
             Ok(())
+        }
+    }
+
+    struct FakeClock;
+    impl Clock for FakeClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc::now()
         }
     }
 
@@ -337,6 +349,7 @@ mod tests {
             policy_repo: Arc::new(FakePolicyRepo::new()),
             license: Arc::new(FakeLicense),
             audit: Arc::new(FakeAudit),
+            clock: Arc::new(FakeClock),
         }
     }
 
@@ -359,6 +372,7 @@ mod tests {
             }),
             license: Arc::new(FakeLicense),
             audit: Arc::new(FakeAudit),
+            clock: Arc::new(FakeClock),
         };
         assert!(matches!(
             uc.create_workflow(make_wf("wf-6"), &admin_user()),
