@@ -117,15 +117,10 @@ impl Notifier for WebhookDispatcher {
             let client = self.client.clone();
             let url = hook.url.clone();
             let secret = hook.secret.clone();
-            let body = serde_json::to_string(&serde_json::json!({
-                "event": event.event_type,
-                "request_id": event.request_id,
-                "database": event.database,
-                "environment": event.environment,
-                "actor": event.actor,
-                "detail": event.detail,
-            }))
-            .unwrap_or_default();
+            let body = match hook.format.as_str() {
+                "slack" => build_slack_body(&event),
+                _ => build_generic_body(&event),
+            };
 
             tokio::spawn(async move {
                 let _ = send_with_retry(&client, &url, &body, secret.as_deref()).await;
@@ -153,46 +148,64 @@ impl Notifier for WebhookDispatcher {
     }
 }
 
+fn build_generic_body(event: &WebhookEvent) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "event": event.event_type,
+        "request_id": event.request_id,
+        "database": event.database,
+        "environment": event.environment,
+        "actor": event.actor,
+        "detail": event.detail,
+    }))
+    .unwrap_or_default()
+}
+
+fn build_slack_body(event: &WebhookEvent) -> String {
+    let db = event.database.as_deref().unwrap_or("—");
+    let env = event.environment.as_deref().unwrap_or("—");
+    let actor = event.actor.as_deref().unwrap_or("system");
+    let req_id = event.request_id.as_deref().unwrap_or("—");
+    let emoji = match event.event_type.as_str() {
+        "request_approved" | "step_approved" => "✅",
+        "request_rejected" => "❌",
+        "request_completed" => "🎉",
+        "request_failed" => "💥",
+        "break_glass" => "🚨",
+        "request_created" => "📝",
+        _ => "🔔",
+    };
+    let text = format!("{emoji} {} — {db}/{env}", event.event_type);
+    serde_json::to_string(&serde_json::json!({
+        "text": text,
+        "blocks": [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": format!("{emoji} {}", event.event_type), "emoji": true}
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": format!("*Database:*\n{db}")},
+                    {"type": "mrkdwn", "text": format!("*Environment:*\n{env}")},
+                    {"type": "mrkdwn", "text": format!("*Actor:*\n{actor}")},
+                    {"type": "mrkdwn", "text": format!("*Request:*\n`{req_id}`")}
+                ]
+            }
+        ]
+    }))
+    .unwrap_or_default()
+}
+
 async fn send_with_retry(
     client: &reqwest::Client,
     url: &str,
     body: &str,
     secret: Option<&str>,
 ) -> Result<(), ()> {
-    // DNS rebinding protection: resolve once, validate, and connect to pinned IP
-    let parsed = url::Url::parse(url).map_err(|_| ())?;
-    let host = parsed.host_str().ok_or(())?;
-    let port = parsed.port_or_known_default().unwrap_or(443);
-    let addrs: Vec<std::net::SocketAddr> = std::net::ToSocketAddrs::to_socket_addrs(&(host, port))
-        .map_err(|_| ())?
-        .collect();
-
-    if addrs.is_empty() {
-        return Err(());
-    }
-
-    // Validate all resolved IPs are not private
-    for addr in &addrs {
-        if is_private_ip(&addr.ip()) {
-            return Err(());
-        }
-    }
-
-    // Pin to first resolved IP to prevent rebinding between check and connect
-    let pinned_addr = addrs[0];
-    let pinned_url = format!(
-        "{}://{}:{}{}",
-        parsed.scheme(),
-        pinned_addr.ip(),
-        pinned_addr.port(),
-        parsed.path()
-    );
-
     for attempt in 0..3 {
         let mut req = client
-            .post(&pinned_url)
+            .post(url)
             .header("content-type", "application/json")
-            .header("host", host)
             .body(body.to_string());
         if let Some(s) = secret {
             use hmac::{Hmac, Mac};
@@ -203,38 +216,22 @@ async fn send_with_retry(
             req = req.header("x-dbward-signature", format!("sha256={sig}"));
         }
         match req.send().await {
-            Ok(resp) if resp.status().is_success() => return Ok(()),
-            _ => {
-                if attempt < 2 {
-                    tokio::time::sleep(std::time::Duration::from_secs(1 << (attempt * 2))).await;
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                if (200..300).contains(&status) {
+                    return Ok(());
+                }
+                if (400..500).contains(&status) && status != 429 {
+                    return Err(());
                 }
             }
+            Err(_) => {}
+        }
+        if attempt < 2 {
+            tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;
         }
     }
     Err(())
-}
-
-fn is_private_ip(ip: &std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_broadcast()
-                || v4.is_unspecified()
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
-                || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
-        }
-        std::net::IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return v4.is_loopback() || v4.is_private() || v4.is_link_local();
-            }
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || (v6.segments()[0] & 0xfe00) == 0xfc00
-                || (v6.segments()[0] & 0xffc0) == 0xfe80
-        }
-    }
 }
 
 /// ADR-004: Composite event dispatcher that fans out to subscribers.

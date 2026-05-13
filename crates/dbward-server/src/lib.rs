@@ -404,11 +404,15 @@ fn sync_webhooks(
     }
 
     for (i, wh) in webhooks.iter().enumerate() {
+        let format = match wh.format.as_str() {
+            "slack" => WebhookFormat::Slack,
+            _ => WebhookFormat::Generic,
+        };
         let webhook = Webhook {
             id: format!("config-wh-{i}"),
             url: wh.url.clone(),
             events: wh.events.clone(),
-            format: WebhookFormat::Generic,
+            format,
             secret: wh.secret.clone(),
             status: WebhookStatus::Active,
             created_at: Some(chrono::Utc::now()),

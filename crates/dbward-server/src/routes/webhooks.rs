@@ -18,9 +18,12 @@ pub struct CreateBody {
     pub url: String,
     #[serde(default)]
     pub events: Vec<String>,
+    #[serde(default = "default_format")]
     pub format: String,
     pub secret: Option<String>,
 }
+
+fn default_format() -> String { "generic".into() }
 
 #[derive(Deserialize)]
 pub struct UpdateBody {
