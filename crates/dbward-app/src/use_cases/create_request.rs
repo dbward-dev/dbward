@@ -142,7 +142,13 @@ impl CreateRequest {
                     operation: existing.operation,
                     is_existing: true,
                     expires_at: existing.expires_at,
-                    approvers: vec![],
+                    approvers: existing.workflow_snapshot_json.as_ref().and_then(|json| {
+                        serde_json::from_str::<serde_json::Value>(json).ok().and_then(|v| {
+                            v["steps"][0]["approvers"].as_array().map(|arr| {
+                                arr.iter().filter_map(|a| a["selector"].as_str().map(String::from)).collect()
+                            })
+                        })
+                    }).unwrap_or_default(),
                 });
             }
         }

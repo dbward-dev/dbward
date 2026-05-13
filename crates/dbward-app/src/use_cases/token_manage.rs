@@ -97,7 +97,7 @@ impl TokenManage {
             let known_names: Vec<&str> = known_roles.iter().map(|r| r.name.as_str()).collect();
             for role in &input.roles {
                 if !known_names.contains(&role.as_str())
-                    && !matches!(role.as_str(), "admin" | "agent-default")
+                    && !matches!(role.as_str(), "admin" | "developer" | "readonly" | "agent-default")
                 {
                     return Err(AppError::Validation(format!("unknown role: {}", role)));
                 }
