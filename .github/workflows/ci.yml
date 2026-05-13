@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
+  CARGO_INCREMENTAL: 0
 
 jobs:
   check:
@@ -19,6 +20,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-check
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -35,6 +38,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-check
 
       - name: Install cargo-deny
         uses: taiki-e/install-action@cargo-deny
@@ -53,6 +58,8 @@ jobs:
         with:
           toolchain: "1.88"
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-msrv
 
       - name: Check MSRV
         run: cargo check --workspace
@@ -65,6 +72,8 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-check
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
