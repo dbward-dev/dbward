@@ -115,10 +115,7 @@ mod tests {
         ) -> Result<(Vec<Request>, u32), AppError> {
             unimplemented!()
         }
-        fn insert_approval(
-            &self,
-            _: &dbward_domain::entities::Approval,
-        ) -> Result<(), AppError> {
+        fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> {
             unimplemented!()
         }
         fn get_approvals(
@@ -193,11 +190,7 @@ mod tests {
         ) -> Result<bool, AppError> {
             unimplemented!()
         }
-        fn mark_failed(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
+        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
             unimplemented!()
         }
         fn cancel_all_for_user(

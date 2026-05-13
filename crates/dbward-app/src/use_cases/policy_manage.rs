@@ -355,25 +355,6 @@ mod tests {
         }
     }
 
-    fn make_wf(id: &str) -> Workflow {
-        Workflow {
-            id: id.into(),
-            database: DatabaseName::wildcard(),
-            environment: Environment::wildcard(),
-            operations: vec![],
-            steps: vec![],
-            skip_approval_for: vec![],
-            require_reason: false,
-            allow_self_approve: false,
-            allow_same_approver_across_steps: false,
-            pending_ttl_secs: None,
-            approval_ttl_secs: None,
-            statement_timeout_secs: None,
-            created_at: None,
-            updated_at: None,
-        }
-    }
-
     struct FakeIdGen;
     impl IdGenerator for FakeIdGen {
         fn generate(&self) -> String {

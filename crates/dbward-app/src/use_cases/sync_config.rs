@@ -73,9 +73,9 @@ impl SyncConfig {
 
             let mut operations: Vec<Operation> = Vec::new();
             for op_str in &wf.operations {
-                let op = op_str
-                    .parse::<Operation>()
-                    .map_err(|_| AppError::Validation(format!("workflow {id}: unknown operation '{op_str}'")))?;
+                let op = op_str.parse::<Operation>().map_err(|_| {
+                    AppError::Validation(format!("workflow {id}: unknown operation '{op_str}'"))
+                })?;
                 operations.push(op);
             }
 
@@ -98,7 +98,10 @@ impl SyncConfig {
                                 "user" => Some(Selector::User(a.value.clone())),
                                 _ => None,
                             };
-                            selector.map(|s| ApproverGroup { selector: s, min: a.min })
+                            selector.map(|s| ApproverGroup {
+                                selector: s,
+                                min: a.min,
+                            })
                         })
                         .collect();
                     WorkflowStep { approvers, mode }

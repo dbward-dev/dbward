@@ -14,7 +14,4 @@ RUSTFLAGS="-Dwarnings" cargo clippy --workspace --all-targets -- \
 echo "  test..."
 cargo test --workspace --quiet
 
-echo "  coverage..."
-cargo llvm-cov --workspace --ignore-filename-regex "tests/" --summary-only
-
 echo "✅ All checks passed. Pushing..."

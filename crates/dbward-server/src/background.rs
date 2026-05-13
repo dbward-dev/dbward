@@ -377,7 +377,13 @@ pub(crate) fn run_wal_checkpoint_once(state: &AppState) {
 // --- Helpers ---
 
 fn emit_audit(state: &AppState, event_type: &str, category: EventCategory, request_id: &str) {
-    let mut event = AuditEvent::simple(event_type, "approval", "system", Some(request_id), state.clock.now());
+    let mut event = AuditEvent::simple(
+        event_type,
+        "approval",
+        "system",
+        Some(request_id),
+        state.clock.now(),
+    );
     event.actor_type = ActorType::System;
     event.request_id = Some(request_id.to_string());
     event.outcome = EventOutcome::Success;
@@ -393,7 +399,13 @@ fn make_audit_event(
     request_id: &str,
     state: &AppState,
 ) -> AuditEvent {
-    let mut event = AuditEvent::simple(event_type, "approval", "system", Some(request_id), state.clock.now());
+    let mut event = AuditEvent::simple(
+        event_type,
+        "approval",
+        "system",
+        Some(request_id),
+        state.clock.now(),
+    );
     event.actor_type = ActorType::System;
     event.request_id = Some(request_id.to_string());
     event.outcome = EventOutcome::Success;

@@ -237,10 +237,7 @@ mod tests {
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
             Ok(None)
         }
-        fn insert_approval(
-            &self,
-            _: &dbward_domain::entities::Approval,
-        ) -> Result<(), AppError> {
+        fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> {
             Ok(())
         }
         fn get_approvals(
@@ -252,11 +249,7 @@ mod tests {
         fn count_executions(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
         }
-        fn mark_approved(
-            &self,
-            _: &str,
-            _: chrono::DateTime<Utc>,
-        ) -> Result<bool, AppError> {
+        fn mark_approved(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
             Ok(true)
         }
         fn approve_and_mark_approved(
@@ -267,11 +260,7 @@ mod tests {
         ) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn mark_rejected(
-            &self,
-            _: &str,
-            _: chrono::DateTime<Utc>,
-        ) -> Result<bool, AppError> {
+        fn mark_rejected(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
             Ok(true)
         }
         fn reject_and_record(
@@ -291,42 +280,22 @@ mod tests {
         ) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn mark_dispatched(
-            &self,
-            _: &str,
-            _: chrono::DateTime<Utc>,
-        ) -> Result<bool, AppError> {
+        fn mark_dispatched(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
             Ok(true)
         }
         fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
             Ok(())
         }
-        fn mark_running(
-            &self,
-            _: &str,
-            _: chrono::DateTime<Utc>,
-        ) -> Result<bool, AppError> {
+        fn mark_running(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn mark_executed(
-            &self,
-            _: &str,
-            _: chrono::DateTime<Utc>,
-        ) -> Result<bool, AppError> {
+        fn mark_executed(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn mark_failed(
-            &self,
-            _: &str,
-            _: chrono::DateTime<Utc>,
-        ) -> Result<bool, AppError> {
+        fn mark_failed(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn cancel_all_for_user(
-            &self,
-            _: &str,
-            _: chrono::DateTime<Utc>,
-        ) -> Result<u32, AppError> {
+        fn cancel_all_for_user(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<u32, AppError> {
             Ok(0)
         }
         fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {

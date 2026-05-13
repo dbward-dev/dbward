@@ -13,7 +13,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::Router;
 use dbward_app::ports::PolicyRepo;
-use dbward_app::use_cases::sync_config::{SyncConfig, WebhookInput, WorkflowInput, WorkflowStepInput, ApproverInput};
+use dbward_app::use_cases::sync_config::{
+    ApproverInput, SyncConfig, WebhookInput, WorkflowInput, WorkflowStepInput,
+};
 use dbward_domain::values::{DatabaseName, Environment};
 use state::AppState;
 use tokio::time::Duration;
@@ -251,7 +253,8 @@ pub async fn run_from_args(
             eprintln!("[bootstrap] tokens already exist, skipping creation");
         } else {
             let admin_token = bootstrap::create_bootstrap_token(&state, "admin", "admin", false)?;
-            let dev_token = bootstrap::create_bootstrap_token(&state, "developer", "developer", false)?;
+            let dev_token =
+                bootstrap::create_bootstrap_token(&state, "developer", "developer", false)?;
             let agent_token = bootstrap::create_bootstrap_token(&state, "agent", "admin", true)?;
             let tokens = serde_json::json!({
                 "admin": admin_token,
@@ -291,10 +294,8 @@ fn register_databases(
 ) -> Result<(), Box<dyn std::error::Error>> {
     for db in databases {
         for env in &db.environments {
-            let db_name = DatabaseName::new(&db.name)
-                .map_err(|e| format!("database name: {e}"))?;
-            let environment = Environment::new(env)
-                .map_err(|e| format!("environment: {e}"))?;
+            let db_name = DatabaseName::new(&db.name).map_err(|e| format!("database name: {e}"))?;
+            let environment = Environment::new(env).map_err(|e| format!("environment: {e}"))?;
             state.database_registry.register(&db_name, &environment)?;
         }
     }
@@ -335,20 +336,21 @@ fn sync_workflows(
                                 .filter_map(|a| {
                                     let min =
                                         a.get("min").and_then(|m| m.as_u64()).unwrap_or(1) as u32;
-                                    let (selector_type, value) =
-                                        if let Some(role) = a.get("role").and_then(|r| r.as_str()) {
-                                            ("role", role)
-                                        } else if let Some(group) =
-                                            a.get("group").and_then(|g| g.as_str())
-                                        {
-                                            ("group", group)
-                                        } else if let Some(user) =
-                                            a.get("user").and_then(|u| u.as_str())
-                                        {
-                                            ("user", user)
-                                        } else {
-                                            return None;
-                                        };
+                                    let (selector_type, value) = if let Some(role) =
+                                        a.get("role").and_then(|r| r.as_str())
+                                    {
+                                        ("role", role)
+                                    } else if let Some(group) =
+                                        a.get("group").and_then(|g| g.as_str())
+                                    {
+                                        ("group", group)
+                                    } else if let Some(user) =
+                                        a.get("user").and_then(|u| u.as_str())
+                                    {
+                                        ("user", user)
+                                    } else {
+                                        return None;
+                                    };
                                     Some(ApproverInput {
                                         selector_type: selector_type.to_string(),
                                         value: value.to_string(),
