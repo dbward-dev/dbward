@@ -23,18 +23,6 @@ $ dbward request approve req_7f3a --comment "Confirmed with product team"
 - 🔒 **Agent isolation** — DB credentials never leave the agent. CLI/AI never touch your database directly
 - 🆓 **Free** — approval, audit, MCP, break-glass all included. [Apache-2.0 / MIT](LICENSE-APACHE)
 
-## How it compares
-
-| | dbward Free | dbward Pro | Bytebase | dbmate |
-|---|---|---|---|---|
-| Approval workflows | ✅ (5 rules) | Unlimited | Enterprise only | — |
-| Audit logs | ✅ (hash chain) | + export | Pro (limited) | — |
-| MCP / AI agents | ✅ 15 tools | ✅ | Add-on | — |
-| SSO (OIDC) | — | ✅ | Enterprise | — |
-| DB connections | 3 | Unlimited | Unlimited | 1 |
-| Deploy | Single binary | Single binary | Docker + PostgreSQL | Single binary |
-| Price | $0 | $79/mo (waitlist) | $20/user/mo+ | Free |
-
 ## Architecture
 
 ```
@@ -458,7 +446,7 @@ output = "stderr"              # "stderr" (default) or "file"
 
 ## Free / Pro
 
-| | Free | Pro |
+| | Free | Pro (planned) |
 |---|---|---|
 | Workflow rules | 5 | Unlimited |
 | Execution policies | 3 | Unlimited |
@@ -471,11 +459,9 @@ output = "stderr"              # "stderr" (default) or "file"
 | Result policies (access control) | — | ✅ |
 | Notification policies (routing) | — | ✅ |
 | Result sharing (share-with) | — | ✅ |
-| Audit export (S3/Datadog) | — | ✅ (coming) |
+| Audit export | — | TBD |
 
-Safety features are always free. You pay for organizational complexity.
-
-**Pro waitlist:** https://dbward.dev/waitlist
+Safety features are always free. Pro pricing and availability are not yet determined.
 
 ## Migration File Format
 
