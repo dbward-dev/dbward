@@ -152,7 +152,7 @@ impl AgentClaim {
             .get_execution_policy(&request.database, &request.environment);
 
         // 9. Create execution record
-        let lease_expires_at = now + chrono::Duration::seconds(300);
+        let lease_expires_at = now + chrono::Duration::seconds(exec_policy.lease_duration_secs());
 
         // 10. Sign execution token (SHA-256 for detail_hash)
         let detail_hash = sha256_hex(&request.detail);

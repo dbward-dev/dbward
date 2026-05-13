@@ -10,6 +10,7 @@ pub struct AgentHeartbeat {
     pub authorizer: Arc<dyn Authorizer>,
     pub agent_repo: Arc<dyn AgentRepo>,
     pub request_repo: Arc<dyn RequestRepo>,
+    pub policy: Arc<dyn PolicyEvaluator>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
 }
@@ -60,13 +61,17 @@ impl AgentHeartbeat {
             )));
         }
 
-        // 5. Extend lease (+300 seconds)
-        let new_expiry = self.clock.now() + chrono::Duration::seconds(300);
+        // 5. Extend lease using execution policy
+        let request = self.request_repo.get(&execution.request_id)?;
+        let req = request.as_ref();
+        let exec_policy = req
+            .map(|r| self.policy.get_execution_policy(&r.database, &r.environment))
+            .unwrap_or_default();
+        let new_expiry = self.clock.now() + chrono::Duration::seconds(exec_policy.lease_duration_secs());
         self.agent_repo.extend_lease(&execution.id, new_expiry)?;
 
         // 6. Check if request was cancelled
-        let request = self.request_repo.get(&execution.request_id)?;
-        let cancelled = request
+        let cancelled = req
             .map(|r| r.status == dbward_domain::entities::RequestStatus::Cancelled)
             .unwrap_or(false);
 

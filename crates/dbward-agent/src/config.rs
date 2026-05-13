@@ -11,6 +11,7 @@ pub struct AgentConfig {
     pub max_concurrent_tasks: Option<u32>,
     pub drain_timeout_secs: Option<u64>,
     pub statement_timeout_secs: Option<u64>,
+    // TODO(v0.2): send to server during poll so lease = max(policy, agent_requested)
     pub lease_duration_secs: Option<u64>,
     pub operations: Option<Vec<String>>,
     pub server: ServerConfig,

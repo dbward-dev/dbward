@@ -33,6 +33,7 @@ pub struct Agent {
     pub status: AgentStatus,
     pub max_concurrent: u32,
     pub in_flight: u32,
+    pub lease_duration_secs: Option<u64>,
     pub last_seen: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }

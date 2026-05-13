@@ -459,7 +459,7 @@ impl RequestRepo for SqliteRequestRepo {
         let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
-                "UPDATE requests SET status = 'approved', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending'",
+                "UPDATE requests SET status = 'approved', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
                 params![id, now.to_rfc3339()],
             )
             .map_err(map_err)?;
@@ -494,7 +494,7 @@ impl RequestRepo for SqliteRequestRepo {
 
         let now_str = now.to_rfc3339();
         let affected = tx.execute(
-            "UPDATE requests SET status = 'approved', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending'",
+            "UPDATE requests SET status = 'approved', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
             params![request_id, now_str],
         ).map_err(map_err)?;
 
@@ -516,7 +516,7 @@ impl RequestRepo for SqliteRequestRepo {
         let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
-                "UPDATE requests SET status = 'rejected', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending'",
+                "UPDATE requests SET status = 'rejected', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
                 params![id, now.to_rfc3339()],
             )
             .map_err(map_err)?;
@@ -536,7 +536,7 @@ impl RequestRepo for SqliteRequestRepo {
 
         let now_str = now.to_rfc3339();
         let affected = tx.execute(
-            "UPDATE requests SET status = 'rejected', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending'",
+            "UPDATE requests SET status = 'rejected', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
             params![request_id, now_str],
         ).map_err(map_err)?;
 

@@ -219,6 +219,7 @@ pub async fn heartbeat(
         authorizer: state.authorizer.clone(),
         agent_repo: state.agent_repo.clone(),
         request_repo: state.request_repo.clone(),
+        policy: state.policy_evaluator.clone(),
         event_dispatcher: state.event_dispatcher.clone(),
         clock: state.clock.clone(),
     };
