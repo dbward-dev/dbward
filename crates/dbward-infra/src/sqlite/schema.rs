@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 1;
 
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -17,26 +17,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(SCHEMA_SQL)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
-        // Incremental migrations
-        if current < 2 {
-            conn.execute_batch(MIGRATION_V2)?;
-        }
-        if current < 3 {
-            conn.execute_batch(MIGRATION_V3)?;
-        }
-        if current < 4 {
-            conn.execute_batch(MIGRATION_V4)?;
-        }
-        if current < 5 {
-            conn.execute_batch(MIGRATION_V5)?;
-        }
-        if current < 6 {
-            conn.execute_batch(MIGRATION_V6)?;
-        }
-        if current < 7 {
-            conn.execute_batch(MIGRATION_V7)?;
-        }
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        // Post-v0.1.0 incremental migrations go here
+        // if current < 2 { conn.execute_batch(MIGRATION_V2)?; }
+        panic!("schema migration from v{current} to v{SCHEMA_VERSION} not implemented — add migration steps above");
     }
     Ok(())
 }
@@ -301,35 +284,8 @@ INSERT OR IGNORE INTO roles (name, permissions_json, databases_json, environment
 ('developer', '[\"request.create\",\"request.create_select\",\"request.view\",\"request.cancel\",\"request.dispatch\",\"result.view\",\"token.revoke_own\"]', '[\"*\"]', '[\"*\"]', 1),
 ('readonly', '[\"request.create_select\",\"request.view\",\"result.view\"]', '[\"*\"]', '[\"*\"]', 1),
 ('agent-default', '[\"agent.poll\",\"agent.claim\",\"agent.heartbeat\",\"agent.submit_result\"]', '[\"*\"]', '[\"*\"]', 1);
-";
 
-const MIGRATION_V2: &str = "
-CREATE UNIQUE INDEX IF NOT EXISTS idx_executions_unique_claim ON executions(request_id) WHERE status = 'claimed';
-";
-
-const MIGRATION_V3: &str = "
-CREATE TABLE IF NOT EXISTS request_pending_approvers (
-    request_id TEXT NOT NULL REFERENCES requests(id),
-    selector TEXT NOT NULL,
-    step_index INTEGER NOT NULL,
-    PRIMARY KEY (request_id, selector, step_index)
-);
-CREATE INDEX IF NOT EXISTS idx_pending_approvers_selector ON request_pending_approvers(selector);
-";
-
-const MIGRATION_V4: &str = "
-CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_no_dup_approve
-  ON approvals(request_id, actor_id, step_index) WHERE action = 'approve';
-";
-
-const MIGRATION_V5: &str = "
-UPDATE roles SET permissions_json = '[\"request.create\",\"request.create_select\",\"request.view\",\"request.cancel\",\"request.dispatch\",\"result.view\",\"token.revoke_own\"]'
-  WHERE name = 'developer' AND built_in = 1;
-";
-
-const MIGRATION_V6: &str = "
--- CHECK constraints (SQLite enforces these on INSERT/UPDATE)
--- audit_events: hash length validation
+-- Validation triggers
 CREATE TRIGGER IF NOT EXISTS chk_audit_event_hash_insert
 BEFORE INSERT ON audit_events
 BEGIN
@@ -339,7 +295,6 @@ BEGIN
     WHERE NEW.prev_hash IS NOT NULL AND length(NEW.prev_hash) != 64;
 END;
 
--- requests: status validation
 CREATE TRIGGER IF NOT EXISTS chk_requests_status_insert
 BEFORE INSERT ON requests
 BEGIN
@@ -354,12 +309,9 @@ BEGIN
     WHERE NEW.status NOT IN ('pending','approved','rejected','dispatched','completed','cancelled','failed','auto_approved','break_glass','running','executed','expired','execution_lost');
 END;
 
--- Partial indexes
+-- Partial indexes for hot queries
 CREATE INDEX IF NOT EXISTS idx_requests_dispatched ON requests(status) WHERE status = 'dispatched';
 CREATE INDEX IF NOT EXISTS idx_requests_pending ON requests(status) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_requests_claimed ON executions(status) WHERE status = 'claimed';
 ";
 
-const MIGRATION_V7: &str = "
-ALTER TABLE workflows ADD COLUMN statement_timeout_secs INTEGER;
-";
