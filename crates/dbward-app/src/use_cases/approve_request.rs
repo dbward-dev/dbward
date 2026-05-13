@@ -62,6 +62,14 @@ impl ApproveRequest {
             )));
         }
 
+        // 2b. Expiry check (enforce even if background job hasn't run yet)
+        let now = self.clock.now();
+        if let Some(expires_at) = request.expires_at {
+            if now >= expires_at {
+                return Err(AppError::Gone("request has expired".into()));
+            }
+        }
+
         // 3. Parse workflow snapshot (fail-closed: all pending requests have a workflow)
         let workflow: Workflow = request
             .workflow_snapshot_json
@@ -144,7 +152,6 @@ impl ApproveRequest {
         }
 
         // 10. Insert approval
-        let now = self.clock.now();
         let comment = input.comment.clone();
         let approval = Approval {
             id: self.id_gen.generate(),
@@ -599,5 +606,43 @@ mod tests {
             &user,
         );
         assert!(matches!(result, Err(AppError::NotFound(_))));
+    }
+
+    #[test]
+    fn expired_request_returns_gone() {
+        let wf = single_step_workflow();
+        let mut req = make_pending_request(&wf);
+        req.expires_at = Some(Utc::now() - chrono::Duration::seconds(10));
+        let repo = Arc::new(FakeRepo::new(req));
+        let uc = make_uc(repo);
+        let user = make_user("bob", &["dba"]);
+
+        let result = uc.execute(
+            ApproveRequestInput {
+                request_id: "req-001".into(),
+                comment: None,
+            },
+            &user,
+        );
+        assert!(matches!(result, Err(AppError::Gone(_))));
+    }
+
+    #[test]
+    fn not_expired_request_proceeds() {
+        let wf = single_step_workflow();
+        let mut req = make_pending_request(&wf);
+        req.expires_at = Some(Utc::now() + chrono::Duration::hours(1));
+        let repo = Arc::new(FakeRepo::new(req));
+        let uc = make_uc(repo);
+        let user = make_user("bob", &["dba"]);
+
+        let result = uc.execute(
+            ApproveRequestInput {
+                request_id: "req-001".into(),
+                comment: None,
+            },
+            &user,
+        );
+        assert!(result.is_ok());
     }
 }

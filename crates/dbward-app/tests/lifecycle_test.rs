@@ -1247,6 +1247,7 @@ fn agent_full_flow_poll_claim_heartbeat() {
         authorizer: h.authorizer.clone(),
         agent_repo: agent_repo.clone(),
         request_repo: h.repo.clone(),
+        policy: h.policy.clone(),
         event_dispatcher: h.event_dispatcher.clone(),
         clock: h.clock.clone(),
     };
@@ -1326,6 +1327,7 @@ fn heartbeat_detects_cancelled_request() {
         authorizer: h.authorizer.clone(),
         agent_repo: agent_repo.clone(),
         request_repo: h.repo.clone(),
+        policy: h.policy.clone(),
         event_dispatcher: h.event_dispatcher.clone(),
         clock: h.clock.clone(),
     };

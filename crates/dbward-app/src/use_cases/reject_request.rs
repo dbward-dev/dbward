@@ -123,8 +123,15 @@ impl RejectRequest {
             }
         };
 
-        // 5. Transition via status_machine
+        // 5. Expiry check
         let now = self.clock.now();
+        if let Some(expires_at) = request.expires_at {
+            if now >= expires_at {
+                return Err(AppError::Gone("request has expired".into()));
+            }
+        }
+
+        // 6. Transition via status_machine
         let result = status_machine::transition(
             request.status,
             &RequestTrigger::Reject,
