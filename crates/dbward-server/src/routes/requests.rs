@@ -7,8 +7,8 @@ use serde_json::json;
 
 use dbward_app::error::AppError;
 use dbward_app::use_cases::{
-    approve_request, cancel_request, create_request, dispatch_request, get_result, list_requests,
-    reject_request, stream_result,
+    approve_request, cancel_request, create_request, dispatch_request, get_request, get_result,
+    list_requests, reject_request, stream_result,
 };
 use dbward_domain::auth::AuthUser;
 use dbward_domain::values::{DatabaseName, Environment, Operation};
@@ -231,17 +231,19 @@ pub async fn get(
     Path(id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<GetRequestQuery>,
 ) -> ApiResult {
-    let req = match state.request_repo.get(&id) {
-        Ok(Some(r)) => r,
-        Ok(None) => return Err(map_error(AppError::NotFound("request not found".into()))),
-        Err(e) => return Err(map_error(e)),
+    let uc = get_request::GetRequest {
+        request_repo: state.request_repo.clone(),
+        authorizer: state.authorizer.clone(),
     };
 
+    // Authorize BEFORE any waiting
+    let output = uc.execute(&id, &user).map_err(map_error)?;
+
     // M-13: Long-poll — wait for status change if non-terminal and wait specified
-    let req = if let Some(wait_secs) = query.wait {
+    let output = if let Some(wait_secs) = query.wait {
         use dbward_domain::entities::RequestStatus;
         let is_terminal = matches!(
-            req.status,
+            output.request.status,
             RequestStatus::Executed
                 | RequestStatus::Failed
                 | RequestStatus::Rejected
@@ -251,10 +253,9 @@ pub async fn get(
         );
         if !is_terminal && wait_secs > 0 {
             let wait_secs = wait_secs.min(120);
-            let original_status = req.status;
+            let original_status = output.request.status;
             let deadline =
                 tokio::time::Instant::now() + tokio::time::Duration::from_secs(wait_secs);
-            let mut current = req;
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 if tokio::time::Instant::now() >= deadline {
@@ -262,78 +263,38 @@ pub async fn get(
                 }
                 match state.request_repo.get(&id) {
                     Ok(Some(r)) if r.status != original_status => {
-                        current = r;
                         break;
                     }
-                    Ok(Some(r)) => {
-                        current = r;
-                    }
+                    Ok(Some(_)) => {}
                     _ => break,
                 }
             }
-            current
+            // Re-fetch with authorization and redaction
+            uc.execute(&id, &user).map_err(map_error)?
         } else {
-            req
+            output
         }
     } else {
-        req
-    };
-
-    use dbward_domain::auth::{Permission, ResourceContext};
-    use dbward_domain::entities::RequestStatus;
-    let scoped_ok = state.authorizer.authorize_scoped(
-        &user,
-        Permission::RequestView,
-        &req.database,
-        &req.environment,
-        &ResourceContext::Request {
-            requester_id: req.requester.clone(),
-        },
-    );
-    let is_approver_view = if let Err(authz_err) = scoped_ok {
-        // Approvers can view pending requests they need to act on (scoped to matching db/env)
-        let approver = req.status == RequestStatus::Pending
-            && state
-                .authorizer
-                .authorize_scoped(
-                    &user,
-                    Permission::RequestApprove,
-                    &req.database,
-                    &req.environment,
-                    &ResourceContext::Global,
-                )
-                .is_ok();
-        if !approver {
-            return Err(map_error(AppError::Forbidden(authz_err)));
-        }
-        true
-    } else {
-        false
-    };
-
-    let detail = if is_approver_view && user.subject_id != req.requester {
-        "[redacted - approve to view]".to_string()
-    } else {
-        req.detail.clone()
+        output
     };
 
     Ok((
         StatusCode::OK,
         Json(json!({
-            "id": req.id,
-            "requester": req.requester,
-            "database": req.database,
-            "environment": req.environment,
-            "operation": req.operation.as_str(),
-            "detail": detail,
-            "status": req.status.as_str(),
-            "emergency": req.emergency,
-            "reason": req.reason,
-            "share_with": req.share_with,
-            "no_store": req.no_store,
-            "created_at": req.created_at,
-            "updated_at": req.updated_at,
-            "expires_at": req.expires_at,
+            "id": output.request.id,
+            "requester": output.request.requester,
+            "database": output.request.database,
+            "environment": output.request.environment,
+            "operation": output.request.operation.as_str(),
+            "detail": output.detail,
+            "status": output.request.status.as_str(),
+            "emergency": output.request.emergency,
+            "reason": output.request.reason,
+            "share_with": output.request.share_with,
+            "no_store": output.request.no_store,
+            "created_at": output.request.created_at,
+            "updated_at": output.request.updated_at,
+            "expires_at": output.request.expires_at,
         })),
     ))
 }
