@@ -140,13 +140,12 @@ services:
     build: *dbward-build
     profiles: [mysql]
     <<: *security
-    entrypoint: ["dbward-agent"]
-    command:
-      - --config
-      - /config/dbward-agent.toml
+    entrypoint: ["/bin/sh", "/config/agent-entrypoint.sh"]
     networks: [backend]
     volumes:
       - ./config/agent-mysql.toml:/config/dbward-agent.toml:ro
+      - ./scripts/agent-entrypoint.sh:/config/agent-entrypoint.sh:ro
+      - server-data:/data:ro
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/dbward-agent-ready"]
       start_period: 30s

@@ -4,7 +4,7 @@ max_concurrent_tasks = 4
 
 [server]
 url = "http://dbward-server:3000"
-agent_token = "__DBWARD_AGENT_TOKEN__"
+agent_token = "${DBWARD_AGENT_TOKEN}"
 
 [databases.mysql_dev.development]
 url = "mysql://dbward:dbward@mysql:3306/dbward_dev"

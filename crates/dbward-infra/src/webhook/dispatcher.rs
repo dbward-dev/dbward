@@ -157,7 +157,7 @@ fn build_generic_body(event: &WebhookEvent) -> String {
         "operation": event.operation,
         "actor": event.actor,
         "requester": event.requester,
-        "detail": event.detail,
+        "detail": event.redacted_detail,
     }))
     .unwrap_or_default()
 }
@@ -189,6 +189,11 @@ fn build_slack_body(event: &WebhookEvent) -> String {
         format!("{sep}\nRequester: {requester}\nOperation: {}\nEnvironment: {env}\nDatabase: {db}\n{sep}",
             event.operation.as_deref().unwrap_or("—")),
     ];
+
+    // Show actor (approver/rejector) when different from requester
+    if actor != requester {
+        sections.push(format!("Actor: {actor}"));
+    }
 
     if let Some(ref sql) = event.redacted_detail {
         let truncated: String = sql.chars().take(200).collect();
