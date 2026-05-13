@@ -59,11 +59,24 @@ pub struct RoleBinding {
 
 #[derive(Debug, Deserialize)]
 pub struct OidcConfig {
+    #[serde(alias = "issuer")]
     pub issuer_url: String,
+    #[serde(default)]
     pub audience: String,
     #[serde(default)]
-    pub role_mappings: std::collections::HashMap<String, Vec<String>>,
+    pub jwks_uri: Option<String>,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub role_mappings: Vec<OidcRoleMapping>,
     pub default_role: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct OidcRoleMapping {
+    pub claim: String,
+    pub value: String,
+    pub role: String,
 }
 
 fn default_auth_mode() -> String { "both".into() }

@@ -61,9 +61,9 @@ pub async fn run_from_args(
         if let Some(ref oidc_cfg) = cfg.auth.oidc {
             let oidc = dbward_infra::auth::OidcVerifier::new(
                 oidc_cfg.issuer_url.clone(),
-                oidc_cfg.audience.clone(),
+                oidc_cfg.client_id.clone().unwrap_or_else(|| oidc_cfg.audience.clone()),
                 "groups".to_string(),
-                None,
+                oidc_cfg.jwks_uri.clone(),
             );
             token_verifier_impl = token_verifier_impl.with_oidc(oidc);
         }
