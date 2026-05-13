@@ -212,6 +212,7 @@ fn real_state() -> AppState {
         license_checker: Arc::new(TestLicense),
         clock: Arc::new(TestClock),
         id_generator: Arc::new(TestIdGen(std::sync::atomic::AtomicU64::new(1))),
+        token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
         draining: Arc::new(AtomicBool::new(false)),
         auth_mode: "token".into(),

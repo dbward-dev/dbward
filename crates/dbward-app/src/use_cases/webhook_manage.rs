@@ -86,6 +86,7 @@ impl WebhookManage {
             "policy",
             &user.subject_id,
             Some(&webhook.id),
+            self.clock.now(),
         ))?;
 
         // Reload dispatcher config
@@ -137,6 +138,7 @@ impl WebhookManage {
             "policy",
             &user.subject_id,
             Some(&webhook.id),
+            self.clock.now(),
         ))?;
 
         // Reload dispatcher config
@@ -174,6 +176,7 @@ impl WebhookManage {
             "policy",
             &user.subject_id,
             Some(&input.id),
+            self.clock.now(),
         ))?;
 
         // Reload dispatcher config

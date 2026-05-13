@@ -662,7 +662,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -745,13 +744,11 @@ dependencies = [
  "dbward-app",
  "dbward-domain",
  "dbward-infra",
- "hex",
  "http-body-util",
  "hyper",
  "rusqlite",
  "serde",
  "serde_json",
- "sha2",
  "tokio",
  "tokio-util",
  "toml",

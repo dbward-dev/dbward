@@ -150,6 +150,7 @@ pub async fn auth_middleware(
                     "auth",
                     &subject_id,
                     None,
+                    state.clock.now(),
                 );
                 let _ = state.audit_logger.record(&event);
                 let mut cache = LOGIN_AUDIT_CACHE.lock().unwrap();

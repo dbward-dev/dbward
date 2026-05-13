@@ -202,6 +202,7 @@ async fn run_cancel(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_list(
     sc: &ServerClient,
     json_output: bool,

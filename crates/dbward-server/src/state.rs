@@ -37,6 +37,7 @@ pub struct AppState {
     pub license_checker: Arc<dyn LicenseChecker>,
     pub clock: Arc<dyn Clock>,
     pub id_generator: Arc<dyn IdGenerator>,
+    pub token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator>,
     // Metrics
     pub metrics: Arc<Metrics>,
     // Config

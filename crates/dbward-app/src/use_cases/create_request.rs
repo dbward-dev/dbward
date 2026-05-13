@@ -53,6 +53,7 @@ pub struct CreateRequestOutput {
     pub operation: Operation,
     pub is_existing: bool,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub approvers: Vec<String>,
 }
 
 impl CreateRequest {
@@ -141,6 +142,17 @@ impl CreateRequest {
                     operation: existing.operation,
                     is_existing: true,
                     expires_at: existing.expires_at,
+                    approvers: if existing.status == dbward_domain::entities::RequestStatus::Pending {
+                        existing.workflow_snapshot_json.as_ref().and_then(|json| {
+                            serde_json::from_str::<serde_json::Value>(json).ok().and_then(|v| {
+                                v["steps"][0]["approvers"].as_array().map(|arr| {
+                                    arr.iter().filter_map(|a| a["selector"].as_str().map(String::from)).collect()
+                                })
+                            })
+                        }).unwrap_or_default()
+                    } else {
+                        vec![]
+                    },
                 });
             }
         }
@@ -300,6 +312,20 @@ impl CreateRequest {
             operation,
             is_existing: false,
             expires_at,
+            approvers: if final_status == RequestStatus::Pending {
+                workflow
+                    .as_ref()
+                    .and_then(|wf| wf.steps.first())
+                    .map(|step| {
+                        step.approvers
+                            .iter()
+                            .map(|a| a.selector.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                vec![]
+            },
         })
     }
 }
@@ -551,6 +577,9 @@ mod tests {
 
     struct FakeDbRegistry;
     impl DatabaseRegistry for FakeDbRegistry {
+        fn register(&self, _: &DatabaseName, _: &Environment) -> Result<(), AppError> {
+            Ok(())
+        }
         fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
             Ok(true)
         }

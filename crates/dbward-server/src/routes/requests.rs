@@ -7,8 +7,8 @@ use serde_json::json;
 
 use dbward_app::error::AppError;
 use dbward_app::use_cases::{
-    approve_request, cancel_request, create_request, dispatch_request, get_result, reject_request,
-    stream_result,
+    approve_request, cancel_request, create_request, dispatch_request, get_request, get_result,
+    list_requests, reject_request, stream_result,
 };
 use dbward_domain::auth::AuthUser;
 use dbward_domain::values::{DatabaseName, Environment, Operation};
@@ -112,40 +112,6 @@ pub async fn create(
 
     match uc.execute(input, &user) {
         Ok(out) => {
-            // Extract approvers from workflow snapshot if pending
-            let approvers: Vec<String> =
-                if out.status == dbward_domain::entities::RequestStatus::Pending {
-                    // Re-read the request to get workflow_snapshot
-                    state
-                        .request_repo
-                        .get(&out.id)
-                        .ok()
-                        .flatten()
-                        .and_then(|r| r.workflow_snapshot_json)
-                        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
-                        .and_then(|v| {
-                            v.get("steps")?
-                                .as_array()?
-                                .first()?
-                                .get("approvers")?
-                                .as_array()
-                                .cloned()
-                        })
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|a| {
-                                    a.get("selector")
-                                        .and_then(|s| s.as_str())
-                                        .map(String::from)
-                                        .or_else(|| Some(a.get("selector")?.to_string()))
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                } else {
-                    vec![]
-                };
-
             let status_code = if out.is_existing {
                 StatusCode::OK
             } else {
@@ -158,7 +124,7 @@ pub async fn create(
                     "id": out.id,
                     "status": out.status.as_str(),
                     "operation": out.operation.as_str(),
-                    "approvers": approvers,
+                    "approvers": out.approvers,
                     "idempotent": out.is_existing,
                     "expires_at": out.expires_at,
                 })),
@@ -173,87 +139,41 @@ pub async fn list(
     Extension(user): Extension<AuthUser>,
     axum::extract::Query(params): axum::extract::Query<ListParams>,
 ) -> ApiResult {
-    // Require request.view permission
-    state
-        .authorizer
-        .authorize_global(&user, dbward_domain::auth::Permission::RequestView)
-        .map_err(|e| (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))))?;
-
-    let limit = params.limit.unwrap_or(50).min(100);
-    let offset = params.offset.unwrap_or(0);
-    let pending_for_me = params.pending_for_me.unwrap_or(false);
-
-    // pending_for_me uses denormalized table (no N+1)
-    if pending_for_me {
-        let roles: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
-        let (requests, total) = state
-            .request_repo
-            .list_pending_for_user(&user.subject_id, &user.groups, &roles, limit, offset)
-            .map_err(map_error)?;
-        let items: Vec<serde_json::Value> = requests
-            .iter()
-            .map(|r| {
-                json!({
-                    "id": r.id,
-                    "requester": r.requester,
-                    "database": r.database,
-                    "environment": r.environment,
-                    "operation": r.operation.as_str(),
-                    "status": r.status.as_str(),
-                    "created_at": r.created_at,
-                })
-            })
-            .collect();
-        return Ok((
-            StatusCode::OK,
-            Json(json!({"requests": items, "total": total, "limit": limit, "offset": offset})),
-        ));
-    }
-
-    let (requests, total) = state
-        .request_repo
-        .list(
-            limit,
-            offset,
-            params.status.as_deref(),
-            params.user.as_deref(),
+    let uc = list_requests::ListRequests {
+        request_repo: state.request_repo.clone(),
+        authorizer: state.authorizer.clone(),
+    };
+    let output = uc
+        .execute(
+            list_requests::ListRequestsInput {
+                limit: params.limit,
+                offset: params.offset,
+                status: params.status,
+                user: params.user,
+                pending_for_me: params.pending_for_me,
+            },
+            &user,
         )
         .map_err(map_error)?;
-    // Non-admin users only see their own requests + pending requests they can approve
-    let is_admin = user.roles.iter().any(|r| r.name == "admin");
-    let can_approve = user.has_permission(dbward_domain::auth::Permission::RequestApprove);
-    let items: Vec<serde_json::Value> = requests
+
+    let items: Vec<serde_json::Value> = output
+        .requests
         .iter()
-        .filter(|r| {
-            if is_admin {
-                return true;
-            }
-            if r.requester == user.subject_id {
-                return true;
-            }
-            if can_approve && r.status == dbward_domain::entities::RequestStatus::Pending {
-                return true;
-            }
-            false
-        })
         .map(|r| {
             json!({
                 "id": r.id,
                 "requester": r.requester,
                 "database": r.database,
                 "environment": r.environment,
-                "operation": r.operation.as_str(),
-                "status": r.status.as_str(),
+                "operation": r.operation,
+                "status": r.status,
                 "created_at": r.created_at,
             })
         })
         .collect();
-    let effective_total = if is_admin { total } else { items.len() as u32 };
     Ok((
         StatusCode::OK,
-        Json(
-            json!({"requests": items, "total": effective_total, "limit": limit, "offset": offset}),
-        ),
+        Json(json!({"requests": items, "total": output.total, "limit": output.limit, "offset": output.offset})),
     ))
 }
 
@@ -277,17 +197,19 @@ pub async fn get(
     Path(id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<GetRequestQuery>,
 ) -> ApiResult {
-    let req = match state.request_repo.get(&id) {
-        Ok(Some(r)) => r,
-        Ok(None) => return Err(map_error(AppError::NotFound("request not found".into()))),
-        Err(e) => return Err(map_error(e)),
+    let uc = get_request::GetRequest {
+        request_repo: state.request_repo.clone(),
+        authorizer: state.authorizer.clone(),
     };
 
+    // Authorize BEFORE any waiting
+    let output = uc.execute(&id, &user).map_err(map_error)?;
+
     // M-13: Long-poll — wait for status change if non-terminal and wait specified
-    let req = if let Some(wait_secs) = query.wait {
+    let output = if let Some(wait_secs) = query.wait {
         use dbward_domain::entities::RequestStatus;
         let is_terminal = matches!(
-            req.status,
+            output.request.status,
             RequestStatus::Executed
                 | RequestStatus::Failed
                 | RequestStatus::Rejected
@@ -297,10 +219,9 @@ pub async fn get(
         );
         if !is_terminal && wait_secs > 0 {
             let wait_secs = wait_secs.min(120);
-            let original_status = req.status;
+            let original_status = output.request.status;
             let deadline =
                 tokio::time::Instant::now() + tokio::time::Duration::from_secs(wait_secs);
-            let mut current = req;
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                 if tokio::time::Instant::now() >= deadline {
@@ -308,78 +229,38 @@ pub async fn get(
                 }
                 match state.request_repo.get(&id) {
                     Ok(Some(r)) if r.status != original_status => {
-                        current = r;
                         break;
                     }
-                    Ok(Some(r)) => {
-                        current = r;
-                    }
+                    Ok(Some(_)) => {}
                     _ => break,
                 }
             }
-            current
+            // Re-fetch with authorization and redaction
+            uc.execute(&id, &user).map_err(map_error)?
         } else {
-            req
+            output
         }
     } else {
-        req
-    };
-
-    use dbward_domain::auth::{Permission, ResourceContext};
-    use dbward_domain::entities::RequestStatus;
-    let scoped_ok = state.authorizer.authorize_scoped(
-        &user,
-        Permission::RequestView,
-        &req.database,
-        &req.environment,
-        &ResourceContext::Request {
-            requester_id: req.requester.clone(),
-        },
-    );
-    let is_approver_view = if let Err(authz_err) = scoped_ok {
-        // Approvers can view pending requests they need to act on (scoped to matching db/env)
-        let approver = req.status == RequestStatus::Pending
-            && state
-                .authorizer
-                .authorize_scoped(
-                    &user,
-                    Permission::RequestApprove,
-                    &req.database,
-                    &req.environment,
-                    &ResourceContext::Global,
-                )
-                .is_ok();
-        if !approver {
-            return Err(map_error(AppError::Forbidden(authz_err)));
-        }
-        true
-    } else {
-        false
-    };
-
-    let detail = if is_approver_view && user.subject_id != req.requester {
-        "[redacted - approve to view]".to_string()
-    } else {
-        req.detail.clone()
+        output
     };
 
     Ok((
         StatusCode::OK,
         Json(json!({
-            "id": req.id,
-            "requester": req.requester,
-            "database": req.database,
-            "environment": req.environment,
-            "operation": req.operation.as_str(),
-            "detail": detail,
-            "status": req.status.as_str(),
-            "emergency": req.emergency,
-            "reason": req.reason,
-            "share_with": req.share_with,
-            "no_store": req.no_store,
-            "created_at": req.created_at,
-            "updated_at": req.updated_at,
-            "expires_at": req.expires_at,
+            "id": output.request.id,
+            "requester": output.request.requester,
+            "database": output.request.database,
+            "environment": output.request.environment,
+            "operation": output.request.operation.as_str(),
+            "detail": output.detail,
+            "status": output.request.status.as_str(),
+            "emergency": output.request.emergency,
+            "reason": output.request.reason,
+            "share_with": output.request.share_with,
+            "no_store": output.request.no_store,
+            "created_at": output.request.created_at,
+            "updated_at": output.request.updated_at,
+            "expires_at": output.request.expires_at,
         })),
     ))
 }
@@ -564,69 +445,10 @@ pub async fn get_result(
         Ok(out) => {
             // Return stored data as JSON directly
             let json_value: serde_json::Value = serde_json::from_slice(&out.data)
-                .unwrap_or_else(|_| json!({"raw": base64_encode(&out.data)}));
+                .unwrap_or_else(|_| json!({"raw": crate::util::base64_encode(&out.data)}));
             Ok((StatusCode::OK, Json(json_value)))
         }
         Err(e) => Err(map_error(e)),
-    }
-}
-
-fn base64_encode(data: &[u8]) -> String {
-    use std::io::Write;
-    let mut buf = Vec::with_capacity(data.len() * 4 / 3 + 4);
-    {
-        let mut encoder = Base64Encoder::new(&mut buf);
-        encoder.write_all(data).unwrap();
-    }
-    String::from_utf8(buf).unwrap_or_default()
-}
-
-/// Minimal base64 encoder (no external dependency needed).
-struct Base64Encoder<'a> {
-    out: &'a mut Vec<u8>,
-}
-
-impl<'a> Base64Encoder<'a> {
-    fn new(out: &'a mut Vec<u8>) -> Self {
-        Self { out }
-    }
-}
-
-impl<'a> std::io::Write for Base64Encoder<'a> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        const TABLE: &[u8; 64] =
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        for chunk in buf.chunks(3) {
-            match chunk.len() {
-                3 => {
-                    self.out.push(TABLE[(chunk[0] >> 2) as usize]);
-                    self.out
-                        .push(TABLE[(((chunk[0] & 0x03) << 4) | (chunk[1] >> 4)) as usize]);
-                    self.out
-                        .push(TABLE[(((chunk[1] & 0x0f) << 2) | (chunk[2] >> 6)) as usize]);
-                    self.out.push(TABLE[(chunk[2] & 0x3f) as usize]);
-                }
-                2 => {
-                    self.out.push(TABLE[(chunk[0] >> 2) as usize]);
-                    self.out
-                        .push(TABLE[(((chunk[0] & 0x03) << 4) | (chunk[1] >> 4)) as usize]);
-                    self.out.push(TABLE[((chunk[1] & 0x0f) << 2) as usize]);
-                    self.out.push(b'=');
-                }
-                1 => {
-                    self.out.push(TABLE[(chunk[0] >> 2) as usize]);
-                    self.out.push(TABLE[((chunk[0] & 0x03) << 4) as usize]);
-                    self.out.push(b'=');
-                    self.out.push(b'=');
-                }
-                _ => {}
-            }
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 

@@ -138,6 +138,7 @@ pub trait AgentRepo: Send + Sync {
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError>;
     /// Atomically updates execution status (Completed/Failed) and request status (executed/failed).
+    #[allow(clippy::too_many_arguments)]
     /// Also inserts audit event, result manifest, and result_access records in the same TX.
     /// Returns false if request was cancelled (request update skipped).
     fn complete_execution(
@@ -227,6 +228,7 @@ pub trait WebhookRepo: Send + Sync {
 // --- DatabaseRegistry ---
 
 pub trait DatabaseRegistry: Send + Sync {
+    fn register(&self, db: &DatabaseName, env: &Environment) -> Result<(), AppError>;
     fn exists(&self, db: &DatabaseName, env: &Environment) -> Result<bool, AppError>;
     fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError>;
 }

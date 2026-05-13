@@ -3,9 +3,9 @@ use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
 };
-use dbward_app::use_cases::policy_manage::PolicyManage;
+use dbward_app::use_cases::policy_manage::{CreateWorkflowInput, PolicyManage};
 use dbward_domain::auth::{AuthUser, RoleDefinition};
-use dbward_domain::policies::{ExecutionPolicy, Workflow, WorkflowStep};
+use dbward_domain::policies::{ExecutionPolicy, WorkflowStep};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::state::AppState;
@@ -18,6 +18,8 @@ fn make_uc(state: &AppState) -> PolicyManage {
         policy_repo: state.policy_repo.clone(),
         license: state.license_checker.clone(),
         audit: state.audit_logger.clone(),
+        clock: state.clock.clone(),
+        id_gen: state.id_generator.clone(),
     }
 }
 
@@ -47,25 +49,15 @@ pub async fn create_workflow(
         .map_err(|e| map_error(dbward_app::error::AppError::Validation(e.into())))?;
     let environment = Environment::new(body.environment)
         .map_err(|e| map_error(dbward_app::error::AppError::Validation(e.into())))?;
-    let id = format!("wf-{}", state.id_generator.generate());
-    let wf = Workflow {
-        id,
+    let input = CreateWorkflowInput {
         database,
         environment,
         operations: body.operations,
         steps: body.steps,
-        skip_approval_for: vec![],
         require_reason: body.require_reason,
-        allow_self_approve: false,
-        allow_same_approver_across_steps: false,
-        pending_ttl_secs: None,
-        statement_timeout_secs: None,
-        approval_ttl_secs: None,
-        created_at: None,
-        updated_at: None,
     };
     let uc = make_uc(&state);
-    let wf = uc.create_workflow(wf, &user).map_err(map_error)?;
+    let wf = uc.create_workflow(input, &user).map_err(map_error)?;
     Ok((StatusCode::CREATED, Json(serde_json::json!(wf))))
 }
 

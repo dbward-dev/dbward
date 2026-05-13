@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
-use uuid::Uuid;
 
 use dbward_domain::auth::{AuthUser, Permission};
 
@@ -18,6 +17,7 @@ pub struct TokenManage {
     pub audit: Arc<dyn AuditLogger>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
+    pub token_gen: Arc<dyn TokenValueGenerator>,
 }
 
 // --- Create ---
@@ -97,7 +97,7 @@ impl TokenManage {
             let known_names: Vec<&str> = known_roles.iter().map(|r| r.name.as_str()).collect();
             for role in &input.roles {
                 if !known_names.contains(&role.as_str())
-                    && !matches!(role.as_str(), "admin" | "agent-default")
+                    && !matches!(role.as_str(), "admin" | "developer" | "readonly" | "agent-default")
                 {
                     return Err(AppError::Validation(format!("unknown role: {}", role)));
                 }
@@ -111,8 +111,8 @@ impl TokenManage {
         }
 
         // Generate token
-        let raw = format!("dbw_{}", Uuid::new_v4().simple());
-        let prefix = raw[4..12].to_string();
+        let raw = self.token_gen.generate_token_value();
+        let prefix = if raw.len() >= 12 { raw[4..12].to_string() } else { raw.chars().take(8).collect() };
         let hash = hex::encode(Sha256::digest(raw.as_bytes()));
 
         let now = self.clock.now();
@@ -144,6 +144,7 @@ impl TokenManage {
                 "token",
                 &user.subject_id,
                 Some(&id),
+                self.clock.now(),
             ))?;
 
         // Resolve permissions from assigned roles
@@ -209,6 +210,7 @@ impl TokenManage {
                 "token",
                 &user.subject_id,
                 Some(&input.token_id),
+                self.clock.now(),
             ))?;
 
         Ok(TokenRevokeOutput {
@@ -251,10 +253,16 @@ mod tests {
             chrono::Utc::now()
         }
     }
+    struct FakeTokenGen;
+    impl TokenValueGenerator for FakeTokenGen {
+        fn generate_token_value(&self) -> String {
+            "dbw_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4".into()
+        }
+    }
     struct FakeIdGen;
     impl IdGenerator for FakeIdGen {
         fn generate(&self) -> String {
-            "tok-1".into()
+            "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4".into()
         }
     }
     struct FakeTokenRepo {
@@ -432,6 +440,7 @@ mod tests {
             audit: Arc::new(FakeAudit),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),
+            token_gen: Arc::new(FakeTokenGen),
         }
     }
 

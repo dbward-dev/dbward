@@ -38,6 +38,7 @@ pub async fn create(
         audit: state.audit_logger.clone(),
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
+        token_gen: state.token_value_generator.clone(),
     };
     let output = uc
         .create(
@@ -79,6 +80,7 @@ pub async fn list(
         audit: state.audit_logger.clone(),
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
+        token_gen: state.token_value_generator.clone(),
     };
     let output = uc.list(&user).map_err(map_error)?;
     Ok((
@@ -101,6 +103,7 @@ pub async fn revoke(
         audit: state.audit_logger.clone(),
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
+        token_gen: state.token_value_generator.clone(),
     };
     let output = uc
         .revoke(TokenRevokeInput { token_id: id }, &user)

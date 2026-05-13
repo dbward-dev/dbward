@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, RoleDefinition};
 use dbward_domain::entities::AuditEvent;
-use dbward_domain::policies::{ExecutionPolicy, Workflow};
+use dbward_domain::policies::{ExecutionPolicy, Workflow, WorkflowStep};
+use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -12,12 +13,26 @@ pub struct PolicyManage {
     pub policy_repo: Arc<dyn PolicyRepo>,
     pub license: Arc<dyn LicenseChecker>,
     pub audit: Arc<dyn AuditLogger>,
+    pub clock: Arc<dyn Clock>,
+    pub id_gen: Arc<dyn IdGenerator>,
+}
+
+pub struct CreateWorkflowInput {
+    pub database: DatabaseName,
+    pub environment: Environment,
+    pub operations: Vec<Operation>,
+    pub steps: Vec<WorkflowStep>,
+    pub require_reason: bool,
 }
 
 // --- Workflow ---
 
 impl PolicyManage {
-    pub fn create_workflow(&self, wf: Workflow, user: &AuthUser) -> Result<Workflow, AppError> {
+    pub fn create_workflow(
+        &self,
+        input: CreateWorkflowInput,
+        user: &AuthUser,
+    ) -> Result<Workflow, AppError> {
         self.authorizer
             .authorize_global(user, Permission::WorkflowManage)
             .map_err(AppError::Forbidden)?;
@@ -25,12 +40,30 @@ impl PolicyManage {
         if count >= self.license.max_workflows() {
             return Err(AppError::PlanLimit("workflow limit reached".into()));
         }
+        let now = self.clock.now();
+        let wf = Workflow {
+            id: format!("wf-{}", self.id_gen.generate()),
+            database: input.database,
+            environment: input.environment,
+            operations: input.operations,
+            steps: input.steps,
+            skip_approval_for: vec![],
+            require_reason: input.require_reason,
+            allow_self_approve: false,
+            allow_same_approver_across_steps: false,
+            pending_ttl_secs: None,
+            statement_timeout_secs: None,
+            approval_ttl_secs: None,
+            created_at: Some(now),
+            updated_at: Some(now),
+        };
         self.policy_repo.create_workflow(&wf)?;
         self.audit.record(&AuditEvent::simple(
             "policy_created",
             "policy",
             &user.subject_id,
             Some(&wf.id),
+            self.clock.now(),
         ))?;
         Ok(wf)
     }
@@ -55,6 +88,7 @@ impl PolicyManage {
             "policy",
             &user.subject_id,
             Some(id),
+            self.clock.now(),
         ))?;
         Ok(())
     }
@@ -79,6 +113,7 @@ impl PolicyManage {
             "policy",
             &user.subject_id,
             None,
+            self.clock.now(),
         ))?;
         Ok(ep)
     }
@@ -127,6 +162,7 @@ impl PolicyManage {
             "policy",
             &user.subject_id,
             Some(&role.name),
+            self.clock.now(),
         ))?;
         Ok(role)
     }
@@ -226,6 +262,13 @@ mod tests {
     impl AuditLogger for FakeAudit {
         fn record(&self, _: &AuditEvent) -> Result<(), AppError> {
             Ok(())
+        }
+    }
+
+    struct FakeClock;
+    impl Clock for FakeClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc::now()
         }
     }
 
@@ -331,12 +374,21 @@ mod tests {
         }
     }
 
+    struct FakeIdGen;
+    impl IdGenerator for FakeIdGen {
+        fn generate(&self) -> String {
+            "test-id".into()
+        }
+    }
+
     fn make_uc(authz: Arc<dyn Authorizer>) -> PolicyManage {
         PolicyManage {
             authorizer: authz,
             policy_repo: Arc::new(FakePolicyRepo::new()),
             license: Arc::new(FakeLicense),
             audit: Arc::new(FakeAudit),
+            clock: Arc::new(FakeClock),
+            id_gen: Arc::new(FakeIdGen),
         }
     }
 
@@ -344,7 +396,16 @@ mod tests {
     fn create_workflow_denied_without_permission() {
         let uc = make_uc(Arc::new(DenyAll));
         assert!(matches!(
-            uc.create_workflow(make_wf("wf-1"), &admin_user()),
+            uc.create_workflow(
+                CreateWorkflowInput {
+                    database: DatabaseName::wildcard(),
+                    environment: Environment::wildcard(),
+                    operations: vec![],
+                    steps: vec![],
+                    require_reason: false,
+                },
+                &admin_user()
+            ),
             Err(AppError::Forbidden(_))
         ));
     }
@@ -359,9 +420,20 @@ mod tests {
             }),
             license: Arc::new(FakeLicense),
             audit: Arc::new(FakeAudit),
+            clock: Arc::new(FakeClock),
+            id_gen: Arc::new(FakeIdGen),
         };
         assert!(matches!(
-            uc.create_workflow(make_wf("wf-6"), &admin_user()),
+            uc.create_workflow(
+                CreateWorkflowInput {
+                    database: DatabaseName::wildcard(),
+                    environment: Environment::wildcard(),
+                    operations: vec![],
+                    steps: vec![],
+                    require_reason: false,
+                },
+                &admin_user()
+            ),
             Err(AppError::PlanLimit(_))
         ));
     }

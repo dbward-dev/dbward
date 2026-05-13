@@ -4,7 +4,7 @@ pub mod repos;
 mod services;
 
 pub use authorizer::{Authorizer, PolicyEvaluator, RoleResolver, TokenVerifier};
-pub use clock::{Clock, IdGenerator};
+pub use clock::{Clock, IdGenerator, TokenValueGenerator};
 pub use repos::{
     AgentRepo, AuditFilter, AuditLogger, AuditRepo, AuditVerifyResult, DatabaseRegistry,
     ExecutionTokenClaims, LicenseChecker, PolicyRepo, RequestRepo, ResultChannel, ResultStore,

@@ -423,6 +423,9 @@ impl PolicyRepo for StubPolicyRepo {
 
 struct StubDatabaseRegistry;
 impl DatabaseRegistry for StubDatabaseRegistry {
+    fn register(&self, _: &DatabaseName, _: &Environment) -> Result<(), AppError> {
+        Ok(())
+    }
     fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
         Ok(false)
     }
@@ -581,6 +584,7 @@ fn test_state() -> AppState {
         license_checker: Arc::new(StubLicenseChecker),
         clock: Arc::new(StubClock),
         id_generator: Arc::new(StubIdGenerator),
+        token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         default_approval_ttl_secs: Some(3600),

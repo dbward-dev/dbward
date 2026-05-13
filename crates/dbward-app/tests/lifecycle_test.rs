@@ -280,6 +280,9 @@ impl PolicyEvaluator for FakePolicy {
 
 struct FakeDbRegistry;
 impl DatabaseRegistry for FakeDbRegistry {
+    fn register(&self, _: &DatabaseName, _: &Environment) -> Result<(), AppError> {
+        Ok(())
+    }
     fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
         Ok(true)
     }
@@ -322,7 +325,14 @@ impl IdGenerator for SeqIdGen {
     fn generate(&self) -> String {
         let mut c = self.counter.lock().unwrap();
         *c += 1;
-        format!("id-{c:04}")
+        format!("{:032x}", *c)
+    }
+}
+
+struct FakeTokenValueGen;
+impl dbward_app::ports::TokenValueGenerator for FakeTokenValueGen {
+    fn generate_token_value(&self) -> String {
+        "dbw_faketoken1234567890abcdef1234".into()
     }
 }
 
@@ -1673,6 +1683,7 @@ fn token_prefix_is_raw_4_to_12() {
         audit: Arc::new(FakeAuditLogger),
         clock: Arc::new(FakeClock::new()),
         id_gen: Arc::new(SeqIdGen::new()),
+        token_gen: Arc::new(FakeTokenValueGen),
     };
 
     let admin = make_user("admin", &["admin"]);

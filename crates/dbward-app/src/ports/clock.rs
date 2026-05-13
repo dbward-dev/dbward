@@ -7,3 +7,7 @@ pub trait Clock: Send + Sync {
 pub trait IdGenerator: Send + Sync {
     fn generate(&self) -> String;
 }
+
+pub trait TokenValueGenerator: Send + Sync {
+    fn generate_token_value(&self) -> String;
+}

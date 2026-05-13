@@ -1,9 +1,11 @@
 pub mod background;
+pub mod bootstrap;
 pub mod config;
 pub mod metrics;
 pub mod middleware;
 pub mod routes;
 pub mod state;
+pub mod util;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,6 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::Router;
 use dbward_app::ports::PolicyRepo;
+use dbward_app::use_cases::sync_config::{SyncConfig, WebhookInput, WorkflowInput, WorkflowStepInput, ApproverInput};
+use dbward_domain::values::{DatabaseName, Environment};
 use state::AppState;
 use tokio::time::Duration;
 
@@ -176,6 +180,7 @@ pub async fn run_from_args(
     if let Err(e) = notifier.reload() {
         tracing::warn!("failed to load webhooks on startup: {e}");
     }
+    let clock: Arc<dyn dbward_app::ports::Clock> = Arc::new(dbward_infra::UtcClock);
     let event_dispatcher: Arc<dyn dbward_app::ports::EventDispatcher> =
         Arc::new(dbward_infra::webhook::CompositeEventDispatcher {
             audit: audit_logger.clone(),
@@ -187,15 +192,17 @@ pub async fn run_from_args(
                 "full" => dbward_infra::webhook::RedactionMode::Full,
                 _ => dbward_infra::webhook::RedactionMode::Literals,
             },
+            clock: clock.clone(),
         });
     let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> =
         Arc::new(dbward_infra::webhook::SsrfGuard);
     let license_checker: Arc<dyn dbward_app::ports::LicenseChecker> = Arc::new(
         dbward_infra::LicenseCheckerImpl::new(dbward_domain::license::License::default()),
     );
-    let clock: Arc<dyn dbward_app::ports::Clock> = Arc::new(dbward_infra::UtcClock);
     let id_generator: Arc<dyn dbward_app::ports::IdGenerator> =
         Arc::new(dbward_infra::UuidGenerator);
+    let token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator> =
+        Arc::new(dbward_infra::SecureTokenGenerator);
 
     let draining = Arc::new(AtomicBool::new(false));
 
@@ -222,6 +229,7 @@ pub async fn run_from_args(
         license_checker,
         clock,
         id_generator,
+        token_value_generator,
         metrics: Arc::new(metrics::Metrics::new()),
         default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
         auth_mode: cfg.auth.mode.clone(),
@@ -230,7 +238,7 @@ pub async fn run_from_args(
 
     // Dev bootstrap: create tokens and output to stdout
     if dev_bootstrap {
-        register_databases(&conn, &cfg.databases)?;
+        register_databases(&state, &cfg.databases)?;
         sync_workflows(&state, &cfg.workflows)?;
 
         let data_dir = std::path::Path::new(data)
@@ -242,9 +250,9 @@ pub async fn run_from_args(
         if agent_token_path.exists() {
             eprintln!("[bootstrap] tokens already exist, skipping creation");
         } else {
-            let admin_token = create_bootstrap_token(&state, "admin", "admin", false)?;
-            let dev_token = create_bootstrap_token(&state, "developer", "developer", false)?;
-            let agent_token = create_bootstrap_token(&state, "agent", "admin", true)?;
+            let admin_token = bootstrap::create_bootstrap_token(&state, "admin", "admin", false)?;
+            let dev_token = bootstrap::create_bootstrap_token(&state, "developer", "developer", false)?;
+            let agent_token = bootstrap::create_bootstrap_token(&state, "agent", "admin", true)?;
             let tokens = serde_json::json!({
                 "admin": admin_token,
                 "developer": dev_token,
@@ -264,7 +272,7 @@ pub async fn run_from_args(
             }
         }
     } else {
-        register_databases(&conn, &cfg.databases)?;
+        register_databases(&state, &cfg.databases)?;
         sync_workflows(&state, &cfg.workflows)?;
     }
 
@@ -278,17 +286,16 @@ pub async fn run_from_args(
 }
 
 fn register_databases(
-    conn: &dbward_infra::sqlite::DbConn,
+    state: &AppState,
     databases: &[config::DatabaseDef],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let c = conn.lock().unwrap();
     for db in databases {
         for env in &db.environments {
-            let id = format!("{}:{}", db.name, env);
-            c.execute(
-                "INSERT OR IGNORE INTO databases (id, name, environment, created_at) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![id, db.name, env, chrono::Utc::now().to_rfc3339()],
-            )?;
+            let db_name = DatabaseName::new(&db.name)
+                .map_err(|e| format!("database name: {e}"))?;
+            let environment = Environment::new(env)
+                .map_err(|e| format!("environment: {e}"))?;
+            state.database_registry.register(&db_name, &environment)?;
         }
     }
     Ok(())
@@ -298,97 +305,72 @@ fn sync_workflows(
     state: &AppState,
     workflows: &[config::WorkflowDef],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use dbward_domain::policies::{ApproverGroup, Workflow, WorkflowStep, WorkflowStepMode};
-    use dbward_domain::values::{DatabaseName, Environment, Selector};
+    let uc = SyncConfig {
+        policy_repo: state.policy_repo.clone(),
+        webhook_repo: state.webhook_repo.clone(),
+        clock: state.clock.clone(),
+        id_gen: state.id_generator.clone(),
+    };
 
-    // Clean all config-sourced workflows first (handles reorder/removal)
-    for i in 0..100 {
-        let _ = state.policy_repo.delete_workflow(&format!("config-wf-{i}"));
-    }
-
-    for (i, wf) in workflows.iter().enumerate() {
-        let id = format!("config-wf-{i}");
-        let db = if wf.database == "*" {
-            DatabaseName::wildcard()
-        } else {
-            DatabaseName::new(&wf.database).map_err(|e| format!("workflow db: {e}"))?
-        };
-        let env = if wf.environment == "*" {
-            Environment::wildcard()
-        } else {
-            Environment::new(&wf.environment).map_err(|e| format!("workflow env: {e}"))?
-        };
-
-        // Parse operations from config (empty = catchall, which is intentional)
-        let mut operations: Vec<dbward_domain::values::Operation> = Vec::new();
-        for op_str in &wf.operations {
-            let op = op_str
-                .parse::<dbward_domain::values::Operation>()
-                .map_err(|_| format!("workflow {}: unknown operation '{op_str}'", id))?;
-            operations.push(op);
-        }
-
-        // Parse steps from config JSON values
-        let steps: Vec<WorkflowStep> = wf
-            .steps
-            .iter()
-            .map(|step_val| {
-                let mode = match step_val.get("mode").and_then(|m| m.as_str()) {
-                    Some("any") => WorkflowStepMode::Any,
-                    _ => WorkflowStepMode::All,
-                };
-                let approvers: Vec<ApproverGroup> = step_val
-                    .get("approvers")
-                    .and_then(|a| a.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|a| {
-                                let min = a.get("min").and_then(|m| m.as_u64()).unwrap_or(1) as u32;
-                                let selector = if let Some(role) =
-                                    a.get("role").and_then(|r| r.as_str())
-                                {
-                                    Some(Selector::Role(role.into()))
-                                } else if let Some(group) = a.get("group").and_then(|g| g.as_str())
-                                {
-                                    Some(Selector::Group(group.into()))
-                                } else {
-                                    a.get("user")
-                                        .and_then(|u| u.as_str())
-                                        .map(|user| Selector::User(user.into()))
-                                };
-                                selector.map(|s| ApproverGroup { selector: s, min })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                WorkflowStep { approvers, mode }
-            })
-            .collect();
-
-        let workflow = Workflow {
-            id,
-            database: db,
-            environment: env,
-            operations,
-            steps,
-            skip_approval_for: wf
-                .skip_approval_for
+    let inputs: Vec<WorkflowInput> = workflows
+        .iter()
+        .map(|wf| WorkflowInput {
+            database: wf.database.clone(),
+            environment: wf.environment.clone(),
+            operations: wf.operations.clone(),
+            steps: wf
+                .steps
                 .iter()
-                .filter_map(|s| Selector::parse(s).ok())
+                .map(|step_val| {
+                    let mode = step_val
+                        .get("mode")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("all")
+                        .to_string();
+                    let approvers = step_val
+                        .get("approvers")
+                        .and_then(|a| a.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|a| {
+                                    let min =
+                                        a.get("min").and_then(|m| m.as_u64()).unwrap_or(1) as u32;
+                                    let (selector_type, value) =
+                                        if let Some(role) = a.get("role").and_then(|r| r.as_str()) {
+                                            ("role", role)
+                                        } else if let Some(group) =
+                                            a.get("group").and_then(|g| g.as_str())
+                                        {
+                                            ("group", group)
+                                        } else if let Some(user) =
+                                            a.get("user").and_then(|u| u.as_str())
+                                        {
+                                            ("user", user)
+                                        } else {
+                                            return None;
+                                        };
+                                    Some(ApproverInput {
+                                        selector_type: selector_type.to_string(),
+                                        value: value.to_string(),
+                                        min,
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    WorkflowStepInput { mode, approvers }
+                })
                 .collect(),
+            skip_approval_for: wf.skip_approval_for.clone(),
             require_reason: wf.require_reason,
             allow_self_approve: wf.allow_self_approve,
             allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
             pending_ttl_secs: wf.pending_ttl_secs,
             statement_timeout_secs: wf.statement_timeout_secs,
-            approval_ttl_secs: None,
-            created_at: None,
-            updated_at: None,
-        };
-        if let Err(e) = state.policy_repo.create_workflow(&workflow) {
-            return Err(format!("sync workflow: {e}").into());
-        }
-    }
+        })
+        .collect();
+
+    uc.sync_workflows(inputs)?;
     Ok(())
 }
 
@@ -396,73 +378,30 @@ fn sync_webhooks(
     state: &AppState,
     webhooks: &[config::WebhookDef],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use dbward_domain::entities::{Webhook, WebhookFormat, WebhookStatus};
+    let uc = SyncConfig {
+        policy_repo: state.policy_repo.clone(),
+        webhook_repo: state.webhook_repo.clone(),
+        clock: state.clock.clone(),
+        id_gen: state.id_generator.clone(),
+    };
 
-    // Delete all config-sourced webhooks
-    for i in 0..100 {
-        let _ = state.webhook_repo.delete(&format!("config-wh-{i}"));
-    }
-
-    for (i, wh) in webhooks.iter().enumerate() {
-        let format = match wh.format.as_str() {
-            "slack" => WebhookFormat::Slack,
-            _ => WebhookFormat::Generic,
-        };
-        let webhook = Webhook {
-            id: format!("config-wh-{i}"),
+    let inputs: Vec<WebhookInput> = webhooks
+        .iter()
+        .map(|wh| WebhookInput {
             url: wh.url.clone(),
             events: wh.events.clone(),
-            format,
+            format: wh.format.clone(),
             secret: wh.secret.clone(),
-            status: WebhookStatus::Active,
-            created_at: Some(chrono::Utc::now()),
-            updated_at: Some(chrono::Utc::now()),
-        };
-        state.webhook_repo.create(&webhook)?;
-    }
+        })
+        .collect();
+
+    uc.sync_webhooks(inputs)?;
 
     // Reload notifier to pick up new webhooks
     if let Err(e) = state.notifier.reload() {
         tracing::warn!("failed to reload webhooks after sync: {e}");
     }
     Ok(())
-}
-
-fn create_bootstrap_token(
-    state: &AppState,
-    subject_id: &str,
-    role: &str,
-    is_agent: bool,
-) -> Result<String, Box<dyn std::error::Error>> {
-    use dbward_domain::auth::SubjectType;
-    use dbward_domain::entities::{Token, TokenStatus};
-    use sha2::{Digest, Sha256};
-
-    let token_id = state.id_generator.generate();
-    let raw_token = format!("dbw_{}", state.id_generator.generate().replace('-', ""));
-    let token_hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
-    let token_prefix = raw_token[4..12].to_string();
-
-    let token = Token {
-        id: token_id,
-        subject_type: if is_agent {
-            SubjectType::Agent
-        } else {
-            SubjectType::User
-        },
-        subject_id: subject_id.to_string(),
-        token_hash,
-        token_prefix,
-        roles: vec![role.to_string()],
-        groups: vec![],
-        name: Some(format!("bootstrap-{subject_id}")),
-        status: TokenStatus::Active,
-        expires_at: None,
-        created_at: state.clock.now(),
-        revoked_at: None,
-    };
-    state.token_repo.create(&token)?;
-    Ok(raw_token)
 }
 
 pub fn build_app(state: AppState) -> Router {
