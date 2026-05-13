@@ -3,12 +3,12 @@
 services:
   postgres:
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     networks: [backend, frontend]
 
   dbward-server:
     ports:
-      - "127.0.0.1:13000:3000"
+      - "127.0.0.1:${SERVER_PORT:-13000}:3000"
     environment:
       DBWARD_LICENSE_KEY: "${DBWARD_LICENSE_KEY:-}"
 
@@ -22,7 +22,7 @@ services:
     volumes:
       - ./fixtures/webhook-receiver.py:/app/webhook-receiver.py:ro
     ports:
-      - "127.0.0.1:9999:9999"
+      - "127.0.0.1:${WEBHOOK_PORT:-9999}:9999"
     tmpfs:
       - /tmp:size=16M
 
@@ -84,7 +84,7 @@ services:
     volumes:
       - ./fixtures/keycloak-realm.json:/opt/keycloak/data/import/realm.json:ro
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${KEYCLOAK_PORT:-8080}:8080"
     networks: [backend, frontend]
     healthcheck:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\n\r\n' >&3 && cat <&3 | grep -q '200'"]
@@ -150,3 +150,4 @@ networks:
 volumes:
   alice-credentials:
   bob-credentials:
+
