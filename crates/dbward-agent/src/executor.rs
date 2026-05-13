@@ -259,11 +259,14 @@ async fn do_execute(
             .unwrap())
         }
         "migrate_up" => {
-            let detail = dbward_migrate::MigrationDetail::parse(sql)
-                .map_err(|e| AgentError::Driver(dbward_driver::DriverError::QueryFailed(e.to_string())))?;
+            let detail = dbward_migrate::MigrationDetail::parse(sql).map_err(|e| {
+                AgentError::Driver(dbward_driver::DriverError::QueryFailed(e.to_string()))
+            })?;
             driver.ensure_migrations_table().await?;
             let already = driver.applied_versions().await?;
-            let pending: Vec<_> = detail.migrations.iter()
+            let pending: Vec<_> = detail
+                .migrations
+                .iter()
                 .filter(|e| !already.contains(&e.version))
                 .take(detail.max_count.unwrap_or(usize::MAX))
                 .collect();
@@ -278,11 +281,15 @@ async fn do_execute(
             Ok(serde_json::json!({"applied": applied}).to_string())
         }
         "migrate_down" => {
-            let detail = dbward_migrate::MigrationDetail::parse(sql)
-                .map_err(|e| AgentError::Driver(dbward_driver::DriverError::QueryFailed(e.to_string())))?;
+            let detail = dbward_migrate::MigrationDetail::parse(sql).map_err(|e| {
+                AgentError::Driver(dbward_driver::DriverError::QueryFailed(e.to_string()))
+            })?;
             driver.ensure_migrations_table().await?;
             let already = driver.applied_versions().await?;
-            let to_revert: Vec<_> = detail.migrations.iter().rev()
+            let to_revert: Vec<_> = detail
+                .migrations
+                .iter()
+                .rev()
                 .filter(|e| already.contains(&e.version))
                 .take(detail.max_count.unwrap_or(usize::MAX))
                 .collect();

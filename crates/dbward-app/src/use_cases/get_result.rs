@@ -174,13 +174,26 @@ mod tests {
         fn insert(&self, _: &Request) -> Result<(), AppError> {
             Ok(())
         }
-        fn list(&self, _: u32, _: u32, _: Option<&str>, _: Option<&str>) -> Result<(Vec<Request>, u32), AppError> {
+        fn list(
+            &self,
+            _: u32,
+            _: u32,
+            _: Option<&str>,
+            _: Option<&str>,
+        ) -> Result<(Vec<Request>, u32), AppError> {
             Ok((vec![], 0))
         }
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
             Ok(None)
         }
-        fn list_pending_for_user(&self, _: &str, _: &[String], _: &[String], _: u32, _: u32) -> Result<(Vec<Request>, u32), AppError> {
+        fn list_pending_for_user(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+            _: u32,
+            _: u32,
+        ) -> Result<(Vec<Request>, u32), AppError> {
             Ok((vec![], 0))
         }
         fn insert_approval(&self, _: &Approval) -> Result<(), AppError> {
@@ -273,7 +286,13 @@ mod tests {
         fn wal_checkpoint(&self) -> Result<(), AppError> {
             Ok(())
         }
-        fn list_results_for_user(&self, _: &str, _: &[String], _: &[String], _: u32) -> Result<Vec<crate::ports::repos::StoredResultEntry>, AppError> {
+        fn list_results_for_user(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+            _: u32,
+        ) -> Result<Vec<crate::ports::repos::StoredResultEntry>, AppError> {
             Ok(vec![])
         }
     }

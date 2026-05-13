@@ -212,7 +212,12 @@ pub async fn list(
 
     let (requests, total) = state
         .request_repo
-        .list(limit, offset, params.status.as_deref(), params.user.as_deref())
+        .list(
+            limit,
+            offset,
+            params.status.as_deref(),
+            params.user.as_deref(),
+        )
         .map_err(map_error)?;
     // Non-admin users only see their own requests + pending requests they can approve
     let is_admin = user.roles.iter().any(|r| r.name == "admin");
@@ -631,7 +636,16 @@ pub async fn list_results(
 ) -> ApiResult {
     let results = state
         .request_repo
-        .list_results_for_user(&user.subject_id, &user.groups, &user.roles.iter().map(|r| r.name.clone()).collect::<Vec<_>>(), 50)
+        .list_results_for_user(
+            &user.subject_id,
+            &user.groups,
+            &user
+                .roles
+                .iter()
+                .map(|r| r.name.clone())
+                .collect::<Vec<_>>(),
+            50,
+        )
         .map_err(map_error)?;
     let items: Vec<serde_json::Value> = results
         .iter()

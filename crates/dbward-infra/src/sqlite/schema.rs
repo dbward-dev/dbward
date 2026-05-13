@@ -19,7 +19,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
     } else if current < SCHEMA_VERSION {
         // Post-v0.1.0 incremental migrations go here
         // if current < 2 { conn.execute_batch(MIGRATION_V2)?; }
-        panic!("schema migration from v{current} to v{SCHEMA_VERSION} not implemented — add migration steps above");
+        panic!(
+            "schema migration from v{current} to v{SCHEMA_VERSION} not implemented — add migration steps above"
+        );
     }
     Ok(())
 }
@@ -314,4 +316,3 @@ CREATE INDEX IF NOT EXISTS idx_requests_dispatched ON requests(status) WHERE sta
 CREATE INDEX IF NOT EXISTS idx_requests_pending ON requests(status) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_requests_claimed ON executions(status) WHERE status = 'claimed';
 ";
-

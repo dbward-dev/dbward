@@ -101,7 +101,12 @@ impl TokenVerifier for MultiUserVerifier {
 
 struct NoopRoleResolver;
 impl RoleResolver for NoopRoleResolver {
-    fn resolve(&self, _: &str, _: SubjectType, _: &[String]) -> Result<Vec<ResolvedRole>, AuthError> {
+    fn resolve(
+        &self,
+        _: &str,
+        _: SubjectType,
+        _: &[String],
+    ) -> Result<Vec<ResolvedRole>, AuthError> {
         Ok(vec![])
     }
 }
@@ -109,9 +114,15 @@ impl RoleResolver for NoopRoleResolver {
 struct NoopResultStore;
 #[async_trait]
 impl ResultStore for NoopResultStore {
-    async fn put(&self, _: &str, _: &[u8]) -> Result<(), AppError> { Ok(()) }
-    async fn get(&self, _: &str) -> Result<Vec<u8>, AppError> { Ok(vec![]) }
-    async fn delete(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+    async fn put(&self, _: &str, _: &[u8]) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn get(&self, _: &str) -> Result<Vec<u8>, AppError> {
+        Ok(vec![])
+    }
+    async fn delete(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 struct NoopResultChannel;
@@ -119,14 +130,20 @@ struct NoopResultChannel;
 impl ResultChannel for NoopResultChannel {
     fn create_slot(&self, _: &str) {}
     async fn publish(&self, _: &str, _: ResultSummary) {}
-    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> { Ok(None) }
+    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> {
+        Ok(None)
+    }
     async fn notify_all(&self) {}
 }
 
 struct NoopTokenSigner;
 impl TokenSigner for NoopTokenSigner {
-    fn sign(&self, _: &ExecutionTokenClaims) -> String { "signed".into() }
-    fn public_key_hex(&self) -> String { "aa".repeat(32) }
+    fn sign(&self, _: &ExecutionTokenClaims) -> String {
+        "signed".into()
+    }
+    fn public_key_hex(&self) -> String {
+        "aa".repeat(32)
+    }
 }
 
 struct NoopNotifier;
@@ -141,17 +158,31 @@ impl EventDispatcher for NoopEventDispatcher {
 
 struct NoopSsrf;
 impl SsrfValidator for NoopSsrf {
-    fn validate_url(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+    fn validate_url(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 struct NoopLicense;
 impl LicenseChecker for NoopLicense {
-    fn max_tokens(&self) -> u32 { 10 }
-    fn max_workflows(&self) -> u32 { 10 }
-    fn max_webhooks(&self) -> u32 { 3 }
-    fn max_roles(&self) -> u32 { 10 }
-    fn max_agents(&self) -> u32 { 3 }
-    fn is_pro(&self) -> bool { false }
+    fn max_tokens(&self) -> u32 {
+        10
+    }
+    fn max_workflows(&self) -> u32 {
+        10
+    }
+    fn max_webhooks(&self) -> u32 {
+        3
+    }
+    fn max_roles(&self) -> u32 {
+        10
+    }
+    fn max_agents(&self) -> u32 {
+        3
+    }
+    fn is_pro(&self) -> bool {
+        false
+    }
 }
 
 struct SeqIdGen(std::sync::atomic::AtomicU64);
@@ -164,7 +195,9 @@ impl IdGenerator for SeqIdGen {
 
 struct RealClock;
 impl Clock for RealClock {
-    fn now(&self) -> chrono::DateTime<chrono::Utc> { chrono::Utc::now() }
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc::now()
+    }
 }
 
 // --- Test state builder ---
@@ -177,12 +210,24 @@ fn workflow_state() -> AppState {
         let c = conn.lock().unwrap();
         c.execute(
             "INSERT INTO databases (id, name, environment, created_at) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params!["app:production", "app", "production", "2026-01-01T00:00:00Z"],
-        ).unwrap();
+            rusqlite::params![
+                "app:production",
+                "app",
+                "production",
+                "2026-01-01T00:00:00Z"
+            ],
+        )
+        .unwrap();
         c.execute(
             "INSERT INTO databases (id, name, environment, created_at) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params!["app:development", "app", "development", "2026-01-01T00:00:00Z"],
-        ).unwrap();
+            rusqlite::params![
+                "app:development",
+                "app",
+                "development",
+                "2026-01-01T00:00:00Z"
+            ],
+        )
+        .unwrap();
 
         // 2-step production workflow (backend-team → dba-team)
         c.execute(
@@ -244,7 +289,9 @@ fn json_req(method: &str, uri: &str, token: &str, body: serde_json::Value) -> Re
 }
 
 async fn resp_json(resp: axum::http::Response<Body>) -> serde_json::Value {
-    let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+        .await
+        .unwrap();
     serde_json::from_slice(&bytes).unwrap_or_default()
 }
 
@@ -267,16 +314,40 @@ async fn reject_then_approve_returns_conflict() {
     let mut app = build_app(workflow_state());
 
     // Create pending request
-    let resp = app.call(create_request("dev-token", "production", "SELECT 1", Some("test"))).await.unwrap();
+    let resp = app
+        .call(create_request(
+            "dev-token",
+            "production",
+            "SELECT 1",
+            Some("test"),
+        ))
+        .await
+        .unwrap();
     let body = resp_json(resp).await;
     let id = body["id"].as_str().unwrap().to_string();
 
     // Reject
-    let resp = app.call(json_req("POST", &format!("/api/requests/{id}/reject"), "admin-token", serde_json::json!({"comment":"no"}))).await.unwrap();
+    let resp = app
+        .call(json_req(
+            "POST",
+            &format!("/api/requests/{id}/reject"),
+            "admin-token",
+            serde_json::json!({"comment":"no"}),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Try approve after reject
-    let resp = app.call(json_req("POST", &format!("/api/requests/{id}/approve"), "admin-token", serde_json::json!({"comment":"yes"}))).await.unwrap();
+    let resp = app
+        .call(json_req(
+            "POST",
+            &format!("/api/requests/{id}/approve"),
+            "admin-token",
+            serde_json::json!({"comment":"yes"}),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 }
 
@@ -284,18 +355,42 @@ async fn reject_then_approve_returns_conflict() {
 async fn step1_approve_then_reject_at_step2() {
     let mut app = build_app(workflow_state());
 
-    let resp = app.call(create_request("dev-token", "production", "SELECT 1", Some("test"))).await.unwrap();
+    let resp = app
+        .call(create_request(
+            "dev-token",
+            "production",
+            "SELECT 1",
+            Some("test"),
+        ))
+        .await
+        .unwrap();
     let body = resp_json(resp).await;
     let id = body["id"].as_str().unwrap().to_string();
 
     // Step 1 approve (backend-team)
-    let resp = app.call(json_req("POST", &format!("/api/requests/{id}/approve"), "approver-token", serde_json::json!({"comment":"ok"}))).await.unwrap();
+    let resp = app
+        .call(json_req(
+            "POST",
+            &format!("/api/requests/{id}/approve"),
+            "approver-token",
+            serde_json::json!({"comment":"ok"}),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp_json(resp).await;
     assert_eq!(body["status"].as_str().unwrap(), "pending");
 
     // Reject at step 2
-    let resp = app.call(json_req("POST", &format!("/api/requests/{id}/reject"), "dba-token", serde_json::json!({"comment":"nope"}))).await.unwrap();
+    let resp = app
+        .call(json_req(
+            "POST",
+            &format!("/api/requests/{id}/reject"),
+            "dba-token",
+            serde_json::json!({"comment":"nope"}),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp_json(resp).await;
     assert_eq!(body["status"].as_str().unwrap(), "rejected");
@@ -305,11 +400,27 @@ async fn step1_approve_then_reject_at_step2() {
 async fn cancel_pending_succeeds() {
     let mut app = build_app(workflow_state());
 
-    let resp = app.call(create_request("dev-token", "production", "SELECT 1", Some("test"))).await.unwrap();
+    let resp = app
+        .call(create_request(
+            "dev-token",
+            "production",
+            "SELECT 1",
+            Some("test"),
+        ))
+        .await
+        .unwrap();
     let body = resp_json(resp).await;
     let id = body["id"].as_str().unwrap().to_string();
 
-    let resp = app.call(json_req("POST", &format!("/api/requests/{id}/cancel"), "dev-token", serde_json::json!({}))).await.unwrap();
+    let resp = app
+        .call(json_req(
+            "POST",
+            &format!("/api/requests/{id}/cancel"),
+            "dev-token",
+            serde_json::json!({}),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp_json(resp).await;
     assert_eq!(body["status"].as_str().unwrap(), "cancelled");
@@ -319,16 +430,46 @@ async fn cancel_pending_succeeds() {
 async fn cancel_approved_succeeds() {
     let mut app = build_app(workflow_state());
 
-    let resp = app.call(create_request("dev-token", "production", "SELECT 1", Some("test"))).await.unwrap();
+    let resp = app
+        .call(create_request(
+            "dev-token",
+            "production",
+            "SELECT 1",
+            Some("test"),
+        ))
+        .await
+        .unwrap();
     let body = resp_json(resp).await;
     let id = body["id"].as_str().unwrap().to_string();
 
     // Approve both steps
-    app.call(json_req("POST", &format!("/api/requests/{id}/approve"), "approver-token", serde_json::json!({"comment":"1"}))).await.unwrap();
-    app.call(json_req("POST", &format!("/api/requests/{id}/approve"), "dba-token", serde_json::json!({"comment":"2"}))).await.unwrap();
+    app.call(json_req(
+        "POST",
+        &format!("/api/requests/{id}/approve"),
+        "approver-token",
+        serde_json::json!({"comment":"1"}),
+    ))
+    .await
+    .unwrap();
+    app.call(json_req(
+        "POST",
+        &format!("/api/requests/{id}/approve"),
+        "dba-token",
+        serde_json::json!({"comment":"2"}),
+    ))
+    .await
+    .unwrap();
 
     // Cancel approved
-    let resp = app.call(json_req("POST", &format!("/api/requests/{id}/cancel"), "dev-token", serde_json::json!({}))).await.unwrap();
+    let resp = app
+        .call(json_req(
+            "POST",
+            &format!("/api/requests/{id}/cancel"),
+            "dev-token",
+            serde_json::json!({}),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
@@ -336,12 +477,28 @@ async fn cancel_approved_succeeds() {
 async fn other_user_cannot_cancel() {
     let mut app = build_app(workflow_state());
 
-    let resp = app.call(create_request("dev-token", "production", "SELECT 1", Some("test"))).await.unwrap();
+    let resp = app
+        .call(create_request(
+            "dev-token",
+            "production",
+            "SELECT 1",
+            Some("test"),
+        ))
+        .await
+        .unwrap();
     let body = resp_json(resp).await;
     let id = body["id"].as_str().unwrap().to_string();
 
     // approver tries to cancel dev's request
-    let resp = app.call(json_req("POST", &format!("/api/requests/{id}/cancel"), "approver-token", serde_json::json!({}))).await.unwrap();
+    let resp = app
+        .call(json_req(
+            "POST",
+            &format!("/api/requests/{id}/cancel"),
+            "approver-token",
+            serde_json::json!({}),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -349,11 +506,27 @@ async fn other_user_cannot_cancel() {
 async fn admin_can_cancel_others_request() {
     let mut app = build_app(workflow_state());
 
-    let resp = app.call(create_request("dev-token", "production", "SELECT 1", Some("test"))).await.unwrap();
+    let resp = app
+        .call(create_request(
+            "dev-token",
+            "production",
+            "SELECT 1",
+            Some("test"),
+        ))
+        .await
+        .unwrap();
     let body = resp_json(resp).await;
     let id = body["id"].as_str().unwrap().to_string();
 
-    let resp = app.call(json_req("POST", &format!("/api/requests/{id}/cancel"), "admin-token", serde_json::json!({}))).await.unwrap();
+    let resp = app
+        .call(json_req(
+            "POST",
+            &format!("/api/requests/{id}/cancel"),
+            "admin-token",
+            serde_json::json!({}),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
@@ -368,7 +541,10 @@ async fn break_glass_skips_approval() {
         "reason": "emergency",
         "emergency": true,
     });
-    let resp = app.call(json_req("POST", "/api/requests", "admin-token", body)).await.unwrap();
+    let resp = app
+        .call(json_req("POST", "/api/requests", "admin-token", body))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = resp_json(resp).await;
     assert_eq!(body["status"].as_str().unwrap(), "dispatched");
@@ -385,7 +561,10 @@ async fn developer_cannot_break_glass() {
         "reason": "emergency",
         "emergency": true,
     });
-    let resp = app.call(json_req("POST", "/api/requests", "dev-token", body)).await.unwrap();
+    let resp = app
+        .call(json_req("POST", "/api/requests", "dev-token", body))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -393,16 +572,46 @@ async fn developer_cannot_break_glass() {
 async fn approve_already_approved_returns_conflict() {
     let mut app = build_app(workflow_state());
 
-    let resp = app.call(create_request("dev-token", "production", "SELECT 1", Some("test"))).await.unwrap();
+    let resp = app
+        .call(create_request(
+            "dev-token",
+            "production",
+            "SELECT 1",
+            Some("test"),
+        ))
+        .await
+        .unwrap();
     let body = resp_json(resp).await;
     let id = body["id"].as_str().unwrap().to_string();
 
     // Approve both steps
-    app.call(json_req("POST", &format!("/api/requests/{id}/approve"), "approver-token", serde_json::json!({"comment":"1"}))).await.unwrap();
-    app.call(json_req("POST", &format!("/api/requests/{id}/approve"), "dba-token", serde_json::json!({"comment":"2"}))).await.unwrap();
+    app.call(json_req(
+        "POST",
+        &format!("/api/requests/{id}/approve"),
+        "approver-token",
+        serde_json::json!({"comment":"1"}),
+    ))
+    .await
+    .unwrap();
+    app.call(json_req(
+        "POST",
+        &format!("/api/requests/{id}/approve"),
+        "dba-token",
+        serde_json::json!({"comment":"2"}),
+    ))
+    .await
+    .unwrap();
 
     // 3rd approve
-    let resp = app.call(json_req("POST", &format!("/api/requests/{id}/approve"), "admin-token", serde_json::json!({"comment":"3"}))).await.unwrap();
+    let resp = app
+        .call(json_req(
+            "POST",
+            &format!("/api/requests/{id}/approve"),
+            "admin-token",
+            serde_json::json!({"comment":"3"}),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 }
 
@@ -417,12 +626,23 @@ async fn self_approve_blocked_even_for_admin() {
         "detail": "SELECT 1",
         "reason": "self test",
     });
-    let resp = app.call(json_req("POST", "/api/requests", "admin-token", body)).await.unwrap();
+    let resp = app
+        .call(json_req("POST", "/api/requests", "admin-token", body))
+        .await
+        .unwrap();
     let body = resp_json(resp).await;
     let id = body["id"].as_str().unwrap().to_string();
 
     // Admin tries to approve own request
-    let resp = app.call(json_req("POST", &format!("/api/requests/{id}/approve"), "admin-token", serde_json::json!({"comment":"self"}))).await.unwrap();
+    let resp = app
+        .call(json_req(
+            "POST",
+            &format!("/api/requests/{id}/approve"),
+            "admin-token",
+            serde_json::json!({"comment":"self"}),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -430,15 +650,38 @@ async fn self_approve_blocked_even_for_admin() {
 async fn reject_then_cancel_returns_conflict() {
     let mut app = build_app(workflow_state());
 
-    let resp = app.call(create_request("dev-token", "production", "SELECT 1", Some("test"))).await.unwrap();
+    let resp = app
+        .call(create_request(
+            "dev-token",
+            "production",
+            "SELECT 1",
+            Some("test"),
+        ))
+        .await
+        .unwrap();
     let body = resp_json(resp).await;
     let id = body["id"].as_str().unwrap().to_string();
 
     // Reject
-    app.call(json_req("POST", &format!("/api/requests/{id}/reject"), "admin-token", serde_json::json!({"comment":"no"}))).await.unwrap();
+    app.call(json_req(
+        "POST",
+        &format!("/api/requests/{id}/reject"),
+        "admin-token",
+        serde_json::json!({"comment":"no"}),
+    ))
+    .await
+    .unwrap();
 
     // Try cancel
-    let resp = app.call(json_req("POST", &format!("/api/requests/{id}/cancel"), "dev-token", serde_json::json!({}))).await.unwrap();
+    let resp = app
+        .call(json_req(
+            "POST",
+            &format!("/api/requests/{id}/cancel"),
+            "dev-token",
+            serde_json::json!({}),
+        ))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 }
 
@@ -446,7 +689,10 @@ async fn reject_then_cancel_returns_conflict() {
 async fn development_auto_approves() {
     let mut app = build_app(workflow_state());
 
-    let resp = app.call(create_request("dev-token", "development", "SELECT 1", None)).await.unwrap();
+    let resp = app
+        .call(create_request("dev-token", "development", "SELECT 1", None))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = resp_json(resp).await;
     assert_eq!(body["status"].as_str().unwrap(), "dispatched");
@@ -457,6 +703,9 @@ async fn require_reason_enforced() {
     let mut app = build_app(workflow_state());
 
     // Production requires reason
-    let resp = app.call(create_request("dev-token", "production", "SELECT 1", None)).await.unwrap();
+    let resp = app
+        .call(create_request("dev-token", "production", "SELECT 1", None))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

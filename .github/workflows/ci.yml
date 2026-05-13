@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, v2/rewrite]
+    branches: [main]
   pull_request:
-    branches: [main, v2/rewrite]
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,9 +29,6 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-      - name: Build release
-        run: cargo build --workspace --release
-
   security:
     runs-on: ubuntu-latest
     steps:
@@ -40,9 +37,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-deny
-        run: |
-          curl -L https://github.com/EmbarkStudios/cargo-deny/releases/download/0.16.4/cargo-deny-0.16.4-x86_64-unknown-linux-musl.tar.gz | tar xz
-          mv cargo-deny-0.16.4-x86_64-unknown-linux-musl/cargo-deny /usr/local/bin/
+        uses: taiki-e/install-action@cargo-deny
 
       - name: License check
         run: cargo deny check licenses
@@ -77,10 +72,5 @@ jobs:
       - name: Generate coverage
         run: cargo llvm-cov --workspace --ignore-filename-regex "tests/" --lcov --output-path lcov.info
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: lcov.info
-          fail_ci_if_error: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      - name: Coverage summary
+        run: cargo llvm-cov report --summary-only

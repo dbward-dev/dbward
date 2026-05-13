@@ -23,7 +23,9 @@ pub struct CreateBody {
     pub secret: Option<String>,
 }
 
-fn default_format() -> String { "generic".into() }
+fn default_format() -> String {
+    "generic".into()
+}
 
 #[derive(Deserialize)]
 pub struct UpdateBody {

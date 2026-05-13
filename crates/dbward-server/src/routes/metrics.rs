@@ -1,10 +1,5 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Extension,
-};
 use axum::Json;
+use axum::{Extension, extract::State, http::StatusCode, response::IntoResponse};
 
 use crate::state::AppState;
 use dbward_domain::auth::AuthUser;
@@ -14,8 +9,14 @@ pub async fn metrics(
     Extension(user): Extension<AuthUser>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     // Admin-only (README: admin auth required for /metrics)
-    if !user.roles.iter().any(|r| r.permissions.contains(&dbward_domain::auth::Permission::All)) {
-        return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "admin role required for /metrics"}))));
+    if !user.roles.iter().any(|r| {
+        r.permissions
+            .contains(&dbward_domain::auth::Permission::All)
+    }) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "admin role required for /metrics"})),
+        ));
     }
 
     let body = crate::metrics::render(

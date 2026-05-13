@@ -99,7 +99,14 @@ impl RequestRepo for StubRequestRepo {
     ) -> Result<Option<dbward_domain::entities::Request>, AppError> {
         Ok(None)
     }
-    fn list_pending_for_user(&self, _: &str, _: &[String], _: &[String], _: u32, _: u32) -> Result<(Vec<dbward_domain::entities::Request>, u32), AppError> {
+    fn list_pending_for_user(
+        &self,
+        _: &str,
+        _: &[String],
+        _: &[String],
+        _: u32,
+        _: u32,
+    ) -> Result<(Vec<dbward_domain::entities::Request>, u32), AppError> {
         Ok((vec![], 0))
     }
     fn insert_approval(&self, _: &Approval) -> Result<(), AppError> {
@@ -191,7 +198,13 @@ impl RequestRepo for StubRequestRepo {
     fn wal_checkpoint(&self) -> Result<(), AppError> {
         Ok(())
     }
-    fn list_results_for_user(&self, _: &str, _: &[String], _: &[String], _: u32) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
+    fn list_results_for_user(
+        &self,
+        _: &str,
+        _: &[String],
+        _: &[String],
+        _: u32,
+    ) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
         Ok(vec![])
     }
 }

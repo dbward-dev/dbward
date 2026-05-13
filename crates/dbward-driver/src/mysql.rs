@@ -221,7 +221,11 @@ impl DatabaseDriver for MysqlDriver {
                 }
                 rows.push(json);
             }
-            Ok::<_, DriverError>(QueryOutput { rows, truncated, truncation_reason })
+            Ok::<_, DriverError>(QueryOutput {
+                rows,
+                truncated,
+                truncation_reason,
+            })
         })
         .await;
 

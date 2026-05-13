@@ -38,20 +38,18 @@ fn populate_pending_approvers(
         rusqlite::params![request_id],
     )
     .map_err(map_err)?;
-    if let Some(json) = workflow_snapshot_json {
-        if let Ok(workflow) =
+    if let Some(json) = workflow_snapshot_json
+        && let Ok(workflow) =
             serde_json::from_str::<dbward_domain::policies::workflow::Workflow>(json)
-        {
-            if let Some(step) = workflow.steps.get(step_index as usize) {
-                for approver in &step.approvers {
-                    let selector = approver.selector.to_string();
-                    conn.execute(
-                        "INSERT OR IGNORE INTO request_pending_approvers (request_id, selector, step_index) VALUES (?1, ?2, ?3)",
-                        rusqlite::params![request_id, selector, step_index],
-                    )
-                    .map_err(map_err)?;
-                }
-            }
+        && let Some(step) = workflow.steps.get(step_index as usize)
+    {
+        for approver in &step.approvers {
+            let selector = approver.selector.to_string();
+            conn.execute(
+                "INSERT OR IGNORE INTO request_pending_approvers (request_id, selector, step_index) VALUES (?1, ?2, ?3)",
+                rusqlite::params![request_id, selector, step_index],
+            )
+            .map_err(map_err)?;
         }
     }
     // Also add roles that have approve permission (Permission::All or RequestApprove)
@@ -280,7 +278,11 @@ impl RequestRepo for SqliteRequestRepo {
 
         let count_sql = format!("SELECT COUNT(*) FROM requests{}", where_clause);
         let total: u32 = conn
-            .query_row(&count_sql, rusqlite::params_from_iter(count_params.iter().map(|p| p.as_ref())), |r| r.get(0))
+            .query_row(
+                &count_sql,
+                rusqlite::params_from_iter(count_params.iter().map(|p| p.as_ref())),
+                |r| r.get(0),
+            )
             .map_err(map_err)?;
 
         let query_sql = format!(
@@ -299,7 +301,10 @@ impl RequestRepo for SqliteRequestRepo {
 
         let mut stmt = conn.prepare(&query_sql).map_err(map_err)?;
         let rows = stmt
-            .query_and_then(rusqlite::params_from_iter(query_params.iter().map(|p| p.as_ref())), row_to_request)
+            .query_and_then(
+                rusqlite::params_from_iter(query_params.iter().map(|p| p.as_ref())),
+                row_to_request,
+            )
             .map_err(map_err)?;
         let items = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
         Ok((items, total))
@@ -342,8 +347,10 @@ impl RequestRepo for SqliteRequestRepo {
              LIMIT {} OFFSET {}",
             limit, offset
         );
-        let params: Vec<Box<dyn rusqlite::types::ToSql>> =
-            selectors.into_iter().map(|s| Box::new(s) as Box<dyn rusqlite::types::ToSql>).collect();
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> = selectors
+            .into_iter()
+            .map(|s| Box::new(s) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
 
@@ -355,9 +362,7 @@ impl RequestRepo for SqliteRequestRepo {
         let rows = stmt
             .query_and_then(param_refs.as_slice(), row_to_request)
             .map_err(map_err)?;
-        let requests: Vec<Request> = rows
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(map_err)?;
+        let requests: Vec<Request> = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
         Ok((requests, total))
     }
 
@@ -400,7 +405,12 @@ impl RequestRepo for SqliteRequestRepo {
             )
             .ok()
             .flatten();
-        populate_pending_approvers(&conn, &approval.request_id, &snapshot, approval.step_index + 1)?;
+        populate_pending_approvers(
+            &conn,
+            &approval.request_id,
+            &snapshot,
+            approval.step_index + 1,
+        )?;
         Ok(())
     }
 
@@ -506,7 +516,8 @@ impl RequestRepo for SqliteRequestRepo {
         tx.execute(
             "DELETE FROM request_pending_approvers WHERE request_id = ?1",
             params![request_id],
-        ).map_err(map_err)?;
+        )
+        .map_err(map_err)?;
 
         tx.commit().map_err(map_err)?;
         Ok(true)
@@ -844,18 +855,20 @@ impl RequestRepo for SqliteRequestRepo {
             "req.requester = ?1".to_string(),
             "(ra.selector_type = 'user' AND ra.selector_value = ?1)".to_string(),
         ];
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
-            Box::new(user_id.to_string()),
-            Box::new(limit),
-        ];
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(user_id.to_string()), Box::new(limit)];
         let mut idx = 3; // ?1=user_id, ?2=limit, ?3+
         for g in groups {
-            conditions.push(format!("(ra.selector_type = 'group' AND ra.selector_value = ?{idx})"));
+            conditions.push(format!(
+                "(ra.selector_type = 'group' AND ra.selector_value = ?{idx})"
+            ));
             params.push(Box::new(g.clone()));
             idx += 1;
         }
         for r in roles {
-            conditions.push(format!("(ra.selector_type = 'role' AND ra.selector_value = ?{idx})"));
+            conditions.push(format!(
+                "(ra.selector_type = 'role' AND ra.selector_value = ?{idx})"
+            ));
             params.push(Box::new(r.clone()));
             idx += 1;
         }
@@ -873,7 +886,8 @@ impl RequestRepo for SqliteRequestRepo {
              LIMIT ?2"
         );
         let mut stmt = conn.prepare(&sql).map_err(map_err)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt
             .query_map(param_refs.as_slice(), |row| {
                 Ok(dbward_app::ports::repos::StoredResultEntry {
