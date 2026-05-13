@@ -60,6 +60,10 @@ impl ListRequests {
         let offset = input.offset.unwrap_or(0);
         let pending_for_me = input.pending_for_me.unwrap_or(false);
 
+        // Note: pending_for_me returns requests where the user matches a workflow
+        // approver selector. Scope is enforced by the workflow definition itself,
+        // not by db/env permission scoping. This is by design: if a workflow lists
+        // you as approver, you need to see the request to act on it.
         if pending_for_me {
             let has_view = self
                 .authorizer
@@ -81,6 +85,10 @@ impl ListRequests {
                 .map_err(AppError::Forbidden)?;
         }
 
+        // Note: pending_for_me returns requests where the user matches a workflow
+        // approver selector. Scope is enforced by the workflow definition itself,
+        // not by db/env permission scoping. This is by design: if a workflow lists
+        // you as approver, you need to see the request to act on it.
         if pending_for_me {
             let roles: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
             let (requests, total) = self.request_repo.list_pending_for_user(
