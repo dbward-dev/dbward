@@ -154,7 +154,9 @@ fn build_generic_body(event: &WebhookEvent) -> String {
         "request_id": event.request_id,
         "database": event.database,
         "environment": event.environment,
+        "operation": event.operation,
         "actor": event.actor,
+        "requester": event.requester,
         "detail": event.detail,
     }))
     .unwrap_or_default()
@@ -185,7 +187,7 @@ fn build_slack_body(event: &WebhookEvent) -> String {
 
     let mut sections = vec![
         format!("{sep}\nRequester: {requester}\nOperation: {}\nEnvironment: {env}\nDatabase: {db}\n{sep}",
-            event.detail.as_deref().unwrap_or("—")),
+            event.operation.as_deref().unwrap_or("—")),
     ];
 
     if let Some(ref sql) = event.redacted_detail {
@@ -335,6 +337,7 @@ impl EventDispatcher for CompositeEventDispatcher {
             actor: Some(event.actor_id.clone()),
             detail: None,
             requester: Some(event.requester_id.clone()),
+            operation: Some(event.operation.as_str().to_string()),
             reason: match &event.metadata {
                 EventMetadata::Created { .. } => None,
                 EventMetadata::Rejected { comment, .. } => comment.clone(),

@@ -19,4 +19,5 @@ pub struct WebhookEvent {
     pub redacted_detail: Option<String>,
     pub error_summary: Option<String>,
     pub approval_hint: Option<String>,
+    pub operation: Option<String>,
 }

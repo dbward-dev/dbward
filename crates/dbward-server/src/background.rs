@@ -420,5 +420,6 @@ fn emit_webhook(state: &AppState, event_type: &str, request_id: &str) {
         redacted_detail: None,
         error_summary: None,
         approval_hint: None,
+        operation: None,
     });
 }
