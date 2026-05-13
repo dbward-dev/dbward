@@ -659,4 +659,5 @@ Detailed documentation is available in the [`docs/`](docs/) directory:
 
 ## License
 
-Apache-2.0 / MIT (dual-licensed)
+- **dbward-server**: [Business Source License 1.1](LICENSE-BSL) (converts to Apache-2.0 on 2029-05-08)
+- **All other crates**: [Apache-2.0](LICENSE-APACHE) OR [MIT](LICENSE-MIT) (dual-licensed)
