@@ -6,7 +6,9 @@ use sha2::{Digest, Sha256};
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Execution, ExecutionStatus};
-use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
+use dbward_domain::services::status_machine::{
+    self, EventMetadata, RequestTrigger, TransitionContext,
+};
 use dbward_domain::values::Operation;
 
 use crate::error::AppError;
@@ -43,13 +45,20 @@ pub struct AgentClaimOutput {
 }
 
 impl AgentClaim {
-    pub fn execute(&self, input: AgentClaimInput, user: &AuthUser) -> Result<AgentClaimOutput, AppError> {
+    pub fn execute(
+        &self,
+        input: AgentClaimInput,
+        user: &AuthUser,
+    ) -> Result<AgentClaimOutput, AppError> {
         // 1. Authorization (global permission)
-        self.authorizer.authorize_global(user, Permission::AgentClaim)
+        self.authorizer
+            .authorize_global(user, Permission::AgentClaim)
             .map_err(AppError::Forbidden)?;
 
         // 2. Get request
-        let request = self.request_repo.get(&input.request_id)?
+        let request = self
+            .request_repo
+            .get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
         // 3. Status check: must be dispatched → running
@@ -66,9 +75,13 @@ impl AgentClaim {
                 environment: request.environment.clone(),
                 operation: request.operation,
                 timestamp: now,
-                metadata: EventMetadata::Claimed { execution_id: execution_id.clone(), agent_id: input.agent_id.clone() },
+                metadata: EventMetadata::Claimed {
+                    execution_id: execution_id.clone(),
+                    agent_id: input.agent_id.clone(),
+                },
             },
-        ).map_err(|e| AppError::Conflict(e.to_string()))?;
+        )
+        .map_err(|e| AppError::Conflict(e.to_string()))?;
 
         // 4. Capability verification: agent must support (database, environment)
         let has_capability = input.agent_databases.iter().any(|cap| {
@@ -90,9 +103,10 @@ impl AgentClaim {
             let op_supported = match request.operation {
                 Operation::MigrateUp | Operation::MigrateDown => {
                     // Migration requires explicit database capability (not wildcard)
-                    input.agent_databases.iter().any(|cap| {
-                        cap.database == request.database || cap.database.is_wildcard()
-                    })
+                    input
+                        .agent_databases
+                        .iter()
+                        .any(|cap| cap.database == request.database || cap.database.is_wildcard())
                 }
                 _ => true,
             };
@@ -105,37 +119,55 @@ impl AgentClaim {
         }
 
         // 5. Migration exclusion: no concurrent migrate on same (db, env)
-        if matches!(request.operation, Operation::MigrateUp | Operation::MigrateDown)
-            && self.agent_repo.has_running_migration(&request.database, &request.environment, &request.id)?
-        {
-            return Err(AppError::Conflict("migration already running for this database".into()));
+        if matches!(
+            request.operation,
+            Operation::MigrateUp | Operation::MigrateDown
+        ) && self.agent_repo.has_running_migration(
+            &request.database,
+            &request.environment,
+            &request.id,
+        )? {
+            return Err(AppError::Conflict(
+                "migration already running for this database".into(),
+            ));
         }
 
         // 7. Resource-level authorization
-        self.authorizer.authorize_scoped(
-            user,
-            Permission::AgentClaim,
-            &request.database,
-            &request.environment,
-            &ResourceContext::AgentExecution { agent_id: input.agent_id.clone() },
-        ).map_err(AppError::Forbidden)?;
+        self.authorizer
+            .authorize_scoped(
+                user,
+                Permission::AgentClaim,
+                &request.database,
+                &request.environment,
+                &ResourceContext::AgentExecution {
+                    agent_id: input.agent_id.clone(),
+                },
+            )
+            .map_err(AppError::Forbidden)?;
 
         // 8. Get execution policy for statement_timeout
-        let exec_policy = self.policy.get_execution_policy(&request.database, &request.environment);
+        let exec_policy = self
+            .policy
+            .get_execution_policy(&request.database, &request.environment);
 
         // 9. Create execution record
         let lease_expires_at = now + chrono::Duration::seconds(300);
 
         // 10. Sign execution token (SHA-256 for detail_hash)
         let detail_hash = sha256_hex(&request.detail);
-        let requester_groups = self.user_repo.get(&request.requester)?
+        let requester_groups = self
+            .user_repo
+            .get(&request.requester)?
             .map(|u| u.groups)
             .unwrap_or_default();
-        let requester_role = self.role_resolver.resolve(
-            &request.requester,
-            dbward_domain::auth::SubjectType::User,
-            &requester_groups,
-        ).ok()
+        let requester_role = self
+            .role_resolver
+            .resolve(
+                &request.requester,
+                dbward_domain::auth::SubjectType::User,
+                &requester_groups,
+            )
+            .ok()
             .and_then(|roles| roles.first().map(|r| r.name.clone()))
             .unwrap_or_else(|| "unknown".into());
         let token = self.token_signer.sign(&ExecutionTokenClaims {
@@ -160,7 +192,8 @@ impl AgentClaim {
             error_message: None,
             created_at: now,
         };
-        self.agent_repo.claim_and_mark_running(&execution, &request.id, now)?
+        self.agent_repo
+            .claim_and_mark_running(&execution, &request.id, now)?
             .then_some(())
             .ok_or_else(|| AppError::Conflict("concurrent status change".into()))?;
 

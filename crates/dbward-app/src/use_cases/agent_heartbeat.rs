@@ -23,28 +23,40 @@ pub struct AgentHeartbeatOutput {
 }
 
 impl AgentHeartbeat {
-    pub fn execute(&self, input: AgentHeartbeatInput, user: &AuthUser) -> Result<AgentHeartbeatOutput, AppError> {
+    pub fn execute(
+        &self,
+        input: AgentHeartbeatInput,
+        user: &AuthUser,
+    ) -> Result<AgentHeartbeatOutput, AppError> {
         // 1. Authorization (global)
-        self.authorizer.authorize_global(user, Permission::AgentHeartbeat)
+        self.authorizer
+            .authorize_global(user, Permission::AgentHeartbeat)
             .map_err(AppError::Forbidden)?;
 
         // 2. Get execution
-        let execution = self.agent_repo.get_execution(&input.execution_id)?
+        let execution = self
+            .agent_repo
+            .get_execution(&input.execution_id)?
             .ok_or_else(|| AppError::NotFound("execution not found".into()))?;
 
         // 3. Resource-level authorization (agent_id match via Authorizer)
-        self.authorizer.authorize_scoped(
-            user,
-            Permission::AgentHeartbeat,
-            &dbward_domain::values::DatabaseName::wildcard(),
-            &dbward_domain::values::Environment::wildcard(),
-            &ResourceContext::AgentExecution { agent_id: execution.agent_id.clone() },
-        ).map_err(AppError::Forbidden)?;
+        self.authorizer
+            .authorize_scoped(
+                user,
+                Permission::AgentHeartbeat,
+                &dbward_domain::values::DatabaseName::wildcard(),
+                &dbward_domain::values::Environment::wildcard(),
+                &ResourceContext::AgentExecution {
+                    agent_id: execution.agent_id.clone(),
+                },
+            )
+            .map_err(AppError::Forbidden)?;
 
         // 4. Verify execution is still active (Claimed = in progress)
         if execution.status != ExecutionStatus::Claimed {
             return Err(AppError::Conflict(format!(
-                "execution is {:?}, cannot heartbeat", execution.status
+                "execution is {:?}, cannot heartbeat",
+                execution.status
             )));
         }
 

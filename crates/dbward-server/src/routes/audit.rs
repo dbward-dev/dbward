@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Extension, Query, State},
     http::StatusCode,
-    Json,
 };
 use chrono::{DateTime, Utc};
 use dbward_app::ports::AuditFilter;
@@ -36,25 +36,30 @@ pub async fn list_events(
         authorizer: state.authorizer.clone(),
         audit_repo: state.audit_repo.clone(),
     };
-    let output = uc.list(
-        AuditListInput {
-            filter: AuditFilter {
-                actor_id: params.actor_id,
-                event_type: params.event_type,
-                event_category: params.event_category,
-                outcome: params.outcome,
-                environment: params.environment,
-                database: params.database,
-                since: params.since,
-                until: params.until,
-                limit: params.limit.unwrap_or(50),
-                offset: params.offset.unwrap_or(0),
+    let output = uc
+        .list(
+            AuditListInput {
+                filter: AuditFilter {
+                    actor_id: params.actor_id,
+                    event_type: params.event_type,
+                    event_category: params.event_category,
+                    outcome: params.outcome,
+                    environment: params.environment,
+                    database: params.database,
+                    since: params.since,
+                    until: params.until,
+                    limit: params.limit.unwrap_or(50),
+                    offset: params.offset.unwrap_or(0),
+                },
             },
-        },
-        &user,
-    ).map_err(map_error)?;
+            &user,
+        )
+        .map_err(map_error)?;
 
-    Ok((StatusCode::OK, Json(serde_json::json!({ "events": output.events }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({ "events": output.events })),
+    ))
 }
 
 pub async fn verify_chain(
@@ -67,9 +72,12 @@ pub async fn verify_chain(
     };
     let output = uc.verify(&user).map_err(map_error)?;
 
-    Ok((StatusCode::OK, Json(serde_json::json!({
-        "total_events": output.total_events,
-        "first_broken_id": output.first_broken_id,
-        "valid": output.first_broken_id.is_none(),
-    }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "total_events": output.total_events,
+            "first_broken_id": output.first_broken_id,
+            "valid": output.first_broken_id.is_none(),
+        })),
+    ))
 }

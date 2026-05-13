@@ -58,9 +58,11 @@ impl AgentConfig {
     }
 
     pub fn agent_id(&self) -> String {
-        self.agent_id
-            .clone()
-            .unwrap_or_else(|| hostname::get().map(|h| h.to_string_lossy().into()).unwrap_or_else(|_| "unknown".into()))
+        self.agent_id.clone().unwrap_or_else(|| {
+            hostname::get()
+                .map(|h| h.to_string_lossy().into())
+                .unwrap_or_else(|_| "unknown".into())
+        })
     }
 
     pub fn poll_interval_ms(&self) -> u64 {
@@ -158,7 +160,10 @@ url = "postgres://localhost/mydb"
 "#;
         let config = AgentConfig::from_toml(toml).unwrap();
         assert_eq!(config.server.url, "http://localhost:8080");
-        assert_eq!(config.agent_id(), hostname::get().unwrap().to_string_lossy().to_string());
+        assert_eq!(
+            config.agent_id(),
+            hostname::get().unwrap().to_string_lossy().to_string()
+        );
     }
 
     #[test]

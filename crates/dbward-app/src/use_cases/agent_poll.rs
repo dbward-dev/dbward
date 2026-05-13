@@ -37,9 +37,14 @@ pub struct PollJob {
 }
 
 impl AgentPoll {
-    pub fn execute(&self, input: AgentPollInput, user: &AuthUser) -> Result<AgentPollOutput, AppError> {
+    pub fn execute(
+        &self,
+        input: AgentPollInput,
+        user: &AuthUser,
+    ) -> Result<AgentPollOutput, AppError> {
         // 1. Authorization
-        self.authorizer.authorize_global(user, Permission::AgentPoll)
+        self.authorizer
+            .authorize_global(user, Permission::AgentPoll)
             .map_err(AppError::Forbidden)?;
 
         // 2. Check if this is a new agent registration
@@ -79,7 +84,9 @@ impl AgentPoll {
         }
 
         // 4. Find dispatched jobs matching capabilities
-        let pairs: Vec<(DatabaseName, Environment)> = input.capabilities.iter()
+        let pairs: Vec<(DatabaseName, Environment)> = input
+            .capabilities
+            .iter()
             .map(|c| (c.database.clone(), c.environment.clone()))
             .collect();
         let mut jobs = self.agent_repo.find_dispatched_jobs(&pairs)?;
@@ -94,14 +101,17 @@ impl AgentPoll {
         jobs.truncate(limit);
 
         // 7. Map to output
-        let poll_jobs = jobs.into_iter().map(|r| PollJob {
-            id: r.id,
-            created_by: r.requester,
-            operation: r.operation,
-            environment: r.environment,
-            database: r.database,
-            detail: r.detail,
-        }).collect();
+        let poll_jobs = jobs
+            .into_iter()
+            .map(|r| PollJob {
+                id: r.id,
+                created_by: r.requester,
+                operation: r.operation,
+                environment: r.environment,
+                database: r.database,
+                detail: r.detail,
+            })
+            .collect();
 
         Ok(AgentPollOutput { jobs: poll_jobs })
     }

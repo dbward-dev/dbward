@@ -31,17 +31,21 @@ impl DatabaseRegistry for SqliteDatabaseRegistry {
 
     fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT name, environment FROM databases")
+        let mut stmt = conn
+            .prepare("SELECT name, environment FROM databases")
             .map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        }).map_err(|e| AppError::Internal(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| AppError::Internal(e.to_string()))?;
 
         let mut results = Vec::new();
         for row in rows {
             let (name, env) = row.map_err(|e| AppError::Internal(e.to_string()))?;
             let db = DatabaseName::new(name).map_err(|e| AppError::Internal(e.to_string()))?;
-            let environment = Environment::new(env).map_err(|e| AppError::Internal(e.to_string()))?;
+            let environment =
+                Environment::new(env).map_err(|e| AppError::Internal(e.to_string()))?;
             results.push((db, environment));
         }
         Ok(results)

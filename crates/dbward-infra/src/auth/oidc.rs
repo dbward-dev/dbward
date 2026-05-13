@@ -23,19 +23,29 @@ struct CachedKeys {
 
 impl CachedKeys {
     fn is_stale(&self) -> bool {
-        self.fetched_at.is_none_or(|t| t.elapsed() > Duration::from_secs(3600))
+        self.fetched_at
+            .is_none_or(|t| t.elapsed() > Duration::from_secs(3600))
     }
 }
 
 impl OidcVerifier {
-    pub fn new(issuer: String, client_id: String, groups_claim: String, jwks_uri: Option<String>) -> Self {
-        let jwks_uri = jwks_uri.unwrap_or_else(|| format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/')));
+    pub fn new(
+        issuer: String,
+        client_id: String,
+        groups_claim: String,
+        jwks_uri: Option<String>,
+    ) -> Self {
+        let jwks_uri = jwks_uri
+            .unwrap_or_else(|| format!("{}/.well-known/jwks.json", issuer.trim_end_matches('/')));
         Self {
             issuer,
             client_id,
             groups_claim,
             jwks_uri,
-            keys: Arc::new(RwLock::new(CachedKeys { keys: Vec::new(), fetched_at: None })),
+            keys: Arc::new(RwLock::new(CachedKeys {
+                keys: Vec::new(),
+                fetched_at: None,
+            })),
         }
     }
 
@@ -52,20 +62,30 @@ impl OidcVerifier {
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .map_err(|e| AuthError::Internal(format!("HTTP client build failed: {e}")))?;
-        let resp = client.get(&self.jwks_uri).send().await
+        let resp = client
+            .get(&self.jwks_uri)
+            .send()
+            .await
             .map_err(|e| AuthError::Internal(format!("JWKS fetch failed: {e}")))?;
-        let jwks: serde_json::Value = resp.json().await
+        let jwks: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| AuthError::Internal(format!("JWKS parse failed: {e}")))?;
 
-        let keys_arr = jwks.get("keys").and_then(|k| k.as_array())
+        let keys_arr = jwks
+            .get("keys")
+            .and_then(|k| k.as_array())
             .ok_or_else(|| AuthError::Internal("JWKS missing keys array".into()))?;
 
         let mut decoding_keys = Vec::new();
         for key in keys_arr {
-            if let (Some(n), Some(e)) = (key.get("n").and_then(|v| v.as_str()), key.get("e").and_then(|v| v.as_str()))
-                && let Ok(dk) = jsonwebtoken::DecodingKey::from_rsa_components(n, e) {
-                    decoding_keys.push(dk);
-                }
+            if let (Some(n), Some(e)) = (
+                key.get("n").and_then(|v| v.as_str()),
+                key.get("e").and_then(|v| v.as_str()),
+            ) && let Ok(dk) = jsonwebtoken::DecodingKey::from_rsa_components(n, e)
+            {
+                decoding_keys.push(dk);
+            }
         }
 
         if decoding_keys.is_empty() {
@@ -81,7 +101,9 @@ impl OidcVerifier {
     async fn try_verify(&self, token: &str) -> Result<(String, Vec<String>), AuthError> {
         let keys = self.keys.read().await;
         if keys.keys.is_empty() {
-            return Err(AuthError::OidcVerificationFailed("JWKS not loaded (fail-closed)".into()));
+            return Err(AuthError::OidcVerificationFailed(
+                "JWKS not loaded (fail-closed)".into(),
+            ));
         }
 
         let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
@@ -95,13 +117,21 @@ impl OidcVerifier {
             match jsonwebtoken::decode::<serde_json::Value>(token, key, &validation) {
                 Ok(token_data) => {
                     let claims = token_data.claims;
-                    let subject = claims.get("sub")
+                    let subject = claims
+                        .get("sub")
                         .and_then(|v| v.as_str())
-                        .ok_or_else(|| AuthError::OidcVerificationFailed("missing sub claim".into()))?
+                        .ok_or_else(|| {
+                            AuthError::OidcVerificationFailed("missing sub claim".into())
+                        })?
                         .to_string();
-                    let groups: Vec<String> = claims.get(&self.groups_claim)
+                    let groups: Vec<String> = claims
+                        .get(&self.groups_claim)
                         .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     return Ok((subject, groups));
                 }

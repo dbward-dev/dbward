@@ -1,9 +1,11 @@
 use axum::{
+    Json,
     extract::{Extension, Path, State},
     http::StatusCode,
-    Json,
 };
-use dbward_app::use_cases::webhook_manage::{WebhookCreateInput, WebhookDeleteInput, WebhookManage, WebhookUpdateInput};
+use dbward_app::use_cases::webhook_manage::{
+    WebhookCreateInput, WebhookDeleteInput, WebhookManage, WebhookUpdateInput,
+};
 use dbward_domain::auth::AuthUser;
 use serde::Deserialize;
 
@@ -47,15 +49,17 @@ pub async fn create(
     Json(body): Json<CreateBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     let uc = make_uc(&state);
-    let webhook = uc.create(
-        WebhookCreateInput {
-            url: body.url,
-            events: body.events,
-            format: body.format,
-            secret: body.secret,
-        },
-        &user,
-    ).map_err(map_error)?;
+    let webhook = uc
+        .create(
+            WebhookCreateInput {
+                url: body.url,
+                events: body.events,
+                format: body.format,
+                secret: body.secret,
+            },
+            &user,
+        )
+        .map_err(map_error)?;
 
     Ok((StatusCode::CREATED, Json(serde_json::json!(webhook))))
 }
@@ -66,7 +70,10 @@ pub async fn list(
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     let uc = make_uc(&state);
     let webhooks = uc.list(&user).map_err(map_error)?;
-    Ok((StatusCode::OK, Json(serde_json::json!({ "webhooks": webhooks }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({ "webhooks": webhooks })),
+    ))
 }
 
 pub async fn get(
@@ -86,16 +93,18 @@ pub async fn update(
     Json(body): Json<UpdateBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     let uc = make_uc(&state);
-    let webhook = uc.update(
-        WebhookUpdateInput {
-            id,
-            url: body.url,
-            events: body.events,
-            format: body.format,
-            secret: body.secret,
-        },
-        &user,
-    ).map_err(map_error)?;
+    let webhook = uc
+        .update(
+            WebhookUpdateInput {
+                id,
+                url: body.url,
+                events: body.events,
+                format: body.format,
+                secret: body.secret,
+            },
+            &user,
+        )
+        .map_err(map_error)?;
 
     Ok((StatusCode::OK, Json(serde_json::json!(webhook))))
 }
@@ -106,6 +115,7 @@ pub async fn delete(
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     let uc = make_uc(&state);
-    uc.delete(WebhookDeleteInput { id }, &user).map_err(map_error)?;
+    uc.delete(WebhookDeleteInput { id }, &user)
+        .map_err(map_error)?;
     Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
 }

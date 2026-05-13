@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use dbward_api_types::agent::{ClaimResponse, Job, ResultBody};
@@ -9,10 +9,10 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use sha2::{Digest, Sha256};
 use tracing::{debug, error, info, warn};
 
+use crate::AgentError;
 use crate::cancel::CancelToken;
 use crate::client::AgentClient;
 use crate::config::DatabaseEntry;
-use crate::AgentError;
 
 pub struct JobExecutor {
     pub client: Arc<AgentClient>,
@@ -23,7 +23,11 @@ pub struct JobExecutor {
 }
 
 impl JobExecutor {
-    pub async fn execute_job(&self, job: Job, _draining: Arc<AtomicBool>) -> Result<(), AgentError> {
+    pub async fn execute_job(
+        &self,
+        job: Job,
+        _draining: Arc<AtomicBool>,
+    ) -> Result<(), AgentError> {
         let claim = match self.client.claim(&job.id).await {
             Ok(c) => c,
             Err(AgentError::AlreadyClaimed) => {
@@ -44,7 +48,9 @@ impl JobExecutor {
             ))
         })?;
 
-        let timeout_secs = claim.statement_timeout_secs.unwrap_or(self.statement_timeout_secs);
+        let timeout_secs = claim
+            .statement_timeout_secs
+            .unwrap_or(self.statement_timeout_secs);
         let is_migration = claim.operation.starts_with("migrate");
 
         // CancelState shared between driver and heartbeat
@@ -81,7 +87,8 @@ impl JobExecutor {
         });
 
         let sql = extract_sql(&claim.detail, &claim.operation);
-        let result = run_cancellable(driver, &claim.operation, &sql, timeout_secs, &cancel_state).await;
+        let result =
+            run_cancellable(driver, &claim.operation, &sql, timeout_secs, &cancel_state).await;
 
         heartbeat_handle.abort();
 
@@ -112,11 +119,13 @@ impl JobExecutor {
         let token: serde_json::Value = serde_json::from_str(&claim.execution_token)
             .map_err(|e| AgentError::TokenVerification(format!("invalid token JSON: {e}")))?;
 
-        let sig_hex = token.get("signature")
+        let sig_hex = token
+            .get("signature")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AgentError::TokenVerification("missing signature".into()))?;
 
-        let expires_at = token.get("expires_at")
+        let expires_at = token
+            .get("expires_at")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AgentError::TokenVerification("missing expires_at".into()))?;
         let exp_time = chrono::DateTime::parse_from_rfc3339(expires_at)
@@ -142,7 +151,8 @@ impl JobExecutor {
             return Err(AgentError::TokenVerification("environment mismatch".into()));
         }
 
-        let expected_hash = token.get("detail_hash")
+        let expected_hash = token
+            .get("detail_hash")
             .and_then(|v| v.as_str())
             .ok_or_else(|| AgentError::TokenVerification("missing detail_hash".into()))?;
         let actual_hash = hex::encode(Sha256::digest(claim.detail.as_bytes()));
@@ -150,13 +160,24 @@ impl JobExecutor {
             return Err(AgentError::TokenVerification("detail_hash mismatch".into()));
         }
 
-        let requester_role = token.get("requester_role").and_then(|v| v.as_str()).unwrap_or("");
-        let requester_subject = token.get("requester_subject_id").and_then(|v| v.as_str()).unwrap_or("");
+        let requester_role = token
+            .get("requester_role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let requester_subject = token
+            .get("requester_subject_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let message = format!(
             "{}|{}|{}|{}|{}|{}|{}|{}",
-            claim.request_id, claim.operation, claim.environment,
-            claim.database, expected_hash, expires_at,
-            requester_role, requester_subject,
+            claim.request_id,
+            claim.operation,
+            claim.environment,
+            claim.database,
+            expected_hash,
+            expires_at,
+            requester_role,
+            requester_subject,
         );
 
         let sig_bytes = hex::decode(sig_hex)
@@ -186,7 +207,11 @@ impl JobExecutor {
                         error!(execution_id, "result submission failed after retries: {e}");
                         return;
                     }
-                    warn!(execution_id, delay_ms = delay.as_millis(), "submit retry: {e}");
+                    warn!(
+                        execution_id,
+                        delay_ms = delay.as_millis(),
+                        "submit retry: {e}"
+                    );
                     tokio::time::sleep(delay).await;
                     delay = (delay * 2).min(max_delay);
                 }
@@ -230,10 +255,13 @@ async fn do_execute(
                 "rows": output.rows,
                 "truncated": output.truncated,
                 "truncation_reason": output.truncation_reason,
-            })).unwrap())
+            }))
+            .unwrap())
         }
         _ => {
-            let affected = driver.execute_cancellable(sql, timeout_secs, cancel).await?;
+            let affected = driver
+                .execute_cancellable(sql, timeout_secs, cancel)
+                .await?;
             Ok(serde_json::to_string(&serde_json::json!({ "rows_affected": affected })).unwrap())
         }
     }

@@ -20,7 +20,9 @@ pub enum RequestAction {
         #[arg(long)]
         user: Option<String>,
     },
-    Show { id: String },
+    Show {
+        id: String,
+    },
     Approve {
         id: String,
         #[arg(long)]
@@ -43,7 +45,9 @@ pub enum RequestAction {
         #[arg(long)]
         no_save: bool,
     },
-    Result { id: String },
+    Result {
+        id: String,
+    },
 }
 
 pub async fn run_request(
@@ -54,19 +58,49 @@ pub async fn run_request(
     environment: Option<&str>,
 ) -> Result<(), CliError> {
     match action {
-        RequestAction::Approve { id, comment } => run_approve(sc, json_output, &id, comment.as_deref()).await,
-        RequestAction::Reject { id, reason } => run_reject(sc, json_output, &id, reason.as_deref()).await,
-        RequestAction::Cancel { id, reason } => run_cancel(sc, json_output, &id, reason.as_deref()).await,
-        RequestAction::List { limit, status, pending_for_me, user } => {
-            run_list(sc, json_output, limit, status.as_deref(), pending_for_me, user.as_deref(), database, environment).await
+        RequestAction::Approve { id, comment } => {
+            run_approve(sc, json_output, &id, comment.as_deref()).await
+        }
+        RequestAction::Reject { id, reason } => {
+            run_reject(sc, json_output, &id, reason.as_deref()).await
+        }
+        RequestAction::Cancel { id, reason } => {
+            run_cancel(sc, json_output, &id, reason.as_deref()).await
+        }
+        RequestAction::List {
+            limit,
+            status,
+            pending_for_me,
+            user,
+        } => {
+            run_list(
+                sc,
+                json_output,
+                limit,
+                status.as_deref(),
+                pending_for_me,
+                user.as_deref(),
+                database,
+                environment,
+            )
+            .await
         }
         RequestAction::Show { id } => run_show(sc, json_output, &id).await,
-        RequestAction::Resume { id, output, no_save } => run_resume(sc, json_output, &id, output.as_deref(), no_save).await,
+        RequestAction::Resume {
+            id,
+            output,
+            no_save,
+        } => run_resume(sc, json_output, &id, output.as_deref(), no_save).await,
         RequestAction::Result { id } => run_result(sc, json_output, &id).await,
     }
 }
 
-async fn run_approve(sc: &ServerClient, json_output: bool, id: &str, comment: Option<&str>) -> Result<(), CliError> {
+async fn run_approve(
+    sc: &ServerClient,
+    json_output: bool,
+    id: &str,
+    comment: Option<&str>,
+) -> Result<(), CliError> {
     match sc.approve(id, comment).await {
         Ok(body) => {
             if json_output {
@@ -77,34 +111,60 @@ async fn run_approve(sc: &ServerClient, json_output: bool, id: &str, comment: Op
             Ok(())
         }
         Err(e) => {
-            if e.status == 404 { return Err(CliError::Server(format!("Request {id} not found"))); }
-            let body_lower = e.body.to_lowercase();
-            if e.status == 409 && (body_lower.contains("already approved") || body_lower.contains("already dispatched")) {
-                return Err(CliError::Server(format!("Request is already approved. Run: dbward request resume {id}")));
+            if e.status == 404 {
+                return Err(CliError::Server(format!("Request {id} not found")));
             }
-            if e.status == 403 { return Err(CliError::Server(e.body)); }
+            let body_lower = e.body.to_lowercase();
+            if e.status == 409
+                && (body_lower.contains("already approved")
+                    || body_lower.contains("already dispatched"))
+            {
+                return Err(CliError::Server(format!(
+                    "Request is already approved. Run: dbward request resume {id}"
+                )));
+            }
+            if e.status == 403 {
+                return Err(CliError::Server(e.body));
+            }
             Err(e.into_cli_error("approve"))
         }
     }
 }
 
-async fn run_reject(sc: &ServerClient, json_output: bool, id: &str, reason: Option<&str>) -> Result<(), CliError> {
+async fn run_reject(
+    sc: &ServerClient,
+    json_output: bool,
+    id: &str,
+    reason: Option<&str>,
+) -> Result<(), CliError> {
     match sc.reject(id, reason).await {
         Ok(body) => {
-            if json_output { println!("{}", serde_json::to_string_pretty(&body)?); }
-            else { println!("Rejected: {id}"); }
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&body)?);
+            } else {
+                println!("Rejected: {id}");
+            }
             Ok(())
         }
         Err(e) => {
-            if e.status == 404 { return Err(CliError::Server(format!("Request {id} not found"))); }
-            if e.status == 403 { return Err(CliError::Server(e.body)); }
+            if e.status == 404 {
+                return Err(CliError::Server(format!("Request {id} not found")));
+            }
+            if e.status == 403 {
+                return Err(CliError::Server(e.body));
+            }
             Err(e.into_cli_error("reject"))
         }
     }
 }
 
 #[allow(clippy::collapsible_if)]
-async fn run_cancel(sc: &ServerClient, json_output: bool, id: &str, reason: Option<&str>) -> Result<(), CliError> {
+async fn run_cancel(
+    sc: &ServerClient,
+    json_output: bool,
+    id: &str,
+    reason: Option<&str>,
+) -> Result<(), CliError> {
     let req_info = sc.get_json(&format!("/api/requests/{id}")).await;
     if !json_output {
         if let Ok(info) = &req_info {
@@ -123,42 +183,75 @@ async fn run_cancel(sc: &ServerClient, json_output: bool, id: &str, reason: Opti
     }
     match sc.cancel_request(id, reason).await {
         Ok(body) => {
-            if json_output { println!("{}", serde_json::to_string_pretty(&body)?); }
-            else { println!("Cancelled: {id}"); }
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&body)?);
+            } else {
+                println!("Cancelled: {id}");
+            }
             Ok(())
         }
         Err(e) => {
-            if e.status == 404 { return Err(CliError::Server(format!("Request {id} not found"))); }
-            if e.status == 403 { return Err(CliError::Server(e.body)); }
+            if e.status == 404 {
+                return Err(CliError::Server(format!("Request {id} not found")));
+            }
+            if e.status == 403 {
+                return Err(CliError::Server(e.body));
+            }
             Err(e.into_cli_error("cancel"))
         }
     }
 }
 
-async fn run_list(sc: &ServerClient, json_output: bool, limit: Option<u32>, status: Option<&str>, pending_for_me: bool, user: Option<&str>, database: Option<&str>, environment: Option<&str>) -> Result<(), CliError> {
+async fn run_list(
+    sc: &ServerClient,
+    json_output: bool,
+    limit: Option<u32>,
+    status: Option<&str>,
+    pending_for_me: bool,
+    user: Option<&str>,
+    database: Option<&str>,
+    environment: Option<&str>,
+) -> Result<(), CliError> {
     let body = if pending_for_me {
         sc.list_pending_for_me(limit).await?
     } else {
-        sc.list_requests(limit, status, database, environment, user).await?
+        sc.list_requests(limit, status, database, environment, user)
+            .await?
     };
     if json_output {
         println!("{}", serde_json::to_string_pretty(&body)?);
         return Ok(());
     }
     let empty = vec![];
-    let requests = body["requests"].as_array().or_else(|| body.as_array()).unwrap_or(&empty);
-    if requests.is_empty() { println!("No requests."); } else { print_request_list(requests); }
+    let requests = body["requests"]
+        .as_array()
+        .or_else(|| body.as_array())
+        .unwrap_or(&empty);
+    if requests.is_empty() {
+        println!("No requests.");
+    } else {
+        print_request_list(requests);
+    }
     Ok(())
 }
 
 async fn run_show(sc: &ServerClient, json_output: bool, id: &str) -> Result<(), CliError> {
     let body = sc.get_request(id).await?;
-    if json_output { println!("{}", serde_json::to_string_pretty(&body)?); }
-    else { print_request_detail(&body); }
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else {
+        print_request_detail(&body);
+    }
     Ok(())
 }
 
-async fn run_resume(sc: &ServerClient, json_output: bool, id: &str, output: Option<&std::path::Path>, no_save: bool) -> Result<(), CliError> {
+async fn run_resume(
+    sc: &ServerClient,
+    json_output: bool,
+    id: &str,
+    output: Option<&std::path::Path>,
+    no_save: bool,
+) -> Result<(), CliError> {
     // DML re-dispatch warning
     let req = sc.get_request(id).await?;
     let status = req["status"].as_str().unwrap_or("");
@@ -189,8 +282,11 @@ async fn run_resume(sc: &ServerClient, json_output: bool, id: &str, output: Opti
         return Err(e.into_cli_error("dispatch"));
     }
     let resp = sc.wait_for_result(id).await?;
-    if json_output { println!("{}", serde_json::to_string_pretty(&resp)?); }
-    else { print_execution_result(&resp); }
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        print_execution_result(&resp);
+    }
     save_result(id, &resp, output, no_save);
     Ok(())
 }
@@ -198,13 +294,17 @@ async fn run_resume(sc: &ServerClient, json_output: bool, id: &str, output: Opti
 async fn run_result(sc: &ServerClient, json_output: bool, id: &str) -> Result<(), CliError> {
     match load_result(id) {
         Ok(resp) => {
-            if json_output { println!("{}", serde_json::to_string_pretty(&resp)?); }
-            else { print_execution_result(&resp); }
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                print_execution_result(&resp);
+            }
         }
         Err(_) => {
             let resp = sc.get_result_content(id).await?;
-            if json_output { println!("{}", serde_json::to_string_pretty(&resp)?); }
-            else {
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
                 let wrapped = serde_json::json!({"success": true, "result": resp});
                 print_execution_result(&wrapped);
             }

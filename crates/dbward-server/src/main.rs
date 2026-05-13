@@ -23,12 +23,10 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    if let Err(e) = dbward_server::run_from_args(
-        &args.listen,
-        &args.data,
-        &args.config,
-        args.dev_bootstrap,
-    ).await {
+    if let Err(e) =
+        dbward_server::run_from_args(&args.listen, &args.data, &args.config, args.dev_bootstrap)
+            .await
+    {
         eprintln!("Error: {e}");
         std::process::exit(1);
     }

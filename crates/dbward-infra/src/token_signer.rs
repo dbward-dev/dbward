@@ -13,7 +13,10 @@ impl Ed25519TokenSigner {
         let signing_key = if key_path.exists() {
             let bytes = std::fs::read(&key_path)?;
             if bytes.len() != 32 {
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid key length"));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "invalid key length",
+                ));
             }
             let mut arr = [0u8; 32];
             arr.copy_from_slice(&bytes);
@@ -62,9 +65,14 @@ impl TokenSigner for Ed25519TokenSigner {
         // Use token_message_v2 format: req|op|env|db|hash|expires|role|subject
         let message = format!(
             "{}|{}|{}|{}|{}|{}|{}|{}",
-            claims.request_id, claims.operation, claims.environment,
-            claims.database, detail_hash, expires_at,
-            claims.requester_role, claims.requester,
+            claims.request_id,
+            claims.operation,
+            claims.environment,
+            claims.database,
+            detail_hash,
+            expires_at,
+            claims.requester_role,
+            claims.requester,
         );
         let signature = self.signing_key.sign(message.as_bytes());
 
@@ -80,7 +88,8 @@ impl TokenSigner for Ed25519TokenSigner {
             "signature": hex::encode(signature.to_bytes()),
             "requester_role": claims.requester_role,
             "requester_subject_id": claims.requester,
-        }).to_string()
+        })
+        .to_string()
     }
 
     fn public_key_hex(&self) -> String {
@@ -157,11 +166,20 @@ mod tests {
         let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes.try_into().unwrap());
         let message = format!(
             "{}|{}|{}|{}|{}|{}|{}|{}",
-            v["request_id"].as_str().unwrap(), v["operation"].as_str().unwrap(),
-            v["environment"].as_str().unwrap(), v["database"].as_str().unwrap(),
-            v["detail_hash"].as_str().unwrap(), v["expires_at"].as_str().unwrap(),
-            v["requester_role"].as_str().unwrap(), v["requester_subject_id"].as_str().unwrap(),
+            v["request_id"].as_str().unwrap(),
+            v["operation"].as_str().unwrap(),
+            v["environment"].as_str().unwrap(),
+            v["database"].as_str().unwrap(),
+            v["detail_hash"].as_str().unwrap(),
+            v["expires_at"].as_str().unwrap(),
+            v["requester_role"].as_str().unwrap(),
+            v["requester_subject_id"].as_str().unwrap(),
         );
-        assert!(signer.public_key().verify(message.as_bytes(), &signature).is_ok());
+        assert!(
+            signer
+                .public_key()
+                .verify(message.as_bytes(), &signature)
+                .is_ok()
+        );
     }
 }

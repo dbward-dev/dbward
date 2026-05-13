@@ -12,7 +12,6 @@ pub enum DeliveryMode {
     Stream,
 }
 
-
 /// Controls how results are stored and who can access them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResultPolicy {

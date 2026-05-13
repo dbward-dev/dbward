@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::Duration;
 use tokio::task::JoinSet;
-use tokio::time::{interval, interval_at, Duration as TokioDuration, Instant};
+use tokio::time::{Duration as TokioDuration, Instant, interval, interval_at};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -43,7 +43,11 @@ pub fn spawn_background_tasks(
     set.spawn(lease_reclaim_loop(state.clone(), shutdown.clone()));
     set.spawn(ttl_expiry_loop(state.clone(), shutdown.clone()));
     set.spawn(dispatch_timeout_loop(state.clone(), shutdown.clone()));
-    set.spawn(record_purge_loop(state.clone(), shutdown.clone(), retention));
+    set.spawn(record_purge_loop(
+        state.clone(),
+        shutdown.clone(),
+        retention,
+    ));
     set.spawn(wal_checkpoint_loop(state.clone(), shutdown.clone()));
 
     // Bridge: when draining is set externally, also cancel background tasks
@@ -94,7 +98,10 @@ pub(crate) async fn run_lease_reclaim_once(state: &AppState) -> TickResult {
 
     for (exec_id, req_id) in expired {
         let audit = make_audit_event("execution_lost", EventCategory::Agent, &req_id);
-        match state.agent_repo.mark_execution_lost_and_record(&exec_id, &req_id, &audit, &now_str) {
+        match state
+            .agent_repo
+            .mark_execution_lost_and_record(&exec_id, &req_id, &audit, &now_str)
+        {
             Ok(true) => {
                 result.processed += 1;
                 emit_webhook(state, "execution_lost", &req_id);
@@ -135,7 +142,10 @@ pub(crate) async fn run_ttl_expiry_once(state: &AppState) -> TickResult {
         Ok(ids) => {
             for id in ids {
                 let audit = make_audit_event("request_expired", EventCategory::Approval, &id);
-                match state.request_repo.mark_expired_and_record(&id, &audit, &now_str) {
+                match state
+                    .request_repo
+                    .mark_expired_and_record(&id, &audit, &now_str)
+                {
                     Ok(true) => {
                         result.processed += 1;
                         emit_webhook(state, "request_expired", &id);
@@ -159,7 +169,10 @@ pub(crate) async fn run_ttl_expiry_once(state: &AppState) -> TickResult {
         Ok(ids) => {
             for id in ids {
                 let audit = make_audit_event("request_expired", EventCategory::Approval, &id);
-                match state.request_repo.mark_expired_and_record(&id, &audit, &now_str) {
+                match state
+                    .request_repo
+                    .mark_expired_and_record(&id, &audit, &now_str)
+                {
                     Ok(true) => {
                         result.processed += 1;
                         emit_webhook(state, "request_expired", &id);
@@ -214,7 +227,10 @@ pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
     };
 
     for id in ids {
-        match state.request_repo.mark_approved_from_dispatched(&id, &now_str) {
+        match state
+            .request_repo
+            .mark_approved_from_dispatched(&id, &now_str)
+        {
             Ok(true) => {
                 result.processed += 1;
                 emit_audit(state, "dispatch_timeout", EventCategory::Approval, &id);
@@ -231,7 +247,11 @@ pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
 
 // --- Record Purge ---
 
-async fn record_purge_loop(state: AppState, shutdown: CancellationToken, retention: RetentionConfig) {
+async fn record_purge_loop(
+    state: AppState,
+    shutdown: CancellationToken,
+    retention: RetentionConfig,
+) {
     // Delay first execution by one interval
     let start = Instant::now() + RECORD_PURGE_INTERVAL;
     let mut ticker = interval_at(start, RECORD_PURGE_INTERVAL);
@@ -246,7 +266,10 @@ async fn record_purge_loop(state: AppState, shutdown: CancellationToken, retenti
     }
 }
 
-pub(crate) async fn run_record_purge_once(state: &AppState, retention: &RetentionConfig) -> TickResult {
+pub(crate) async fn run_record_purge_once(
+    state: &AppState,
+    retention: &RetentionConfig,
+) -> TickResult {
     let mut result = TickResult::default();
     let now = state.clock.now();
     let request_cutoff = (now - Duration::days(retention.request_ttl_days as i64)).to_rfc3339();
@@ -254,20 +277,44 @@ pub(crate) async fn run_record_purge_once(state: &AppState, retention: &Retentio
 
     // Revoked tokens
     match state.token_repo.purge_revoked(&request_cutoff) {
-        Ok(n) => { if n > 0 { result.processed += n; info!(task = "record_purge", count = n, "purged revoked tokens"); } }
-        Err(e) => { result.failed += 1; error!(task = "record_purge", error = %e, "purge_revoked failed"); }
+        Ok(n) => {
+            if n > 0 {
+                result.processed += n;
+                info!(task = "record_purge", count = n, "purged revoked tokens");
+            }
+        }
+        Err(e) => {
+            result.failed += 1;
+            error!(task = "record_purge", error = %e, "purge_revoked failed");
+        }
     }
 
     // Old audit events
     match state.audit_repo.purge_old(&audit_cutoff) {
-        Ok(n) => { if n > 0 { result.processed += n; info!(task = "record_purge", count = n, "purged old audit events"); } }
-        Err(e) => { result.failed += 1; error!(task = "record_purge", error = %e, "purge_old audit failed"); }
+        Ok(n) => {
+            if n > 0 {
+                result.processed += n;
+                info!(task = "record_purge", count = n, "purged old audit events");
+            }
+        }
+        Err(e) => {
+            result.failed += 1;
+            error!(task = "record_purge", error = %e, "purge_old audit failed");
+        }
     }
 
     // Old requests
     match state.request_repo.purge_old_requests(&request_cutoff) {
-        Ok(n) => { if n > 0 { result.processed += n; info!(task = "record_purge", count = n, "purged old requests"); } }
-        Err(e) => { result.failed += 1; error!(task = "record_purge", error = %e, "purge_old_requests failed"); }
+        Ok(n) => {
+            if n > 0 {
+                result.processed += n;
+                info!(task = "record_purge", count = n, "purged old requests");
+            }
+        }
+        Err(e) => {
+            result.failed += 1;
+            error!(task = "record_purge", error = %e, "purge_old_requests failed");
+        }
     }
 
     // Expired results (storage delete → DB delete)
@@ -293,7 +340,10 @@ pub(crate) async fn run_record_purge_once(state: &AppState, retention: &Retentio
                 }
             }
         }
-        Err(e) => { result.failed += 1; error!(task = "record_purge", error = %e, "find_expired_results failed"); }
+        Err(e) => {
+            result.failed += 1;
+            error!(task = "record_purge", error = %e, "find_expired_results failed");
+        }
     }
 
     result

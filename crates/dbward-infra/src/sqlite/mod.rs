@@ -20,9 +20,9 @@ pub use token_repo::SqliteTokenRepo;
 pub use user_repo::SqliteUserRepo;
 pub use webhook_repo::SqliteWebhookRepo;
 
+use rusqlite::Connection;
 use std::sync::Arc;
 use std::sync::Mutex;
-use rusqlite::Connection;
 
 /// Shared SQLite connection handle used by all repos.
 pub type DbConn = Arc<Mutex<Connection>>;

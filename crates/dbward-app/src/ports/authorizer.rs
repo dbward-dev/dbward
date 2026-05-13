@@ -38,11 +38,7 @@ pub trait Authorizer: Send + Sync {
     ) -> Result<(), AuthzError>;
 
     /// Global operations (workflow.manage, user.manage, etc. No DB scope.)
-    fn authorize_global(
-        &self,
-        user: &AuthUser,
-        permission: Permission,
-    ) -> Result<(), AuthzError>;
+    fn authorize_global(&self, user: &AuthUser, permission: Permission) -> Result<(), AuthzError>;
 }
 
 /// Policy evaluation: workflow matching + execution policy lookup.

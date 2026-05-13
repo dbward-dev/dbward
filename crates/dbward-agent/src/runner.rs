@@ -1,17 +1,17 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use dbward_api_types::agent::{AgentStatusReport, PollRequest};
 use dbward_driver::DatabaseDriver;
 use tracing::{error, info, warn};
 
+use crate::AgentError;
 use crate::client::AgentClient;
 use crate::config::{AgentConfig, DatabaseEntry};
 use crate::executor::JobExecutor;
 use crate::probes::ProbeGuard;
-use crate::AgentError;
 
 struct InFlightGuard {
     counter: Arc<AtomicU32>,
@@ -42,7 +42,10 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
 
     info!(agent_id, "starting agent");
 
-    let client = Arc::new(AgentClient::new(&config.server.url, &config.server.agent_token)?);
+    let client = Arc::new(AgentClient::new(
+        &config.server.url,
+        &config.server.agent_token,
+    )?);
 
     // Fail-fast: fetch public key
     let public_key = client.fetch_public_key().await?;

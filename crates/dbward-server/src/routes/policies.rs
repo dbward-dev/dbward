@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Extension, Path, State},
     http::StatusCode,
-    Json,
 };
 use dbward_app::use_cases::policy_manage::PolicyManage;
 use dbward_domain::auth::{AuthUser, RoleDefinition};
@@ -36,7 +36,10 @@ pub async fn list_workflows(
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     let uc = make_uc(&state);
     let workflows = uc.list_workflows(&user).map_err(map_error)?;
-    Ok((StatusCode::OK, Json(serde_json::json!({ "workflows": workflows }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({ "workflows": workflows })),
+    ))
 }
 
 pub async fn delete_workflow(
@@ -65,7 +68,10 @@ pub async fn list_execution_policies(
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     let uc = make_uc(&state);
     let policies = uc.list_execution_policies(&user).map_err(map_error)?;
-    Ok((StatusCode::OK, Json(serde_json::json!({ "execution_policies": policies }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({ "execution_policies": policies })),
+    ))
 }
 
 pub async fn delete_execution_policy(

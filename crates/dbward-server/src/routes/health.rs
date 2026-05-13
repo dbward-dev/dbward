@@ -1,6 +1,10 @@
 use std::sync::atomic::Ordering;
 
-use axum::{extract::{Extension, State}, http::StatusCode, Json};
+use axum::{
+    Json,
+    extract::{Extension, State},
+    http::StatusCode,
+};
 use dbward_domain::auth::{AuthUser, SubjectType};
 
 use crate::state::AppState;
@@ -25,7 +29,12 @@ pub async fn public_key(
     Extension(user): Extension<AuthUser>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if user.subject_type != SubjectType::Agent {
-        return Err((StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "agent token required", "code": "forbidden"}))));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "agent token required", "code": "forbidden"})),
+        ));
     }
-    Ok(Json(serde_json::json!({"public_key": state.token_signer.public_key_hex()})))
+    Ok(Json(
+        serde_json::json!({"public_key": state.token_signer.public_key_hex()}),
+    ))
 }

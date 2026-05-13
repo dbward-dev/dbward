@@ -43,7 +43,8 @@ impl TokenRepo for SqliteTokenRepo {
         let mut stmt = conn.prepare(
             "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE token_prefix = ?1 AND status = 'active'",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt.query_map(rusqlite::params![prefix], row_to_token)
+        let rows = stmt
+            .query_map(rusqlite::params![prefix], row_to_token)
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
         use subtle::ConstantTimeEq;
@@ -61,8 +62,11 @@ impl TokenRepo for SqliteTokenRepo {
         let mut stmt = conn.prepare(
             "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt.query_map([], row_to_token).map_err(|e| AppError::Internal(e.to_string()))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| AppError::Internal(e.to_string()))
+        let rows = stmt
+            .query_map([], row_to_token)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Internal(e.to_string()))
     }
 
     fn get(&self, token_id: &str) -> Result<Option<Token>, AppError> {
@@ -98,17 +102,24 @@ impl TokenRepo for SqliteTokenRepo {
 
     fn count_active(&self) -> Result<u32, AppError> {
         let conn = self.conn.lock().unwrap();
-        let count: u32 = conn.query_row("SELECT COUNT(*) FROM tokens WHERE status = 'active'", [], |row| row.get(0))
+        let count: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tokens WHERE status = 'active'",
+                [],
+                |row| row.get(0),
+            )
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(count)
     }
 
     fn purge_revoked(&self, before: &str) -> Result<u32, AppError> {
         let conn = self.conn.lock().unwrap();
-        let n = conn.execute(
-            "DELETE FROM tokens WHERE status = 'revoked' AND revoked_at < ?1",
-            rusqlite::params![before],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        let n = conn
+            .execute(
+                "DELETE FROM tokens WHERE status = 'revoked' AND revoked_at < ?1",
+                rusqlite::params![before],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(n as u32)
     }
 }
@@ -160,8 +171,18 @@ fn row_to_token(row: &rusqlite::Row) -> rusqlite::Result<Token> {
         groups: serde_json::from_str(&groups_json).unwrap_or_default(),
         name: row.get(7)?,
         status: parse_token_status(&status_s),
-        expires_at: expires_str.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-        created_at: DateTime::parse_from_rfc3339(&created_str).unwrap().with_timezone(&Utc),
-        revoked_at: revoked_str.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
+        expires_at: expires_str.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .ok()
+                .map(|d| d.with_timezone(&Utc))
+        }),
+        created_at: DateTime::parse_from_rfc3339(&created_str)
+            .unwrap()
+            .with_timezone(&Utc),
+        revoked_at: revoked_str.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .ok()
+                .map(|d| d.with_timezone(&Utc))
+        }),
     })
 }

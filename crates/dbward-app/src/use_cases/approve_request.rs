@@ -3,8 +3,10 @@ use std::sync::Arc;
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Approval, ApprovalAction, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
+use dbward_domain::services::status_machine::{
+    self, EventMetadata, RequestTrigger, TransitionContext,
+};
 use dbward_domain::services::{approval_checker, workflow_matcher};
-use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
 
 use crate::error::{AppError, AuthzError};
 use crate::ports::*;
@@ -32,27 +34,38 @@ pub struct ApproveRequestOutput {
 }
 
 impl ApproveRequest {
-    pub fn execute(&self, input: ApproveRequestInput, user: &AuthUser) -> Result<ApproveRequestOutput, AppError> {
+    pub fn execute(
+        &self,
+        input: ApproveRequestInput,
+        user: &AuthUser,
+    ) -> Result<ApproveRequestOutput, AppError> {
         // 0. Input validation
         if let Some(ref c) = input.comment {
             if c.len() > 1024 {
-                return Err(AppError::Validation("comment too long (max 1024 bytes)".into()));
+                return Err(AppError::Validation(
+                    "comment too long (max 1024 bytes)".into(),
+                ));
             }
         }
 
         // 1. Get request
-        let request = self.request_repo.get(&input.request_id)?
+        let request = self
+            .request_repo
+            .get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
         // 2. Status check
         if request.status != RequestStatus::Pending {
             return Err(AppError::Conflict(format!(
-                "request is {}, expected pending", request.status.as_str()
+                "request is {}, expected pending",
+                request.status.as_str()
             )));
         }
 
         // 3. Parse workflow snapshot (fail-closed: all pending requests have a workflow)
-        let workflow: Workflow = request.workflow_snapshot_json.as_deref()
+        let workflow: Workflow = request
+            .workflow_snapshot_json
+            .as_deref()
             .and_then(|json| serde_json::from_str(json).ok())
             .ok_or_else(|| AppError::Conflict("request has no approval workflow".into()))?;
 
@@ -70,25 +83,28 @@ impl ApproveRequest {
         let step = &workflow.steps[current_step_index as usize];
 
         // 6. Authorization: scoped permission + approval_checker
-        let previous_approver_ids: Vec<String> = approvals.iter()
+        let previous_approver_ids: Vec<String> = approvals
+            .iter()
             .filter(|a| a.step_index < current_step_index && a.action == ApprovalAction::Approve)
             .map(|a| a.actor_id.clone())
             .collect();
 
-        self.authorizer.authorize_scoped(
-            user,
-            Permission::RequestApprove,
-            &request.database,
-            &request.environment,
-            &ResourceContext::ApprovalStep {
-                requester_id: request.requester.clone(),
-                step_index: current_step_index,
-                approvers: step.approvers.clone(),
-                allow_self_approve: workflow.allow_self_approve,
-                allow_same_approver_across_steps: workflow.allow_same_approver_across_steps,
-                previous_approver_ids: previous_approver_ids.clone(),
-            },
-        ).map_err(AppError::Forbidden)?;
+        self.authorizer
+            .authorize_scoped(
+                user,
+                Permission::RequestApprove,
+                &request.database,
+                &request.environment,
+                &ResourceContext::ApprovalStep {
+                    requester_id: request.requester.clone(),
+                    step_index: current_step_index,
+                    approvers: step.approvers.clone(),
+                    allow_self_approve: workflow.allow_self_approve,
+                    allow_same_approver_across_steps: workflow.allow_same_approver_across_steps,
+                    previous_approver_ids: previous_approver_ids.clone(),
+                },
+            )
+            .map_err(AppError::Forbidden)?;
 
         // 7. Domain-level approvability check (redundant with Authorizer but explicit)
 
@@ -163,7 +179,9 @@ impl ApproveRequest {
                 operation: request.operation,
                 timestamp: now,
                 metadata: if all_satisfied {
-                    EventMetadata::Approved { comment: comment.clone() }
+                    EventMetadata::Approved {
+                        comment: comment.clone(),
+                    }
                 } else {
                     EventMetadata::StepApproved {
                         step_index: current_step_index,
@@ -172,12 +190,15 @@ impl ApproveRequest {
                     }
                 },
             },
-        ).map_err(|e| AppError::Conflict(e.to_string()))?;
+        )
+        .map_err(|e| AppError::Conflict(e.to_string()))?;
 
         let new_status = result.status();
 
         if all_satisfied {
-            let ok = self.request_repo.approve_and_mark_approved(&approval, &request.id, now)?;
+            let ok = self
+                .request_repo
+                .approve_and_mark_approved(&approval, &request.id, now)?;
             if !ok {
                 return Err(AppError::Conflict("concurrent status change".into()));
             }
@@ -192,21 +213,34 @@ impl ApproveRequest {
             status: new_status,
             approved_by: user.subject_id.clone(),
             step_completed,
-            current_step: if all_satisfied { total_steps } else { step_completed + 1 },
+            current_step: if all_satisfied {
+                total_steps
+            } else {
+                step_completed + 1
+            },
             total_steps,
         })
     }
 }
 
 /// Find which selector the user matches in the approver groups.
-fn find_matched_selector(user: &AuthUser, approvers: &[dbward_domain::policies::workflow::ApproverGroup]) -> String {
+fn find_matched_selector(
+    user: &AuthUser,
+    approvers: &[dbward_domain::policies::workflow::ApproverGroup],
+) -> String {
     let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
     for ag in approvers {
-        if ag.selector.matches(&role_names, &user.groups, &user.subject_id, false) {
+        if ag
+            .selector
+            .matches(&role_names, &user.groups, &user.subject_id, false)
+        {
             return ag.selector.to_string();
         }
     }
-    if user.roles.iter().any(|r| r.permissions.contains(&dbward_domain::auth::Permission::All)) {
+    if user.roles.iter().any(|r| {
+        r.permissions
+            .contains(&dbward_domain::auth::Permission::All)
+    }) {
         return "admin_override".to_string();
     }
     "unknown".to_string()
@@ -218,7 +252,9 @@ mod tests {
     use dbward_domain::entities::Request;
     use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
     struct NoopDispatcher;
-    impl EventDispatcher for NoopDispatcher { fn dispatch(&self, _: TransitionEvent) {} }
+    impl EventDispatcher for NoopDispatcher {
+        fn dispatch(&self, _: TransitionEvent) {}
+    }
     use chrono::{DateTime, Utc};
     use dbward_domain::auth::{ResolvedRole, SubjectType};
     use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
@@ -227,8 +263,19 @@ mod tests {
 
     struct AllowAll;
     impl Authorizer for AllowAll {
-        fn authorize_scoped(&self, _: &AuthUser, _: Permission, _: &DatabaseName, _: &Environment, _: &ResourceContext) -> Result<(), AuthzError> { Ok(()) }
-        fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> { Ok(()) }
+        fn authorize_scoped(
+            &self,
+            _: &AuthUser,
+            _: Permission,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
+        fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
 
     struct FakeRepo {
@@ -248,12 +295,18 @@ mod tests {
     }
 
     impl RequestRepo for FakeRepo {
-        fn insert(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
+        fn insert(&self, _: &Request) -> Result<(), AppError> {
+            Ok(())
+        }
         fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
             Ok(self.request.lock().unwrap().clone())
         }
-        fn list(&self, _: u32, _: u32, _: Option<&str>) -> Result<(Vec<Request>, u32), AppError> { Ok((vec![], 0)) }
-        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(None) }
+        fn list(&self, _: u32, _: u32, _: Option<&str>) -> Result<(Vec<Request>, u32), AppError> {
+            Ok((vec![], 0))
+        }
+        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
+            Ok(None)
+        }
         fn insert_approval(&self, a: &Approval) -> Result<(), AppError> {
             self.approvals.lock().unwrap().push(a.clone());
             Ok(())
@@ -261,55 +314,133 @@ mod tests {
         fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> {
             Ok(self.approvals.lock().unwrap().clone())
         }
-        fn count_executions(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+        fn count_executions(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
         fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
             *self.marked_approved.lock().unwrap() = true;
             Ok(true)
         }
-        fn approve_and_mark_approved(&self, a: &Approval, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+        fn approve_and_mark_approved(
+            &self,
+            a: &Approval,
+            _: &str,
+            _: DateTime<Utc>,
+        ) -> Result<bool, AppError> {
             self.approvals.lock().unwrap().push(a.clone());
             *self.marked_approved.lock().unwrap() = true;
             Ok(true)
         }
-        fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn reject_and_record(&self, _: &str, _: &Approval, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
-        fn mark_running(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn mark_executed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn cancel_all_for_user(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError> { Ok(0) }
-        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn mark_expired_and_record(&self, _: &str, _: &dbward_domain::entities::AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
-        fn count_by_status(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
-        fn wal_checkpoint(&self) -> Result<(), AppError> { Ok(()) }
+        fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn reject_and_record(
+            &self,
+            _: &str,
+            _: &Approval,
+            _: DateTime<Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_cancelled(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: DateTime<Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn mark_running(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_executed(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn cancel_all_for_user(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_expired_and_record(
+            &self,
+            _: &str,
+            _: &dbward_domain::entities::AuditEvent,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn wal_checkpoint(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     struct FakeClock;
     impl Clock for FakeClock {
-        fn now(&self) -> DateTime<Utc> { Utc::now() }
+        fn now(&self) -> DateTime<Utc> {
+            Utc::now()
+        }
     }
     struct FakeIdGen;
     impl IdGenerator for FakeIdGen {
-        fn generate(&self) -> String { "appr-001".into() }
+        fn generate(&self) -> String {
+            "appr-001".into()
+        }
     }
 
     fn make_user(id: &str, roles: &[&str]) -> AuthUser {
         AuthUser {
             subject_id: id.to_string(),
             subject_type: SubjectType::User,
-            roles: roles.iter().map(|name| ResolvedRole {
-                name: name.to_string(),
-                permissions: [Permission::RequestApprove].into_iter().collect(),
-                databases: vec![],
-                environments: vec![],
-            }).collect(),
+            roles: roles
+                .iter()
+                .map(|name| ResolvedRole {
+                    name: name.to_string(),
+                    permissions: [Permission::RequestApprove].into_iter().collect(),
+                    databases: vec![],
+                    environments: vec![],
+                })
+                .collect(),
             groups: vec![],
             token_id: None,
         }
@@ -382,7 +513,15 @@ mod tests {
         let uc = make_uc(repo.clone());
         let user = make_user("bob", &["dba"]);
 
-        let out = uc.execute(ApproveRequestInput { request_id: "req-001".into(), comment: None }, &user).unwrap();
+        let out = uc
+            .execute(
+                ApproveRequestInput {
+                    request_id: "req-001".into(),
+                    comment: None,
+                },
+                &user,
+            )
+            .unwrap();
         assert_eq!(out.status, RequestStatus::Approved);
         assert_eq!(out.step_completed, 1);
         assert_eq!(out.current_step, 1);
@@ -398,7 +537,13 @@ mod tests {
         let uc = make_uc(repo);
         let user = make_user("alice", &["dba"]); // alice is the requester
 
-        let result = uc.execute(ApproveRequestInput { request_id: "req-001".into(), comment: None }, &user);
+        let result = uc.execute(
+            ApproveRequestInput {
+                request_id: "req-001".into(),
+                comment: None,
+            },
+            &user,
+        );
         assert!(result.is_err());
     }
 
@@ -411,17 +556,33 @@ mod tests {
         let uc = make_uc(repo);
         let user = make_user("bob", &["dba"]);
 
-        let result = uc.execute(ApproveRequestInput { request_id: "req-001".into(), comment: None }, &user);
+        let result = uc.execute(
+            ApproveRequestInput {
+                request_id: "req-001".into(),
+                comment: None,
+            },
+            &user,
+        );
         assert!(matches!(result, Err(AppError::Conflict(_))));
     }
 
     #[test]
     fn not_found_returns_error() {
-        let repo = Arc::new(FakeRepo { request: Mutex::new(None), approvals: Mutex::new(vec![]), marked_approved: Mutex::new(false) });
+        let repo = Arc::new(FakeRepo {
+            request: Mutex::new(None),
+            approvals: Mutex::new(vec![]),
+            marked_approved: Mutex::new(false),
+        });
         let uc = make_uc(repo);
         let user = make_user("bob", &["dba"]);
 
-        let result = uc.execute(ApproveRequestInput { request_id: "nope".into(), comment: None }, &user);
+        let result = uc.execute(
+            ApproveRequestInput {
+                request_id: "nope".into(),
+                comment: None,
+            },
+            &user,
+        );
         assert!(matches!(result, Err(AppError::NotFound(_))));
     }
 }

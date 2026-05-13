@@ -10,27 +10,59 @@ use crate::error::AppError;
 pub trait RequestRepo: Send + Sync {
     fn insert(&self, req: &Request) -> Result<(), AppError>;
     fn get(&self, id: &str) -> Result<Option<Request>, AppError>;
-    fn list(&self, limit: u32, offset: u32, status: Option<&str>) -> Result<(Vec<Request>, u32), AppError>;
+    fn list(
+        &self,
+        limit: u32,
+        offset: u32,
+        status: Option<&str>,
+    ) -> Result<(Vec<Request>, u32), AppError>;
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError>;
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError>;
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError>;
     fn count_executions(&self, request_id: &str) -> Result<u32, AppError>;
 
     /// Returns false if the request was not in an expected source state (optimistic lock).
-    fn mark_approved(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn mark_approved(&self, id: &str, now: chrono::DateTime<chrono::Utc>)
+        -> Result<bool, AppError>;
     /// Atomically inserts approval and marks request as approved in one transaction.
-    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
-    fn mark_rejected(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn approve_and_mark_approved(
+        &self,
+        approval: &Approval,
+        request_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError>;
+    fn mark_rejected(&self, id: &str, now: chrono::DateTime<chrono::Utc>)
+        -> Result<bool, AppError>;
     /// Atomically inserts rejection approval and marks request as rejected in one transaction.
-    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
-    fn mark_cancelled(&self, id: &str, actor: &str, reason: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
-    fn mark_dispatched(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn reject_and_record(
+        &self,
+        request_id: &str,
+        approval: &Approval,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError>;
+    fn mark_cancelled(
+        &self,
+        id: &str,
+        actor: &str,
+        reason: Option<&str>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError>;
+    fn mark_dispatched(
+        &self,
+        id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError>;
     /// Atomically inserts a request and marks it as dispatched in one transaction.
     fn create_and_dispatch(&self, request: &Request) -> Result<(), AppError>;
     fn mark_running(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
-    fn mark_executed(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn mark_executed(&self, id: &str, now: chrono::DateTime<chrono::Utc>)
+        -> Result<bool, AppError>;
     fn mark_failed(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
-    fn cancel_all_for_user(&self, user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError>;
+    fn cancel_all_for_user(
+        &self,
+        user_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u32, AppError>;
 
     // Background task methods
     fn find_expired_approved(&self, now: &str) -> Result<Vec<String>, AppError>;
@@ -38,7 +70,12 @@ pub trait RequestRepo: Send + Sync {
     fn find_dispatched_older_than(&self, cutoff: &str) -> Result<Vec<String>, AppError>;
     fn mark_expired(&self, id: &str, now: &str) -> Result<bool, AppError>;
     /// Atomically marks request expired and records audit event in one transaction.
-    fn mark_expired_and_record(&self, id: &str, audit_event: &AuditEvent, now: &str) -> Result<bool, AppError>;
+    fn mark_expired_and_record(
+        &self,
+        id: &str,
+        audit_event: &AuditEvent,
+        now: &str,
+    ) -> Result<bool, AppError>;
     fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError>;
     fn purge_old_requests(&self, before: &str) -> Result<u32, AppError>;
     fn count_by_status(&self, status: &str) -> Result<u32, AppError>;
@@ -53,10 +90,26 @@ pub trait AgentRepo: Send + Sync {
     fn list(&self) -> Result<Vec<Agent>, AppError>;
     fn create_execution(&self, execution: &Execution) -> Result<(), AppError>;
     fn get_execution(&self, execution_id: &str) -> Result<Option<Execution>, AppError>;
-    fn update_execution_status(&self, execution_id: &str, status: ExecutionStatus) -> Result<(), AppError>;
-    fn extend_lease(&self, execution_id: &str, new_expiry: chrono::DateTime<chrono::Utc>) -> Result<(), AppError>;
-    fn find_dispatched_jobs(&self, databases: &[(DatabaseName, Environment)]) -> Result<Vec<Request>, AppError>;
-    fn has_running_migration(&self, db: &DatabaseName, env: &Environment, exclude_request_id: &str) -> Result<bool, AppError>;
+    fn update_execution_status(
+        &self,
+        execution_id: &str,
+        status: ExecutionStatus,
+    ) -> Result<(), AppError>;
+    fn extend_lease(
+        &self,
+        execution_id: &str,
+        new_expiry: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError>;
+    fn find_dispatched_jobs(
+        &self,
+        databases: &[(DatabaseName, Environment)],
+    ) -> Result<Vec<Request>, AppError>;
+    fn has_running_migration(
+        &self,
+        db: &DatabaseName,
+        env: &Environment,
+        exclude_request_id: &str,
+    ) -> Result<bool, AppError>;
     /// Returns executions ordered by created_at ASC (oldest first).
     fn find_executions_for_request(&self, request_id: &str) -> Result<Vec<Execution>, AppError>;
     /// Atomically creates execution and marks request as running in a single transaction.
@@ -82,9 +135,20 @@ pub trait AgentRepo: Send + Sync {
 
     // Background task methods
     fn find_expired_leases(&self, now: &str) -> Result<Vec<(String, String)>, AppError>;
-    fn mark_execution_lost(&self, execution_id: &str, request_id: &str, now: &str) -> Result<bool, AppError>;
+    fn mark_execution_lost(
+        &self,
+        execution_id: &str,
+        request_id: &str,
+        now: &str,
+    ) -> Result<bool, AppError>;
     /// Atomically marks execution lost and records audit event in one transaction.
-    fn mark_execution_lost_and_record(&self, execution_id: &str, request_id: &str, audit_event: &AuditEvent, now: &str) -> Result<bool, AppError>;
+    fn mark_execution_lost_and_record(
+        &self,
+        execution_id: &str,
+        request_id: &str,
+        audit_event: &AuditEvent,
+        now: &str,
+    ) -> Result<bool, AppError>;
     /// Returns (result_id, storage_key) for results past their expires_at.
     fn find_expired_results(&self, now: &str) -> Result<Vec<(String, String)>, AppError>;
     /// Delete a result record by id.
@@ -98,7 +162,8 @@ pub trait UserRepo: Send + Sync {
     fn upsert(&self, user: &User) -> Result<(), AppError>;
     fn list(&self) -> Result<Vec<User>, AppError>;
     fn suspend(&self, user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
-    fn activate(&self, user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
+    fn activate(&self, user_id: &str, now: chrono::DateTime<chrono::Utc>)
+        -> Result<bool, AppError>;
     fn is_suspended(&self, user_id: &str) -> Result<bool, AppError>;
     /// Auto-create user record on first auth if not exists.
     fn ensure_exists(&self, subject_id: &str) -> Result<(), AppError>;
@@ -112,7 +177,11 @@ pub trait TokenRepo: Send + Sync {
     fn list(&self) -> Result<Vec<Token>, AppError>;
     fn get(&self, token_id: &str) -> Result<Option<Token>, AppError>;
     fn revoke(&self, token_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
-    fn revoke_all_for_user(&self, subject_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError>;
+    fn revoke_all_for_user(
+        &self,
+        subject_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u32, AppError>;
     fn count_active(&self) -> Result<u32, AppError>;
     fn purge_revoked(&self, before: &str) -> Result<u32, AppError>;
 }
@@ -170,21 +239,37 @@ pub struct AuditVerifyResult {
 
 pub trait PolicyRepo: Send + Sync {
     fn create_workflow(&self, wf: &dbward_domain::policies::Workflow) -> Result<(), AppError>;
-    fn get_workflow(&self, id: &str) -> Result<Option<dbward_domain::policies::Workflow>, AppError>;
+    fn get_workflow(&self, id: &str)
+        -> Result<Option<dbward_domain::policies::Workflow>, AppError>;
     fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError>;
     fn delete_workflow(&self, id: &str) -> Result<bool, AppError>;
     fn count_workflows(&self) -> Result<u32, AppError>;
 
-    fn create_execution_policy(&self, ep: &dbward_domain::policies::ExecutionPolicy) -> Result<(), AppError>;
-    fn get_execution_policy(&self, id: &str) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError>;
-    fn list_execution_policies(&self) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError>;
+    fn create_execution_policy(
+        &self,
+        ep: &dbward_domain::policies::ExecutionPolicy,
+    ) -> Result<(), AppError>;
+    fn get_execution_policy(
+        &self,
+        id: &str,
+    ) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError>;
+    fn list_execution_policies(
+        &self,
+    ) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError>;
     fn delete_execution_policy(&self, id: &str) -> Result<bool, AppError>;
 
-    fn find_result_policy(&self, db: &DatabaseName, env: &Environment) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError>;
+    fn find_result_policy(
+        &self,
+        db: &DatabaseName,
+        env: &Environment,
+    ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError>;
 
     fn create_role(&self, role: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError>;
     fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError>;
-    fn get_roles_by_names(&self, names: &[String]) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError>;
+    fn get_roles_by_names(
+        &self,
+        names: &[String],
+    ) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError>;
     fn delete_role(&self, name: &str) -> Result<bool, AppError>;
     fn count_roles(&self) -> Result<u32, AppError>;
 }
@@ -206,7 +291,11 @@ pub trait LicenseChecker: Send + Sync {
 pub trait ResultChannel: Send + Sync {
     fn create_slot(&self, request_id: &str);
     async fn publish(&self, request_id: &str, summary: ResultSummary);
-    async fn subscribe(&self, request_id: &str, timeout_secs: u64) -> Result<Option<ResultSummary>, AppError>;
+    async fn subscribe(
+        &self,
+        request_id: &str,
+        timeout_secs: u64,
+    ) -> Result<Option<ResultSummary>, AppError>;
     async fn notify_all(&self);
 }
 

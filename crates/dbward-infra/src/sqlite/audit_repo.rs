@@ -19,15 +19,18 @@ impl AuditLogger for SqliteAuditLogger {
         use sha2::{Digest, Sha256};
 
         let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
         // Get last hash for chain continuity
-        let prev_hash: Option<String> = tx.query_row(
-            "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
-            [],
-            |row| row.get(0),
-        ).ok();
+        let prev_hash: Option<String> = tx
+            .query_row(
+                "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
 
         // Infra generates id if caller left it empty
         let id = if event.id.is_empty() {
@@ -39,7 +42,9 @@ impl AuditLogger for SqliteAuditLogger {
         // Infra computes event_hash from ALL content fields (tamper detection)
         let hash_input = format!(
             "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-            id, event.event_type, event.actor_id,
+            id,
+            event.event_type,
+            event.actor_id,
             event.created_at.to_rfc3339(),
             prev_hash.as_deref().unwrap_or(""),
             outcome_str(event.outcome),
@@ -147,12 +152,17 @@ impl AuditRepo for SqliteAuditRepo {
         param_values.push(Box::new(filter.limit));
         param_values.push(Box::new(filter.offset));
 
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
-        let mut stmt = conn.prepare(&sql).map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt.query_map(params_ref.as_slice(), row_to_audit_event)
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let rows = stmt
+            .query_map(params_ref.as_slice(), row_to_audit_event)
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| AppError::Internal(e.to_string()))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Internal(e.to_string()))
     }
 
     fn verify_chain(&self) -> Result<AuditVerifyResult, AppError> {
@@ -162,39 +172,62 @@ impl AuditRepo for SqliteAuditRepo {
         let mut stmt = conn.prepare(
             "SELECT id, event_type, actor_id, created_at, prev_hash, event_hash, outcome, request_id, operation, database_name, environment, reason, detail_raw, metadata_json FROM audit_events ORDER BY rowid ASC"
         ).map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, Option<String>>(7)?,
-                row.get::<_, Option<String>>(8)?,
-                row.get::<_, Option<String>>(9)?,
-                row.get::<_, Option<String>>(10)?,
-                row.get::<_, Option<String>>(11)?,
-                row.get::<_, Option<String>>(12)?,
-                row.get::<_, String>(13)?,
-            ))
-        }).map_err(|e| AppError::Internal(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, Option<String>>(11)?,
+                    row.get::<_, Option<String>>(12)?,
+                    row.get::<_, String>(13)?,
+                ))
+            })
+            .map_err(|e| AppError::Internal(e.to_string()))?;
 
         let mut total: u64 = 0;
         let mut expected_prev: Option<String> = None;
 
         for row in rows {
-            let (id, event_type, actor_id, created_at, prev_hash, event_hash, outcome, request_id, operation, database_name, environment, reason, detail_raw, metadata_json) = row.map_err(|e| AppError::Internal(e.to_string()))?;
+            let (
+                id,
+                event_type,
+                actor_id,
+                created_at,
+                prev_hash,
+                event_hash,
+                outcome,
+                request_id,
+                operation,
+                database_name,
+                environment,
+                reason,
+                detail_raw,
+                metadata_json,
+            ) = row.map_err(|e| AppError::Internal(e.to_string()))?;
             total += 1;
 
             if prev_hash.as_deref() != expected_prev.as_deref() {
-                return Ok(AuditVerifyResult { total_events: total, first_broken_id: Some(id) });
+                return Ok(AuditVerifyResult {
+                    total_events: total,
+                    first_broken_id: Some(id),
+                });
             }
 
             let hash_input = format!(
                 "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-                id, event_type, actor_id, created_at,
+                id,
+                event_type,
+                actor_id,
+                created_at,
                 prev_hash.as_deref().unwrap_or(""),
                 outcome,
                 request_id.as_deref().unwrap_or(""),
@@ -207,21 +240,29 @@ impl AuditRepo for SqliteAuditRepo {
             );
             let computed = hex::encode(Sha256::digest(hash_input.as_bytes()));
             if computed != event_hash {
-                return Ok(AuditVerifyResult { total_events: total, first_broken_id: Some(id) });
+                return Ok(AuditVerifyResult {
+                    total_events: total,
+                    first_broken_id: Some(id),
+                });
             }
 
             expected_prev = Some(event_hash);
         }
 
-        Ok(AuditVerifyResult { total_events: total, first_broken_id: None })
+        Ok(AuditVerifyResult {
+            total_events: total,
+            first_broken_id: None,
+        })
     }
 
     fn purge_old(&self, before: &str) -> Result<u32, AppError> {
         let conn = self.conn.lock().unwrap();
-        let n = conn.execute(
-            "DELETE FROM audit_events WHERE created_at < ?1",
-            rusqlite::params![before],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        let n = conn
+            .execute(
+                "DELETE FROM audit_events WHERE created_at < ?1",
+                rusqlite::params![before],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(n as u32)
     }
 }
@@ -305,6 +346,8 @@ fn row_to_audit_event(row: &rusqlite::Row) -> rusqlite::Result<AuditEvent> {
         metadata_json: row.get(19)?,
         prev_hash: row.get(20)?,
         event_hash: row.get(21)?,
-        created_at: DateTime::parse_from_rfc3339(&created_str).unwrap().with_timezone(&Utc),
+        created_at: DateTime::parse_from_rfc3339(&created_str)
+            .unwrap()
+            .with_timezone(&Utc),
     })
 }

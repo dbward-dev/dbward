@@ -249,9 +249,9 @@ pub async fn logout() -> Result<(), String> {
                 ])
                 .send()
                 .await
-            {
-                eprintln!("Warning: token revocation request failed: {err}");
-            }
+        {
+            eprintln!("Warning: token revocation request failed: {err}");
+        }
     }
 
     std::fs::remove_file(&path).map_err(|e| e.to_string())?;

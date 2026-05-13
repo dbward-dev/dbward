@@ -4,7 +4,9 @@ use serde_json::Value;
 
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
 impl Drop for AbortOnDrop {
-    fn drop(&mut self) { self.0.abort(); }
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 const MAX_ERROR_BODY_PREVIEW: usize = 200;
@@ -105,7 +107,11 @@ impl ServerClient {
         }
     }
 
-    async fn parse_response(&self, resp: reqwest::Response, context: &str) -> Result<Value, CliError> {
+    async fn parse_response(
+        &self,
+        resp: reqwest::Response,
+        context: &str,
+    ) -> Result<Value, CliError> {
         let status = resp.status();
         let text = resp
             .text()
@@ -240,7 +246,11 @@ impl ServerClient {
         self.get_request_with_wait(request_id, 0).await
     }
 
-    pub async fn get_request_with_wait(&self, request_id: &str, wait: u64) -> Result<Value, CliError> {
+    pub async fn get_request_with_wait(
+        &self,
+        request_id: &str,
+        wait: u64,
+    ) -> Result<Value, CliError> {
         let mut url = format!("{}/api/requests/{}", self.base_url, request_id);
         if wait > 0 {
             url = format!("{url}?wait={wait}");
@@ -329,7 +339,7 @@ impl ServerClient {
             }
         }));
 
-        let result = loop {
+        loop {
             let result = tokio::select! {
                 result = self.stream_result(request_id) => Some(result),
                 _ = tokio::signal::ctrl_c() => None,
@@ -348,10 +358,7 @@ impl ServerClient {
                     break Err(CliError::Server("interrupted".into()));
                 }
             }
-        };
-
-        
-        result
+        }
     }
 
     pub async fn get_terminal_result(&self, request_id: &str) -> Result<Value, CliError> {
@@ -359,7 +366,10 @@ impl ServerClient {
         self.resolve_terminal_result(request_id, &req).await
     }
 
-    async fn get_request_result_fallback(&self, request_id: &str) -> Result<Option<Value>, CliError> {
+    async fn get_request_result_fallback(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<Value>, CliError> {
         let mut req = self.get_request(request_id).await?;
 
         loop {
@@ -405,7 +415,11 @@ impl ServerClient {
         }
     }
 
-    async fn resolve_terminal_result(&self, request_id: &str, req: &Value) -> Result<Value, CliError> {
+    async fn resolve_terminal_result(
+        &self,
+        request_id: &str,
+        req: &Value,
+    ) -> Result<Value, CliError> {
         let status = req["status"].as_str().unwrap_or("");
         if let Some(payload) = Self::terminal_payload_from_request(req) {
             return Ok(payload);
@@ -734,8 +748,7 @@ mod tests {
                 let req_str = String::from_utf8_lossy(&buf);
 
                 let response = if req_str.contains("/result/stream") {
-                    "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n"
-                        .to_string()
+                    "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n".to_string()
                 } else if req_str.contains("GET") && req_str.contains("/api/requests/") {
                     let body = serde_json::json!({
                         "id": "test-req", "status": "executed",
@@ -767,6 +780,9 @@ mod tests {
         .await;
 
         server.abort();
-        assert!(result.is_ok(), "wait_for_result should not hang on stream failure");
+        assert!(
+            result.is_ok(),
+            "wait_for_result should not hang on stream failure"
+        );
     }
 }

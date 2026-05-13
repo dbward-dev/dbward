@@ -1,11 +1,11 @@
-use dbward_infra::sqlite::{self, *};
-use dbward_infra::auth::{RbacAuthorizer, ConfigRoleResolver};
-use dbward_app::ports::*;
-use dbward_domain::entities::*;
-use dbward_domain::values::*;
-use dbward_domain::auth::*;
-use dbward_domain::policies::*;
 use chrono::Utc;
+use dbward_app::ports::*;
+use dbward_domain::auth::*;
+use dbward_domain::entities::*;
+use dbward_domain::policies::*;
+use dbward_domain::values::*;
+use dbward_infra::auth::{ConfigRoleResolver, RbacAuthorizer};
+use dbward_infra::sqlite::{self, *};
 use std::collections::HashMap;
 
 fn setup() -> DbConn {
@@ -13,10 +13,16 @@ fn setup() -> DbConn {
 }
 
 fn register_db(conn: &DbConn) {
-    conn.lock().unwrap()
+    conn.lock()
+        .unwrap()
         .execute(
             "INSERT INTO databases (id, name, environment, created_at) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params!["app:production", "app", "production", Utc::now().to_rfc3339()],
+            rusqlite::params![
+                "app:production",
+                "app",
+                "production",
+                Utc::now().to_rfc3339()
+            ],
         )
         .unwrap();
 }
@@ -185,7 +191,11 @@ fn audit_chain_detects_broken_link() {
     // Tamper with the DB directly (simulate attacker modifying actor_id)
     {
         let c = conn.lock().unwrap();
-        c.execute("UPDATE audit_events SET actor_id = 'hacked' WHERE rowid = 1", []).unwrap();
+        c.execute(
+            "UPDATE audit_events SET actor_id = 'hacked' WHERE rowid = 1",
+            [],
+        )
+        .unwrap();
     }
 
     // verify_chain should now detect the tampering
@@ -210,92 +220,116 @@ fn policy_evaluator_4_level_workflow_priority() {
     };
 
     // Level 4 (lowest): (*, *)
-    policy_repo.create_workflow(&Workflow {
-        id: "w-global".into(),
-        database: DatabaseName::new("*").unwrap(),
-        environment: Environment::new("*").unwrap(),
-        operations: vec![],
-        steps: vec![],
-        skip_approval_for: vec![],
-        require_reason: false,
-        allow_self_approve: false,
-        allow_same_approver_across_steps: false,
-        pending_ttl_secs: None,
-        statement_timeout_secs: None,
-        approval_ttl_secs: None,
-        created_at: None, updated_at: None,
-    }).unwrap();
+    policy_repo
+        .create_workflow(&Workflow {
+            id: "w-global".into(),
+            database: DatabaseName::new("*").unwrap(),
+            environment: Environment::new("*").unwrap(),
+            operations: vec![],
+            steps: vec![],
+            skip_approval_for: vec![],
+            require_reason: false,
+            allow_self_approve: false,
+            allow_same_approver_across_steps: false,
+            pending_ttl_secs: None,
+            statement_timeout_secs: None,
+            approval_ttl_secs: None,
+            created_at: None,
+            updated_at: None,
+        })
+        .unwrap();
 
     // Level 3: (app, *)
-    policy_repo.create_workflow(&Workflow {
-        id: "w-db".into(),
-        database: DatabaseName::new("app").unwrap(),
-        environment: Environment::new("*").unwrap(),
-        operations: vec![],
-        steps: vec![step.clone()],
-        skip_approval_for: vec![],
-        require_reason: false,
-        allow_self_approve: false,
-        allow_same_approver_across_steps: false,
-        pending_ttl_secs: None,
-        statement_timeout_secs: None,
-        approval_ttl_secs: None,
-        created_at: None, updated_at: None,
-    }).unwrap();
+    policy_repo
+        .create_workflow(&Workflow {
+            id: "w-db".into(),
+            database: DatabaseName::new("app").unwrap(),
+            environment: Environment::new("*").unwrap(),
+            operations: vec![],
+            steps: vec![step.clone()],
+            skip_approval_for: vec![],
+            require_reason: false,
+            allow_self_approve: false,
+            allow_same_approver_across_steps: false,
+            pending_ttl_secs: None,
+            statement_timeout_secs: None,
+            approval_ttl_secs: None,
+            created_at: None,
+            updated_at: None,
+        })
+        .unwrap();
 
     // Level 2: (*, production)
-    policy_repo.create_workflow(&Workflow {
-        id: "w-env".into(),
-        database: DatabaseName::new("*").unwrap(),
-        environment: Environment::new("production").unwrap(),
-        operations: vec![],
-        steps: vec![step.clone(), step.clone()],
-        skip_approval_for: vec![],
-        require_reason: true,
-        allow_self_approve: false,
-        allow_same_approver_across_steps: false,
-        pending_ttl_secs: None,
-        statement_timeout_secs: None,
-        approval_ttl_secs: None,
-        created_at: None, updated_at: None,
-    }).unwrap();
+    policy_repo
+        .create_workflow(&Workflow {
+            id: "w-env".into(),
+            database: DatabaseName::new("*").unwrap(),
+            environment: Environment::new("production").unwrap(),
+            operations: vec![],
+            steps: vec![step.clone(), step.clone()],
+            skip_approval_for: vec![],
+            require_reason: true,
+            allow_self_approve: false,
+            allow_same_approver_across_steps: false,
+            pending_ttl_secs: None,
+            statement_timeout_secs: None,
+            approval_ttl_secs: None,
+            created_at: None,
+            updated_at: None,
+        })
+        .unwrap();
 
     // Level 1 (highest): (app, production)
-    policy_repo.create_workflow(&Workflow {
-        id: "w-exact".into(),
-        database: DatabaseName::new("app").unwrap(),
-        environment: Environment::new("production").unwrap(),
-        operations: vec![Operation::ExecuteDml],
-        steps: vec![step.clone(), step.clone(), step.clone()],
-        skip_approval_for: vec![],
-        require_reason: true,
-        allow_self_approve: false,
-        allow_same_approver_across_steps: false,
-        pending_ttl_secs: None,
-        statement_timeout_secs: None,
-        approval_ttl_secs: None,
-        created_at: None, updated_at: None,
-    }).unwrap();
+    policy_repo
+        .create_workflow(&Workflow {
+            id: "w-exact".into(),
+            database: DatabaseName::new("app").unwrap(),
+            environment: Environment::new("production").unwrap(),
+            operations: vec![Operation::ExecuteDml],
+            steps: vec![step.clone(), step.clone(), step.clone()],
+            skip_approval_for: vec![],
+            require_reason: true,
+            allow_self_approve: false,
+            allow_same_approver_across_steps: false,
+            pending_ttl_secs: None,
+            statement_timeout_secs: None,
+            approval_ttl_secs: None,
+            created_at: None,
+            updated_at: None,
+        })
+        .unwrap();
 
     let db = DatabaseName::new("app").unwrap();
     let env = Environment::new("production").unwrap();
 
     // DML on app:production → exact match (w-exact, 3 steps)
-    let matched = evaluator.evaluate_workflow(&db, &env, Operation::ExecuteDml).unwrap().unwrap();
+    let matched = evaluator
+        .evaluate_workflow(&db, &env, Operation::ExecuteDml)
+        .unwrap()
+        .unwrap();
     assert_eq!(matched.id, "w-exact");
 
     // SELECT on app:production → (*, production) wins over (app, *) per env > db priority
-    let matched = evaluator.evaluate_workflow(&db, &env, Operation::ExecuteSelect).unwrap().unwrap();
+    let matched = evaluator
+        .evaluate_workflow(&db, &env, Operation::ExecuteSelect)
+        .unwrap()
+        .unwrap();
     assert_eq!(matched.id, "w-env");
 
     // DML on app:staging → (app, *) matches
     let staging = Environment::new("staging").unwrap();
-    let matched = evaluator.evaluate_workflow(&db, &staging, Operation::ExecuteDml).unwrap().unwrap();
+    let matched = evaluator
+        .evaluate_workflow(&db, &staging, Operation::ExecuteDml)
+        .unwrap()
+        .unwrap();
     assert_eq!(matched.id, "w-db");
 
     // SELECT on other:staging → (*, *) matches
     let other = DatabaseName::new("other").unwrap();
-    let matched = evaluator.evaluate_workflow(&other, &staging, Operation::ExecuteSelect).unwrap().unwrap();
+    let matched = evaluator
+        .evaluate_workflow(&other, &staging, Operation::ExecuteSelect)
+        .unwrap()
+        .unwrap();
     assert_eq!(matched.id, "w-global");
 }
 
@@ -308,22 +342,26 @@ fn execution_policy_specificity() {
     let evaluator = SqlitePolicyEvaluator::new(conn.clone());
 
     // Global default
-    policy_repo.create_execution_policy(&ExecutionPolicy {
-        id: "ep-global".into(),
-        database: DatabaseName::new("*").unwrap(),
-        environment: Environment::new("*").unwrap(),
-        statement_timeout_secs: 10,
-        ..ExecutionPolicy::default()
-    }).unwrap();
+    policy_repo
+        .create_execution_policy(&ExecutionPolicy {
+            id: "ep-global".into(),
+            database: DatabaseName::new("*").unwrap(),
+            environment: Environment::new("*").unwrap(),
+            statement_timeout_secs: 10,
+            ..ExecutionPolicy::default()
+        })
+        .unwrap();
 
     // Exact match
-    policy_repo.create_execution_policy(&ExecutionPolicy {
-        id: "ep-exact".into(),
-        database: DatabaseName::new("app").unwrap(),
-        environment: Environment::new("production").unwrap(),
-        statement_timeout_secs: 60,
-        ..ExecutionPolicy::default()
-    }).unwrap();
+    policy_repo
+        .create_execution_policy(&ExecutionPolicy {
+            id: "ep-exact".into(),
+            database: DatabaseName::new("app").unwrap(),
+            environment: Environment::new("production").unwrap(),
+            statement_timeout_secs: 60,
+            ..ExecutionPolicy::default()
+        })
+        .unwrap();
 
     let db = DatabaseName::new("app").unwrap();
     let prod = Environment::new("production").unwrap();
@@ -354,12 +392,8 @@ fn rbac_with_config_role_resolver() {
             environments: vec![Environment::new("development").unwrap()],
         },
     ];
-    let role_bindings = HashMap::from([
-        ("engineering".to_string(), vec!["developer".to_string()]),
-    ]);
-    let user_bindings = HashMap::from([
-        ("alice".to_string(), vec!["admin".to_string()]),
-    ]);
+    let role_bindings = HashMap::from([("engineering".to_string(), vec!["developer".to_string()])]);
+    let user_bindings = HashMap::from([("alice".to_string(), vec!["admin".to_string()])]);
     let resolver = ConfigRoleResolver::new(defs, role_bindings, user_bindings, None);
 
     // Alice is admin via user binding
@@ -373,10 +407,22 @@ fn rbac_with_config_role_resolver() {
     };
     let db = DatabaseName::new("app").unwrap();
     let env = Environment::new("production").unwrap();
-    assert!(RbacAuthorizer.authorize_scoped(&alice, Permission::RequestCreate, &db, &env, &ResourceContext::Global).is_ok());
+    assert!(
+        RbacAuthorizer
+            .authorize_scoped(
+                &alice,
+                Permission::RequestCreate,
+                &db,
+                &env,
+                &ResourceContext::Global
+            )
+            .is_ok()
+    );
 
     // Bob is developer via group binding — scoped to app:development only
-    let bob_roles = resolver.resolve("bob", SubjectType::User, &["engineering".into()]).unwrap();
+    let bob_roles = resolver
+        .resolve("bob", SubjectType::User, &["engineering".into()])
+        .unwrap();
     let bob = AuthUser {
         subject_id: "bob".into(),
         subject_type: SubjectType::User,
@@ -385,9 +431,29 @@ fn rbac_with_config_role_resolver() {
         token_id: None,
     };
     let dev = Environment::new("development").unwrap();
-    assert!(RbacAuthorizer.authorize_scoped(&bob, Permission::RequestCreate, &db, &dev, &ResourceContext::Global).is_ok());
+    assert!(
+        RbacAuthorizer
+            .authorize_scoped(
+                &bob,
+                Permission::RequestCreate,
+                &db,
+                &dev,
+                &ResourceContext::Global
+            )
+            .is_ok()
+    );
     // Bob denied on production
-    assert!(RbacAuthorizer.authorize_scoped(&bob, Permission::RequestCreate, &db, &env, &ResourceContext::Global).is_err());
+    assert!(
+        RbacAuthorizer
+            .authorize_scoped(
+                &bob,
+                Permission::RequestCreate,
+                &db,
+                &env,
+                &ResourceContext::Global
+            )
+            .is_err()
+    );
 }
 
 // --- 8. Execution tracking with agent repo ---
@@ -460,7 +526,9 @@ fn execution_tracking_cross_repo() {
     assert_eq!(request_repo.count_executions("req-exec").unwrap(), 1);
 
     // Update execution status
-    agent_repo.update_execution_status("exec-1", ExecutionStatus::Running).unwrap();
+    agent_repo
+        .update_execution_status("exec-1", ExecutionStatus::Running)
+        .unwrap();
     let fetched = agent_repo.get_execution("exec-1").unwrap().unwrap();
     assert_eq!(fetched.status, ExecutionStatus::Running);
 }
@@ -479,7 +547,8 @@ fn webhook_crud_lifecycle() {
         format: WebhookFormat::Slack,
         secret: Some("s3cr3t".into()),
         status: WebhookStatus::Active,
-        created_at: None, updated_at: None,
+        created_at: None,
+        updated_at: None,
     };
     repo.create(&wh).unwrap();
 
@@ -608,7 +677,11 @@ fn database_registry_exists_and_list() {
     let env = Environment::new("production").unwrap();
 
     assert!(registry.exists(&db, &env).unwrap());
-    assert!(!registry.exists(&DatabaseName::new("other").unwrap(), &env).unwrap());
+    assert!(
+        !registry
+            .exists(&DatabaseName::new("other").unwrap(), &env)
+            .unwrap()
+    );
 
     let list = registry.list().unwrap();
     assert_eq!(list.len(), 1);
@@ -665,7 +738,22 @@ fn complete_execution_success() {
     agent_repo.create_execution(&execution).unwrap();
 
     let now = Utc::now();
-    let result = agent_repo.complete_execution("exec-ce-ok", "req-ce-ok", true, now, &AuditEvent::simple("execution.completed", "execution", "agent-1", Some("exec-ce-ok")), None, &[]).unwrap();
+    let result = agent_repo
+        .complete_execution(
+            "exec-ce-ok",
+            "req-ce-ok",
+            true,
+            now,
+            &AuditEvent::simple(
+                "execution.completed",
+                "execution",
+                "agent-1",
+                Some("exec-ce-ok"),
+            ),
+            None,
+            &[],
+        )
+        .unwrap();
     assert!(result);
 
     let fetched_exec = agent_repo.get_execution("exec-ce-ok").unwrap().unwrap();
@@ -725,7 +813,22 @@ fn complete_execution_failure() {
     agent_repo.create_execution(&execution).unwrap();
 
     let now = Utc::now();
-    let result = agent_repo.complete_execution("exec-ce-fail", "req-ce-fail", false, now, &AuditEvent::simple("execution.failed", "execution", "agent-1", Some("exec-ce-fail")), None, &[]).unwrap();
+    let result = agent_repo
+        .complete_execution(
+            "exec-ce-fail",
+            "req-ce-fail",
+            false,
+            now,
+            &AuditEvent::simple(
+                "execution.failed",
+                "execution",
+                "agent-1",
+                Some("exec-ce-fail"),
+            ),
+            None,
+            &[],
+        )
+        .unwrap();
     assert!(result);
 
     let fetched_exec = agent_repo.get_execution("exec-ce-fail").unwrap().unwrap();
@@ -784,7 +887,22 @@ fn complete_execution_cancelled_request() {
     agent_repo.create_execution(&execution).unwrap();
 
     let now = Utc::now();
-    let result = agent_repo.complete_execution("exec-ce-cancel", "req-ce-cancel", true, now, &AuditEvent::simple("execution.completed", "execution", "agent-1", Some("exec-ce-cancel")), None, &[]).unwrap();
+    let result = agent_repo
+        .complete_execution(
+            "exec-ce-cancel",
+            "req-ce-cancel",
+            true,
+            now,
+            &AuditEvent::simple(
+                "execution.completed",
+                "execution",
+                "agent-1",
+                Some("exec-ce-cancel"),
+            ),
+            None,
+            &[],
+        )
+        .unwrap();
     assert!(!result);
 
     // Execution is still updated
@@ -845,7 +963,22 @@ fn complete_execution_already_completed() {
     agent_repo.create_execution(&execution).unwrap();
 
     let now = Utc::now();
-    let result = agent_repo.complete_execution("exec-ce-done", "req-ce-done", true, now, &AuditEvent::simple("execution.completed", "execution", "agent-1", Some("exec-ce-done")), None, &[]).unwrap();
+    let result = agent_repo
+        .complete_execution(
+            "exec-ce-done",
+            "req-ce-done",
+            true,
+            now,
+            &AuditEvent::simple(
+                "execution.completed",
+                "execution",
+                "agent-1",
+                Some("exec-ce-done"),
+            ),
+            None,
+            &[],
+        )
+        .unwrap();
     assert!(!result);
 
     // Execution still updated
@@ -937,7 +1070,9 @@ fn reject_and_record_success() {
     };
 
     let now = Utc::now();
-    let result = request_repo.reject_and_record("req-rej", &approval, now).unwrap();
+    let result = request_repo
+        .reject_and_record("req-rej", &approval, now)
+        .unwrap();
     assert!(result);
 
     let fetched = request_repo.get("req-rej").unwrap().unwrap();
@@ -993,7 +1128,9 @@ fn reject_and_record_already_rejected() {
         created_at: Utc::now(),
     };
 
-    let result = request_repo.reject_and_record("req-rej2", &approval, Utc::now()).unwrap();
+    let result = request_repo
+        .reject_and_record("req-rej2", &approval, Utc::now())
+        .unwrap();
     assert!(!result);
 
     // No approval record inserted on failure
@@ -1049,7 +1186,9 @@ fn claim_and_mark_running_success() {
     };
 
     let now = Utc::now();
-    let result = agent_repo.claim_and_mark_running(&execution, "req-claim", now).unwrap();
+    let result = agent_repo
+        .claim_and_mark_running(&execution, "req-claim", now)
+        .unwrap();
     assert!(result);
 
     let fetched_exec = agent_repo.get_execution("exec-claim").unwrap().unwrap();
@@ -1109,7 +1248,9 @@ fn claim_and_mark_running_not_dispatched_rollback() {
     };
 
     let now = Utc::now();
-    let result = agent_repo.claim_and_mark_running(&execution, "req-claim-fail", now).unwrap();
+    let result = agent_repo
+        .claim_and_mark_running(&execution, "req-claim-fail", now)
+        .unwrap();
     assert!(!result);
 
     // Verify NO orphan execution was created (rollback worked)
@@ -1386,7 +1527,10 @@ fn duplicate_approve_same_actor_step_rejected() {
         created_at: Utc::now(),
     };
     let result = request_repo.insert_approval(&a2);
-    assert!(result.is_err(), "duplicate approve should be rejected by UNIQUE index");
+    assert!(
+        result.is_err(),
+        "duplicate approve should be rejected by UNIQUE index"
+    );
 
     // Reject with same (request_id, actor_id, step_index) still works (index is WHERE action='approve')
     let a3 = Approval {
@@ -1421,7 +1565,9 @@ fn workflow_crud_lifecycle() {
         allow_same_approver_across_steps: false,
         pending_ttl_secs: None,
         approval_ttl_secs: Some(3600),
-        created_at: None, updated_at: None,
+        statement_timeout_secs: None,
+        created_at: None,
+        updated_at: None,
     };
     repo.create_workflow(&wf).unwrap();
     assert_eq!(repo.get_workflow("wf-1").unwrap().unwrap().id, "wf-1");
@@ -1446,10 +1592,17 @@ fn execution_policy_crud() {
         retry_on_failure: false,
         statement_timeout_secs: 30,
         max_statement_timeout_secs: 300,
-        created_at: None, updated_at: None,
+        created_at: None,
+        updated_at: None,
     };
     repo.create_execution_policy(&ep).unwrap();
-    assert_eq!(repo.get_execution_policy("ep-1").unwrap().unwrap().statement_timeout_secs, 30);
+    assert_eq!(
+        repo.get_execution_policy("ep-1")
+            .unwrap()
+            .unwrap()
+            .statement_timeout_secs,
+        30
+    );
     assert_eq!(repo.list_execution_policies().unwrap().len(), 1);
     assert!(repo.delete_execution_policy("ep-1").unwrap());
     assert!(repo.list_execution_policies().unwrap().is_empty());
@@ -1503,7 +1656,10 @@ fn user_get_list_activate() {
         updated_at: Utc::now(),
     };
     repo.upsert(&user).unwrap();
-    assert_eq!(repo.get("alice").unwrap().unwrap().display_name, Some("Alice".into()));
+    assert_eq!(
+        repo.get("alice").unwrap().unwrap().display_name,
+        Some("Alice".into())
+    );
     assert_eq!(repo.list().unwrap().len(), 1);
     repo.suspend("alice", Utc::now()).unwrap();
     assert!(repo.is_suspended("alice").unwrap());
@@ -1527,12 +1683,25 @@ fn token_list_revoke_all_purge() {
     let repo = SqliteTokenRepo::new(conn);
 
     let t1 = Token {
-        id: "tok-a".into(), subject_type: SubjectType::User, subject_id: "alice".into(),
-        token_hash: "h1".into(), token_prefix: "dbw_a".into(),
-        roles: vec!["dev".into()], groups: vec![], name: None,
-        status: TokenStatus::Active, expires_at: None, created_at: Utc::now(), revoked_at: None,
+        id: "tok-a".into(),
+        subject_type: SubjectType::User,
+        subject_id: "alice".into(),
+        token_hash: "h1".into(),
+        token_prefix: "dbw_a".into(),
+        roles: vec!["dev".into()],
+        groups: vec![],
+        name: None,
+        status: TokenStatus::Active,
+        expires_at: None,
+        created_at: Utc::now(),
+        revoked_at: None,
     };
-    let t2 = Token { id: "tok-b".into(), token_hash: "h2".into(), token_prefix: "dbw_b".into(), ..t1.clone() };
+    let t2 = Token {
+        id: "tok-b".into(),
+        token_hash: "h2".into(),
+        token_prefix: "dbw_b".into(),
+        ..t1.clone()
+    };
     repo.create(&t1).unwrap();
     repo.create(&t2).unwrap();
 
@@ -1556,10 +1725,35 @@ fn audit_list_with_filter() {
     let logger = SqliteAuditLogger::new(conn.clone());
     let repo = SqliteAuditRepo::new(conn.clone());
 
-    logger.record(&AuditEvent::simple("query_executed", "query", "alice", Some("req-1"))).unwrap();
-    logger.record(&AuditEvent::simple("request_created", "request", "bob", Some("req-2"))).unwrap();
+    logger
+        .record(&AuditEvent::simple(
+            "query_executed",
+            "query",
+            "alice",
+            Some("req-1"),
+        ))
+        .unwrap();
+    logger
+        .record(&AuditEvent::simple(
+            "request_created",
+            "request",
+            "bob",
+            Some("req-2"),
+        ))
+        .unwrap();
 
-    let filter = AuditFilter { actor_id: Some("alice".into()), event_type: None, event_category: None, outcome: None, environment: None, database: None, since: None, until: None, limit: 100, offset: 0 };
+    let filter = AuditFilter {
+        actor_id: Some("alice".into()),
+        event_type: None,
+        event_category: None,
+        outcome: None,
+        environment: None,
+        database: None,
+        since: None,
+        until: None,
+        limit: 100,
+        offset: 0,
+    };
     let events = repo.list(&filter).unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].actor_id, "alice");
@@ -1571,7 +1765,9 @@ fn audit_purge_old() {
     let logger = SqliteAuditLogger::new(conn.clone());
     let repo = SqliteAuditRepo::new(conn.clone());
 
-    logger.record(&AuditEvent::simple("test", "test", "x", None)).unwrap();
+    logger
+        .record(&AuditEvent::simple("test", "test", "x", None))
+        .unwrap();
     // Nothing old enough to purge
     assert_eq!(repo.purge_old("2000-01-01T00:00:00Z").unwrap(), 0);
     // Purge everything
@@ -1587,10 +1783,17 @@ fn agent_get_and_list() {
     let repo = SqliteAgentRepo::new(conn.clone());
 
     let agent = Agent {
-        id: "agent-1".into(), token_id: "tok-1".into(),
-        databases: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }],
-        status: AgentStatus::Active, max_concurrent: 2, in_flight: 0,
-        last_seen: Some(Utc::now()), created_at: Utc::now(),
+        id: "agent-1".into(),
+        token_id: "tok-1".into(),
+        databases: vec![DatabaseCapability {
+            database: DatabaseName::new("app").unwrap(),
+            environment: Environment::new("production").unwrap(),
+        }],
+        status: AgentStatus::Active,
+        max_concurrent: 2,
+        in_flight: 0,
+        last_seen: Some(Utc::now()),
+        created_at: Utc::now(),
     };
     repo.upsert(&agent).unwrap();
     assert_eq!(repo.get("agent-1").unwrap().unwrap().id, "agent-1");
@@ -1605,17 +1808,33 @@ fn agent_find_dispatched_jobs() {
     let request_repo = SqliteRequestRepo::new(conn.clone());
 
     let req = Request {
-        id: "req-d1".into(), requester: "alice".into(),
-        database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap(),
-        operation: Operation::ExecuteDml, detail: "UPDATE t SET x=1".into(),
-        status: RequestStatus::Dispatched, emergency: false, reason: None,
-        idempotency_key: None, metadata_json: "{}".into(), share_with: vec![],
-        no_store: false, workflow_snapshot_json: None, cancel_reason: None, cancelled_by: None,
-        created_at: Utc::now(), updated_at: Utc::now(), resolved_at: None, expires_at: None,
+        id: "req-d1".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "UPDATE t SET x=1".into(),
+        status: RequestStatus::Dispatched,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
     };
     request_repo.insert(&req).unwrap();
 
-    let caps = vec![(DatabaseName::new("app").unwrap(), Environment::new("production").unwrap())];
+    let caps = vec![(
+        DatabaseName::new("app").unwrap(),
+        Environment::new("production").unwrap(),
+    )];
     let jobs = repo.find_dispatched_jobs(&caps).unwrap();
     assert_eq!(jobs.len(), 1);
 }
@@ -1628,21 +1847,40 @@ fn agent_extend_lease_and_find_executions() {
     let request_repo = SqliteRequestRepo::new(conn.clone());
 
     let req = Request {
-        id: "req-el".into(), requester: "alice".into(),
-        database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap(),
-        operation: Operation::ExecuteDml, detail: "X".into(),
-        status: RequestStatus::Running, emergency: false, reason: None,
-        idempotency_key: None, metadata_json: "{}".into(), share_with: vec![],
-        no_store: false, workflow_snapshot_json: None, cancel_reason: None, cancelled_by: None,
-        created_at: Utc::now(), updated_at: Utc::now(), resolved_at: None, expires_at: None,
+        id: "req-el".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml,
+        detail: "X".into(),
+        status: RequestStatus::Running,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
     };
     request_repo.insert(&req).unwrap();
 
     let exec = Execution {
-        id: "exec-el".into(), request_id: "req-el".into(), agent_id: "agent-1".into(),
-        status: ExecutionStatus::Claimed, token: "tok".into(),
-        lease_expires_at: Utc::now(), started_at: Some(Utc::now()),
-        finished_at: None, error_message: None, created_at: Utc::now(),
+        id: "exec-el".into(),
+        request_id: "req-el".into(),
+        agent_id: "agent-1".into(),
+        status: ExecutionStatus::Claimed,
+        token: "tok".into(),
+        lease_expires_at: Utc::now(),
+        started_at: Some(Utc::now()),
+        finished_at: None,
+        error_message: None,
+        created_at: Utc::now(),
     };
     repo.create_execution(&exec).unwrap();
 

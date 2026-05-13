@@ -12,7 +12,9 @@ pub async fn metrics(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    state.authorizer.authorize_global(&user, Permission::MetricsView)
+    state
+        .authorizer
+        .authorize_global(&user, Permission::MetricsView)
         .map_err(|_| (StatusCode::FORBIDDEN, "forbidden".to_string()))?;
 
     let body = crate::metrics::render(

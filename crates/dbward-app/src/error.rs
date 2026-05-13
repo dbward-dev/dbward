@@ -45,10 +45,16 @@ impl AppError {
 #[derive(Debug, thiserror::Error)]
 pub enum AuthzError {
     #[error("permission denied: {permission} — {reason}")]
-    Forbidden { permission: Permission, reason: String },
+    Forbidden {
+        permission: Permission,
+        reason: String,
+    },
 
     #[error("scope denied: {database}:{environment}")]
-    ScopeDenied { database: String, environment: String },
+    ScopeDenied {
+        database: String,
+        environment: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]

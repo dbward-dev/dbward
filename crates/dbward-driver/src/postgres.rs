@@ -2,8 +2,8 @@ use futures::TryStreamExt;
 use sqlx::{Column, Row, TypeInfo, ValueRef};
 
 use crate::{
-    text_to_json, CancelState, DatabaseDriver, DriverError, JsonMapping, QueryOutput, MAX_RESULT_BYTES,
-    MAX_RESULT_ROWS,
+    CancelState, DatabaseDriver, DriverError, JsonMapping, MAX_RESULT_BYTES, MAX_RESULT_ROWS,
+    QueryOutput, text_to_json,
 };
 
 pub struct PostgresDriver {
@@ -139,15 +139,25 @@ impl DatabaseDriver for PostgresDriver {
         Ok(rows.into_iter().map(|(v,)| v).collect())
     }
 
-    async fn query_cancellable(&self, sql: &str, timeout_secs: u64, cancel: &CancelState) -> Result<QueryOutput, DriverError> {
-        let mut conn = self.pool.acquire().await
+    async fn query_cancellable(
+        &self,
+        sql: &str,
+        timeout_secs: u64,
+        cancel: &CancelState,
+    ) -> Result<QueryOutput, DriverError> {
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
         let ms = timeout_secs * 1000;
         sqlx::query(&format!("SET statement_timeout = {ms}"))
-            .execute(&mut *conn).await
+            .execute(&mut *conn)
+            .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
-            .fetch_one(&mut *conn).await
+            .fetch_one(&mut *conn)
+            .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         cancel.set_connection_id(pid.to_string());
 
@@ -161,8 +171,11 @@ impl DatabaseDriver for PostgresDriver {
         let mut truncated = false;
         let mut truncation_reason = None;
 
-        while let Some(row) = stream.try_next().await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))? {
+        while let Some(row) = stream
+            .try_next()
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?
+        {
             let json = pg_row_to_json(&row);
             total_bytes += json.to_string().len();
             if rows.len() >= MAX_RESULT_ROWS {
@@ -177,18 +190,32 @@ impl DatabaseDriver for PostgresDriver {
             }
             rows.push(json);
         }
-        Ok(QueryOutput { rows, truncated, truncation_reason })
+        Ok(QueryOutput {
+            rows,
+            truncated,
+            truncation_reason,
+        })
     }
 
-    async fn execute_cancellable(&self, sql: &str, timeout_secs: u64, cancel: &CancelState) -> Result<u64, DriverError> {
-        let mut conn = self.pool.acquire().await
+    async fn execute_cancellable(
+        &self,
+        sql: &str,
+        timeout_secs: u64,
+        cancel: &CancelState,
+    ) -> Result<u64, DriverError> {
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
         let ms = timeout_secs * 1000;
         sqlx::query(&format!("SET statement_timeout = {ms}"))
-            .execute(&mut *conn).await
+            .execute(&mut *conn)
+            .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
-            .fetch_one(&mut *conn).await
+            .fetch_one(&mut *conn)
+            .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         cancel.set_connection_id(pid.to_string());
 
@@ -196,7 +223,9 @@ impl DatabaseDriver for PostgresDriver {
             return Err(DriverError::Cancelled);
         }
 
-        let result = sqlx::query(sql).execute(&mut *conn).await
+        let result = sqlx::query(sql)
+            .execute(&mut *conn)
+            .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         Ok(result.rows_affected())
     }

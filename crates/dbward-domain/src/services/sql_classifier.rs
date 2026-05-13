@@ -76,7 +76,8 @@ pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyE
 
     // Pre-parse: reject LOAD DATA (sqlparser can't parse it for PG/MySQL dialects)
     let upper = trimmed.to_ascii_uppercase();
-    if upper.starts_with("LOAD DATA") || upper.starts_with("LOAD\t") || upper.starts_with("LOAD\n") {
+    if upper.starts_with("LOAD DATA") || upper.starts_with("LOAD\t") || upper.starts_with("LOAD\n")
+    {
         return Err(ClassifyError::Rejected {
             reason: "LOAD DATA is not allowed".into(),
         });
@@ -609,7 +610,10 @@ mod tests {
 
     #[test]
     fn set_role_rejected() {
-        assert!(matches!(pg("SET ROLE admin"), Err(ClassifyError::Rejected { .. })));
+        assert!(matches!(
+            pg("SET ROLE admin"),
+            Err(ClassifyError::Rejected { .. })
+        ));
     }
 
     #[test]

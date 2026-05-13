@@ -9,7 +9,11 @@ pub enum ResultAction {
     Get { id: String },
 }
 
-pub async fn run_result(sc: &ServerClient, json_output: bool, action: ResultAction) -> Result<(), CliError> {
+pub async fn run_result(
+    sc: &ServerClient,
+    json_output: bool,
+    action: ResultAction,
+) -> Result<(), CliError> {
     match action {
         ResultAction::List => {
             let body = sc.list_results().await?;
@@ -19,7 +23,10 @@ pub async fn run_result(sc: &ServerClient, json_output: bool, action: ResultActi
                 if results.is_empty() {
                     println!("No shared results.");
                 } else {
-                    println!("{:<10} {:<12} {:<10} {:<12} DETAIL", "ID", "USER", "ENV", "DB");
+                    println!(
+                        "{:<10} {:<12} {:<10} {:<12} DETAIL",
+                        "ID", "USER", "ENV", "DB"
+                    );
                     for r in results {
                         let rid = r["request_id"].as_str().unwrap_or("");
                         println!(

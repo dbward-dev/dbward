@@ -8,7 +8,6 @@ use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::sqlite::DbConn;
 
-
 pub struct SqliteRequestRepo {
     conn: DbConn,
 }
@@ -83,17 +82,23 @@ fn parse_optional_ts(s: Option<String>) -> Result<Option<DateTime<Utc>>, AppErro
 
 fn row_to_request(row: &rusqlite::Row<'_>) -> Result<Request, rusqlite::Error> {
     let db_id: String = row.get("database_id")?;
-    let (database, environment) = parse_database_id(&db_id)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?;
+    let (database, environment) = parse_database_id(&db_id).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })?;
 
     let op_str: String = row.get("operation")?;
-    let operation: Operation = op_str
-        .parse()
-        .map_err(|e: &str| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(AppError::Internal(e.to_string()))))?;
+    let operation: Operation = op_str.parse().map_err(|e: &str| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(AppError::Internal(e.to_string())),
+        )
+    })?;
 
     let status_str: String = row.get("status")?;
-    let status = parse_status(&status_str)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?;
+    let status = parse_status(&status_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })?;
 
     let share_with_json: String = row.get("share_with_json")?;
     let share_with: Vec<String> = serde_json::from_str(&share_with_json).unwrap_or_default();
@@ -103,14 +108,18 @@ fn row_to_request(row: &rusqlite::Row<'_>) -> Result<Request, rusqlite::Error> {
     let resolved_at_str: Option<String> = row.get("resolved_at")?;
     let expires_at_str: Option<String> = row.get("expires_at")?;
 
-    let created_at = parse_ts(&created_at_str)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?;
-    let updated_at = parse_ts(&updated_at_str)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?;
-    let resolved_at = parse_optional_ts(resolved_at_str)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?;
-    let expires_at = parse_optional_ts(expires_at_str)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))?;
+    let created_at = parse_ts(&created_at_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let updated_at = parse_ts(&updated_at_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let resolved_at = parse_optional_ts(resolved_at_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let expires_at = parse_optional_ts(expires_at_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })?;
 
     Ok(Request {
         id: row.get("id")?,
@@ -176,35 +185,51 @@ impl RequestRepo for SqliteRequestRepo {
         let mut stmt = conn
             .prepare("SELECT * FROM requests WHERE id = ?1")
             .map_err(map_err)?;
-        let mut rows = stmt.query_and_then(params![id], row_to_request).map_err(map_err)?;
+        let mut rows = stmt
+            .query_and_then(params![id], row_to_request)
+            .map_err(map_err)?;
         match rows.next() {
             Some(r) => Ok(Some(r.map_err(map_err)?)),
             None => Ok(None),
         }
     }
 
-    fn list(&self, limit: u32, offset: u32, status: Option<&str>) -> Result<(Vec<Request>, u32), AppError> {
+    fn list(
+        &self,
+        limit: u32,
+        offset: u32,
+        status: Option<&str>,
+    ) -> Result<(Vec<Request>, u32), AppError> {
         let conn = self.conn.lock().unwrap();
         let (count_sql, query_sql) = if let Some(s) = status {
             let total: u32 = conn
-                .query_row("SELECT COUNT(*) FROM requests WHERE status = ?1", params![s], |r| r.get(0))
+                .query_row(
+                    "SELECT COUNT(*) FROM requests WHERE status = ?1",
+                    params![s],
+                    |r| r.get(0),
+                )
                 .map_err(map_err)?;
             let mut stmt = conn
                 .prepare("SELECT * FROM requests WHERE status = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3")
                 .map_err(map_err)?;
-            let rows = stmt.query_and_then(params![s, limit, offset], row_to_request).map_err(map_err)?;
+            let rows = stmt
+                .query_and_then(params![s, limit, offset], row_to_request)
+                .map_err(map_err)?;
             let items = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
             return Ok((items, total));
         } else {
-            ("SELECT COUNT(*) FROM requests", "SELECT * FROM requests ORDER BY created_at DESC LIMIT ?1 OFFSET ?2")
+            (
+                "SELECT COUNT(*) FROM requests",
+                "SELECT * FROM requests ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            )
         };
         let total: u32 = conn
             .query_row(count_sql, [], |r| r.get(0))
             .map_err(map_err)?;
-        let mut stmt = conn
-            .prepare(query_sql)
+        let mut stmt = conn.prepare(query_sql).map_err(map_err)?;
+        let rows = stmt
+            .query_and_then(params![limit, offset], row_to_request)
             .map_err(map_err)?;
-        let rows = stmt.query_and_then(params![limit, offset], row_to_request).map_err(map_err)?;
         let items = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
         Ok((items, total))
     }
@@ -214,7 +239,9 @@ impl RequestRepo for SqliteRequestRepo {
         let mut stmt = conn
             .prepare("SELECT * FROM requests WHERE idempotency_key = ?1")
             .map_err(map_err)?;
-        let mut rows = stmt.query_and_then(params![key], row_to_request).map_err(map_err)?;
+        let mut rows = stmt
+            .query_and_then(params![key], row_to_request)
+            .map_err(map_err)?;
         match rows.next() {
             Some(r) => Ok(Some(r.map_err(map_err)?)),
             None => Ok(None),
@@ -249,11 +276,19 @@ impl RequestRepo for SqliteRequestRepo {
             .query_map(params![request_id], |row| {
                 let action_str: String = row.get("action")?;
                 let action = parse_approval_action(&action_str).map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
                 })?;
                 let created_at_str: String = row.get("created_at")?;
                 let created_at = parse_ts(&created_at_str).map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
                 })?;
                 Ok(Approval {
                     id: row.get("id")?,
@@ -294,9 +329,16 @@ impl RequestRepo for SqliteRequestRepo {
         Ok(affected > 0)
     }
 
-    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+    fn approve_and_mark_approved(
+        &self,
+        approval: &Approval,
+        request_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
         let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(map_err)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_err)?;
 
         tx.execute(
             "INSERT INTO approvals (id, request_id, action, actor_id, matched_selector, step_index, comment, created_at)
@@ -339,9 +381,16 @@ impl RequestRepo for SqliteRequestRepo {
         Ok(affected > 0)
     }
 
-    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: DateTime<Utc>) -> Result<bool, AppError> {
+    fn reject_and_record(
+        &self,
+        request_id: &str,
+        approval: &Approval,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
         let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(map_err)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_err)?;
 
         let now_str = now.to_rfc3339();
         let affected = tx.execute(
@@ -373,7 +422,13 @@ impl RequestRepo for SqliteRequestRepo {
         Ok(true)
     }
 
-    fn mark_cancelled(&self, id: &str, actor: &str, reason: Option<&str>, now: DateTime<Utc>) -> Result<bool, AppError> {
+    fn mark_cancelled(
+        &self,
+        id: &str,
+        actor: &str,
+        reason: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
         let conn = self.conn.lock().unwrap();
         let affected = conn
             .execute(
@@ -432,7 +487,8 @@ impl RequestRepo for SqliteRequestRepo {
         tx.execute(
             "UPDATE requests SET status = 'dispatched', updated_at = ?2 WHERE id = ?1",
             params![req.id, req.updated_at.to_rfc3339()],
-        ).map_err(map_err)?;
+        )
+        .map_err(map_err)?;
 
         tx.commit().map_err(map_err)?;
         Ok(())
@@ -489,7 +545,9 @@ impl RequestRepo for SqliteRequestRepo {
             "SELECT id FROM requests WHERE status = 'approved' \
              AND datetime(updated_at, '+' || COALESCE(json_extract(workflow_snapshot_json, '$.approval_ttl_secs'), 86400) || ' seconds') < datetime(?1)"
         ).map_err(map_err)?;
-        let rows = stmt.query_map(params![now], |row| row.get(0)).map_err(map_err)?;
+        let rows = stmt
+            .query_map(params![now], |row| row.get(0))
+            .map_err(map_err)?;
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
     }
 
@@ -501,7 +559,9 @@ impl RequestRepo for SqliteRequestRepo {
              AND json_extract(workflow_snapshot_json, '$.pending_ttl_secs') IS NOT NULL \
              AND datetime(created_at, '+' || json_extract(workflow_snapshot_json, '$.pending_ttl_secs') || ' seconds') < datetime(?1)"
         ).map_err(map_err)?;
-        let rows = stmt.query_map(params![now], |row| row.get(0)).map_err(map_err)?;
+        let rows = stmt
+            .query_map(params![now], |row| row.get(0))
+            .map_err(map_err)?;
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
     }
 
@@ -510,7 +570,9 @@ impl RequestRepo for SqliteRequestRepo {
         let mut stmt = conn.prepare(
             "SELECT id FROM requests WHERE status = 'dispatched' AND datetime(updated_at) < datetime(?1)"
         ).map_err(map_err)?;
-        let rows = stmt.query_map(params![cutoff], |row| row.get(0)).map_err(map_err)?;
+        let rows = stmt
+            .query_map(params![cutoff], |row| row.get(0))
+            .map_err(map_err)?;
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
     }
 
@@ -523,11 +585,18 @@ impl RequestRepo for SqliteRequestRepo {
         Ok(n > 0)
     }
 
-    fn mark_expired_and_record(&self, id: &str, audit_event: &AuditEvent, now: &str) -> Result<bool, AppError> {
+    fn mark_expired_and_record(
+        &self,
+        id: &str,
+        audit_event: &AuditEvent,
+        now: &str,
+    ) -> Result<bool, AppError> {
         use sha2::{Digest, Sha256};
 
         let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(map_err)?;
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_err)?;
 
         let n = tx.execute(
             "UPDATE requests SET status = 'expired', updated_at = ?2 WHERE id = ?1 AND status IN ('approved', 'pending')",
@@ -538,15 +607,19 @@ impl RequestRepo for SqliteRequestRepo {
         }
 
         // Inline audit INSERT with hash chain
-        let prev_hash: Option<String> = tx.query_row(
-            "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
-            [],
-            |row| row.get(0),
-        ).ok();
+        let prev_hash: Option<String> = tx
+            .query_row(
+                "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
         let audit_id = uuid::Uuid::new_v4().to_string();
         let hash_input = format!(
             "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-            audit_id, audit_event.event_type, audit_event.actor_id,
+            audit_id,
+            audit_event.event_type,
+            audit_event.actor_id,
             audit_event.created_at.to_rfc3339(),
             prev_hash.as_deref().unwrap_or(""),
             "success",
@@ -599,17 +672,20 @@ impl RequestRepo for SqliteRequestRepo {
 
     fn count_by_status(&self, status: &str) -> Result<u32, AppError> {
         let conn = self.conn.lock().unwrap();
-        let count: u32 = conn.query_row(
-            "SELECT COUNT(*) FROM requests WHERE status = ?1",
-            params![status],
-            |row| row.get(0),
-        ).map_err(map_err)?;
+        let count: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM requests WHERE status = ?1",
+                params![status],
+                |row| row.get(0),
+            )
+            .map_err(map_err)?;
         Ok(count)
     }
 
     fn wal_checkpoint(&self) -> Result<(), AppError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").map_err(map_err)?;
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .map_err(map_err)?;
         Ok(())
     }
 }
@@ -679,7 +755,11 @@ mod tests {
 
         let found = repo.find_by_idempotency_key("idem-1").unwrap().unwrap();
         assert_eq!(found.id, "req-1");
-        assert!(repo.find_by_idempotency_key("nonexistent").unwrap().is_none());
+        assert!(
+            repo.find_by_idempotency_key("nonexistent")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -725,7 +805,10 @@ mod tests {
         repo.insert(&make_request()).unwrap();
 
         let now = Utc::now();
-        assert!(repo.mark_cancelled("req-1", "admin", Some("oops"), now).unwrap());
+        assert!(
+            repo.mark_cancelled("req-1", "admin", Some("oops"), now)
+                .unwrap()
+        );
 
         let req = repo.get("req-1").unwrap().unwrap();
         assert_eq!(req.status, RequestStatus::Cancelled);

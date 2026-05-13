@@ -6,7 +6,8 @@ use crate::error::CliError;
 pub async fn run_agent(config_path: &Path) -> Result<(), CliError> {
     let binary = find_agent_binary()?;
     let status = ProcessCommand::new(&binary)
-        .arg("--config").arg(config_path)
+        .arg("--config")
+        .arg(config_path)
         .status()
         .map_err(|e| CliError::Server(format!("failed to start agent: {e}")))?;
     if !status.success() {

@@ -42,17 +42,20 @@ impl AgentClient {
                 body,
             });
         }
-        let body: serde_json::Value = resp.json().await
+        let body: serde_json::Value = resp
+            .json()
+            .await
             .map_err(|e| AgentError::TokenVerification(format!("invalid response: {e}")))?;
-        let hex_str = body["public_key"].as_str()
+        let hex_str = body["public_key"]
+            .as_str()
             .ok_or_else(|| AgentError::TokenVerification("missing public_key field".into()))?;
         let bytes = hex::decode(hex_str.trim())
             .map_err(|e| AgentError::TokenVerification(format!("invalid public key hex: {e}")))?;
-        let key_bytes: [u8; 32] = bytes.try_into().map_err(|_| {
-            AgentError::TokenVerification("public key must be 32 bytes".into())
-        })?;
+        let key_bytes: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| AgentError::TokenVerification("public key must be 32 bytes".into()))?;
         VerifyingKey::from_bytes(&key_bytes)
-                        .map_err(|e| AgentError::TokenVerification(e.to_string()))
+            .map_err(|e| AgentError::TokenVerification(e.to_string()))
     }
 
     pub async fn poll(&self, req: &PollRequest) -> Result<PollResponse, AgentError> {
@@ -69,7 +72,10 @@ impl AgentClient {
     pub async fn claim(&self, request_id: &str) -> Result<ClaimResponse, AgentError> {
         let resp = self
             .http
-            .post(format!("{}/api/agent/jobs/{}/claim", self.base_url, request_id))
+            .post(format!(
+                "{}/api/agent/jobs/{}/claim",
+                self.base_url, request_id
+            ))
             .bearer_auth(&self.agent_token)
             .send()
             .await?;

@@ -24,7 +24,9 @@ pub fn find_matching_workflow<'a>(
     let candidates: Vec<&Workflow> = workflows
         .iter()
         .filter(|w| w.matches_operation(operation))
-        .filter(|w| matches_scope(&w.database, database) && matches_scope_env(&w.environment, environment))
+        .filter(|w| {
+            matches_scope(&w.database, database) && matches_scope_env(&w.environment, environment)
+        })
         .collect();
 
     if candidates.is_empty() {
@@ -96,7 +98,13 @@ mod tests {
     use crate::policies::{ApproverGroup, WorkflowStep, WorkflowStepMode};
     use crate::values::Selector;
 
-    fn wf(db: &str, env: &str, ops: Vec<Operation>, steps: Vec<WorkflowStep>, skip: Vec<Selector>) -> Workflow {
+    fn wf(
+        db: &str,
+        env: &str,
+        ops: Vec<Operation>,
+        steps: Vec<WorkflowStep>,
+        skip: Vec<Selector>,
+    ) -> Workflow {
         Workflow {
             id: format!("{db}:{env}"),
             database: DatabaseName::new(db).unwrap(),
@@ -147,14 +155,26 @@ mod tests {
 
     #[test]
     fn skip_approval_for_matches() {
-        let w = wf("*", "*", vec![], vec![step()], vec![Selector::Role("admin".to_string())]);
+        let w = wf(
+            "*",
+            "*",
+            vec![],
+            vec![step()],
+            vec![Selector::Role("admin".to_string())],
+        );
         let decision = evaluate(Some(&w), &["admin".to_string()], &[], "alice", true);
         assert_eq!(decision, ApprovalDecision::AutoApproved);
     }
 
     #[test]
     fn skip_approval_for_no_match() {
-        let w = wf("*", "*", vec![], vec![step()], vec![Selector::Role("admin".to_string())]);
+        let w = wf(
+            "*",
+            "*",
+            vec![],
+            vec![step()],
+            vec![Selector::Role("admin".to_string())],
+        );
         let decision = evaluate(Some(&w), &["developer".to_string()], &[], "alice", true);
         assert_eq!(decision, ApprovalDecision::PendingWithWorkflow);
     }
@@ -188,7 +208,13 @@ mod tests {
     fn specific_operations_wins_over_catchall() {
         let workflows = vec![
             wf("app", "production", vec![], vec![], vec![]),
-            wf("app", "production", vec![Operation::ExecuteDml], vec![step()], vec![]),
+            wf(
+                "app",
+                "production",
+                vec![Operation::ExecuteDml],
+                vec![step()],
+                vec![],
+            ),
         ];
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("production").unwrap();
@@ -198,9 +224,7 @@ mod tests {
 
     #[test]
     fn no_match_returns_none() {
-        let workflows = vec![
-            wf("other", "production", vec![], vec![step()], vec![]),
-        ];
+        let workflows = vec![wf("other", "production", vec![], vec![step()], vec![])];
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("production").unwrap();
         assert!(find_matching_workflow(&workflows, &db, &env, Operation::ExecuteDml).is_none());
@@ -208,9 +232,7 @@ mod tests {
 
     #[test]
     fn wildcard_env_matches() {
-        let workflows = vec![
-            wf("app", "*", vec![], vec![step()], vec![]),
-        ];
+        let workflows = vec![wf("app", "*", vec![], vec![step()], vec![])];
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("staging").unwrap();
         let matched = find_matching_workflow(&workflows, &db, &env, Operation::ExecuteSelect);
@@ -235,42 +257,50 @@ pub fn find_current_step(steps: &[WorkflowStep], approvals: &[Approval]) -> u32 
 
 /// Check if a single step is satisfied based on its mode and approver group minimums.
 pub fn is_step_satisfied(step: &WorkflowStep, step_index: u32, approvals: &[Approval]) -> bool {
-    let step_approvals: Vec<&Approval> = approvals.iter()
+    let step_approvals: Vec<&Approval> = approvals
+        .iter()
         .filter(|a| a.step_index == step_index && a.action == ApprovalAction::Approve)
         .collect();
 
     // Admin override satisfies the entire step
-    if step_approvals.iter().any(|a| a.matched_selector == "admin_override") {
+    if step_approvals
+        .iter()
+        .any(|a| a.matched_selector == "admin_override")
+    {
         return true;
     }
 
     match step.mode {
-        WorkflowStepMode::All => {
-            step.approvers.iter().all(|ag| {
-                let count = step_approvals.iter()
-                    .filter(|a| a.matched_selector == ag.selector.to_string())
-                    .count() as u32;
-                count >= ag.min
-            })
-        }
-        WorkflowStepMode::Any => {
-            step.approvers.iter().any(|ag| {
-                let count = step_approvals.iter()
-                    .filter(|a| a.matched_selector == ag.selector.to_string())
-                    .count() as u32;
-                count >= ag.min
-            })
-        }
+        WorkflowStepMode::All => step.approvers.iter().all(|ag| {
+            let count = step_approvals
+                .iter()
+                .filter(|a| a.matched_selector == ag.selector.to_string())
+                .count() as u32;
+            count >= ag.min
+        }),
+        WorkflowStepMode::Any => step.approvers.iter().any(|ag| {
+            let count = step_approvals
+                .iter()
+                .filter(|a| a.matched_selector == ag.selector.to_string())
+                .count() as u32;
+            count >= ag.min
+        }),
     }
 }
 
 /// Check if all steps are satisfied.
 pub fn all_steps_satisfied(steps: &[WorkflowStep], approvals: &[Approval]) -> bool {
     // Admin override satisfies ALL steps
-    if approvals.iter().any(|a| a.action == ApprovalAction::Approve && a.matched_selector == "admin_override") {
+    if approvals
+        .iter()
+        .any(|a| a.action == ApprovalAction::Approve && a.matched_selector == "admin_override")
+    {
         return true;
     }
-    steps.iter().enumerate().all(|(i, step)| is_step_satisfied(step, i as u32, approvals))
+    steps
+        .iter()
+        .enumerate()
+        .all(|(i, step)| is_step_satisfied(step, i as u32, approvals))
 }
 
 #[cfg(test)]
@@ -301,7 +331,10 @@ mod step_tests {
     #[test]
     fn single_step_unsatisfied() {
         let steps = vec![WorkflowStep {
-            approvers: vec![ApproverGroup { selector: Selector::Role("dba".into()), min: 1 }],
+            approvers: vec![ApproverGroup {
+                selector: Selector::Role("dba".into()),
+                min: 1,
+            }],
             mode: WorkflowStepMode::Any,
         }];
         assert_eq!(find_current_step(&steps, &[]), 0);
@@ -310,7 +343,10 @@ mod step_tests {
     #[test]
     fn single_step_satisfied() {
         let steps = vec![WorkflowStep {
-            approvers: vec![ApproverGroup { selector: Selector::Role("dba".into()), min: 1 }],
+            approvers: vec![ApproverGroup {
+                selector: Selector::Role("dba".into()),
+                min: 1,
+            }],
             mode: WorkflowStepMode::Any,
         }];
         let approvals = vec![make_approval(0, "role:dba")];
@@ -321,11 +357,17 @@ mod step_tests {
     fn multi_step_partial() {
         let steps = vec![
             WorkflowStep {
-                approvers: vec![ApproverGroup { selector: Selector::Role("dba".into()), min: 1 }],
+                approvers: vec![ApproverGroup {
+                    selector: Selector::Role("dba".into()),
+                    min: 1,
+                }],
                 mode: WorkflowStepMode::Any,
             },
             WorkflowStep {
-                approvers: vec![ApproverGroup { selector: Selector::Role("cto".into()), min: 1 }],
+                approvers: vec![ApproverGroup {
+                    selector: Selector::Role("cto".into()),
+                    min: 1,
+                }],
                 mode: WorkflowStepMode::Any,
             },
         ];
@@ -339,15 +381,24 @@ mod step_tests {
     fn mode_all_requires_every_group() {
         let steps = vec![WorkflowStep {
             approvers: vec![
-                ApproverGroup { selector: Selector::Role("dba".into()), min: 1 },
-                ApproverGroup { selector: Selector::Role("security".into()), min: 1 },
+                ApproverGroup {
+                    selector: Selector::Role("dba".into()),
+                    min: 1,
+                },
+                ApproverGroup {
+                    selector: Selector::Role("security".into()),
+                    min: 1,
+                },
             ],
             mode: WorkflowStepMode::All,
         }];
         let partial = vec![make_approval(0, "role:dba")];
         assert!(!is_step_satisfied(&steps[0], 0, &partial));
 
-        let full = vec![make_approval(0, "role:dba"), make_approval(0, "role:security")];
+        let full = vec![
+            make_approval(0, "role:dba"),
+            make_approval(0, "role:security"),
+        ];
         assert!(is_step_satisfied(&steps[0], 0, &full));
     }
 }

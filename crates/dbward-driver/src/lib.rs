@@ -31,10 +31,20 @@ pub trait DatabaseDriver: Send + Sync {
 
     /// Cancellable query: acquire connection → set timeout → set pid on cancel_state → execute.
     /// All on the same connection. Cancel state is shared with heartbeat task.
-    async fn query_cancellable(&self, sql: &str, timeout_secs: u64, cancel: &CancelState) -> Result<QueryOutput, DriverError>;
+    async fn query_cancellable(
+        &self,
+        sql: &str,
+        timeout_secs: u64,
+        cancel: &CancelState,
+    ) -> Result<QueryOutput, DriverError>;
 
     /// Cancellable execute: same guarantees as query_cancellable.
-    async fn execute_cancellable(&self, sql: &str, timeout_secs: u64, cancel: &CancelState) -> Result<u64, DriverError>;
+    async fn execute_cancellable(
+        &self,
+        sql: &str,
+        timeout_secs: u64,
+        cancel: &CancelState,
+    ) -> Result<u64, DriverError>;
 }
 
 pub async fn connect(

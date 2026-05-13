@@ -20,47 +20,65 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
     let wildcard_db = DatabaseName::new("*").unwrap();
     let wildcard_env = Environment::new("*").unwrap();
     vec![
-        ("admin".to_string(), ResolvedRole {
-            name: "admin".to_string(),
-            permissions: [Permission::All].into_iter().collect(),
-            databases: vec![wildcard_db.clone()],
-            environments: vec![wildcard_env.clone()],
-        }),
-        ("developer".to_string(), ResolvedRole {
-            name: "developer".to_string(),
-            permissions: [
-                Permission::RequestCreate,
-                Permission::RequestCreateSelect,
-                Permission::RequestView,
-                Permission::RequestCancel,
-                Permission::RequestDispatch,
-                Permission::ResultView,
-                Permission::TokenRevokeOwn,
-            ].into_iter().collect(),
-            databases: vec![wildcard_db.clone()],
-            environments: vec![wildcard_env.clone()],
-        }),
-        ("readonly".to_string(), ResolvedRole {
-            name: "readonly".to_string(),
-            permissions: [
-                Permission::RequestCreateSelect,
-                Permission::RequestView,
-                Permission::ResultView,
-            ].into_iter().collect(),
-            databases: vec![wildcard_db.clone()],
-            environments: vec![wildcard_env.clone()],
-        }),
-        ("agent-default".to_string(), ResolvedRole {
-            name: "agent-default".to_string(),
-            permissions: [
-                Permission::AgentPoll,
-                Permission::AgentClaim,
-                Permission::AgentHeartbeat,
-                Permission::AgentSubmitResult,
-            ].into_iter().collect(),
-            databases: vec![wildcard_db],
-            environments: vec![wildcard_env],
-        }),
+        (
+            "admin".to_string(),
+            ResolvedRole {
+                name: "admin".to_string(),
+                permissions: [Permission::All].into_iter().collect(),
+                databases: vec![wildcard_db.clone()],
+                environments: vec![wildcard_env.clone()],
+            },
+        ),
+        (
+            "developer".to_string(),
+            ResolvedRole {
+                name: "developer".to_string(),
+                permissions: [
+                    Permission::RequestCreate,
+                    Permission::RequestCreateSelect,
+                    Permission::RequestView,
+                    Permission::RequestCancel,
+                    Permission::RequestDispatch,
+                    Permission::ResultView,
+                    Permission::TokenRevokeOwn,
+                ]
+                .into_iter()
+                .collect(),
+                databases: vec![wildcard_db.clone()],
+                environments: vec![wildcard_env.clone()],
+            },
+        ),
+        (
+            "readonly".to_string(),
+            ResolvedRole {
+                name: "readonly".to_string(),
+                permissions: [
+                    Permission::RequestCreateSelect,
+                    Permission::RequestView,
+                    Permission::ResultView,
+                ]
+                .into_iter()
+                .collect(),
+                databases: vec![wildcard_db.clone()],
+                environments: vec![wildcard_env.clone()],
+            },
+        ),
+        (
+            "agent-default".to_string(),
+            ResolvedRole {
+                name: "agent-default".to_string(),
+                permissions: [
+                    Permission::AgentPoll,
+                    Permission::AgentClaim,
+                    Permission::AgentHeartbeat,
+                    Permission::AgentSubmitResult,
+                ]
+                .into_iter()
+                .collect(),
+                databases: vec![wildcard_db],
+                environments: vec![wildcard_env],
+            },
+        ),
     ]
 }
 
@@ -71,7 +89,13 @@ impl ConfigRoleResolver {
         user_bindings: HashMap<String, Vec<String>>,
         default_role: Option<String>,
     ) -> Self {
-        Self::with_policy_repo(role_definitions, role_bindings, user_bindings, default_role, None)
+        Self::with_policy_repo(
+            role_definitions,
+            role_bindings,
+            user_bindings,
+            default_role,
+            None,
+        )
     }
 
     pub fn with_policy_repo(
@@ -137,9 +161,10 @@ impl RoleResolver for ConfigRoleResolver {
 
         // 4. Default role if nothing matched
         if role_names.is_empty()
-            && let Some(ref default) = self.default_role {
-                role_names.insert(default.clone());
-            }
+            && let Some(ref default) = self.default_role
+        {
+            role_names.insert(default.clone());
+        }
 
         // Resolve from config first, then fall back to PolicyRepo for DB-stored roles
         let mut resolved: Vec<ResolvedRole> = Vec::new();
@@ -155,16 +180,17 @@ impl RoleResolver for ConfigRoleResolver {
         // Query PolicyRepo for unresolved role names
         if !unresolved.is_empty()
             && let Some(ref repo) = self.policy_repo
-                && let Ok(defs) = repo.get_roles_by_names(&unresolved) {
-                    for def in defs {
-                        resolved.push(ResolvedRole {
-                            name: def.name.clone(),
-                            permissions: def.permissions.into_iter().collect(),
-                            databases: def.databases,
-                            environments: def.environments,
-                        });
-                    }
-                }
+            && let Ok(defs) = repo.get_roles_by_names(&unresolved)
+        {
+            for def in defs {
+                resolved.push(ResolvedRole {
+                    name: def.name.clone(),
+                    permissions: def.permissions.into_iter().collect(),
+                    databases: def.databases,
+                    environments: def.environments,
+                });
+            }
+        }
 
         Ok(resolved)
     }
@@ -213,24 +239,29 @@ mod tests {
     }
 
     fn make_resolver() -> ConfigRoleResolver {
-        let defs = vec![admin_def(), developer_def(), readonly_def(), agent_default_def()];
+        let defs = vec![
+            admin_def(),
+            developer_def(),
+            readonly_def(),
+            agent_default_def(),
+        ];
         let role_bindings = HashMap::from([
             ("engineering".to_string(), vec!["developer".to_string()]),
             ("admins".to_string(), vec!["admin".to_string()]),
         ]);
-        let user_bindings = HashMap::from([(
-            "alice".to_string(),
-            vec!["admin".to_string()],
-        )]);
-        ConfigRoleResolver::new(defs, role_bindings, user_bindings, Some("readonly".to_string()))
+        let user_bindings = HashMap::from([("alice".to_string(), vec!["admin".to_string()])]);
+        ConfigRoleResolver::new(
+            defs,
+            role_bindings,
+            user_bindings,
+            Some("readonly".to_string()),
+        )
     }
 
     #[test]
     fn user_binding_resolves_directly() {
         let resolver = make_resolver();
-        let roles = resolver
-            .resolve("alice", SubjectType::User, &[])
-            .unwrap();
+        let roles = resolver.resolve("alice", SubjectType::User, &[]).unwrap();
         assert_eq!(roles.len(), 1);
         assert_eq!(roles[0].name, "admin");
     }
@@ -249,7 +280,11 @@ mod tests {
     fn multiple_groups_merge_roles() {
         let resolver = make_resolver();
         let roles = resolver
-            .resolve("carol", SubjectType::User, &["engineering".to_string(), "admins".to_string()])
+            .resolve(
+                "carol",
+                SubjectType::User,
+                &["engineering".to_string(), "admins".to_string()],
+            )
             .unwrap();
         assert_eq!(roles.len(), 2);
         let names: HashSet<_> = roles.iter().map(|r| r.name.as_str()).collect();
@@ -281,9 +316,7 @@ mod tests {
     fn no_default_returns_empty() {
         let defs = vec![admin_def()];
         let resolver = ConfigRoleResolver::new(defs, HashMap::new(), HashMap::new(), None);
-        let roles = resolver
-            .resolve("nobody", SubjectType::User, &[])
-            .unwrap();
+        let roles = resolver.resolve("nobody", SubjectType::User, &[]).unwrap();
         assert!(roles.is_empty());
     }
 }

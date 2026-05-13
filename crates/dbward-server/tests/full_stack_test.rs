@@ -14,10 +14,10 @@ use dbward_app::ports::*;
 use dbward_domain::auth::*;
 use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
 use dbward_domain::values::*;
-use dbward_infra::sqlite::{self, *};
 use dbward_infra::auth::RbacAuthorizer;
-use dbward_server::state::AppState;
+use dbward_infra::sqlite::{self, *};
 use dbward_server::build_app;
+use dbward_server::state::AppState;
 
 // --- Minimal stubs for ports that don't have infra impls in test ---
 
@@ -43,7 +43,9 @@ impl TokenVerifier for TestTokenVerifier {
                 subject_type: SubjectType::User,
                 roles: vec![ResolvedRole {
                     name: "developer".into(),
-                    permissions: [Permission::RequestCreate, Permission::ResultView].into_iter().collect(),
+                    permissions: [Permission::RequestCreate, Permission::ResultView]
+                        .into_iter()
+                        .collect(),
                     databases: vec![DatabaseName::new("*").unwrap()],
                     environments: vec![Environment::new("*").unwrap()],
                 }],
@@ -60,7 +62,12 @@ impl TokenVerifier for TestTokenVerifier {
 
 struct TestRoleResolver;
 impl RoleResolver for TestRoleResolver {
-    fn resolve(&self, _: &str, _: SubjectType, _: &[String]) -> Result<Vec<ResolvedRole>, AuthError> {
+    fn resolve(
+        &self,
+        _: &str,
+        _: SubjectType,
+        _: &[String],
+    ) -> Result<Vec<ResolvedRole>, AuthError> {
         Ok(vec![])
     }
 }
@@ -68,9 +75,15 @@ impl RoleResolver for TestRoleResolver {
 struct TestResultStore;
 #[async_trait]
 impl ResultStore for TestResultStore {
-    async fn put(&self, _: &str, _: &[u8]) -> Result<(), AppError> { Ok(()) }
-    async fn get(&self, _: &str) -> Result<Vec<u8>, AppError> { Ok(vec![]) }
-    async fn delete(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+    async fn put(&self, _: &str, _: &[u8]) -> Result<(), AppError> {
+        Ok(())
+    }
+    async fn get(&self, _: &str) -> Result<Vec<u8>, AppError> {
+        Ok(vec![])
+    }
+    async fn delete(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 struct TestResultChannel;
@@ -78,37 +91,67 @@ struct TestResultChannel;
 impl ResultChannel for TestResultChannel {
     fn create_slot(&self, _: &str) {}
     async fn publish(&self, _: &str, _: ResultSummary) {}
-    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> { Ok(None) }
+    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> {
+        Ok(None)
+    }
     async fn notify_all(&self) {}
 }
 
 struct TestTokenSigner;
 impl TokenSigner for TestTokenSigner {
-    fn sign(&self, _: &ExecutionTokenClaims) -> String { "signed-token".into() }
-    fn public_key_hex(&self) -> String { "deadbeef".repeat(4) }
+    fn sign(&self, _: &ExecutionTokenClaims) -> String {
+        "signed-token".into()
+    }
+    fn public_key_hex(&self) -> String {
+        "deadbeef".repeat(4)
+    }
 }
 
 struct TestNotifier;
-impl Notifier for TestNotifier { fn dispatch(&self, _: WebhookEvent) {} }
+impl Notifier for TestNotifier {
+    fn dispatch(&self, _: WebhookEvent) {}
+}
 
 struct TestEventDispatcher;
-impl EventDispatcher for TestEventDispatcher { fn dispatch(&self, _: TransitionEvent) {} }
+impl EventDispatcher for TestEventDispatcher {
+    fn dispatch(&self, _: TransitionEvent) {}
+}
 
 struct TestSsrfValidator;
-impl SsrfValidator for TestSsrfValidator { fn validate_url(&self, _: &str) -> Result<(), AppError> { Ok(()) } }
+impl SsrfValidator for TestSsrfValidator {
+    fn validate_url(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+}
 
 struct TestLicense;
 impl LicenseChecker for TestLicense {
-    fn max_tokens(&self) -> u32 { 10 }
-    fn max_workflows(&self) -> u32 { 5 }
-    fn max_webhooks(&self) -> u32 { 3 }
-    fn max_roles(&self) -> u32 { 8 }
-    fn max_agents(&self) -> u32 { 3 }
-    fn is_pro(&self) -> bool { false }
+    fn max_tokens(&self) -> u32 {
+        10
+    }
+    fn max_workflows(&self) -> u32 {
+        5
+    }
+    fn max_webhooks(&self) -> u32 {
+        3
+    }
+    fn max_roles(&self) -> u32 {
+        8
+    }
+    fn max_agents(&self) -> u32 {
+        3
+    }
+    fn is_pro(&self) -> bool {
+        false
+    }
 }
 
 struct TestClock;
-impl Clock for TestClock { fn now(&self) -> chrono::DateTime<chrono::Utc> { chrono::Utc::now() } }
+impl Clock for TestClock {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        chrono::Utc::now()
+    }
+}
 
 struct TestIdGen(std::sync::atomic::AtomicU64);
 impl IdGenerator for TestIdGen {
@@ -123,10 +166,16 @@ fn real_state() -> AppState {
     let conn = sqlite::open_memory().unwrap();
 
     // Register a database so requests can be created
-    conn.lock().unwrap()
+    conn.lock()
+        .unwrap()
         .execute(
             "INSERT INTO databases (id, name, environment, created_at) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params!["app:production", "app", "production", chrono::Utc::now().to_rfc3339()],
+            rusqlite::params![
+                "app:production",
+                "app",
+                "production",
+                chrono::Utc::now().to_rfc3339()
+            ],
         )
         .unwrap();
 
@@ -165,6 +214,7 @@ fn real_state() -> AppState {
         id_generator: Arc::new(TestIdGen(std::sync::atomic::AtomicU64::new(1))),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
         draining: Arc::new(AtomicBool::new(false)),
+        auth_mode: "token".into(),
         default_approval_ttl_secs: Some(3600),
     }
 }
@@ -274,9 +324,9 @@ async fn get_request_returns_detail() {
         )
         .await
         .unwrap();
-    let created: serde_json::Value = serde_json::from_slice(
-        &axum::body::to_bytes(resp.into_body(), 4096).await.unwrap()
-    ).unwrap();
+    let created: serde_json::Value =
+        serde_json::from_slice(&axum::body::to_bytes(resp.into_body(), 4096).await.unwrap())
+            .unwrap();
     let id = created["id"].as_str().unwrap();
 
     let app2 = build_app(state);

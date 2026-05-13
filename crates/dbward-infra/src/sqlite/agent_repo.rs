@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
 use dbward_app::error::AppError;
 use dbward_app::ports::AgentRepo;
@@ -21,7 +21,8 @@ impl SqliteAgentRepo {
 impl AgentRepo for SqliteAgentRepo {
     fn upsert(&self, agent: &Agent) -> Result<(), AppError> {
         let conn = self.conn.lock().unwrap();
-        let databases_json = serde_json::to_string(&agent.databases).map_err(|e| AppError::Internal(e.to_string()))?;
+        let databases_json = serde_json::to_string(&agent.databases)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         let status = agent_status_str(agent.status);
         let last_seen = agent.last_seen.map(|t| t.to_rfc3339());
         let created_at = agent.created_at.to_rfc3339();
@@ -70,18 +71,20 @@ impl AgentRepo for SqliteAgentRepo {
         let mut stmt = conn.prepare(
             "SELECT id, token_id, databases_json, status, max_concurrent, in_flight, last_seen_at, created_at FROM agents ORDER BY last_seen_at DESC",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt.query_map([], |row| {
-            Ok(AgentRow {
-                id: row.get(0)?,
-                token_id: row.get(1)?,
-                databases_json: row.get(2)?,
-                status: row.get(3)?,
-                max_concurrent: row.get(4)?,
-                in_flight: row.get(5)?,
-                last_seen_at: row.get::<_, Option<String>>(6)?,
-                created_at: row.get(7)?,
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(AgentRow {
+                    id: row.get(0)?,
+                    token_id: row.get(1)?,
+                    databases_json: row.get(2)?,
+                    status: row.get(3)?,
+                    max_concurrent: row.get(4)?,
+                    in_flight: row.get(5)?,
+                    last_seen_at: row.get::<_, Option<String>>(6)?,
+                    created_at: row.get(7)?,
+                })
             })
-        }).map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         let mut results = Vec::new();
         for row in rows {
             let r = row.map_err(|e| AppError::Internal(e.to_string()))?;
@@ -118,20 +121,30 @@ impl AgentRepo for SqliteAgentRepo {
         .map_err(|e| AppError::Internal(e.to_string()))
     }
 
-    fn update_execution_status(&self, execution_id: &str, status: ExecutionStatus) -> Result<(), AppError> {
+    fn update_execution_status(
+        &self,
+        execution_id: &str,
+        status: ExecutionStatus,
+    ) -> Result<(), AppError> {
         let conn = self.conn.lock().unwrap();
         // Set finished_at when execution reaches a terminal state
         let finished = matches!(status, ExecutionStatus::Completed | ExecutionStatus::Failed);
         if finished {
             conn.execute(
                 "UPDATE executions SET status = ?1, finished_at = ?3 WHERE id = ?2",
-                params![execution_status_str(status), execution_id, chrono::Utc::now().to_rfc3339()],
-            ).map_err(|e| AppError::Internal(e.to_string()))?;
+                params![
+                    execution_status_str(status),
+                    execution_id,
+                    chrono::Utc::now().to_rfc3339()
+                ],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         } else {
             conn.execute(
                 "UPDATE executions SET status = ?1 WHERE id = ?2",
                 params![execution_status_str(status), execution_id],
-            ).map_err(|e| AppError::Internal(e.to_string()))?;
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         }
         Ok(())
     }
@@ -141,55 +154,71 @@ impl AgentRepo for SqliteAgentRepo {
         conn.execute(
             "UPDATE executions SET lease_expires_at = ?1 WHERE id = ?2",
             params![new_expiry.to_rfc3339(), execution_id],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(())
     }
 
-    fn find_dispatched_jobs(&self, databases: &[(DatabaseName, Environment)]) -> Result<Vec<Request>, AppError> {
+    fn find_dispatched_jobs(
+        &self,
+        databases: &[(DatabaseName, Environment)],
+    ) -> Result<Vec<Request>, AppError> {
         if databases.is_empty() {
             return Ok(vec![]);
         }
         let conn = self.conn.lock().unwrap();
-        let placeholders: Vec<String> = databases.iter().enumerate().map(|(i, _)| format!("?{}", i + 2)).collect();
+        let placeholders: Vec<String> = databases
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 2))
+            .collect();
         let sql = format!(
             "SELECT id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at
              FROM requests WHERE status = ?1 AND database_id IN ({})",
             placeholders.join(",")
         );
 
-        let mut stmt = conn.prepare(&sql).map_err(|e| AppError::Internal(e.to_string()))?;
-        let db_ids: Vec<String> = databases.iter().map(|(db, env)| format!("{}:{}", db, env)).collect();
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let db_ids: Vec<String> = databases
+            .iter()
+            .map(|(db, env)| format!("{}:{}", db, env))
+            .collect();
 
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         param_values.push(Box::new("dispatched".to_string()));
         for id in &db_ids {
             param_values.push(Box::new(id.clone()));
         }
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
 
-        let rows = stmt.query_map(params_ref.as_slice(), |row| {
-            Ok(RequestRow {
-                id: row.get(0)?,
-                requester: row.get(1)?,
-                operation: row.get(2)?,
-                database_id: row.get(3)?,
-                detail: row.get(4)?,
-                status: row.get(5)?,
-                emergency: row.get(6)?,
-                reason: row.get(7)?,
-                idempotency_key: row.get(8)?,
-                metadata_json: row.get(9)?,
-                share_with_json: row.get(10)?,
-                no_store: row.get(11)?,
-                workflow_snapshot_json: row.get(12)?,
-                cancelled_by: row.get(13)?,
-                cancel_reason: row.get(14)?,
-                created_at: row.get(15)?,
-                updated_at: row.get(16)?,
-                resolved_at: row.get(17)?,
-                expires_at: row.get(18)?,
+        let rows = stmt
+            .query_map(params_ref.as_slice(), |row| {
+                Ok(RequestRow {
+                    id: row.get(0)?,
+                    requester: row.get(1)?,
+                    operation: row.get(2)?,
+                    database_id: row.get(3)?,
+                    detail: row.get(4)?,
+                    status: row.get(5)?,
+                    emergency: row.get(6)?,
+                    reason: row.get(7)?,
+                    idempotency_key: row.get(8)?,
+                    metadata_json: row.get(9)?,
+                    share_with_json: row.get(10)?,
+                    no_store: row.get(11)?,
+                    workflow_snapshot_json: row.get(12)?,
+                    cancelled_by: row.get(13)?,
+                    cancel_reason: row.get(14)?,
+                    created_at: row.get(15)?,
+                    updated_at: row.get(16)?,
+                    resolved_at: row.get(17)?,
+                    expires_at: row.get(18)?,
+                })
             })
-        }).map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(|e| AppError::Internal(e.to_string()))?;
 
         let mut results = Vec::new();
         for row in rows {
@@ -199,18 +228,25 @@ impl AgentRepo for SqliteAgentRepo {
         Ok(results)
     }
 
-    fn has_running_migration(&self, db: &DatabaseName, env: &Environment, exclude_request_id: &str) -> Result<bool, AppError> {
+    fn has_running_migration(
+        &self,
+        db: &DatabaseName,
+        env: &Environment,
+        exclude_request_id: &str,
+    ) -> Result<bool, AppError> {
         let conn = self.conn.lock().unwrap();
         let database_id = format!("{}:{}", db, env);
-        let count: u32 = conn.query_row(
-            "SELECT COUNT(*) FROM requests
+        let count: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM requests
              WHERE status IN ('dispatched','running')
                AND operation IN ('migrate_up','migrate_down')
                AND database_id = ?1
                AND id != ?2",
-            params![database_id, exclude_request_id],
-            |row| row.get(0),
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+                params![database_id, exclude_request_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(count > 0)
     }
 
@@ -221,7 +257,8 @@ impl AgentRepo for SqliteAgentRepo {
              FROM executions WHERE request_id = ?1 ORDER BY created_at ASC",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-        let rows = stmt.query_map(params![request_id], row_to_execution)
+        let rows = stmt
+            .query_map(params![request_id], row_to_execution)
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
         let mut results = Vec::new();
@@ -238,7 +275,9 @@ impl AgentRepo for SqliteAgentRepo {
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError> {
         let conn = self.conn.lock().unwrap();
-        let tx = conn.unchecked_transaction().map_err(|e| AppError::Internal(e.to_string()))?;
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
 
         let status = execution_status_str(execution.status);
         let lease = execution.lease_expires_at.to_rfc3339();
@@ -279,14 +318,16 @@ impl AgentRepo for SqliteAgentRepo {
         share_with: &[ResultAccess],
     ) -> Result<bool, AppError> {
         let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
         let exec_status = if success { "completed" } else { "failed" };
         tx.execute(
             "UPDATE executions SET status = ?1, finished_at = ?2 WHERE id = ?3",
             params![exec_status, now.to_rfc3339(), execution_id],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
         let req_status = if success { "executed" } else { "failed" };
         let updated = tx.execute(
@@ -328,15 +369,25 @@ impl AgentRepo for SqliteAgentRepo {
         let mut stmt = conn.prepare(
             "SELECT id, request_id FROM executions WHERE status IN ('claimed', 'running') AND datetime(lease_expires_at) < datetime(?1)"
         ).map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt.query_map(rusqlite::params![now], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        }).map_err(|e| AppError::Internal(e.to_string()))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| AppError::Internal(e.to_string()))
+        let rows = stmt
+            .query_map(rusqlite::params![now], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Internal(e.to_string()))
     }
 
-    fn mark_execution_lost(&self, execution_id: &str, request_id: &str, now: &str) -> Result<bool, AppError> {
+    fn mark_execution_lost(
+        &self,
+        execution_id: &str,
+        request_id: &str,
+        now: &str,
+    ) -> Result<bool, AppError> {
         let conn = self.conn.lock().unwrap();
-        let tx = conn.unchecked_transaction().map_err(|e| AppError::Internal(e.to_string()))?;
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         let n1 = tx.execute(
             "UPDATE executions SET status = 'failed', finished_at = ?2 WHERE id = ?1 AND status IN ('claimed', 'running')",
             rusqlite::params![execution_id, now],
@@ -352,11 +403,18 @@ impl AgentRepo for SqliteAgentRepo {
         Ok(true)
     }
 
-    fn mark_execution_lost_and_record(&self, execution_id: &str, request_id: &str, audit_event: &AuditEvent, now: &str) -> Result<bool, AppError> {
+    fn mark_execution_lost_and_record(
+        &self,
+        execution_id: &str,
+        request_id: &str,
+        audit_event: &AuditEvent,
+        now: &str,
+    ) -> Result<bool, AppError> {
         use sha2::{Digest, Sha256};
 
         let mut conn = self.conn.lock().unwrap();
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|e| AppError::Internal(e.to_string()))?;
         let n1 = tx.execute(
             "UPDATE executions SET status = 'failed', finished_at = ?2 WHERE id = ?1 AND status IN ('claimed', 'running')",
@@ -371,15 +429,19 @@ impl AgentRepo for SqliteAgentRepo {
         ).map_err(|e| AppError::Internal(e.to_string()))?;
 
         // Inline audit INSERT with hash chain
-        let prev_hash: Option<String> = tx.query_row(
-            "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
-            [],
-            |row| row.get(0),
-        ).ok();
+        let prev_hash: Option<String> = tx
+            .query_row(
+                "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
         let id = uuid::Uuid::new_v4().to_string();
         let hash_input = format!(
             "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-            id, audit_event.event_type, audit_event.actor_id,
+            id,
+            audit_event.event_type,
+            audit_event.actor_id,
             audit_event.created_at.to_rfc3339(),
             prev_hash.as_deref().unwrap_or(""),
             "success",
@@ -414,39 +476,57 @@ impl AgentRepo for SqliteAgentRepo {
 
     fn find_expired_results(&self, now: &str) -> Result<Vec<(String, String)>, AppError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, storage_key FROM results WHERE datetime(expires_at) < datetime(?1)"
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt.query_map(rusqlite::params![now], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        }).map_err(|e| AppError::Internal(e.to_string()))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| AppError::Internal(e.to_string()))
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, storage_key FROM results WHERE datetime(expires_at) < datetime(?1)",
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let rows = stmt
+            .query_map(rusqlite::params![now], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Internal(e.to_string()))
     }
 
     fn delete_result(&self, result_id: &str) -> Result<(), AppError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM result_access WHERE result_id = ?1", rusqlite::params![result_id])
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        conn.execute("DELETE FROM results WHERE id = ?1", rusqlite::params![result_id])
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM result_access WHERE result_id = ?1",
+            rusqlite::params![result_id],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM results WHERE id = ?1",
+            rusqlite::params![result_id],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(())
     }
 }
 
 // --- helpers ---
 
-fn insert_audit_in_agent_tx(tx: &rusqlite::Transaction<'_>, audit_event: &AuditEvent) -> Result<(), AppError> {
+fn insert_audit_in_agent_tx(
+    tx: &rusqlite::Transaction<'_>,
+    audit_event: &AuditEvent,
+) -> Result<(), AppError> {
     use sha2::{Digest, Sha256};
 
-    let prev_hash: Option<String> = tx.query_row(
-        "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
-        [],
-        |row| row.get(0),
-    ).ok();
+    let prev_hash: Option<String> = tx
+        .query_row(
+            "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
     let id = uuid::Uuid::new_v4().to_string();
     let hash_input = format!(
         "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        id, audit_event.event_type, audit_event.actor_id,
+        id,
+        audit_event.event_type,
+        audit_event.actor_id,
         audit_event.created_at.to_rfc3339(),
         prev_hash.as_deref().unwrap_or(""),
         "success",
@@ -560,8 +640,8 @@ struct AgentRow {
 }
 
 fn row_to_agent(r: AgentRow) -> Result<Agent, AppError> {
-    let databases: Vec<DatabaseCapability> = serde_json::from_str(&r.databases_json)
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let databases: Vec<DatabaseCapability> =
+        serde_json::from_str(&r.databases_json).map_err(|e| AppError::Internal(e.to_string()))?;
     Ok(Agent {
         id: r.id,
         token_id: r.token_id,
@@ -582,16 +662,21 @@ fn row_to_execution(row: &rusqlite::Row) -> rusqlite::Result<Execution> {
     let created_str: String = row.get(9)?;
 
     // Parse inside rusqlite::Result by mapping errors
-    let status = parse_execution_status(&status_str)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e)))?;
-    let lease_expires_at = parse_dt(&lease_str)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e)))?;
-    let started_at = parse_dt_opt(started_str)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e)))?;
-    let finished_at = parse_dt_opt(finished_str)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(e)))?;
-    let created_at = parse_dt(&created_str)
-        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(e)))?;
+    let status = parse_execution_status(&status_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let lease_expires_at = parse_dt(&lease_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let started_at = parse_dt_opt(started_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let finished_at = parse_dt_opt(finished_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    let created_at = parse_dt(&created_str).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(e))
+    })?;
 
     Ok(Execution {
         id: row.get(0)?,
@@ -630,14 +715,19 @@ struct RequestRow {
 }
 
 fn row_to_request(r: RequestRow) -> Result<Request, AppError> {
-    let (db_str, env_str) = r.database_id.split_once(':')
+    let (db_str, env_str) = r
+        .database_id
+        .split_once(':')
         .ok_or_else(|| AppError::Internal(format!("invalid database_id: {}", r.database_id)))?;
     let database = DatabaseName::new(db_str).map_err(|e| AppError::Internal(e.to_string()))?;
     let environment = Environment::new(env_str).map_err(|e| AppError::Internal(e.to_string()))?;
-    let operation: Operation = r.operation.parse().map_err(|e: &str| AppError::Internal(e.to_string()))?;
+    let operation: Operation = r
+        .operation
+        .parse()
+        .map_err(|e: &str| AppError::Internal(e.to_string()))?;
     let status = parse_request_status(&r.status)?;
-    let share_with: Vec<String> = serde_json::from_str(&r.share_with_json)
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let share_with: Vec<String> =
+        serde_json::from_str(&r.share_with_json).map_err(|e| AppError::Internal(e.to_string()))?;
 
     Ok(Request {
         id: r.id,
