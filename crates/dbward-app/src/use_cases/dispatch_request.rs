@@ -404,6 +404,9 @@ mod tests {
         fn wal_checkpoint(&self) -> Result<(), AppError> {
             Ok(())
         }
+        fn list_results_for_user(&self, _: &str, _: u32) -> Result<Vec<crate::ports::repos::StoredResultEntry>, AppError> {
+            Ok(vec![])
+        }
     }
 
     fn make_request(status: RequestStatus) -> Request {

@@ -103,13 +103,6 @@ impl CreateRequest {
             )
             .map_err(AppError::Forbidden)?;
 
-        // 1b-2. SELECT cannot use share_with
-        if operation == Operation::ExecuteSelect && !input.share_with.is_empty() {
-            return Err(AppError::Validation(
-                "share_with is not allowed for SELECT queries".into(),
-            ));
-        }
-
         // 1b. Emergency requires reason
         if input.emergency && input.reason.is_none() {
             return Err(AppError::Validation(
@@ -521,6 +514,9 @@ mod tests {
         }
         fn wal_checkpoint(&self) -> Result<(), AppError> {
             Ok(())
+        }
+        fn list_results_for_user(&self, _: &str, _: u32) -> Result<Vec<crate::ports::repos::StoredResultEntry>, AppError> {
+            Ok(vec![])
         }
     }
 

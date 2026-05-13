@@ -18,6 +18,32 @@ use crate::state::AppState;
 type ApiResult =
     Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)>;
 
+/// Check if user can approve a pending request by parsing its workflow snapshot.
+/// Simplified: checks first step only. Multi-step workflows with completed steps
+/// may show false positives, but never false negatives for single-step workflows.
+fn can_approve_request(user: &AuthUser, request: &dbward_domain::entities::Request) -> bool {
+    use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep};
+    use dbward_domain::services::approval_checker::is_approvable_by;
+
+    let snapshot = match &request.workflow_snapshot_json {
+        Some(json) => json,
+        None => return false,
+    };
+    let steps: Vec<WorkflowStep> = match serde_json::from_str::<serde_json::Value>(snapshot)
+        .ok()
+        .and_then(|v| serde_json::from_value(v.get("steps")?.clone()).ok())
+    {
+        Some(s) => s,
+        None => return false,
+    };
+    // Current step = first unapproved step (simplified: use step 0)
+    let step = match steps.first() {
+        Some(s) => s,
+        None => return false,
+    };
+    is_approvable_by(user, &step.approvers, &request.requester, &[], false, true)
+}
+
 fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
     let status = match &e {
         AppError::Forbidden(_) => StatusCode::FORBIDDEN,
@@ -180,9 +206,18 @@ pub async fn list(
 
     let limit = params.limit.unwrap_or(50).min(100);
     let offset = params.offset.unwrap_or(0);
+    let pending_for_me = params.pending_for_me.unwrap_or(false);
+    let status_filter = if pending_for_me {
+        Some("pending")
+    } else {
+        params.status.as_deref()
+    };
+    // For pending_for_me, fetch all pending (post-filter reduces count)
+    let fetch_limit = if pending_for_me { 1000 } else { limit };
+    let fetch_offset = if pending_for_me { 0 } else { offset };
     let (requests, total) = state
         .request_repo
-        .list(limit, offset, params.status.as_deref(), params.user.as_deref())
+        .list(fetch_limit, fetch_offset, status_filter, params.user.as_deref())
         .map_err(map_error)?;
     // Non-admin users only see their own requests + pending requests they can approve
     let is_admin = user.roles.iter().any(|r| r.name == "admin");
@@ -190,6 +225,10 @@ pub async fn list(
     let items: Vec<serde_json::Value> = requests
         .iter()
         .filter(|r| {
+            // pending_for_me: only show requests the caller can actually approve
+            if pending_for_me {
+                return can_approve_request(&user, r);
+            }
             if is_admin {
                 return true;
             }
@@ -214,11 +253,17 @@ pub async fn list(
             })
         })
         .collect();
-    let effective_total = if is_admin { total } else { items.len() as u32 };
+    let effective_total = if is_admin && !pending_for_me { total } else { items.len() as u32 };
+    let final_items = if pending_for_me {
+        items.into_iter().skip(offset as usize).take(limit as usize).collect::<Vec<_>>()
+    } else {
+        items
+    };
+    let final_total = if pending_for_me { effective_total } else { effective_total };
     Ok((
         StatusCode::OK,
         Json(
-            json!({"requests": items, "total": effective_total, "limit": limit, "offset": offset}),
+            json!({"requests": final_items, "total": final_total, "limit": limit, "offset": offset}),
         ),
     ))
 }
@@ -229,6 +274,7 @@ pub struct ListParams {
     pub offset: Option<u32>,
     pub status: Option<String>,
     pub user: Option<String>,
+    pub pending_for_me: Option<bool>,
 }
 
 #[derive(serde::Deserialize)]
@@ -593,4 +639,28 @@ impl<'a> std::io::Write for Base64Encoder<'a> {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+}
+
+pub async fn list_results(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+) -> ApiResult {
+    let results = state
+        .request_repo
+        .list_results_for_user(&user.subject_id, 50)
+        .map_err(map_error)?;
+    let items: Vec<serde_json::Value> = results
+        .iter()
+        .map(|r| {
+            json!({
+                "request_id": r.request_id,
+                "database": r.database,
+                "environment": r.environment,
+                "operation": r.operation,
+                "stored_at": r.stored_at,
+                "content_length": r.content_length,
+            })
+        })
+        .collect();
+    Ok((StatusCode::OK, Json(json!({ "results": items }))))
 }

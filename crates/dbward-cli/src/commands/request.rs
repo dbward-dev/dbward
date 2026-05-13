@@ -275,13 +275,47 @@ async fn run_resume(
 
     if let Err(e) = sc.dispatch(id).await {
         if e.status == 409 {
-            eprintln!("Request {id} cannot be dispatched yet (may still be pending approval).");
+            // Fetch current status for a helpful message
+            if let Ok(req) = sc.get_request(id).await {
+                let status = req.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                match status {
+                    "executed" => {
+                        eprintln!("Already executed. Run: dbward result get {id}");
+                    }
+                    "failed" => {
+                        eprintln!("Request failed. Run: dbward request show {id}");
+                    }
+                    "cancelled" => {
+                        eprintln!("Request was cancelled.");
+                    }
+                    "dispatched" | "running" => {
+                        eprintln!("Already dispatched. Waiting for agent...");
+                    }
+                    "execution_lost" => {
+                        eprintln!("Execution lost. Re-dispatch: dbward request resume {id}");
+                    }
+                    "pending" => {
+                        eprintln!("Still pending approval.");
+                    }
+                    _ => {
+                        eprintln!("Request {id} cannot be dispatched (status: {status}).");
+                    }
+                }
+            } else {
+                eprintln!("Request {id} cannot be dispatched yet (may still be pending approval).");
+            }
             eprintln!("Check status: dbward request show {id}");
             return Err(CliError::Server("request not ready for dispatch".into()));
         }
         return Err(e.into_cli_error("dispatch"));
     }
-    let resp = sc.wait_for_result(id).await?;
+    let resp = tokio::select! {
+        r = sc.wait_for_result(id) => r?,
+        _ = tokio::signal::ctrl_c() => {
+            eprintln!("\nRequest will continue server-side. Run `dbward result get {id}` to fetch the result.");
+            return Ok(());
+        }
+    };
     if json_output {
         println!("{}", serde_json::to_string_pretty(&resp)?);
     } else {

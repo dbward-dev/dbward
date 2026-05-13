@@ -81,6 +81,12 @@ pub trait RequestRepo: Send + Sync {
     fn purge_old_requests(&self, before: &str) -> Result<u32, AppError>;
     fn count_by_status(&self, status: &str) -> Result<u32, AppError>;
     fn wal_checkpoint(&self) -> Result<(), AppError>;
+    /// List stored results accessible by a user (requester or share_with).
+    fn list_results_for_user(
+        &self,
+        user_id: &str,
+        limit: u32,
+    ) -> Result<Vec<StoredResultEntry>, AppError>;
 }
 
 // --- AgentRepo ---
@@ -154,6 +160,16 @@ pub trait AgentRepo: Send + Sync {
     fn find_expired_results(&self, now: &str) -> Result<Vec<(String, String)>, AppError>;
     /// Delete a result record by id.
     fn delete_result(&self, result_id: &str) -> Result<(), AppError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredResultEntry {
+    pub request_id: String,
+    pub database: String,
+    pub environment: String,
+    pub operation: String,
+    pub stored_at: String,
+    pub content_length: i64,
 }
 
 // --- UserRepo ---

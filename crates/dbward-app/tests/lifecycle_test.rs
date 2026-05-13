@@ -222,6 +222,9 @@ impl RequestRepo for SharedRepo {
     fn wal_checkpoint(&self) -> Result<(), AppError> {
         Ok(())
     }
+    fn list_results_for_user(&self, _: &str, _: u32) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
+        Ok(vec![])
+    }
 }
 
 struct AllowAll;

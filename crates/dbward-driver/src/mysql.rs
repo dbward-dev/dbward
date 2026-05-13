@@ -1,5 +1,6 @@
 use futures::TryStreamExt;
 use sqlx::{Column, Row, TypeInfo, ValueRef};
+use std::time::Duration;
 
 use crate::{
     CancelState, DatabaseDriver, DriverError, JsonMapping, MAX_RESULT_BYTES, MAX_RESULT_ROWS,
@@ -189,37 +190,56 @@ impl DatabaseDriver for MysqlDriver {
             return Err(DriverError::Cancelled);
         }
 
-        // Execute on same connection
-        let mut stream = sqlx::raw_sql(sql).fetch(&mut *conn);
-        let mut rows = Vec::new();
-        let mut total_bytes: usize = 0;
-        let mut truncated = false;
-        let mut truncation_reason = None;
+        // Execute on same connection with external timeout fallback
+        let conn_id = id;
+        let pool = self.pool.clone();
+        let deadline = Duration::from_secs(timeout_secs + 5);
 
-        while let Some(row) = stream
-            .try_next()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?
-        {
-            let json = mysql_row_to_json(&row);
-            total_bytes += json.to_string().len();
-            if rows.len() >= MAX_RESULT_ROWS {
-                truncated = true;
-                truncation_reason = Some(format!("max rows ({MAX_RESULT_ROWS})"));
-                break;
+        let exec_result = tokio::time::timeout(deadline, async {
+            let mut stream = sqlx::raw_sql(sql).fetch(&mut *conn);
+            let mut rows = Vec::new();
+            let mut total_bytes: usize = 0;
+            let mut truncated = false;
+            let mut truncation_reason = None;
+
+            while let Some(row) = stream
+                .try_next()
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?
+            {
+                let json = mysql_row_to_json(&row);
+                total_bytes += json.to_string().len();
+                if rows.len() >= MAX_RESULT_ROWS {
+                    truncated = true;
+                    truncation_reason = Some(format!("max rows ({MAX_RESULT_ROWS})"));
+                    break;
+                }
+                if total_bytes >= MAX_RESULT_BYTES {
+                    truncated = true;
+                    truncation_reason = Some(format!("max size ({MAX_RESULT_BYTES} bytes)"));
+                    break;
+                }
+                rows.push(json);
             }
-            if total_bytes >= MAX_RESULT_BYTES {
-                truncated = true;
-                truncation_reason = Some(format!("max size ({MAX_RESULT_BYTES} bytes)"));
-                break;
-            }
-            rows.push(json);
-        }
-        Ok(QueryOutput {
-            rows,
-            truncated,
-            truncation_reason,
+            Ok::<_, DriverError>(QueryOutput { rows, truncated, truncation_reason })
         })
+        .await;
+
+        match exec_result {
+            Ok(r) => r,
+            Err(_) => {
+                tokio::spawn(async move {
+                    if let Ok(mut k) = pool.acquire().await {
+                        let _ = sqlx::query(&format!("KILL {conn_id}"))
+                            .execute(&mut *k)
+                            .await;
+                    }
+                });
+                Err(DriverError::QueryFailed(format!(
+                    "query timed out after {timeout_secs}s"
+                )))
+            }
+        }
     }
 
     async fn execute_cancellable(
@@ -248,11 +268,34 @@ impl DatabaseDriver for MysqlDriver {
             return Err(DriverError::Cancelled);
         }
 
-        let result = sqlx::query(sql)
-            .execute(&mut *conn)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        Ok(result.rows_affected())
+        let conn_id = id;
+        let pool = self.pool.clone();
+        let deadline = Duration::from_secs(timeout_secs + 5);
+
+        let exec_result = tokio::time::timeout(deadline, async {
+            let result = sqlx::query(sql)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            Ok::<_, DriverError>(result.rows_affected())
+        })
+        .await;
+
+        match exec_result {
+            Ok(r) => r,
+            Err(_) => {
+                tokio::spawn(async move {
+                    if let Ok(mut k) = pool.acquire().await {
+                        let _ = sqlx::query(&format!("KILL {conn_id}"))
+                            .execute(&mut *k)
+                            .await;
+                    }
+                });
+                Err(DriverError::QueryFailed(format!(
+                    "query timed out after {timeout_secs}s"
+                )))
+            }
+        }
     }
 }
 

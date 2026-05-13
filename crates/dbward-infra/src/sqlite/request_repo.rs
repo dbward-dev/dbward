@@ -702,6 +702,42 @@ impl RequestRepo for SqliteRequestRepo {
             .map_err(map_err)?;
         Ok(())
     }
+
+    fn list_results_for_user(
+        &self,
+        user_id: &str,
+        limit: u32,
+    ) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT r.request_id, db.name, db.environment, req.operation,
+                        r.stored_at, r.content_length
+                 FROM results r
+                 JOIN requests req ON req.id = r.request_id
+                 JOIN databases db ON db.id = req.database_id
+                 LEFT JOIN result_access ra ON ra.result_id = r.id
+                 WHERE req.requester = ?1 OR ra.selector_value = ?1
+                 GROUP BY r.id
+                 ORDER BY r.stored_at DESC
+                 LIMIT ?2",
+            )
+            .map_err(map_err)?;
+        let rows = stmt
+            .query_map(rusqlite::params![user_id, limit], |row| {
+                Ok(dbward_app::ports::repos::StoredResultEntry {
+                    request_id: row.get(0)?,
+                    database: row.get(1)?,
+                    environment: row.get(2)?,
+                    operation: row.get(3)?,
+                    stored_at: row.get(4)?,
+                    content_length: row.get(5)?,
+                })
+            })
+            .map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Internal(e.to_string()))
+    }
 }
 
 #[cfg(test)]

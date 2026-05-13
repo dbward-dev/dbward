@@ -163,7 +163,7 @@ pub fn build_router(state: AppState) -> Router {
         // Public key
         .route("/api/public-key", axum::routing::get(health::public_key))
         // Stub endpoints (M-16)
-        .route("/api/results", axum::routing::get(not_implemented))
+        .route("/api/results", axum::routing::get(requests::list_results))
         .route(
             "/api/webhooks/{id}/test",
             axum::routing::post(not_implemented),
