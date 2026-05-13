@@ -152,6 +152,7 @@ mod tests {
             _: u32,
             _: u32,
             _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<(Vec<DomainRequest>, u32), AppError> {
             Ok((vec![], 0))
         }

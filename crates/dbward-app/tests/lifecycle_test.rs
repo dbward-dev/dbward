@@ -56,6 +56,7 @@ impl RequestRepo for SharedRepo {
         _limit: u32,
         _offset: u32,
         _status: Option<&str>,
+        _user: Option<&str>,
     ) -> Result<(Vec<Request>, u32), AppError> {
         let reqs = self.requests.lock().unwrap().clone();
         let total = reqs.len() as u32;

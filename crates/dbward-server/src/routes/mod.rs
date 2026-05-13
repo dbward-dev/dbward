@@ -178,6 +178,8 @@ pub fn build_router(state: AppState) -> Router {
             "/api/execution-policies/{id}",
             axum::routing::get(not_implemented).put(not_implemented),
         )
+        // Metrics (authed)
+        .route("/metrics", axum::routing::get(metrics::metrics))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             super::middleware::auth::auth_middleware,
@@ -187,7 +189,6 @@ pub fn build_router(state: AppState) -> Router {
     let public = Router::new()
         .route("/health", axum::routing::get(health::health))
         .route("/ready", axum::routing::get(health::ready))
-        .route("/metrics", axum::routing::get(metrics::metrics))
         .with_state(state);
 
     public

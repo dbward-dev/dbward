@@ -174,7 +174,7 @@ mod tests {
         fn insert(&self, _: &Request) -> Result<(), AppError> {
             Ok(())
         }
-        fn list(&self, _: u32, _: u32, _: Option<&str>) -> Result<(Vec<Request>, u32), AppError> {
+        fn list(&self, _: u32, _: u32, _: Option<&str>, _: Option<&str>) -> Result<(Vec<Request>, u32), AppError> {
             Ok((vec![], 0))
         }
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {

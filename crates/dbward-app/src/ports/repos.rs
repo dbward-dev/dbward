@@ -15,6 +15,7 @@ pub trait RequestRepo: Send + Sync {
         limit: u32,
         offset: u32,
         status: Option<&str>,
+        user: Option<&str>,
     ) -> Result<(Vec<Request>, u32), AppError>;
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError>;
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError>;

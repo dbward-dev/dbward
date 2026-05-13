@@ -89,22 +89,30 @@ impl ApproveRequest {
             .map(|a| a.actor_id.clone())
             .collect();
 
-        self.authorizer
-            .authorize_scoped(
-                user,
-                Permission::RequestApprove,
-                &request.database,
-                &request.environment,
-                &ResourceContext::ApprovalStep {
-                    requester_id: request.requester.clone(),
-                    step_index: current_step_index,
-                    approvers: step.approvers.clone(),
-                    allow_self_approve: workflow.allow_self_approve,
-                    allow_same_approver_across_steps: workflow.allow_same_approver_across_steps,
-                    previous_approver_ids: previous_approver_ids.clone(),
-                },
-            )
-            .map_err(AppError::Forbidden)?;
+        // Check if user is a workflow approver for this step (ADR-002: approver designation = permission grant)
+        let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
+        let is_designated_approver = step.approvers.iter().any(|ag| {
+            ag.selector.matches(&role_names, &user.groups, &user.subject_id, false)
+        });
+
+        if !is_designated_approver {
+            self.authorizer
+                .authorize_scoped(
+                    user,
+                    Permission::RequestApprove,
+                    &request.database,
+                    &request.environment,
+                    &ResourceContext::ApprovalStep {
+                        requester_id: request.requester.clone(),
+                        step_index: current_step_index,
+                        approvers: step.approvers.clone(),
+                        allow_self_approve: workflow.allow_self_approve,
+                        allow_same_approver_across_steps: workflow.allow_same_approver_across_steps,
+                        previous_approver_ids: previous_approver_ids.clone(),
+                    },
+                )
+                .map_err(AppError::Forbidden)?;
+        }
 
         // 7. Domain-level approvability check (redundant with Authorizer but explicit)
 
@@ -301,7 +309,7 @@ mod tests {
         fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
             Ok(self.request.lock().unwrap().clone())
         }
-        fn list(&self, _: u32, _: u32, _: Option<&str>) -> Result<(Vec<Request>, u32), AppError> {
+        fn list(&self, _: u32, _: u32, _: Option<&str>, _: Option<&str>) -> Result<(Vec<Request>, u32), AppError> {
             Ok((vec![], 0))
         }
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {

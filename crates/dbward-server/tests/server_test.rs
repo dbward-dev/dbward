@@ -89,6 +89,7 @@ impl RequestRepo for StubRequestRepo {
         _: u32,
         _: u32,
         _: Option<&str>,
+        _: Option<&str>,
     ) -> Result<(Vec<dbward_domain::entities::Request>, u32), AppError> {
         Ok((vec![], 0))
     }

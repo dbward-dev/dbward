@@ -2,7 +2,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// Fine-grained permission in the `resource.action` format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Permission {
     RequestCreate,
     RequestCreateSelect,
@@ -96,6 +96,19 @@ impl FromStr for Permission {
             "*" => Ok(Self::All),
             other => Err(format!("unknown permission: {other}")),
         }
+    }
+}
+
+impl serde::Serialize for Permission {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Permission {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s: String = serde::Deserialize::deserialize(deserializer)?;
+        Permission::from_str(&s).map_err(serde::de::Error::custom)
     }
 }
 

@@ -182,7 +182,7 @@ pub async fn list(
     let offset = params.offset.unwrap_or(0);
     let (requests, total) = state
         .request_repo
-        .list(limit, offset, params.status.as_deref())
+        .list(limit, offset, params.status.as_deref(), params.user.as_deref())
         .map_err(map_error)?;
     // Non-admin users only see their own requests + pending requests they can approve
     let is_admin = user.roles.iter().any(|r| r.name == "admin");
@@ -228,6 +228,7 @@ pub struct ListParams {
     pub limit: Option<u32>,
     pub offset: Option<u32>,
     pub status: Option<String>,
+    pub user: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -343,6 +344,7 @@ pub async fn get(
             "no_store": req.no_store,
             "created_at": req.created_at,
             "updated_at": req.updated_at,
+            "expires_at": req.expires_at,
         })),
     ))
 }

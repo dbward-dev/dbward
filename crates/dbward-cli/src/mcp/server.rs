@@ -684,15 +684,23 @@ fn format_result(resp: &Value) -> Result<String, String> {
         return Err(format!("Execution failed: {err}"));
     }
     let result = &resp["result"];
-    if result.is_null() {
-        Ok("Executed successfully.".to_string())
-    } else if let Some(text) = result.as_str() {
-        Ok(text.to_string())
-    } else {
-        // For structured results, include truncation info as part of the JSON
-        // so AI consumers can parse it programmatically
-        Ok(serde_json::to_string_pretty(result).unwrap_or_default())
+    if !result.is_null() {
+        if let Some(text) = result.as_str() {
+            return Ok(text.to_string());
+        }
+        return Ok(serde_json::to_string_pretty(result).unwrap_or_default());
     }
+    // Stream format: result_data is a JSON string
+    if let Some(data) = resp["result_data"].as_str() {
+        if let Ok(parsed) = serde_json::from_str::<Value>(data) {
+            return Ok(serde_json::to_string_pretty(&parsed).unwrap_or_default());
+        }
+        return Ok(data.to_string());
+    }
+    if let Some(affected) = resp["rows_affected"].as_u64() {
+        return Ok(format!("Rows affected: {affected}"));
+    }
+    Ok("Executed successfully.".to_string())
 }
 
 async fn check_request(

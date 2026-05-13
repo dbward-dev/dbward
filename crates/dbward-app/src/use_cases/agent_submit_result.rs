@@ -163,7 +163,7 @@ impl AgentSubmitResult {
 
         // 8. Atomically update execution + request status + audit + result manifest
         let now = self.clock.now();
-        let audit_event = AuditEvent::simple(
+        let mut audit_event = AuditEvent::simple(
             if input.success {
                 "execution.completed"
             } else {
@@ -173,6 +173,9 @@ impl AgentSubmitResult {
             &user.subject_id,
             Some(&execution.id),
         );
+        audit_event.database_name = Some(request.database.to_string());
+        audit_event.environment = Some(request.environment.to_string());
+        audit_event.operation = Some(request.operation.as_str().to_string());
         let request_updated = match self.agent_repo.complete_execution(
             &execution.id,
             &execution.request_id,
@@ -390,6 +393,7 @@ mod tests {
             &self,
             _: u32,
             _: u32,
+            _: Option<&str>,
             _: Option<&str>,
         ) -> Result<(Vec<DomainRequest>, u32), AppError> {
             Ok((vec![], 0))

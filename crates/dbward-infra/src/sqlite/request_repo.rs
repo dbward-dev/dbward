@@ -199,36 +199,50 @@ impl RequestRepo for SqliteRequestRepo {
         limit: u32,
         offset: u32,
         status: Option<&str>,
+        user: Option<&str>,
     ) -> Result<(Vec<Request>, u32), AppError> {
         let conn = self.conn.lock().unwrap();
-        let (count_sql, query_sql) = if let Some(s) = status {
-            let total: u32 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM requests WHERE status = ?1",
-                    params![s],
-                    |r| r.get(0),
-                )
-                .map_err(map_err)?;
-            let mut stmt = conn
-                .prepare("SELECT * FROM requests WHERE status = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3")
-                .map_err(map_err)?;
-            let rows = stmt
-                .query_and_then(params![s, limit, offset], row_to_request)
-                .map_err(map_err)?;
-            let items = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
-            return Ok((items, total));
+
+        let mut conditions = Vec::new();
+        let mut count_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(s) = status {
+            conditions.push("status = ?".to_string());
+            count_params.push(Box::new(s.to_string()));
+        }
+        if let Some(u) = user {
+            conditions.push("requester = ?".to_string());
+            count_params.push(Box::new(u.to_string()));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
         } else {
-            (
-                "SELECT COUNT(*) FROM requests",
-                "SELECT * FROM requests ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
-            )
+            format!(" WHERE {}", conditions.join(" AND "))
         };
+
+        let count_sql = format!("SELECT COUNT(*) FROM requests{}", where_clause);
         let total: u32 = conn
-            .query_row(count_sql, [], |r| r.get(0))
+            .query_row(&count_sql, rusqlite::params_from_iter(count_params.iter().map(|p| p.as_ref())), |r| r.get(0))
             .map_err(map_err)?;
-        let mut stmt = conn.prepare(query_sql).map_err(map_err)?;
+
+        let query_sql = format!(
+            "SELECT * FROM requests{} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            where_clause
+        );
+        let mut query_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        if let Some(s) = status {
+            query_params.push(Box::new(s.to_string()));
+        }
+        if let Some(u) = user {
+            query_params.push(Box::new(u.to_string()));
+        }
+        query_params.push(Box::new(limit));
+        query_params.push(Box::new(offset));
+
+        let mut stmt = conn.prepare(&query_sql).map_err(map_err)?;
         let rows = stmt
-            .query_and_then(params![limit, offset], row_to_request)
+            .query_and_then(rusqlite::params_from_iter(query_params.iter().map(|p| p.as_ref())), row_to_request)
             .map_err(map_err)?;
         let items = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
         Ok((items, total))
@@ -845,14 +859,14 @@ mod tests {
         req2.idempotency_key = Some("idem-2".into());
         repo.insert(&req2).unwrap();
 
-        let (all, _) = repo.list(10, 0, None).unwrap();
+        let (all, _) = repo.list(10, 0, None, None).unwrap();
         assert_eq!(all.len(), 2);
 
-        let (pending, _) = repo.list(10, 0, Some("pending")).unwrap();
+        let (pending, _) = repo.list(10, 0, Some("pending"), None).unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, "req-pending");
 
-        let (dispatched, _) = repo.list(10, 0, Some("dispatched")).unwrap();
+        let (dispatched, _) = repo.list(10, 0, Some("dispatched"), None).unwrap();
         assert_eq!(dispatched.len(), 1);
         assert_eq!(dispatched[0].id, "req-dispatched");
     }
