@@ -103,7 +103,14 @@ impl CreateRequest {
             )
             .map_err(AppError::Forbidden)?;
 
-        // 1b. Emergency requires reason
+        // 1b. Validate share_with selectors
+        for sel in &input.share_with {
+            dbward_domain::values::Selector::parse(sel).map_err(|e| {
+                AppError::Validation(format!("invalid share_with selector '{sel}': {e}"))
+            })?;
+        }
+
+        // 1c. Emergency requires reason
         if input.emergency && input.reason.is_none() {
             return Err(AppError::Validation(
                 "reason is required for emergency requests".into(),
