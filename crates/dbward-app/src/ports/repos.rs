@@ -138,6 +138,7 @@ pub trait AgentRepo: Send + Sync {
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError>;
     /// Atomically updates execution status (Completed/Failed) and request status (executed/failed).
+    #[allow(clippy::too_many_arguments)]
     /// Also inserts audit event, result manifest, and result_access records in the same TX.
     /// Returns false if request was cancelled (request update skipped).
     fn complete_execution(
