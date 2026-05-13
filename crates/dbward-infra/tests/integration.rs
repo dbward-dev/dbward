@@ -223,8 +223,7 @@ fn policy_evaluator_4_level_workflow_priority() {
         pending_ttl_secs: None,
         statement_timeout_secs: None,
         approval_ttl_secs: None,
-        created_at: None,
-        updated_at: None,
+        created_at: None, updated_at: None,
     }).unwrap();
 
     // Level 3: (app, *)
@@ -241,8 +240,7 @@ fn policy_evaluator_4_level_workflow_priority() {
         pending_ttl_secs: None,
         statement_timeout_secs: None,
         approval_ttl_secs: None,
-        created_at: None,
-        updated_at: None,
+        created_at: None, updated_at: None,
     }).unwrap();
 
     // Level 2: (*, production)
@@ -259,8 +257,7 @@ fn policy_evaluator_4_level_workflow_priority() {
         pending_ttl_secs: None,
         statement_timeout_secs: None,
         approval_ttl_secs: None,
-        created_at: None,
-        updated_at: None,
+        created_at: None, updated_at: None,
     }).unwrap();
 
     // Level 1 (highest): (app, production)
@@ -277,8 +274,7 @@ fn policy_evaluator_4_level_workflow_priority() {
         pending_ttl_secs: None,
         statement_timeout_secs: None,
         approval_ttl_secs: None,
-        created_at: None,
-        updated_at: None,
+        created_at: None, updated_at: None,
     }).unwrap();
 
     let db = DatabaseName::new("app").unwrap();
@@ -483,8 +479,7 @@ fn webhook_crud_lifecycle() {
         format: WebhookFormat::Slack,
         secret: Some("s3cr3t".into()),
         status: WebhookStatus::Active,
-        created_at: None,
-        updated_at: None,
+        created_at: None, updated_at: None,
     };
     repo.create(&wh).unwrap();
 
@@ -1405,4 +1400,258 @@ fn duplicate_approve_same_actor_step_rejected() {
         created_at: Utc::now(),
     };
     request_repo.insert_approval(&a3).unwrap();
+}
+
+// === Policy CRUD ===
+
+#[test]
+fn workflow_crud_lifecycle() {
+    let conn = setup();
+    let repo = SqlitePolicyRepo::new(conn.clone());
+
+    let wf = Workflow {
+        id: "wf-1".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operations: vec![],
+        steps: vec![],
+        skip_approval_for: vec![],
+        require_reason: true,
+        allow_self_approve: false,
+        allow_same_approver_across_steps: false,
+        pending_ttl_secs: None,
+        approval_ttl_secs: Some(3600),
+        created_at: None, updated_at: None,
+    };
+    repo.create_workflow(&wf).unwrap();
+    assert_eq!(repo.get_workflow("wf-1").unwrap().unwrap().id, "wf-1");
+    assert_eq!(repo.list_workflows().unwrap().len(), 1);
+    assert_eq!(repo.count_workflows().unwrap(), 1);
+    assert!(repo.delete_workflow("wf-1").unwrap());
+    assert!(!repo.delete_workflow("wf-1").unwrap());
+    assert_eq!(repo.count_workflows().unwrap(), 0);
+}
+
+#[test]
+fn execution_policy_crud() {
+    let conn = setup();
+    let repo = SqlitePolicyRepo::new(conn.clone());
+
+    let ep = ExecutionPolicy {
+        id: "ep-1".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        max_executions: 3,
+        execution_window_secs: 3600,
+        retry_on_failure: false,
+        statement_timeout_secs: 30,
+        max_statement_timeout_secs: 300,
+        created_at: None, updated_at: None,
+    };
+    repo.create_execution_policy(&ep).unwrap();
+    assert_eq!(repo.get_execution_policy("ep-1").unwrap().unwrap().statement_timeout_secs, 30);
+    assert_eq!(repo.list_execution_policies().unwrap().len(), 1);
+    assert!(repo.delete_execution_policy("ep-1").unwrap());
+    assert!(repo.list_execution_policies().unwrap().is_empty());
+}
+
+#[test]
+fn role_crud() {
+    let conn = setup();
+    let repo = SqlitePolicyRepo::new(conn.clone());
+    let initial_count = repo.count_roles().unwrap();
+
+    let role = RoleDefinition {
+        name: "dba".into(),
+        permissions: vec![Permission::RequestCreate, Permission::RequestApprove],
+        databases: vec![DatabaseName::new("app").unwrap()],
+        environments: vec![Environment::new("production").unwrap()],
+    };
+    repo.create_role(&role).unwrap();
+    assert_eq!(repo.get_roles_by_names(&["dba".into()]).unwrap().len(), 1);
+    assert_eq!(repo.count_roles().unwrap(), initial_count + 1);
+    assert!(repo.delete_role("dba").unwrap());
+    assert_eq!(repo.count_roles().unwrap(), initial_count);
+}
+
+#[test]
+fn result_policy_lookup_returns_none() {
+    let conn = setup();
+    register_db(&conn);
+    let repo = SqlitePolicyRepo::new(conn.clone());
+    let db = DatabaseName::new("app").unwrap();
+    let env = Environment::new("production").unwrap();
+    assert!(repo.find_result_policy(&db, &env).unwrap().is_none());
+}
+
+// === User CRUD ===
+
+#[test]
+fn user_get_list_activate() {
+    let conn = setup();
+    let repo = SqliteUserRepo::new(conn.clone());
+
+    let user = User {
+        id: "alice".into(),
+        display_name: Some("Alice".into()),
+        email: Some("alice@example.com".into()),
+        groups: vec!["backend".into()],
+        roles: vec!["developer".into()],
+        status: UserStatus::Active,
+        last_seen_at: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    repo.upsert(&user).unwrap();
+    assert_eq!(repo.get("alice").unwrap().unwrap().display_name, Some("Alice".into()));
+    assert_eq!(repo.list().unwrap().len(), 1);
+    repo.suspend("alice", Utc::now()).unwrap();
+    assert!(repo.is_suspended("alice").unwrap());
+    repo.activate("alice", Utc::now()).unwrap();
+    assert!(!repo.is_suspended("alice").unwrap());
+}
+
+#[test]
+fn user_ensure_exists() {
+    let conn = setup();
+    let repo = SqliteUserRepo::new(conn.clone());
+    repo.ensure_exists("bob").unwrap();
+    assert!(repo.get("bob").unwrap().is_some());
+}
+
+// === Token extended ===
+
+#[test]
+fn token_list_revoke_all_purge() {
+    let conn = setup();
+    let repo = SqliteTokenRepo::new(conn);
+
+    let t1 = Token {
+        id: "tok-a".into(), subject_type: SubjectType::User, subject_id: "alice".into(),
+        token_hash: "h1".into(), token_prefix: "dbw_a".into(),
+        roles: vec!["dev".into()], groups: vec![], name: None,
+        status: TokenStatus::Active, expires_at: None, created_at: Utc::now(), revoked_at: None,
+    };
+    let t2 = Token { id: "tok-b".into(), token_hash: "h2".into(), token_prefix: "dbw_b".into(), ..t1.clone() };
+    repo.create(&t1).unwrap();
+    repo.create(&t2).unwrap();
+
+    assert_eq!(repo.count_active().unwrap(), 2);
+    assert_eq!(repo.list().unwrap().len(), 2);
+    assert_eq!(repo.get("tok-a").unwrap().unwrap().subject_id, "alice");
+
+    let revoked = repo.revoke_all_for_user("alice", Utc::now()).unwrap();
+    assert_eq!(revoked, 2);
+    assert_eq!(repo.count_active().unwrap(), 0);
+
+    let purged = repo.purge_revoked("2099-01-01T00:00:00Z").unwrap();
+    assert_eq!(purged, 2);
+}
+
+// === Audit extended ===
+
+#[test]
+fn audit_list_with_filter() {
+    let conn = setup();
+    let logger = SqliteAuditLogger::new(conn.clone());
+    let repo = SqliteAuditRepo::new(conn.clone());
+
+    logger.record(&AuditEvent::simple("query_executed", "query", "alice", Some("req-1"))).unwrap();
+    logger.record(&AuditEvent::simple("request_created", "request", "bob", Some("req-2"))).unwrap();
+
+    let filter = AuditFilter { actor_id: Some("alice".into()), event_type: None, event_category: None, outcome: None, environment: None, database: None, since: None, until: None, limit: 100, offset: 0 };
+    let events = repo.list(&filter).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].actor_id, "alice");
+}
+
+#[test]
+fn audit_purge_old() {
+    let conn = setup();
+    let logger = SqliteAuditLogger::new(conn.clone());
+    let repo = SqliteAuditRepo::new(conn.clone());
+
+    logger.record(&AuditEvent::simple("test", "test", "x", None)).unwrap();
+    // Nothing old enough to purge
+    assert_eq!(repo.purge_old("2000-01-01T00:00:00Z").unwrap(), 0);
+    // Purge everything
+    assert_eq!(repo.purge_old("2099-01-01T00:00:00Z").unwrap(), 1);
+}
+
+// === Agent extended ===
+
+#[test]
+fn agent_get_and_list() {
+    let conn = setup();
+    register_db(&conn);
+    let repo = SqliteAgentRepo::new(conn.clone());
+
+    let agent = Agent {
+        id: "agent-1".into(), token_id: "tok-1".into(),
+        databases: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }],
+        status: AgentStatus::Active, max_concurrent: 2, in_flight: 0,
+        last_seen: Some(Utc::now()), created_at: Utc::now(),
+    };
+    repo.upsert(&agent).unwrap();
+    assert_eq!(repo.get("agent-1").unwrap().unwrap().id, "agent-1");
+    assert_eq!(repo.list().unwrap().len(), 1);
+}
+
+#[test]
+fn agent_find_dispatched_jobs() {
+    let conn = setup();
+    register_db(&conn);
+    let repo = SqliteAgentRepo::new(conn.clone());
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    let req = Request {
+        id: "req-d1".into(), requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml, detail: "UPDATE t SET x=1".into(),
+        status: RequestStatus::Dispatched, emergency: false, reason: None,
+        idempotency_key: None, metadata_json: "{}".into(), share_with: vec![],
+        no_store: false, workflow_snapshot_json: None, cancel_reason: None, cancelled_by: None,
+        created_at: Utc::now(), updated_at: Utc::now(), resolved_at: None, expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    let caps = vec![(DatabaseName::new("app").unwrap(), Environment::new("production").unwrap())];
+    let jobs = repo.find_dispatched_jobs(&caps).unwrap();
+    assert_eq!(jobs.len(), 1);
+}
+
+#[test]
+fn agent_extend_lease_and_find_executions() {
+    let conn = setup();
+    register_db(&conn);
+    let repo = SqliteAgentRepo::new(conn.clone());
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+
+    let req = Request {
+        id: "req-el".into(), requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteDml, detail: "X".into(),
+        status: RequestStatus::Running, emergency: false, reason: None,
+        idempotency_key: None, metadata_json: "{}".into(), share_with: vec![],
+        no_store: false, workflow_snapshot_json: None, cancel_reason: None, cancelled_by: None,
+        created_at: Utc::now(), updated_at: Utc::now(), resolved_at: None, expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    let exec = Execution {
+        id: "exec-el".into(), request_id: "req-el".into(), agent_id: "agent-1".into(),
+        status: ExecutionStatus::Claimed, token: "tok".into(),
+        lease_expires_at: Utc::now(), started_at: Some(Utc::now()),
+        finished_at: None, error_message: None, created_at: Utc::now(),
+    };
+    repo.create_execution(&exec).unwrap();
+
+    let new_expiry = Utc::now() + chrono::Duration::minutes(10);
+    repo.extend_lease("exec-el", new_expiry).unwrap();
+
+    let got = repo.get_execution("exec-el").unwrap().unwrap();
+    assert!(got.lease_expires_at > Utc::now());
+
+    let execs = repo.find_executions_for_request("req-el").unwrap();
+    assert_eq!(execs.len(), 1);
 }
