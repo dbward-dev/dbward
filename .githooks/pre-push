@@ -1,0 +1,20 @@
+#!/bin/sh
+# Pre-push hook: run CI checks locally before pushing
+set -e
+
+echo "🔍 Running pre-push checks..."
+
+echo "  fmt..."
+cargo fmt --all -- --check
+
+echo "  clippy..."
+RUSTFLAGS="-Dwarnings" cargo clippy --workspace --all-targets -- \
+  -A clippy::too_many_arguments -A clippy::type_complexity
+
+echo "  test..."
+cargo test --workspace --quiet
+
+echo "  coverage..."
+cargo llvm-cov --workspace --ignore-filename-regex "tests/" --summary-only
+
+echo "✅ All checks passed. Pushing..."
