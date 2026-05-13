@@ -197,6 +197,8 @@ pub async fn run_from_args(
     );
     let id_generator: Arc<dyn dbward_app::ports::IdGenerator> =
         Arc::new(dbward_infra::UuidGenerator);
+    let token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator> =
+        Arc::new(dbward_infra::SecureTokenGenerator);
 
     let draining = Arc::new(AtomicBool::new(false));
 
@@ -223,6 +225,7 @@ pub async fn run_from_args(
         license_checker,
         clock,
         id_generator,
+        token_value_generator,
         metrics: Arc::new(metrics::Metrics::new()),
         default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
         auth_mode: cfg.auth.mode.clone(),

@@ -17,6 +17,7 @@ pub struct TokenManage {
     pub audit: Arc<dyn AuditLogger>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
+    pub token_gen: Arc<dyn TokenValueGenerator>,
 }
 
 // --- Create ---
@@ -111,7 +112,7 @@ impl TokenManage {
 
         // Generate token
         let raw = format!("dbw_{}", self.id_gen.generate().replace('-', ""));
-        let prefix = raw[4..12].to_string();
+        let prefix = if raw.len() >= 12 { raw[4..12].to_string() } else { raw.chars().take(8).collect() };
         let hash = hex::encode(Sha256::digest(raw.as_bytes()));
 
         let now = self.clock.now();
@@ -250,6 +251,12 @@ mod tests {
     impl Clock for FakeClock {
         fn now(&self) -> chrono::DateTime<chrono::Utc> {
             chrono::Utc::now()
+        }
+    }
+    struct FakeTokenGen;
+    impl TokenValueGenerator for FakeTokenGen {
+        fn generate_token_value(&self) -> String {
+            "dbw_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4".into()
         }
     }
     struct FakeIdGen;
@@ -433,6 +440,7 @@ mod tests {
             audit: Arc::new(FakeAudit),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),
+            token_gen: Arc::new(FakeTokenGen),
         }
     }
 
