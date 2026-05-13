@@ -65,9 +65,13 @@ impl AgentHeartbeat {
         let request = self.request_repo.get(&execution.request_id)?;
         let req = request.as_ref();
         let exec_policy = req
-            .map(|r| self.policy.get_execution_policy(&r.database, &r.environment))
+            .map(|r| {
+                self.policy
+                    .get_execution_policy(&r.database, &r.environment)
+            })
             .unwrap_or_default();
-        let new_expiry = self.clock.now() + chrono::Duration::seconds(exec_policy.lease_duration_secs());
+        let new_expiry =
+            self.clock.now() + chrono::Duration::seconds(exec_policy.lease_duration_secs());
         self.agent_repo.extend_lease(&execution.id, new_expiry)?;
 
         // 6. Check if request was cancelled

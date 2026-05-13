@@ -141,7 +141,8 @@ pub(crate) async fn run_ttl_expiry_once(state: &AppState) -> TickResult {
     match state.request_repo.find_expired_approved(&now_str) {
         Ok(ids) => {
             for id in ids {
-                let audit = make_audit_event("request_expired", EventCategory::Approval, &id, state);
+                let audit =
+                    make_audit_event("request_expired", EventCategory::Approval, &id, state);
                 match state
                     .request_repo
                     .mark_expired_and_record(&id, &audit, &now_str)
@@ -168,7 +169,8 @@ pub(crate) async fn run_ttl_expiry_once(state: &AppState) -> TickResult {
     match state.request_repo.find_expired_pending(&now_str) {
         Ok(ids) => {
             for id in ids {
-                let audit = make_audit_event("request_expired", EventCategory::Approval, &id, state);
+                let audit =
+                    make_audit_event("request_expired", EventCategory::Approval, &id, state);
                 match state
                     .request_repo
                     .mark_expired_and_record(&id, &audit, &now_str)
@@ -385,7 +387,12 @@ fn emit_audit(state: &AppState, event_type: &str, category: EventCategory, reque
     }
 }
 
-fn make_audit_event(event_type: &str, category: EventCategory, request_id: &str, state: &AppState) -> AuditEvent {
+fn make_audit_event(
+    event_type: &str,
+    category: EventCategory,
+    request_id: &str,
+    state: &AppState,
+) -> AuditEvent {
     let mut event = AuditEvent::simple(event_type, "approval", "system", Some(request_id));
     event.actor_type = ActorType::System;
     event.request_id = Some(request_id.to_string());
@@ -398,7 +405,10 @@ fn make_audit_event(event_type: &str, category: EventCategory, request_id: &str,
             event.operation = Some(req.operation.as_str().to_string());
         }
         Ok(None) => {
-            tracing::warn!(request_id, "audit event: request not found, db/env/op will be empty");
+            tracing::warn!(
+                request_id,
+                "audit event: request not found, db/env/op will be empty"
+            );
         }
         Err(e) => {
             tracing::warn!(request_id, error = %e, "audit event: failed to lookup request");

@@ -34,7 +34,9 @@ pub(super) struct CreateWorkflowBody {
     #[serde(default)]
     require_reason: bool,
 }
-fn star() -> String { "*".into() }
+fn star() -> String {
+    "*".into()
+}
 
 pub async fn create_workflow(
     State(state): State<AppState>,

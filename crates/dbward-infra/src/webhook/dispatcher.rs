@@ -185,10 +185,10 @@ fn build_slack_body(event: &WebhookEvent) -> String {
     let sep = "━━━━━━━━━━━━━━━━━━━━━━";
     let header = format!("{emoji} [dbward] {title}");
 
-    let mut sections = vec![
-        format!("{sep}\nRequester: {requester}\nOperation: {}\nEnvironment: {env}\nDatabase: {db}\n{sep}",
-            event.operation.as_deref().unwrap_or("—")),
-    ];
+    let mut sections = vec![format!(
+        "{sep}\nRequester: {requester}\nOperation: {}\nEnvironment: {env}\nDatabase: {db}\n{sep}",
+        event.operation.as_deref().unwrap_or("—")
+    )];
 
     // Show actor (approver/rejector) when different from requester
     if actor != requester {
@@ -217,7 +217,9 @@ fn build_slack_body(event: &WebhookEvent) -> String {
 
     let action = match event.event_type.as_str() {
         "request_created" => Some(format!("dbward request approve {short_id}")),
-        "break_glass" | "request_auto_approved" => Some(format!("dbward request resume {short_id}")),
+        "break_glass" | "request_auto_approved" => {
+            Some(format!("dbward request resume {short_id}"))
+        }
         _ => None,
     };
     if let Some(cmd) = action {
@@ -354,9 +356,10 @@ impl EventDispatcher for CompositeEventDispatcher {
                 _ => None,
             },
             error_summary: match &event.metadata {
-                EventMetadata::Completed { success: false, execution_id } => {
-                    Some(format!("execution {} failed", execution_id))
-                }
+                EventMetadata::Completed {
+                    success: false,
+                    execution_id,
+                } => Some(format!("execution {} failed", execution_id)),
                 EventMetadata::ExecutionLost { execution_id } => {
                     Some(format!("execution {} lost", execution_id))
                 }
