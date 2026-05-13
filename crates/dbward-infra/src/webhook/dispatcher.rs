@@ -173,62 +173,58 @@ fn build_slack_body(event: &WebhookEvent) -> String {
         "request_approved" | "step_approved" => ("✅", "Approved"),
         "request_rejected" => ("❌", "Rejected"),
         "request_completed" => ("🎉", "Completed"),
-        "request_failed" => ("⚠️", "Failed"),
+        "request_failed" => ("⚠️", "Request Failed"),
         "break_glass" => ("🚨", "Break-Glass Request"),
         "request_auto_approved" => ("⚡", "Auto-Approved"),
         "execution_lost" => ("💀", "Execution Lost"),
         _ => ("🔔", event.event_type.as_str()),
     };
 
+    let sep = "━━━━━━━━━━━━━━━━━━━━━━";
     let header = format!("{emoji} [dbward] {title}");
-    let mut lines = vec![
-        format!("*Requester:* {requester}"),
-        format!("*Environment:* {env}"),
-        format!("*Database:* {db}"),
+
+    let mut sections = vec![
+        format!("{sep}\nRequester: {requester}\nOperation: {}\nEnvironment: {env}\nDatabase: {db}\n{sep}",
+            event.detail.as_deref().unwrap_or("—")),
     ];
 
     if let Some(ref sql) = event.redacted_detail {
         let truncated: String = sql.chars().take(200).collect();
-        lines.push(format!("```{}```", truncated));
+        sections.push(truncated);
     }
 
     if let Some(ref reason) = event.reason {
-        lines.push(format!("*Reason:* {reason}"));
+        sections.push(format!("Reason: {reason}"));
     }
 
     if let Some(ref err) = event.error_summary {
         let first_line = err.lines().next().unwrap_or(err);
-        lines.push(format!("*Error:* {first_line}"));
+        sections.push(format!("Error: {first_line}"));
     }
 
     if let Some(ref hint) = event.approval_hint {
-        lines.push(format!("*Next:* {hint}"));
+        sections.push(format!("Next: {hint}"));
     }
 
+    sections.push(sep.to_string());
+
     let action = match event.event_type.as_str() {
-        "request_created" => Some(format!("`dbward request approve {short_id}`")),
-        "break_glass" | "request_auto_approved" => {
-            Some(format!("`dbward request resume {short_id}`"))
-        }
+        "request_created" => Some(format!("dbward request approve {short_id}")),
+        "break_glass" | "request_auto_approved" => Some(format!("dbward request resume {short_id}")),
         _ => None,
     };
     if let Some(cmd) = action {
-        lines.push(cmd);
+        sections.push(cmd);
     }
 
-    let text = format!("{header} — {db}/{env}");
-    let body_text = lines.join("\n");
+    let text = format!("{header}\n{}", sections.join("\n"));
 
     serde_json::to_string(&serde_json::json!({
         "text": text,
         "blocks": [
             {
-                "type": "header",
-                "text": {"type": "plain_text", "text": header, "emoji": true}
-            },
-            {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": body_text}
+                "text": {"type": "mrkdwn", "text": text}
             }
         ]
     }))
