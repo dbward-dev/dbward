@@ -283,8 +283,8 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
         let val = if raw.is_null() {
             serde_json::Value::Null
         } else {
-            match row.try_get::<&[u8], _>(col.ordinal()) {
-                Ok(bytes) => match std::str::from_utf8(bytes) {
+            match row.try_get::<Vec<u8>, _>(col.ordinal()) {
+                Ok(bytes) => match std::str::from_utf8(&bytes) {
                     Ok(text) => text_to_json(text, mysql_type_mapping(col.type_info().name())),
                     Err(_) => serde_json::Value::String("(binary data)".into()),
                 },

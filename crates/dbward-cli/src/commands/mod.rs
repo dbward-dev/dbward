@@ -212,9 +212,9 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             let cfg = match config::load(&cli.config) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("Not logged in. Config error: {e}");
-                    eprintln!("Run: dbward login or dbward init");
-                    return Ok(());
+                    return Err(CliError::Auth(format!(
+                        "Not logged in. Config error: {e}\nRun: dbward login or dbward init"
+                    )));
                 }
             };
             if let Some(ref token) = cfg.server.token {
@@ -232,10 +232,10 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                             println!("Roles: {}", roles.join(", "));
                         }
                     }
-                    Err(e) => eprintln!("Failed to query server: {e}"),
+                    Err(e) => return Err(CliError::Server(format!("Failed to query server: {e}"))),
                 }
             } else {
-                eprintln!("Not logged in. Run: dbward login");
+                return Err(CliError::Auth("Not logged in. Run: dbward login".into()));
             }
             return Ok(());
         }

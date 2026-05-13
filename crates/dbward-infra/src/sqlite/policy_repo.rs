@@ -46,7 +46,13 @@ impl PolicyRepo for SqlitePolicyRepo {
                 wf.approval_ttl_secs.map(|v| v as i64),
                 wf.statement_timeout_secs.map(|v| v as i64),
             ],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(|e| {
+            if e.to_string().contains("UNIQUE constraint failed") {
+                AppError::Conflict("already exists".into())
+            } else {
+                AppError::Internal(e.to_string())
+            }
+        })?;
         Ok(())
     }
 
@@ -244,7 +250,13 @@ impl PolicyRepo for SqlitePolicyRepo {
             "INSERT INTO roles (name, permissions_json, databases_json, environments_json, built_in)
              VALUES (?1, ?2, ?3, ?4, 0)",
             params![role.name, perms_json, dbs_json, envs_json],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(|e| {
+            if e.to_string().contains("UNIQUE constraint failed") {
+                AppError::Conflict("already exists".into())
+            } else {
+                AppError::Internal(e.to_string())
+            }
+        })?;
         Ok(())
     }
 

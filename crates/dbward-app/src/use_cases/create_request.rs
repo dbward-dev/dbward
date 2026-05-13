@@ -61,6 +61,15 @@ impl CreateRequest {
         input: CreateRequestInput,
         user: &AuthUser,
     ) -> Result<CreateRequestOutput, AppError> {
+        if input.detail.len() > 100_000 {
+            return Err(AppError::Validation("query too long (max 100KB)".into()));
+        }
+        if let Some(ref reason) = input.reason {
+            if reason.len() > 1024 {
+                return Err(AppError::Validation("reason too long (max 1KB)".into()));
+            }
+        }
+
         // 1. Determine operation: migration types are explicit, others classified from SQL
         let operation = match input.operation {
             Operation::MigrateUp | Operation::MigrateDown | Operation::MigrateStatus => {
