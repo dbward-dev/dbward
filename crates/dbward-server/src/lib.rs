@@ -4,6 +4,7 @@ pub mod metrics;
 pub mod middleware;
 pub mod routes;
 pub mod state;
+pub mod util;
 
 use std::collections::HashMap;
 use std::sync::Arc;

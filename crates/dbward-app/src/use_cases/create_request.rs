@@ -53,6 +53,7 @@ pub struct CreateRequestOutput {
     pub operation: Operation,
     pub is_existing: bool,
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub approvers: Vec<String>,
 }
 
 impl CreateRequest {
@@ -141,6 +142,7 @@ impl CreateRequest {
                     operation: existing.operation,
                     is_existing: true,
                     expires_at: existing.expires_at,
+                    approvers: vec![],
                 });
             }
         }
@@ -300,6 +302,20 @@ impl CreateRequest {
             operation,
             is_existing: false,
             expires_at,
+            approvers: if final_status == RequestStatus::Pending {
+                workflow
+                    .as_ref()
+                    .and_then(|wf| wf.steps.first())
+                    .map(|step| {
+                        step.approvers
+                            .iter()
+                            .map(|a| a.selector.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                vec![]
+            },
         })
     }
 }

@@ -112,40 +112,6 @@ pub async fn create(
 
     match uc.execute(input, &user) {
         Ok(out) => {
-            // Extract approvers from workflow snapshot if pending
-            let approvers: Vec<String> =
-                if out.status == dbward_domain::entities::RequestStatus::Pending {
-                    // Re-read the request to get workflow_snapshot
-                    state
-                        .request_repo
-                        .get(&out.id)
-                        .ok()
-                        .flatten()
-                        .and_then(|r| r.workflow_snapshot_json)
-                        .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
-                        .and_then(|v| {
-                            v.get("steps")?
-                                .as_array()?
-                                .first()?
-                                .get("approvers")?
-                                .as_array()
-                                .cloned()
-                        })
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|a| {
-                                    a.get("selector")
-                                        .and_then(|s| s.as_str())
-                                        .map(String::from)
-                                        .or_else(|| Some(a.get("selector")?.to_string()))
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default()
-                } else {
-                    vec![]
-                };
-
             let status_code = if out.is_existing {
                 StatusCode::OK
             } else {
@@ -158,7 +124,7 @@ pub async fn create(
                     "id": out.id,
                     "status": out.status.as_str(),
                     "operation": out.operation.as_str(),
-                    "approvers": approvers,
+                    "approvers": out.approvers,
                     "idempotent": out.is_existing,
                     "expires_at": out.expires_at,
                 })),
@@ -479,69 +445,10 @@ pub async fn get_result(
         Ok(out) => {
             // Return stored data as JSON directly
             let json_value: serde_json::Value = serde_json::from_slice(&out.data)
-                .unwrap_or_else(|_| json!({"raw": base64_encode(&out.data)}));
+                .unwrap_or_else(|_| json!({"raw": crate::util::base64_encode(&out.data)}));
             Ok((StatusCode::OK, Json(json_value)))
         }
         Err(e) => Err(map_error(e)),
-    }
-}
-
-fn base64_encode(data: &[u8]) -> String {
-    use std::io::Write;
-    let mut buf = Vec::with_capacity(data.len() * 4 / 3 + 4);
-    {
-        let mut encoder = Base64Encoder::new(&mut buf);
-        encoder.write_all(data).unwrap();
-    }
-    String::from_utf8(buf).unwrap_or_default()
-}
-
-/// Minimal base64 encoder (no external dependency needed).
-struct Base64Encoder<'a> {
-    out: &'a mut Vec<u8>,
-}
-
-impl<'a> Base64Encoder<'a> {
-    fn new(out: &'a mut Vec<u8>) -> Self {
-        Self { out }
-    }
-}
-
-impl<'a> std::io::Write for Base64Encoder<'a> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        const TABLE: &[u8; 64] =
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        for chunk in buf.chunks(3) {
-            match chunk.len() {
-                3 => {
-                    self.out.push(TABLE[(chunk[0] >> 2) as usize]);
-                    self.out
-                        .push(TABLE[(((chunk[0] & 0x03) << 4) | (chunk[1] >> 4)) as usize]);
-                    self.out
-                        .push(TABLE[(((chunk[1] & 0x0f) << 2) | (chunk[2] >> 6)) as usize]);
-                    self.out.push(TABLE[(chunk[2] & 0x3f) as usize]);
-                }
-                2 => {
-                    self.out.push(TABLE[(chunk[0] >> 2) as usize]);
-                    self.out
-                        .push(TABLE[(((chunk[0] & 0x03) << 4) | (chunk[1] >> 4)) as usize]);
-                    self.out.push(TABLE[((chunk[1] & 0x0f) << 2) as usize]);
-                    self.out.push(b'=');
-                }
-                1 => {
-                    self.out.push(TABLE[(chunk[0] >> 2) as usize]);
-                    self.out.push(TABLE[((chunk[0] & 0x03) << 4) as usize]);
-                    self.out.push(b'=');
-                    self.out.push(b'=');
-                }
-                _ => {}
-            }
-        }
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 
