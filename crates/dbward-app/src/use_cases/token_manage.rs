@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
-use uuid::Uuid;
 
 use dbward_domain::auth::{AuthUser, Permission};
 
@@ -111,7 +110,7 @@ impl TokenManage {
         }
 
         // Generate token
-        let raw = format!("dbw_{}", Uuid::new_v4().simple());
+        let raw = format!("dbw_{}", self.id_gen.generate().replace('-', ""));
         let prefix = raw[4..12].to_string();
         let hash = hex::encode(Sha256::digest(raw.as_bytes()));
 
@@ -254,7 +253,7 @@ mod tests {
     struct FakeIdGen;
     impl IdGenerator for FakeIdGen {
         fn generate(&self) -> String {
-            "tok-1".into()
+            "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4".into()
         }
     }
     struct FakeTokenRepo {

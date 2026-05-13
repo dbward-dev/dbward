@@ -322,7 +322,7 @@ impl IdGenerator for SeqIdGen {
     fn generate(&self) -> String {
         let mut c = self.counter.lock().unwrap();
         *c += 1;
-        format!("id-{c:04}")
+        format!("{:032x}", *c)
     }
 }
 
