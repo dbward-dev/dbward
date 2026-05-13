@@ -70,6 +70,7 @@ mod tests {
             in_flight,
             last_seen: last_seen_secs_ago.map(|s| now - Duration::seconds(s)),
             created_at: now,
+            lease_duration_secs: None,
         }
     }
 

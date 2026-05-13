@@ -70,6 +70,7 @@ impl AgentPoll {
             in_flight: input.in_flight,
             last_seen: Some(now),
             created_at: now,
+            lease_duration_secs: None,
         };
         self.agent_repo.upsert(&agent)?;
 

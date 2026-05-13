@@ -492,7 +492,7 @@ fn execution_tracking_cross_repo() {
     request_repo.insert(&req).unwrap();
 
     // Register agent
-    let agent = Agent {
+    let agent = Agent { lease_duration_secs: None,
         id: "agent-1".into(),
         token_id: "tok-1".into(),
         databases: vec![DatabaseCapability {
@@ -1782,7 +1782,7 @@ fn agent_get_and_list() {
     register_db(&conn);
     let repo = SqliteAgentRepo::new(conn.clone());
 
-    let agent = Agent {
+    let agent = Agent { lease_duration_secs: None,
         id: "agent-1".into(),
         token_id: "tok-1".into(),
         databases: vec![DatabaseCapability {

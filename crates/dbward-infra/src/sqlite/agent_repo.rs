@@ -651,6 +651,7 @@ fn row_to_agent(r: AgentRow) -> Result<Agent, AppError> {
         in_flight: r.in_flight,
         last_seen: parse_dt_opt(r.last_seen_at)?,
         created_at: parse_dt(&r.created_at)?,
+        lease_duration_secs: None,
     })
 }
 
