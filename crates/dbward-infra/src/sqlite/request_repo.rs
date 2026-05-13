@@ -52,29 +52,6 @@ fn populate_pending_approvers(
             .map_err(map_err)?;
         }
     }
-    // Also add roles that have approve permission (Permission::All or RequestApprove)
-    let mut stmt = conn
-        .prepare("SELECT name, permissions_json FROM roles")
-        .map_err(map_err)?;
-    let approve_roles: Vec<String> = stmt
-        .query_map([], |row| {
-            let name: String = row.get(0)?;
-            let perms: String = row.get(1)?;
-            Ok((name, perms))
-        })
-        .map_err(map_err)?
-        .filter_map(|r| r.ok())
-        .filter(|(_, perms)| perms.contains("\"*\"") || perms.contains("request.approve"))
-        .map(|(name, _)| name)
-        .collect();
-    for role in &approve_roles {
-        let selector = format!("role:{role}");
-        conn.execute(
-            "INSERT OR IGNORE INTO request_pending_approvers (request_id, selector, step_index) VALUES (?1, ?2, ?3)",
-            rusqlite::params![request_id, selector, step_index],
-        )
-        .map_err(map_err)?;
-    }
     Ok(())
 }
 

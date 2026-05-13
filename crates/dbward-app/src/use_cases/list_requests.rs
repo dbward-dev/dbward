@@ -56,13 +56,30 @@ impl ListRequests {
         input: ListRequestsInput,
         user: &AuthUser,
     ) -> Result<ListRequestsOutput, AppError> {
-        self.authorizer
-            .authorize_global(user, Permission::RequestView)
-            .map_err(AppError::Forbidden)?;
-
         let limit = input.limit.unwrap_or(50).min(100);
         let offset = input.offset.unwrap_or(0);
         let pending_for_me = input.pending_for_me.unwrap_or(false);
+
+        if pending_for_me {
+            let has_view = self
+                .authorizer
+                .authorize_global(user, Permission::RequestView)
+                .is_ok();
+            let has_approve = self
+                .authorizer
+                .authorize_global(user, Permission::RequestApprove)
+                .is_ok();
+            if !has_view && !has_approve {
+                return Err(AppError::Forbidden(crate::error::AuthzError::Forbidden {
+                    permission: Permission::RequestView,
+                    reason: "requires RequestView or RequestApprove".into(),
+                }));
+            }
+        } else {
+            self.authorizer
+                .authorize_global(user, Permission::RequestView)
+                .map_err(AppError::Forbidden)?;
+        }
 
         if pending_for_me {
             let roles: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
