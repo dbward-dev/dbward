@@ -77,10 +77,5 @@ jobs:
       - name: Generate coverage
         run: cargo llvm-cov --workspace --ignore-filename-regex "tests/" --lcov --output-path lcov.info
 
-      - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: lcov.info
-          fail_ci_if_error: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      - name: Coverage summary
+        run: cargo llvm-cov report --summary-only
