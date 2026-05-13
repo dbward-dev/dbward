@@ -164,32 +164,71 @@ fn build_slack_body(event: &WebhookEvent) -> String {
     let db = event.database.as_deref().unwrap_or("—");
     let env = event.environment.as_deref().unwrap_or("—");
     let actor = event.actor.as_deref().unwrap_or("system");
+    let requester = event.requester.as_deref().unwrap_or(actor);
     let req_id = event.request_id.as_deref().unwrap_or("—");
-    let emoji = match event.event_type.as_str() {
-        "request_approved" | "step_approved" => "✅",
-        "request_rejected" => "❌",
-        "request_completed" => "🎉",
-        "request_failed" => "💥",
-        "break_glass" => "🚨",
-        "request_created" => "📝",
-        _ => "🔔",
+    let short_id = &req_id[..req_id.len().min(8)];
+
+    let (emoji, title) = match event.event_type.as_str() {
+        "request_created" => ("📋", "New Request"),
+        "request_approved" | "step_approved" => ("✅", "Approved"),
+        "request_rejected" => ("❌", "Rejected"),
+        "request_completed" => ("🎉", "Completed"),
+        "request_failed" => ("⚠️", "Failed"),
+        "break_glass" => ("🚨", "Break-Glass Request"),
+        "request_auto_approved" => ("⚡", "Auto-Approved"),
+        "execution_lost" => ("💀", "Execution Lost"),
+        _ => ("🔔", event.event_type.as_str()),
     };
-    let text = format!("{emoji} {} — {db}/{env}", event.event_type);
+
+    let header = format!("{emoji} [dbward] {title}");
+    let mut lines = vec![
+        format!("*Requester:* {requester}"),
+        format!("*Environment:* {env}"),
+        format!("*Database:* {db}"),
+    ];
+
+    if let Some(ref sql) = event.redacted_detail {
+        let truncated: String = sql.chars().take(200).collect();
+        lines.push(format!("```{}```", truncated));
+    }
+
+    if let Some(ref reason) = event.reason {
+        lines.push(format!("*Reason:* {reason}"));
+    }
+
+    if let Some(ref err) = event.error_summary {
+        let first_line = err.lines().next().unwrap_or(err);
+        lines.push(format!("*Error:* {first_line}"));
+    }
+
+    if let Some(ref hint) = event.approval_hint {
+        lines.push(format!("*Next:* {hint}"));
+    }
+
+    let action = match event.event_type.as_str() {
+        "request_created" => Some(format!("`dbward request approve {short_id}`")),
+        "break_glass" | "request_auto_approved" => {
+            Some(format!("`dbward request resume {short_id}`"))
+        }
+        _ => None,
+    };
+    if let Some(cmd) = action {
+        lines.push(cmd);
+    }
+
+    let text = format!("{header} — {db}/{env}");
+    let body_text = lines.join("\n");
+
     serde_json::to_string(&serde_json::json!({
         "text": text,
         "blocks": [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": format!("{emoji} {}", event.event_type), "emoji": true}
+                "text": {"type": "plain_text", "text": header, "emoji": true}
             },
             {
                 "type": "section",
-                "fields": [
-                    {"type": "mrkdwn", "text": format!("*Database:*\n{db}")},
-                    {"type": "mrkdwn", "text": format!("*Environment:*\n{env}")},
-                    {"type": "mrkdwn", "text": format!("*Actor:*\n{actor}")},
-                    {"type": "mrkdwn", "text": format!("*Request:*\n`{req_id}`")}
-                ]
+                "text": {"type": "mrkdwn", "text": body_text}
             }
         ]
     }))
@@ -299,6 +338,27 @@ impl EventDispatcher for CompositeEventDispatcher {
             environment: Some(event.environment.as_str().to_string()),
             actor: Some(event.actor_id.clone()),
             detail: None,
+            requester: Some(event.actor_id.clone()),
+            reason: match &event.metadata {
+                EventMetadata::Created { .. } => None,
+                EventMetadata::Rejected { comment, .. } => comment.clone(),
+                EventMetadata::Cancelled { reason, .. } => reason.clone(),
+                _ => None,
+            },
+            redacted_detail: match &event.metadata {
+                EventMetadata::Created { detail, .. } => Some(redact_sql_literals(detail)),
+                _ => None,
+            },
+            error_summary: match &event.metadata {
+                EventMetadata::Completed { success: false, execution_id } => {
+                    Some(format!("execution {} failed", execution_id))
+                }
+                EventMetadata::ExecutionLost { execution_id } => {
+                    Some(format!("execution {} lost", execution_id))
+                }
+                _ => None,
+            },
+            approval_hint: None,
         };
         // Dispatched events do not trigger webhooks
         if event_type != "request_dispatched" {

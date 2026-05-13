@@ -14,4 +14,9 @@ pub struct WebhookEvent {
     pub environment: Option<String>,
     pub actor: Option<String>,
     pub detail: Option<String>,
+    pub requester: Option<String>,
+    pub reason: Option<String>,
+    pub redacted_detail: Option<String>,
+    pub error_summary: Option<String>,
+    pub approval_hint: Option<String>,
 }

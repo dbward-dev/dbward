@@ -415,5 +415,10 @@ fn emit_webhook(state: &AppState, event_type: &str, request_id: &str) {
         environment: None,
         actor: Some("system".to_string()),
         detail: None,
+        requester: None,
+        reason: None,
+        redacted_detail: None,
+        error_summary: None,
+        approval_hint: None,
     });
 }
