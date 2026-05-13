@@ -4,34 +4,40 @@
 
 クリーンアーキテクチャ違反を修正し、テスト容易性と保守性を向上させる。
 
-## 違反一覧
+## 違反一覧（現状コード反映済み）
 
-### High (5件)
+### 解決済み（本PR）
+
+| # | 内容 | 対応 |
+|---|---|---|
+| V-1 | `Uuid::new_v4()` in token_manage.rs | ✅ TokenValueGenerator port 導入 |
+| V-3 | `uuid` crate in dbward-app | ✅ 削除済み |
+| V-4 | `AuditEvent::simple()` が `Utc::now()` | ✅ timestamp 引数追加 |
+| V-5 | `list` handler にビジネスロジック | ✅ ListRequests use case 抽出 |
+| V-13 | middleware `Utc::now()` | ✅ state.clock.now() に変更 |
+
+### 残存（R-3b/R-3c で対応）
 
 | # | ファイル | 内容 |
 |---|---|---|
-| V-1 | dbward-app/src/use_cases/token_manage.rs:114 | `Uuid::new_v4()` 直接呼び出し。IdGenerator port を使うべき |
-| V-4 | dbward-domain/src/entities/audit_event.rs:106 | `AuditEvent::simple()` が `Utc::now()` 直接呼び出し |
-| V-5 | dbward-server/src/routes/requests.rs:170-253 | `list` handler に認可+フィルタリングのビジネスロジック |
-| V-6 | dbward-server/src/routes/requests.rs:278-370 | `get` handler に long-poll + 認可 + redaction ロジック |
-| V-11 | dbward-server/src/lib.rs:283-293 | Server が `rusqlite` 直接使用。DatabaseRegistry port をバイパス |
+| V-6 | routes/requests.rs get handler | long-poll + 認可。**認可を wait の前に実行する設計に変更** |
+| V-7 | routes/requests.rs create handler | repo 再読み込みで approvers 取得 |
+| V-11 | server/src/lib.rs | rusqlite 直接使用。DatabaseRegistry port 拡張で解消 |
+| V-12 | server/src/lib.rs bootstrap | sha2 重複。TokenManage use case 経由に変更 |
+| V-17 | routes/policies.rs | handler 内で Workflow 構築 |
+| V-18 | server/src/lib.rs | sync_workflows/sync_webhooks が server 層でドメインオブジェクト構築+repo更新。**app 層の SyncConfig use case に寄せる** |
+| V-19 | routes/requests.rs | base64 encoder 混在 |
 
-### Medium (8件)
+---
 
-| # | ファイル | 内容 |
-|---|---|---|
-| V-3 | dbward-app/Cargo.toml | `uuid` crate が app 層に直接依存 |
-| V-7 | routes/requests.rs:114-145 | create handler が repo を再読み込みして approvers 取得 |
-| V-8 | routes/requests.rs:635-663 | list_results が use case 層をバイパス |
-| V-12 | dbward-server/src/lib.rs:439-443 | bootstrap token 生成がハッシュロジックを重複 |
-| V-13 | middleware/auth.rs:57,97 | `Utc::now()` 直接呼び出し（Clock port 未使用） |
-| V-17 | routes/policies.rs:48-75 | route handler 内で Workflow ドメインオブジェクト構築 |
-| V-18 | server/src/lib.rs | 500+ 行の composition + bootstrap + sync 混在 |
-| V-19 | routes/requests.rs | 663 行に 8 handler + base64 encoder + ビジネスロジック |
+## 設計判断（Codex レビュー反映）
 
-### Low (7件 — 対応しない)
-
-V-2 (sha2 in app), V-9/V-10 (simple read handlers), V-14/V-15 (startup/agent Utc::now), V-16 (UnitOfWork), V-20 (large repo file)
+- **long-poll は handler に残すが、認可は wait の前に実行する**: 未認可ユーザーへの存在確認オラクルを防ぐ
+- **pending_for_me の認可**: `RequestApprove` 権限があれば `RequestView` なしでも pending_for_me は使える（承認者が一覧を見られないのは不自然）。ListRequests use case で分岐追加
+- **sync_workflows/sync_webhooks**: ファイル分割だけでなく app 層の `SyncConfig` use case に寄せる（server 層でのドメインオブジェクト構築を排除）
+- **V-8 (list_results) は Low に格下げ**: 現状は repo 呼び出し + JSON 変換のみ
+- **一括変更方針**: `#[deprecated]` による段階的移行は不採用
+- **rusqlite は register_databases 置き換え完了後に dev-dependencies 移動**
 
 ---
 
@@ -78,15 +84,15 @@ V-2 (sha2 in app), V-9/V-10 (simple read handlers), V-14/V-15 (startup/agent Utc
 
 ---
 
-## 実装順序
+## 次の実装順序（R-3b/R-3c）
 
-1. R-2 (IdGenerator) — 1ファイル修正。最もリスク低い
-2. R-1 (Clock) — 27箇所。R-2 で手順確認後に着手
-3. R-3a (use case 追加) — 既存 handler は変更しない
-4. R-3b (handler 薄型化) — handler から use case を呼ぶように変更
-5. R-3c (lib.rs 分割) — bootstrap + sync 抽出 + DatabaseRegistry 拡張
-
-各ステップで 354 テストが通ることを確認。
+1. `GetRequest` の認可境界を決定: wait の前に認可実行
+2. `GetRequest` use case 抽出（認可 + detail redaction）
+3. `ListRequests` に `RequestApprove` ベースの pending_for_me 認可分岐追加
+4. `SyncConfig` use case 作成（sync_workflows/sync_webhooks を app 層に移動）
+5. `DatabaseRegistry::register()` 追加 + `register_databases` 置き換え
+6. `bootstrap.rs` 分離（TokenManage::create 経由）
+7. `rusqlite` を dev-dependencies に移動
 
 ## テスト方針
 
@@ -100,3 +106,32 @@ V-2 (sha2 in app), V-9/V-10 (simple read handlers), V-14/V-15 (startup/agent Utc
 - **V-8 (list_results) は Low に格下げ**: 現状は repo 呼び出し + JSON 変換のみ。将来フィルタ追加時に use case 化
 - **一括変更方針**: `#[deprecated]` による段階的移行は不採用。v0.1.1 で完了させる
 - **rusqlite は dev-dependencies に移動**: テストでの直接 DB 操作は許容
+
+---
+
+## PR スコープ分離
+
+### PR #6（本PR — 完了）
+- R-2: uuid 依存削除 + IdGenerator 経由
+- R-1: AuditEvent timestamp 引数化 + Clock port 統一
+- R-3a: ListRequests use case 抽出（ロジックそのまま移動）
+- TokenValueGenerator port 導入
+
+### PR #7（次 — R-3b/R-3c）
+- GetRequest use case: 認可を wait の前に実行
+- ListRequests 認可モデル修正: pending_for_me は RequestApprove で許可
+- pending_for_me の絞り込み修正: populate_pending_approvers の approve role 全注入を廃止
+- SyncConfig use case: sync_workflows/sync_webhooks を app 層に移動
+- DatabaseRegistry::register() 追加 + register_databases 置き換え
+- bootstrap.rs: TokenManage::create() 経由
+- CreateRequestOutput に approvers 追加
+- CreateWorkflowInput DTO 導入
+- rusqlite を dev-dependencies に移動
+
+### Codex 2回目レビュー指摘（全て PR #7 スコープ）
+1. pending_for_me が RequestView 必須のまま → PR #7 で修正
+2. GET /requests/{id} の認可前 long-poll → PR #7 で修正
+3. populate_pending_approvers の approve role 全注入 → PR #7 で修正
+4. GET /requests/{id} approver fallback が広すぎ → PR #7 で修正
+5. sync/register/bootstrap 未実装 → PR #7 で実装
+6. create handler の repo 再読込 → PR #7 で修正
