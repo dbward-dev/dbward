@@ -206,6 +206,7 @@ mod tests {
             allow_self_approve: false,
             allow_same_approver_across_steps: true,
             pending_ttl_secs: None,
+            statement_timeout_secs: None,
             approval_ttl_secs: None,
             created_at: None,
             updated_at: None,

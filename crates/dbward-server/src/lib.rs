@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use axum::Router;
+use dbward_app::ports::PolicyRepo;
 use state::AppState;
 use tokio::time::Duration;
 
@@ -49,25 +50,61 @@ pub async fn run_from_args(
     let policy_evaluator = Arc::new(dbward_infra::sqlite::SqlitePolicyEvaluator::new(conn.clone()));
 
     // Auth
-    let token_verifier: Arc<dyn dbward_app::ports::TokenVerifier> = Arc::new(
-        dbward_infra::auth::ApiTokenVerifier::new(
-            token_repo.clone(),
-            user_repo.clone(),
-            policy_repo.clone(),
-        ),
+    let mut token_verifier_impl = dbward_infra::auth::ApiTokenVerifier::new(
+        token_repo.clone(),
+        user_repo.clone(),
+        policy_repo.clone(),
     );
-    let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new(
+
+    // C-10: Inject OIDC verifier if configured
+    if cfg.auth.mode == "oidc" || cfg.auth.mode == "both" {
+        if let Some(ref oidc_cfg) = cfg.auth.oidc {
+            let oidc = dbward_infra::auth::OidcVerifier::new(
+                oidc_cfg.issuer_url.clone(),
+                oidc_cfg.audience.clone(),
+                "groups".to_string(),
+                None,
+            );
+            token_verifier_impl = token_verifier_impl.with_oidc(oidc);
+        }
+    }
+
+    let token_verifier: Arc<dyn dbward_app::ports::TokenVerifier> = Arc::new(token_verifier_impl);
+    let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new({
+        // H-31: Build bindings from config
+        let mut group_bindings: HashMap<String, Vec<String>> = HashMap::new();
+        let mut user_bindings: HashMap<String, Vec<String>> = HashMap::new();
+        for rb in &cfg.auth.role_bindings {
+            for group in &rb.groups {
+                group_bindings.entry(group.clone()).or_default().push(rb.role.clone());
+            }
+            for subject in &rb.subjects {
+                user_bindings.entry(subject.clone()).or_default().push(rb.role.clone());
+            }
+        }
         dbward_infra::auth::ConfigRoleResolver::with_policy_repo(
             vec![],
-            HashMap::new(),
-            HashMap::new(),
-            None,
+            group_bindings,
+            user_bindings,
+            cfg.auth.default_role.clone(),
             Some(policy_repo.clone()),
-        ),
-    );
+        )
+    });
     let authorizer: Arc<dyn dbward_app::ports::Authorizer> = Arc::new(
         dbward_infra::auth::RbacAuthorizer,
     );
+
+    // H-31: Validate role_bindings role names at startup
+    for binding in &cfg.auth.role_bindings {
+        if policy_repo.get_roles_by_names(&[binding.role.clone()]).map_or(true, |v| v.is_empty()) {
+            tracing::warn!(role = %binding.role, "role_binding references undefined role; it will be ignored at runtime");
+        }
+    }
+    if let Some(ref default) = cfg.auth.default_role {
+        if policy_repo.get_roles_by_names(&[default.clone()]).map_or(true, |v| v.is_empty()) {
+            tracing::warn!(role = %default, "default_role references undefined role");
+        }
+    }
 
     // Result storage
     let result_store: Arc<dyn dbward_app::ports::ResultStore> = match cfg.result_storage.backend.as_str() {
@@ -148,6 +185,7 @@ pub async fn run_from_args(
         id_generator,
         metrics: Arc::new(metrics::Metrics::new()),
         default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
+        auth_mode: cfg.auth.mode.clone(),
         draining: draining.clone(),
     };
 
@@ -189,18 +227,7 @@ pub async fn run_from_args(
     // BUG-28: Sync webhooks from config
     sync_webhooks(&state, &cfg.webhooks)?;
 
-    // BUG-31: Initialize OIDC verifier if configured
-    if cfg.auth.mode == "oidc" || cfg.auth.mode == "both" {
-        if let Some(ref oidc_cfg) = cfg.auth.oidc {
-            let _oidc_verifier = dbward_infra::auth::OidcVerifier::new(
-                oidc_cfg.issuer_url.clone(),
-                oidc_cfg.audience.clone(),
-                "groups".to_string(),
-                None,
-            );
-            tracing::info!("OIDC verifier initialized (issuer={})", oidc_cfg.issuer_url);
-        }
-    }
+    // BUG-31: OIDC verifier initialized above (injected into ApiTokenVerifier)
 
     let addr: std::net::SocketAddr = listen.parse()?;
     start(addr, state, cfg.retention).await
@@ -287,11 +314,14 @@ fn sync_workflows(
             environment: env,
             operations,
             steps,
-            skip_approval_for: vec![],
+            skip_approval_for: wf.skip_approval_for.iter()
+                .filter_map(|s| Selector::parse(s).ok())
+                .collect(),
             require_reason: wf.require_reason,
-            allow_self_approve: false,
-            allow_same_approver_across_steps: false,
-            pending_ttl_secs: None,
+            allow_self_approve: wf.allow_self_approve,
+            allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
+            pending_ttl_secs: wf.pending_ttl_secs,
+            statement_timeout_secs: wf.statement_timeout_secs,
             approval_ttl_secs: None,
             created_at: None,
             updated_at: None,

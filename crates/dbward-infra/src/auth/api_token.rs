@@ -11,6 +11,7 @@ pub struct ApiTokenVerifier {
     token_repo: Arc<dyn TokenRepo>,
     user_repo: Arc<dyn UserRepo>,
     policy_repo: Arc<dyn PolicyRepo>,
+    oidc: Option<Arc<super::OidcVerifier>>,
 }
 
 impl ApiTokenVerifier {
@@ -19,7 +20,12 @@ impl ApiTokenVerifier {
         user_repo: Arc<dyn UserRepo>,
         policy_repo: Arc<dyn PolicyRepo>,
     ) -> Self {
-        Self { token_repo, user_repo, policy_repo }
+        Self { token_repo, user_repo, policy_repo, oidc: None }
+    }
+
+    pub fn with_oidc(mut self, oidc: super::OidcVerifier) -> Self {
+        self.oidc = Some(Arc::new(oidc));
+        self
     }
 }
 
@@ -84,7 +90,10 @@ impl TokenVerifier for ApiTokenVerifier {
         })
     }
 
-    async fn verify_oidc_token(&self, _token: &str) -> Result<(String, Vec<String>), AuthError> {
-        Err(AuthError::OidcNotConfigured)
+    async fn verify_oidc_token(&self, token: &str) -> Result<(String, Vec<String>), AuthError> {
+        match &self.oidc {
+            Some(oidc) => oidc.verify_oidc_token(token).await,
+            None => Err(AuthError::OidcNotConfigured),
+        }
     }
 }

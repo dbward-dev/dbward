@@ -41,6 +41,8 @@ pub struct Workflow {
     pub allow_same_approver_across_steps: bool,
     /// How long a request can stay pending before expiring.
     pub pending_ttl_secs: Option<u64>,
+    /// Per-workflow statement execution timeout override.
+    pub statement_timeout_secs: Option<u64>,
     /// How long after approval the request remains valid for dispatch.
     pub approval_ttl_secs: Option<u64>,
     #[serde(default)]
@@ -78,6 +80,7 @@ mod tests {
             allow_self_approve: false,
             allow_same_approver_across_steps: false,
             pending_ttl_secs: None,
+            statement_timeout_secs: None,
             approval_ttl_secs: None,
             created_at: None,
             updated_at: None,

@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -32,6 +32,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 6 {
             conn.execute_batch(MIGRATION_V6)?;
+        }
+        if current < 7 {
+            conn.execute_batch(MIGRATION_V7)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -187,6 +190,7 @@ CREATE TABLE IF NOT EXISTS workflows (
     allow_same_approver_across_steps INTEGER NOT NULL DEFAULT 0,
     pending_ttl_secs INTEGER,
     approval_ttl_secs INTEGER,
+    statement_timeout_secs INTEGER,
     UNIQUE(database_name, environment, operations_json)
 );
 
@@ -354,4 +358,8 @@ END;
 CREATE INDEX IF NOT EXISTS idx_requests_dispatched ON requests(status) WHERE status = 'dispatched';
 CREATE INDEX IF NOT EXISTS idx_requests_pending ON requests(status) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_requests_claimed ON executions(status) WHERE status = 'claimed';
+";
+
+const MIGRATION_V7: &str = "
+ALTER TABLE workflows ADD COLUMN statement_timeout_secs INTEGER;
 ";

@@ -70,7 +70,15 @@ pub async fn auth_middleware(
             serde_json::json!({"error": "authentication failed", "code": "unauthorized"}).to_string(),
         ))?;
 
-    let user = if token.starts_with("eyJ") {
+    // H-17: Enforce auth_mode
+    let is_jwt = token.starts_with("eyJ");
+    match state.auth_mode.as_str() {
+        "token" if is_jwt => return Err(auth_error_response(AuthError::OidcNotConfigured)),
+        "oidc" if !is_jwt => return Err(auth_error_response(AuthError::InvalidToken)),
+        _ => {}
+    }
+
+    let user = if is_jwt {
         let (subject_id, groups) = state
             .token_verifier
             .verify_oidc_token(token)
