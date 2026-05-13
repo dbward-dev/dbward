@@ -82,6 +82,14 @@ pub async fn run_from_args(
                 user_bindings.entry(subject.clone()).or_default().push(rb.role.clone());
             }
         }
+        // Also include OIDC role_mappings (group → role)
+        if let Some(ref oidc_cfg) = cfg.auth.oidc {
+            for mapping in &oidc_cfg.role_mappings {
+                if mapping.claim == "groups" {
+                    group_bindings.entry(mapping.value.clone()).or_default().push(mapping.role.clone());
+                }
+            }
+        }
         dbward_infra::auth::ConfigRoleResolver::with_policy_repo(
             vec![],
             group_bindings,
@@ -98,6 +106,13 @@ pub async fn run_from_args(
     for binding in &cfg.auth.role_bindings {
         if policy_repo.get_roles_by_names(&[binding.role.clone()]).map_or(true, |v| v.is_empty()) {
             tracing::warn!(role = %binding.role, "role_binding references undefined role; it will be ignored at runtime");
+        }
+    }
+    if let Some(ref oidc_cfg) = cfg.auth.oidc {
+        for mapping in &oidc_cfg.role_mappings {
+            if policy_repo.get_roles_by_names(&[mapping.role.clone()]).map_or(true, |v| v.is_empty()) {
+                tracing::warn!(role = %mapping.role, "oidc.role_mappings references undefined role; it will be ignored at runtime");
+            }
         }
     }
     if let Some(ref default) = cfg.auth.default_role {
