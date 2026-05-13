@@ -40,9 +40,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-deny
-        run: |
-          curl -L https://github.com/EmbarkStudios/cargo-deny/releases/download/0.16.4/cargo-deny-0.16.4-x86_64-unknown-linux-musl.tar.gz | tar xz
-          mv cargo-deny-0.16.4-x86_64-unknown-linux-musl/cargo-deny /usr/local/bin/
+        uses: taiki-e/install-action@cargo-deny
 
       - name: License check
         run: cargo deny check licenses

@@ -259,17 +259,14 @@ async fn send_with_retry(
             let sig = hex::encode(mac.finalize().into_bytes());
             req = req.header("x-dbward-signature", format!("sha256={sig}"));
         }
-        match req.send().await {
-            Ok(resp) => {
-                let status = resp.status().as_u16();
-                if (200..300).contains(&status) {
-                    return Ok(());
-                }
-                if (400..500).contains(&status) && status != 429 {
-                    return Err(());
-                }
+        if let Ok(resp) = req.send().await {
+            let status = resp.status().as_u16();
+            if (200..300).contains(&status) {
+                return Ok(());
             }
-            Err(_) => {}
+            if (400..500).contains(&status) && status != 429 {
+                return Err(());
+            }
         }
         if attempt < 2 {
             tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempt))).await;

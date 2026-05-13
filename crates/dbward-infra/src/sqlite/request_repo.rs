@@ -38,20 +38,18 @@ fn populate_pending_approvers(
         rusqlite::params![request_id],
     )
     .map_err(map_err)?;
-    if let Some(json) = workflow_snapshot_json {
-        if let Ok(workflow) =
+    if let Some(json) = workflow_snapshot_json
+        && let Ok(workflow) =
             serde_json::from_str::<dbward_domain::policies::workflow::Workflow>(json)
-        {
-            if let Some(step) = workflow.steps.get(step_index as usize) {
-                for approver in &step.approvers {
-                    let selector = approver.selector.to_string();
-                    conn.execute(
-                        "INSERT OR IGNORE INTO request_pending_approvers (request_id, selector, step_index) VALUES (?1, ?2, ?3)",
-                        rusqlite::params![request_id, selector, step_index],
-                    )
-                    .map_err(map_err)?;
-                }
-            }
+        && let Some(step) = workflow.steps.get(step_index as usize)
+    {
+        for approver in &step.approvers {
+            let selector = approver.selector.to_string();
+            conn.execute(
+                "INSERT OR IGNORE INTO request_pending_approvers (request_id, selector, step_index) VALUES (?1, ?2, ?3)",
+                rusqlite::params![request_id, selector, step_index],
+            )
+            .map_err(map_err)?;
         }
     }
     // Also add roles that have approve permission (Permission::All or RequestApprove)
