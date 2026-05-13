@@ -97,4 +97,4 @@ While dbward is pre-1.0 (v0.x):
 
 ## Questions?
 
-Open a [GitHub Discussion](https://github.com/metapox/dbward/discussions) or file an issue.
+Open a [GitHub Discussion](https://github.com/dbward-dev/dbward/discussions) or file an issue.

@@ -71,7 +71,7 @@ systemctl stop dbward-server dbward-agent
 
 # 2. Restore previous binary
 cp /usr/local/bin/dbward.bak /usr/local/bin/dbward
-# Or: docker compose pull metapox/dbward:v0.1.0
+# Or: docker compose pull dbward-dev/dbward:v0.1.0
 
 # 3. Restore SQLite (only if schema changed)
 cp dbward.db.bak.v7 dbward.db

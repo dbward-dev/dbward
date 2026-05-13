@@ -27,7 +27,7 @@ jobs:
 
       - name: Install dbward
         run: |
-          curl -sL https://github.com/metapox/dbward/releases/latest/download/dbward-linux-amd64 -o dbward
+          curl -sL https://github.com/dbward-dev/dbward/releases/latest/download/dbward-linux-amd64 -o dbward
           chmod +x dbward
           sudo mv dbward /usr/local/bin/
 

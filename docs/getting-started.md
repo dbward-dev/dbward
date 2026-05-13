@@ -10,7 +10,7 @@ Get dbward running in 5 minutes.
 ## Install
 
 ```bash
-git clone https://github.com/metapox/dbward.git
+git clone https://github.com/dbward-dev/dbward.git
 cd dbward
 cargo build --release
 ```

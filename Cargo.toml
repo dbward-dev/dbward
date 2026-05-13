@@ -16,7 +16,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
-repository = "https://github.com/metapox/dbward"
+repository = "https://github.com/dbward-dev/dbward"
 rust-version = "1.88"
 
 [workspace.dependencies]

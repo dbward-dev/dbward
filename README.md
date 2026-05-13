@@ -521,7 +521,7 @@ Key alerts:
 ### Quick Deploy
 
 ```bash
-git clone https://github.com/metapox/dbward.git && cd dbward
+git clone https://github.com/dbward-dev/dbward.git && cd dbward
 
 # Configure
 mkdir -p dev/secrets && echo "your-secure-password" > dev/secrets/db_password.txt

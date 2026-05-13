@@ -50,7 +50,7 @@ Agents register with capabilities; the server matches requests to the appropriat
 ```yaml
 services:
   server:
-    image: ghcr.io/metapox/dbward-server:latest
+    image: ghcr.io/dbward-dev/dbward-server:latest
     ports:
       - "7890:7890"
     volumes:
@@ -58,7 +58,7 @@ services:
       - server-data:/var/lib/dbward
 
   agent:
-    image: ghcr.io/metapox/dbward-agent:latest
+    image: ghcr.io/dbward-dev/dbward-agent:latest
     volumes:
       - ./agent.toml:/etc/dbward/agent.toml
     depends_on:
