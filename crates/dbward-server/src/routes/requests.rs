@@ -173,7 +173,9 @@ pub async fn list(
         .collect();
     Ok((
         StatusCode::OK,
-        Json(json!({"requests": items, "total": output.total, "limit": output.limit, "offset": output.offset})),
+        Json(
+            json!({"requests": items, "total": output.total, "limit": output.limit, "offset": output.offset}),
+        ),
     ))
 }
 
