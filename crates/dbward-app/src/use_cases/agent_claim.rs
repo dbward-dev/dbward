@@ -105,10 +105,10 @@ impl AgentClaim {
         }
 
         // 5. Migration exclusion: no concurrent migrate on same (db, env)
-        if matches!(request.operation, Operation::MigrateUp | Operation::MigrateDown) {
-            if self.agent_repo.has_running_migration(&request.database, &request.environment, &request.id)? {
-                return Err(AppError::Conflict("migration already running for this database".into()));
-            }
+        if matches!(request.operation, Operation::MigrateUp | Operation::MigrateDown)
+            && self.agent_repo.has_running_migration(&request.database, &request.environment, &request.id)?
+        {
+            return Err(AppError::Conflict("migration already running for this database".into()));
         }
 
         // 7. Resource-level authorization

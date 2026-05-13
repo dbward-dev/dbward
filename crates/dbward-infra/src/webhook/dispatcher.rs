@@ -274,11 +274,10 @@ impl EventDispatcher for CompositeEventDispatcher {
         }
 
         // Create result channel slot when request is dispatched
-        if let Some(ref rc) = self.result_channel {
-            if matches!(&event.metadata, EventMetadata::Dispatched) {
+        if let Some(ref rc) = self.result_channel
+            && matches!(&event.metadata, EventMetadata::Dispatched) {
                 rc.create_slot(&event.request_id);
             }
-        }
 
         // Fan out to additional subscribers (ADR-004)
         if let Some(ref rn) = self.request_notifier {

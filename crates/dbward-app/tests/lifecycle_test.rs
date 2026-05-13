@@ -199,7 +199,7 @@ impl FakeClock {
     fn new() -> Self { Self { now: Mutex::new(Utc::now()) } }
     fn advance(&self, secs: i64) {
         let mut n = self.now.lock().unwrap();
-        *n = *n + Duration::seconds(secs);
+        *n += Duration::seconds(secs);
     }
 }
 impl Clock for FakeClock {

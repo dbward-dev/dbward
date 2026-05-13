@@ -132,7 +132,7 @@ pub async fn auth_middleware(
             let should_emit = {
                 let cache = LOGIN_AUDIT_CACHE.lock().unwrap();
                 cache.get(&subject_id)
-                    .map_or(true, |t| t.elapsed() > std::time::Duration::from_secs(3600))
+                    .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(3600))
             };
             if should_emit {
                 let event = dbward_domain::entities::AuditEvent::simple(

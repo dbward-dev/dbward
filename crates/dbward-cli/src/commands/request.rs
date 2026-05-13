@@ -103,6 +103,7 @@ async fn run_reject(sc: &ServerClient, json_output: bool, id: &str, reason: Opti
     }
 }
 
+#[allow(clippy::collapsible_if)]
 async fn run_cancel(sc: &ServerClient, json_output: bool, id: &str, reason: Option<&str>) -> Result<(), CliError> {
     let req_info = sc.get_json(&format!("/api/requests/{id}")).await;
     if !json_output {

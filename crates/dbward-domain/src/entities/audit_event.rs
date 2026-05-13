@@ -14,7 +14,7 @@ pub enum EventCategory {
 }
 
 impl EventCategory {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "approval" => Self::Approval,
             "execution" => Self::Execution,
@@ -78,7 +78,7 @@ impl AuditEvent {
         Self {
             id: String::new(), // filled by infra
             event_type: event_type.to_string(),
-            event_category: EventCategory::from_str(category),
+            event_category: EventCategory::parse(category),
             event_version: 1,
             outcome: EventOutcome::Success,
             actor_id: actor_id.to_string(),

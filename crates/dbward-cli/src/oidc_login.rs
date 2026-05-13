@@ -241,8 +241,7 @@ pub async fn logout() -> Result<(), String> {
         let discovery = discover(&creds.issuer).await.ok();
         if let Some(disc) = discovery
             && let Some(ref revoke_url) = disc.revocation_endpoint
-        {
-            if let Err(err) = reqwest::Client::new()
+            && let Err(err) = reqwest::Client::new()
                 .post(revoke_url)
                 .form(&[
                     ("token", refresh.as_str()),
@@ -253,7 +252,6 @@ pub async fn logout() -> Result<(), String> {
             {
                 eprintln!("Warning: token revocation request failed: {err}");
             }
-        }
     }
 
     std::fs::remove_file(&path).map_err(|e| e.to_string())?;

@@ -9,15 +9,13 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-use dbward_app::error::{AppError, AuthError, AuthzError};
+use dbward_app::error::{AppError, AuthError};
 use dbward_app::ports::*;
 use dbward_domain::auth::*;
-use dbward_domain::entities::*;
-use dbward_domain::policies::*;
 use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
 use dbward_domain::values::*;
 use dbward_infra::sqlite::{self, *};
-use dbward_infra::auth::{RbacAuthorizer, ConfigRoleResolver};
+use dbward_infra::auth::RbacAuthorizer;
 use dbward_server::state::AppState;
 use dbward_server::build_app;
 

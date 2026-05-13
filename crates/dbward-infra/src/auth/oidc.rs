@@ -23,7 +23,7 @@ struct CachedKeys {
 
 impl CachedKeys {
     fn is_stale(&self) -> bool {
-        self.fetched_at.map_or(true, |t| t.elapsed() > Duration::from_secs(3600))
+        self.fetched_at.is_none_or(|t| t.elapsed() > Duration::from_secs(3600))
     }
 }
 
@@ -62,11 +62,10 @@ impl OidcVerifier {
 
         let mut decoding_keys = Vec::new();
         for key in keys_arr {
-            if let (Some(n), Some(e)) = (key.get("n").and_then(|v| v.as_str()), key.get("e").and_then(|v| v.as_str())) {
-                if let Ok(dk) = jsonwebtoken::DecodingKey::from_rsa_components(n, e) {
+            if let (Some(n), Some(e)) = (key.get("n").and_then(|v| v.as_str()), key.get("e").and_then(|v| v.as_str()))
+                && let Ok(dk) = jsonwebtoken::DecodingKey::from_rsa_components(n, e) {
                     decoding_keys.push(dk);
                 }
-            }
         }
 
         if decoding_keys.is_empty() {

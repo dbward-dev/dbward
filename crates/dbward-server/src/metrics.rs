@@ -25,6 +25,12 @@ pub struct Metrics {
     // Gauge snapshots are computed at render time from repos
 }
 
+impl Default for Metrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Metrics {
     pub fn new() -> Self {
         Self {
@@ -95,6 +101,12 @@ pub struct CounterVec<const N: usize> {
     entries: std::sync::Mutex<Vec<([String; N], u64)>>,
 }
 
+impl<const N: usize> Default for CounterVec<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> CounterVec<N> {
     pub fn new() -> Self {
         Self { entries: std::sync::Mutex::new(Vec::new()) }
@@ -124,6 +136,12 @@ pub struct Histogram {
     buckets: Vec<AtomicU64>,
     sum: AtomicU64, // stored as f64 bits
     count: AtomicU64,
+}
+
+impl Default for Histogram {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Histogram {
@@ -157,6 +175,12 @@ impl Histogram {
 
 pub struct HistogramVec<const N: usize> {
     entries: std::sync::Mutex<Vec<([String; N], Arc<Histogram>)>>,
+}
+
+impl<const N: usize> Default for HistogramVec<N> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<const N: usize> HistogramVec<N> {

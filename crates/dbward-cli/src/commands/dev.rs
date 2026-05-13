@@ -150,12 +150,8 @@ fn read_bootstrap_tokens(
     // Server outputs one JSON line: {"admin":"token","developer":"token","agent":"token"}
     for line in reader.lines().take(10) {
         let line = line.map_err(|e| CliError::Server(format!("read stdout: {e}")))?;
-        if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, String>>(&line) {
-            if map.contains_key("admin") {
-                return Ok(map);
-            }
-        }
-        // Non-JSON lines are startup logs, skip
+        if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, String>>(&line)
+            && map.contains_key("admin") { return Ok(map); }
     }
     Err(CliError::Server("server did not output bootstrap tokens".into()))
 }
@@ -172,11 +168,8 @@ async fn wait_for_ready(url: &str, timeout_secs: u64) -> bool {
         .unwrap();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
     while tokio::time::Instant::now() < deadline {
-        if let Ok(resp) = client.get(format!("{url}/ready")).send().await {
-            if resp.status().is_success() {
-                return true;
-            }
-        }
+        if let Ok(resp) = client.get(format!("{url}/ready")).send().await
+            && resp.status().is_success() { return true; }
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
     false
@@ -190,13 +183,12 @@ fn write_secure(path: &std::path::Path, content: &[u8]) -> Result<(), CliError> 
         std::fs::OpenOptions::new()
             .write(true).create(true).truncate(true).mode(0o600)
             .open(path)?.write_all(content)?;
-        return Ok(());
     }
     #[cfg(not(unix))]
     {
         std::fs::write(path, content)?;
-        Ok(())
     }
+    Ok(())
 }
 
 fn find_binary(name: &str) -> Result<PathBuf, CliError> {

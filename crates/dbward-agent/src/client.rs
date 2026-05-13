@@ -51,8 +51,8 @@ impl AgentClient {
         let key_bytes: [u8; 32] = bytes.try_into().map_err(|_| {
             AgentError::TokenVerification("public key must be 32 bytes".into())
         })?;
-        Ok(VerifyingKey::from_bytes(&key_bytes)
-            .map_err(|e| AgentError::TokenVerification(e.to_string()))?)
+        VerifyingKey::from_bytes(&key_bytes)
+                        .map_err(|e| AgentError::TokenVerification(e.to_string()))
     }
 
     pub async fn poll(&self, req: &PollRequest) -> Result<PollResponse, AgentError> {

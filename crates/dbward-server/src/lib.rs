@@ -312,11 +312,7 @@ fn sync_workflows(
                         Some(Selector::Role(role.into()))
                     } else if let Some(group) = a.get("group").and_then(|g| g.as_str()) {
                         Some(Selector::Group(group.into()))
-                    } else if let Some(user) = a.get("user").and_then(|u| u.as_str()) {
-                        Some(Selector::User(user.into()))
-                    } else {
-                        None
-                    };
+                    } else { a.get("user").and_then(|u| u.as_str()).map(|user| Selector::User(user.into())) };
                     selector.map(|s| ApproverGroup { selector: s, min })
                 }).collect())
                 .unwrap_or_default();

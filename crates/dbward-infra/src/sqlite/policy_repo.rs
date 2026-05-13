@@ -57,7 +57,6 @@ impl PolicyRepo for SqlitePolicyRepo {
         )
         .optional()
         .map_err(|e| AppError::Internal(e.to_string()))?
-        .map(|r| r)
         .transpose()
     }
 
@@ -118,7 +117,6 @@ impl PolicyRepo for SqlitePolicyRepo {
         )
         .optional()
         .map_err(|e| AppError::Internal(e.to_string()))?
-        .map(|r| r)
         .transpose()
     }
 
@@ -234,7 +232,7 @@ impl PolicyRepo for SqlitePolicyRepo {
             return Ok(Vec::new());
         }
         let conn = self.conn.lock().unwrap();
-        let placeholders = std::iter::repeat("?").take(names.len()).collect::<Vec<_>>().join(",");
+        let placeholders = std::iter::repeat_n("?", names.len()).collect::<Vec<_>>().join(",");
         let sql = format!(
             "SELECT name, permissions_json, databases_json, environments_json FROM roles WHERE name IN ({})",
             placeholders
@@ -316,7 +314,7 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
             };
             let mut eps = Vec::new();
             for row in rows {
-                if let Ok(Ok(ep)) = row.map(|r| r) {
+                if let Ok(Ok(ep)) = row {
                     eps.push(ep);
                 }
             }
@@ -437,7 +435,7 @@ fn row_to_role(row: &rusqlite::Row) -> rusqlite::Result<Result<RoleDefinition, A
     Ok((|| {
         let perm_strs: Vec<String> = serde_json::from_str(&perms_json).map_err(|e| AppError::Internal(e.to_string()))?;
         let permissions: Vec<Permission> = perm_strs.iter()
-            .map(|s| s.parse::<Permission>().map_err(|e| AppError::Internal(e)))
+            .map(|s| s.parse::<Permission>().map_err(AppError::Internal))
             .collect::<Result<_, _>>()?;
         let db_strs: Vec<String> = serde_json::from_str(&dbs_json).map_err(|e| AppError::Internal(e.to_string()))?;
         let databases: Vec<DatabaseName> = db_strs.into_iter()

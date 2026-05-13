@@ -63,7 +63,7 @@ impl StreamResult {
 mod tests {
     use super::*;
     use crate::error::AuthzError;
-    use dbward_domain::auth::{ResolvedRole, ResourceContext, SubjectType, Permission as P};
+    use dbward_domain::auth::{ResourceContext, SubjectType};
     use dbward_domain::entities::{Request as DomainRequest, RequestStatus};
     use dbward_domain::values::{DatabaseName, Environment, Operation};
     use async_trait::async_trait;

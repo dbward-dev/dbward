@@ -2,7 +2,6 @@ use std::path::Path;
 
 use dbward_app::ports::{ExecutionTokenClaims, TokenSigner};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-use sha2::{Digest, Sha256};
 
 pub struct Ed25519TokenSigner {
     signing_key: SigningKey,
@@ -92,7 +91,6 @@ impl TokenSigner for Ed25519TokenSigner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbward_app::ports::TokenSigner as _;
     use tempfile::tempdir;
 
     #[test]
@@ -115,7 +113,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&token_json).unwrap();
         assert_eq!(v["request_id"], "req-1");
         assert_eq!(v["database"], "app");
-        assert!(v["signature"].as_str().unwrap().len() > 0);
+        assert!(!v["signature"].as_str().unwrap().is_empty());
     }
 
     #[test]
@@ -129,7 +127,7 @@ mod tests {
     #[test]
     fn invalid_key_file_returns_error() {
         let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join("signing.key"), &[0u8; 16]).unwrap();
+        std::fs::write(dir.path().join("signing.key"), [0u8; 16]).unwrap();
         let result = Ed25519TokenSigner::load_or_generate(dir.path());
         assert!(result.is_err());
         let err = result.err().unwrap();

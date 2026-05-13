@@ -148,7 +148,6 @@ mod tests {
     use dbward_domain::auth::SubjectType;
     use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
     use dbward_domain::entities::Request;
-    use dbward_domain::entities::AuditEvent;
     use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
     use chrono::{DateTime, Utc};
     use std::sync::Mutex;

@@ -335,6 +335,7 @@ mod step_tests {
     }
 
     #[test]
+    #[allow(clippy::useless_vec)]
     fn mode_all_requires_every_group() {
         let steps = vec![WorkflowStep {
             approvers: vec![

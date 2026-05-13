@@ -136,11 +136,10 @@ impl RoleResolver for ConfigRoleResolver {
         }
 
         // 4. Default role if nothing matched
-        if role_names.is_empty() {
-            if let Some(ref default) = self.default_role {
+        if role_names.is_empty()
+            && let Some(ref default) = self.default_role {
                 role_names.insert(default.clone());
             }
-        }
 
         // Resolve from config first, then fall back to PolicyRepo for DB-stored roles
         let mut resolved: Vec<ResolvedRole> = Vec::new();
@@ -154,9 +153,9 @@ impl RoleResolver for ConfigRoleResolver {
         }
 
         // Query PolicyRepo for unresolved role names
-        if !unresolved.is_empty() {
-            if let Some(ref repo) = self.policy_repo {
-                if let Ok(defs) = repo.get_roles_by_names(&unresolved) {
+        if !unresolved.is_empty()
+            && let Some(ref repo) = self.policy_repo
+                && let Ok(defs) = repo.get_roles_by_names(&unresolved) {
                     for def in defs {
                         resolved.push(ResolvedRole {
                             name: def.name.clone(),
@@ -166,8 +165,6 @@ impl RoleResolver for ConfigRoleResolver {
                         });
                     }
                 }
-            }
-        }
 
         Ok(resolved)
     }

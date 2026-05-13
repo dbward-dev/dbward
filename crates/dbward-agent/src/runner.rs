@@ -145,7 +145,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                 limit: available,
                 status: Some(AgentStatusReport {
                     in_flight: current_in_flight,
-                    max_concurrent: max_concurrent,
+                    max_concurrent,
                     draining: false,
                     uptime_secs: start_time.elapsed().as_secs(),
                     active_jobs: vec![],

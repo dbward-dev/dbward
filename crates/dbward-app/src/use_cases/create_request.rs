@@ -80,7 +80,12 @@ impl CreateRequest {
             .authorize_scoped(user, perm, &input.database, &input.environment, &ResourceContext::Global)
             .map_err(AppError::Forbidden)?;
 
-        // 1b-2. Emergency requires reason
+        // 1b-2. SELECT cannot use share_with
+        if operation == Operation::ExecuteSelect && !input.share_with.is_empty() {
+            return Err(AppError::Validation("share_with is not allowed for SELECT queries".into()));
+        }
+
+        // 1b. Emergency requires reason
         if input.emergency && input.reason.is_none() {
             return Err(AppError::Validation("reason is required for emergency requests".into()));
         }
@@ -145,7 +150,7 @@ impl CreateRequest {
         // 6. Serialize workflow snapshot for approve/reject
         let workflow_snapshot_json = workflow
             .as_ref()
-            .map(|wf| serde_json::to_string(wf))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| AppError::Internal(format!("serialize workflow: {e}")))?;
 

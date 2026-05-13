@@ -61,7 +61,7 @@ impl AgentRepo for SqliteAgentRepo {
         )
         .optional()
         .map_err(|e| AppError::Internal(e.to_string()))?
-        .map(|r| row_to_agent(r))
+        .map(row_to_agent)
         .transpose()
     }
 

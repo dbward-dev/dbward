@@ -19,6 +19,12 @@ pub struct InMemoryResultChannel {
     slots: Arc<StdMutex<HashMap<String, Arc<ResultSlot>>>>,
 }
 
+impl Default for InMemoryResultChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InMemoryResultChannel {
     pub fn new() -> Self {
         Self { slots: Arc::new(StdMutex::new(HashMap::new())) }

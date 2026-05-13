@@ -103,11 +103,10 @@ impl RbacAuthorizer {
                 }
                 let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
                 for sel_str in access_selectors {
-                    if let Ok(sel) = Selector::parse(sel_str) {
-                        if sel.matches(&role_names, &user.groups, &user.subject_id, false) {
+                    if let Ok(sel) = Selector::parse(sel_str)
+                        && sel.matches(&role_names, &user.groups, &user.subject_id, false) {
                             return Ok(());
                         }
-                    }
                 }
                 Err(denied(permission, "no access to this result"))
             }
@@ -149,8 +148,8 @@ fn denied(permission: Permission, reason: &str) -> AuthzError {
 mod tests {
     use super::*;
     use dbward_domain::auth::{ResolvedRole, SubjectType};
-    use dbward_domain::policies::workflow::ApproverGroup;
-    use std::collections::HashSet;
+    
+    
 
     fn user_with(id: &str, perms: &[Permission], dbs: &[&str], envs: &[&str]) -> AuthUser {
         AuthUser {
@@ -167,9 +166,6 @@ mod tests {
         }
     }
 
-    fn admin(id: &str) -> AuthUser {
-        user_with(id, &[Permission::All], &["*"], &["*"])
-    }
 
     #[test]
     fn global_allows_with_permission() {

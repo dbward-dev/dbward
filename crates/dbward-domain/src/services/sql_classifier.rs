@@ -646,7 +646,7 @@ mod tests {
     #[test]
     fn null_byte_rejected() {
         assert!(matches!(
-            pg("SELECT \01"),
+            pg("SELECT \0"),
             Err(ClassifyError::Rejected { .. })
         ));
     }
@@ -681,8 +681,7 @@ mod tests {
 
     #[test]
     fn max_statements_rejected() {
-        let sql = std::iter::repeat("SELECT 1")
-            .take(MAX_STATEMENTS + 1)
+        let sql = std::iter::repeat_n("SELECT 1", MAX_STATEMENTS + 1)
             .collect::<Vec<_>>()
             .join("; ");
         let r = pg(&sql);

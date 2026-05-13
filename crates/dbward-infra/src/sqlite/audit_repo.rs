@@ -239,7 +239,7 @@ fn category_str(c: EventCategory) -> &'static str {
 }
 
 fn parse_category(s: &str) -> EventCategory {
-    EventCategory::from_str(s)
+    EventCategory::parse(s)
 }
 
 fn outcome_str(o: EventOutcome) -> &'static str {

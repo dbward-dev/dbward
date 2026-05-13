@@ -45,11 +45,10 @@ impl TokenVerifier for ApiTokenVerifier {
             .ok_or(AuthError::InvalidToken)?;
 
         // Check expiration
-        if let Some(expires_at) = token.expires_at {
-            if expires_at < chrono::Utc::now() {
+        if let Some(expires_at) = token.expires_at
+            && expires_at < chrono::Utc::now() {
                 return Err(AuthError::TokenExpired);
             }
-        }
 
         // fail-closed: propagate DB errors
         let suspended = self.user_repo.is_suspended(&token.subject_id)

@@ -3,19 +3,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::values::{DatabaseName, Environment, Selector};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryMode {
+    #[default]
     Both,
     StoreOnly,
     Stream,
 }
 
-impl Default for DeliveryMode {
-    fn default() -> Self {
-        Self::Both
-    }
-}
 
 /// Controls how results are stored and who can access them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
