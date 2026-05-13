@@ -423,6 +423,9 @@ impl PolicyRepo for StubPolicyRepo {
 
 struct StubDatabaseRegistry;
 impl DatabaseRegistry for StubDatabaseRegistry {
+    fn register(&self, _: &DatabaseName, _: &Environment) -> Result<(), AppError> {
+        Ok(())
+    }
     fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
         Ok(false)
     }

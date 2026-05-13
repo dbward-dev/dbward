@@ -14,6 +14,17 @@ impl SqliteDatabaseRegistry {
 }
 
 impl DatabaseRegistry for SqliteDatabaseRegistry {
+    fn register(&self, db: &DatabaseName, env: &Environment) -> Result<(), AppError> {
+        let conn = self.conn.lock().unwrap();
+        let id = format!("{}:{}", db, env);
+        conn.execute(
+            "INSERT OR IGNORE INTO databases (id, name, environment, created_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, db.to_string(), env.to_string(), chrono::Utc::now().to_rfc3339()],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(())
+    }
+
     fn exists(&self, db: &DatabaseName, env: &Environment) -> Result<bool, AppError> {
         let conn = self.conn.lock().unwrap();
         let id = format!("{}:{}", db, env);

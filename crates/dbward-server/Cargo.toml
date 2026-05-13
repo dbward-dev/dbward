@@ -16,14 +16,11 @@ dbward-app = { path = "../dbward-app" }
 dbward-domain = { path = "../dbward-domain" }
 dbward-infra = { path = "../dbward-infra" }
 clap = { version = "4", features = ["derive"] }
-rusqlite = { version = "0.35", features = ["bundled"] }
 axum = "0.8"
 chrono.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
-hex = "0.4"
 toml = { workspace = true }
 tower-http = { version = "0.6", features = ["cors"] }
 tokio-util = { version = "0.7", features = ["rt"] }
@@ -36,4 +33,5 @@ hyper = "1"
 http-body-util = "0.1"
 async-trait = "0.1"
 dbward-domain = { path = "../dbward-domain" }
+rusqlite = { version = "0.35", features = ["bundled"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

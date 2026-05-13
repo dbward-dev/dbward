@@ -13,6 +13,7 @@ pub mod list_requests;
 pub mod policy_manage;
 pub mod reject_request;
 pub mod stream_result;
+pub mod sync_config;
 pub mod token_manage;
 pub mod user_manage;
 pub mod webhook_manage;

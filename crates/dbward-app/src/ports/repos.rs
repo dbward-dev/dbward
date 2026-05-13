@@ -227,6 +227,7 @@ pub trait WebhookRepo: Send + Sync {
 // --- DatabaseRegistry ---
 
 pub trait DatabaseRegistry: Send + Sync {
+    fn register(&self, db: &DatabaseName, env: &Environment) -> Result<(), AppError>;
     fn exists(&self, db: &DatabaseName, env: &Environment) -> Result<bool, AppError>;
     fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError>;
 }

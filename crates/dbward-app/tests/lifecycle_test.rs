@@ -280,6 +280,9 @@ impl PolicyEvaluator for FakePolicy {
 
 struct FakeDbRegistry;
 impl DatabaseRegistry for FakeDbRegistry {
+    fn register(&self, _: &DatabaseName, _: &Environment) -> Result<(), AppError> {
+        Ok(())
+    }
     fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
         Ok(true)
     }
