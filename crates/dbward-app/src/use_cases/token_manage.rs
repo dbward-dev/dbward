@@ -58,8 +58,13 @@ pub struct TokenRevokeOutput {
 }
 
 impl TokenManage {
-    pub fn create(&self, input: TokenCreateInput, user: &AuthUser) -> Result<TokenCreateOutput, AppError> {
-        self.authorizer.authorize_global(user, Permission::TokenManage)
+    pub fn create(
+        &self,
+        input: TokenCreateInput,
+        user: &AuthUser,
+    ) -> Result<TokenCreateOutput, AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::TokenManage)
             .map_err(AppError::Forbidden)?;
 
         // Validation
@@ -67,17 +72,23 @@ impl TokenManage {
             return Err(AppError::Validation("subject_id is required".into()));
         }
         if !matches!(input.subject_type.as_str(), "user" | "agent") {
-            return Err(AppError::Validation("subject_type must be 'user' or 'agent'".into()));
+            return Err(AppError::Validation(
+                "subject_type must be 'user' or 'agent'".into(),
+            ));
         }
         if let Some(ref exp) = input.expires_at {
             if *exp <= self.clock.now() {
-                return Err(AppError::Validation("expires_at must be in the future".into()));
+                return Err(AppError::Validation(
+                    "expires_at must be in the future".into(),
+                ));
             }
         }
 
         // Suspended user check
         if self.user_repo.is_suspended(&input.subject_id)? {
-            return Err(AppError::Conflict("cannot create token for suspended user".into()));
+            return Err(AppError::Conflict(
+                "cannot create token for suspended user".into(),
+            ));
         }
 
         // Validate roles exist
@@ -85,7 +96,9 @@ impl TokenManage {
             let known_roles = self.policy_repo.list_roles()?;
             let known_names: Vec<&str> = known_roles.iter().map(|r| r.name.as_str()).collect();
             for role in &input.roles {
-                if !known_names.contains(&role.as_str()) && !matches!(role.as_str(), "admin" | "agent-default") {
+                if !known_names.contains(&role.as_str())
+                    && !matches!(role.as_str(), "admin" | "agent-default")
+                {
                     return Err(AppError::Validation(format!("unknown role: {}", role)));
                 }
             }
@@ -125,13 +138,18 @@ impl TokenManage {
         self.token_repo.create(&token)?;
 
         // Audit
-        self.audit.record(&dbward_domain::entities::AuditEvent::simple(
-            "token_created", "token", &user.subject_id, Some(&id),
-        ))?;
+        self.audit
+            .record(&dbward_domain::entities::AuditEvent::simple(
+                "token_created",
+                "token",
+                &user.subject_id,
+                Some(&id),
+            ))?;
 
         // Resolve permissions from assigned roles
         let permissions: Vec<String> = if !token.roles.is_empty() {
-            self.policy_repo.get_roles_by_names(&token.roles)?
+            self.policy_repo
+                .get_roles_by_names(&token.roles)?
                 .iter()
                 .flat_map(|r| r.permissions.iter())
                 .map(|p| p.as_str().to_string())
@@ -142,26 +160,42 @@ impl TokenManage {
             vec![]
         };
 
-        Ok(TokenCreateOutput { id, token: raw, prefix, subject_id: input.subject_id, expires_at: input.expires_at, permissions })
+        Ok(TokenCreateOutput {
+            id,
+            token: raw,
+            prefix,
+            subject_id: input.subject_id,
+            expires_at: input.expires_at,
+            permissions,
+        })
     }
 
     pub fn list(&self, user: &AuthUser) -> Result<TokenListOutput, AppError> {
-        self.authorizer.authorize_global(user, Permission::TokenManage)
+        self.authorizer
+            .authorize_global(user, Permission::TokenManage)
             .map_err(AppError::Forbidden)?;
         let tokens = self.token_repo.list()?;
         Ok(TokenListOutput { tokens })
     }
 
-    pub fn revoke(&self, input: TokenRevokeInput, user: &AuthUser) -> Result<TokenRevokeOutput, AppError> {
-        let token = self.token_repo.get(&input.token_id)?
+    pub fn revoke(
+        &self,
+        input: TokenRevokeInput,
+        user: &AuthUser,
+    ) -> Result<TokenRevokeOutput, AppError> {
+        let token = self
+            .token_repo
+            .get(&input.token_id)?
             .ok_or_else(|| AppError::NotFound("token not found".into()))?;
 
         // Owner can revoke own token with token.revoke_own; otherwise need TokenManage
         if token.subject_id == user.subject_id {
-            self.authorizer.authorize_global(user, Permission::TokenRevokeOwn)
+            self.authorizer
+                .authorize_global(user, Permission::TokenRevokeOwn)
                 .map_err(AppError::Forbidden)?;
         } else {
-            self.authorizer.authorize_global(user, Permission::TokenManage)
+            self.authorizer
+                .authorize_global(user, Permission::TokenManage)
                 .map_err(AppError::Forbidden)?;
         }
 
@@ -169,83 +203,213 @@ impl TokenManage {
         self.token_repo.revoke(&input.token_id, now)?;
 
         // Audit
-        self.audit.record(&dbward_domain::entities::AuditEvent::simple(
-            "token_revoked", "token", &user.subject_id, Some(&input.token_id),
-        ))?;
+        self.audit
+            .record(&dbward_domain::entities::AuditEvent::simple(
+                "token_revoked",
+                "token",
+                &user.subject_id,
+                Some(&input.token_id),
+            ))?;
 
-        Ok(TokenRevokeOutput { id: input.token_id, revoked_at: now })
+        Ok(TokenRevokeOutput {
+            id: input.token_id,
+            revoked_at: now,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::AuthzError;
     use dbward_domain::auth::{Permission, RoleDefinition, SubjectType};
     use dbward_domain::entities::Token;
-    use crate::error::AuthzError;
 
     struct AllowAll;
     impl Authorizer for AllowAll {
-        fn authorize_scoped(&self, _: &dbward_domain::auth::AuthUser, _: Permission, _: &dbward_domain::values::DatabaseName, _: &dbward_domain::values::Environment, _: &dbward_domain::auth::ResourceContext) -> Result<(), AuthzError> { Ok(()) }
-        fn authorize_global(&self, _: &dbward_domain::auth::AuthUser, _: Permission) -> Result<(), AuthzError> { Ok(()) }
+        fn authorize_scoped(
+            &self,
+            _: &dbward_domain::auth::AuthUser,
+            _: Permission,
+            _: &dbward_domain::values::DatabaseName,
+            _: &dbward_domain::values::Environment,
+            _: &dbward_domain::auth::ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
+        fn authorize_global(
+            &self,
+            _: &dbward_domain::auth::AuthUser,
+            _: Permission,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
     struct FakeClock;
-    impl Clock for FakeClock { fn now(&self) -> chrono::DateTime<chrono::Utc> { chrono::Utc::now() } }
+    impl Clock for FakeClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc::now()
+        }
+    }
     struct FakeIdGen;
-    impl IdGenerator for FakeIdGen { fn generate(&self) -> String { "tok-1".into() } }
-    struct FakeTokenRepo { count: u32 }
+    impl IdGenerator for FakeIdGen {
+        fn generate(&self) -> String {
+            "tok-1".into()
+        }
+    }
+    struct FakeTokenRepo {
+        count: u32,
+    }
     impl TokenRepo for FakeTokenRepo {
-        fn create(&self, _: &Token) -> Result<(), AppError> { Ok(()) }
-        fn verify(&self, _: &str, _: &str) -> Result<Option<Token>, AppError> { Ok(None) }
-        fn list(&self) -> Result<Vec<Token>, AppError> { Ok(vec![]) }
-        fn get(&self, _: &str) -> Result<Option<Token>, AppError> { Ok(None) }
-        fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn revoke_all_for_user(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError> { Ok(0) }
-        fn count_active(&self) -> Result<u32, AppError> { Ok(self.count) }
-        fn purge_revoked(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+        fn create(&self, _: &Token) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn verify(&self, _: &str, _: &str) -> Result<Option<Token>, AppError> {
+            Ok(None)
+        }
+        fn list(&self) -> Result<Vec<Token>, AppError> {
+            Ok(vec![])
+        }
+        fn get(&self, _: &str) -> Result<Option<Token>, AppError> {
+            Ok(None)
+        }
+        fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn revoke_all_for_user(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn count_active(&self) -> Result<u32, AppError> {
+            Ok(self.count)
+        }
+        fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
     }
     struct FakeUserRepo;
     impl UserRepo for FakeUserRepo {
-        fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> { Ok(None) }
-        fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> { Ok(()) }
-        fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> { Ok(vec![]) }
-        fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn activate(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn is_suspended(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
-        fn ensure_exists(&self, _: &str) -> Result<(), AppError> { Ok(()) }
-    }
-    struct FakePolicyRepo { roles: Vec<RoleDefinition> }
-    impl PolicyRepo for FakePolicyRepo {
-        fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> { Ok(()) }
-        fn get_workflow(&self, _: &str) -> Result<Option<dbward_domain::policies::Workflow>, AppError> { Ok(None) }
-        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError> { Ok(vec![]) }
-        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn count_workflows(&self) -> Result<u32, AppError> { Ok(0) }
-        fn create_execution_policy(&self, _: &dbward_domain::policies::ExecutionPolicy) -> Result<(), AppError> { Ok(()) }
-        fn get_execution_policy(&self, _: &str) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(None) }
-        fn list_execution_policies(&self) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(vec![]) }
-        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn find_result_policy(&self, _: &dbward_domain::values::DatabaseName, _: &dbward_domain::values::Environment) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> { Ok(None) }
-        fn create_role(&self, _: &RoleDefinition) -> Result<(), AppError> { Ok(()) }
-        fn list_roles(&self) -> Result<Vec<RoleDefinition>, AppError> { Ok(self.roles.clone()) }
-        fn get_roles_by_names(&self, names: &[String]) -> Result<Vec<RoleDefinition>, AppError> {
-            Ok(self.roles.iter().filter(|r| names.contains(&r.name)).cloned().collect())
+        fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
+            Ok(None)
         }
-        fn delete_role(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn count_roles(&self) -> Result<u32, AppError> { Ok(0) }
+        fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> {
+            Ok(vec![])
+        }
+        fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn activate(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+    struct FakePolicyRepo {
+        roles: Vec<RoleDefinition>,
+    }
+    impl PolicyRepo for FakePolicyRepo {
+        fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_workflow(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::Workflow>, AppError> {
+            Ok(None)
+        }
+        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn count_workflows(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn create_execution_policy(
+            &self,
+            _: &dbward_domain::policies::ExecutionPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_execution_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_execution_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn find_result_policy(
+            &self,
+            _: &dbward_domain::values::DatabaseName,
+            _: &dbward_domain::values::Environment,
+        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(None)
+        }
+        fn create_role(&self, _: &RoleDefinition) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn list_roles(&self) -> Result<Vec<RoleDefinition>, AppError> {
+            Ok(self.roles.clone())
+        }
+        fn get_roles_by_names(&self, names: &[String]) -> Result<Vec<RoleDefinition>, AppError> {
+            Ok(self
+                .roles
+                .iter()
+                .filter(|r| names.contains(&r.name))
+                .cloned()
+                .collect())
+        }
+        fn delete_role(&self, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn count_roles(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
     }
     struct FakeLicense;
     impl LicenseChecker for FakeLicense {
-        fn max_tokens(&self) -> u32 { 10 }
-        fn max_workflows(&self) -> u32 { 5 }
-        fn max_webhooks(&self) -> u32 { 3 }
-        fn max_roles(&self) -> u32 { 8 }
-        fn max_agents(&self) -> u32 { 3 }
-        fn is_pro(&self) -> bool { false }
+        fn max_tokens(&self) -> u32 {
+            10
+        }
+        fn max_workflows(&self) -> u32 {
+            5
+        }
+        fn max_webhooks(&self) -> u32 {
+            3
+        }
+        fn max_roles(&self) -> u32 {
+            8
+        }
+        fn max_agents(&self) -> u32 {
+            3
+        }
+        fn is_pro(&self) -> bool {
+            false
+        }
     }
     struct FakeAudit;
     impl AuditLogger for FakeAudit {
-        fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> { Ok(()) }
+        fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     fn make_user() -> dbward_domain::auth::AuthUser {
@@ -273,31 +437,68 @@ mod tests {
 
     #[test]
     fn create_rejects_unknown_role() {
-        let uc = make_uc(vec![RoleDefinition { name: "dba".into(), permissions: vec![], databases: vec![], environments: vec![] }], 0);
-        let result = uc.create(TokenCreateInput {
-            subject_id: "bob".into(), subject_type: "user".into(),
-            name: None, roles: vec!["nonexistent".into()], groups: vec![], expires_at: None,
-        }, &make_user());
+        let uc = make_uc(
+            vec![RoleDefinition {
+                name: "dba".into(),
+                permissions: vec![],
+                databases: vec![],
+                environments: vec![],
+            }],
+            0,
+        );
+        let result = uc.create(
+            TokenCreateInput {
+                subject_id: "bob".into(),
+                subject_type: "user".into(),
+                name: None,
+                roles: vec!["nonexistent".into()],
+                groups: vec![],
+                expires_at: None,
+            },
+            &make_user(),
+        );
         assert!(matches!(result, Err(AppError::Validation(_))));
     }
 
     #[test]
     fn create_accepts_known_role() {
-        let uc = make_uc(vec![RoleDefinition { name: "dba".into(), permissions: vec![], databases: vec![], environments: vec![] }], 0);
-        let result = uc.create(TokenCreateInput {
-            subject_id: "bob".into(), subject_type: "user".into(),
-            name: None, roles: vec!["dba".into()], groups: vec![], expires_at: None,
-        }, &make_user());
+        let uc = make_uc(
+            vec![RoleDefinition {
+                name: "dba".into(),
+                permissions: vec![],
+                databases: vec![],
+                environments: vec![],
+            }],
+            0,
+        );
+        let result = uc.create(
+            TokenCreateInput {
+                subject_id: "bob".into(),
+                subject_type: "user".into(),
+                name: None,
+                roles: vec!["dba".into()],
+                groups: vec![],
+                expires_at: None,
+            },
+            &make_user(),
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn create_rejects_at_free_limit() {
         let uc = make_uc(vec![], 10); // already at limit
-        let result = uc.create(TokenCreateInput {
-            subject_id: "bob".into(), subject_type: "user".into(),
-            name: None, roles: vec![], groups: vec![], expires_at: None,
-        }, &make_user());
+        let result = uc.create(
+            TokenCreateInput {
+                subject_id: "bob".into(),
+                subject_type: "user".into(),
+                name: None,
+                roles: vec![],
+                groups: vec![],
+                expires_at: None,
+            },
+            &make_user(),
+        );
         assert!(matches!(result, Err(AppError::PlanLimit(_))));
     }
 }

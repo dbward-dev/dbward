@@ -7,14 +7,19 @@ use crate::values::{DatabaseName, Environment, Operation};
 /// Triggers that cause state transitions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestTrigger {
-    Create { emergency: bool, needs_approval: bool },
+    Create {
+        emergency: bool,
+        needs_approval: bool,
+    },
     ApproveStep,
     ApproveFinal,
     Reject,
     Cancel,
     Dispatch,
     Claim,
-    Complete { success: bool },
+    Complete {
+        success: bool,
+    },
     LeaseExpired,
     Expire,
     DispatchTimeout,
@@ -23,15 +28,36 @@ pub enum RequestTrigger {
 /// Metadata attached to a transition event.
 #[derive(Debug, Clone)]
 pub enum EventMetadata {
-    Created { detail: String, emergency: bool },
-    StepApproved { step_index: u32, total_steps: u32, comment: Option<String> },
-    Approved { comment: Option<String> },
-    Rejected { comment: Option<String> },
-    Cancelled { reason: Option<String> },
+    Created {
+        detail: String,
+        emergency: bool,
+    },
+    StepApproved {
+        step_index: u32,
+        total_steps: u32,
+        comment: Option<String>,
+    },
+    Approved {
+        comment: Option<String>,
+    },
+    Rejected {
+        comment: Option<String>,
+    },
+    Cancelled {
+        reason: Option<String>,
+    },
     Dispatched,
-    Claimed { execution_id: String, agent_id: String },
-    Completed { success: bool, execution_id: String },
-    ExecutionLost { execution_id: String },
+    Claimed {
+        execution_id: String,
+        agent_id: String,
+    },
+    Completed {
+        success: bool,
+        execution_id: String,
+    },
+    ExecutionLost {
+        execution_id: String,
+    },
     Expired,
 }
 
@@ -128,10 +154,7 @@ pub fn initial_status(needs_approval: bool, emergency: bool) -> RequestStatus {
 }
 
 /// Build a TransitionResult for request creation (no previous state).
-pub fn create_event(
-    new_status: RequestStatus,
-    context: TransitionContext,
-) -> TransitionResult {
+pub fn create_event(new_status: RequestStatus, context: TransitionContext) -> TransitionResult {
     let event = TransitionEvent {
         request_id: context.request_id,
         previous_status: new_status, // no previous state; use self
@@ -230,7 +253,10 @@ mod tests {
 
     #[test]
     fn approve_final_to_approved() {
-        assert_eq!(compute_next_status(Pending, &ApproveFinal).unwrap(), Approved);
+        assert_eq!(
+            compute_next_status(Pending, &ApproveFinal).unwrap(),
+            Approved
+        );
     }
 
     #[test]
@@ -240,17 +266,26 @@ mod tests {
 
     #[test]
     fn dispatch_approved() {
-        assert_eq!(compute_next_status(Approved, &Dispatch).unwrap(), Dispatched);
+        assert_eq!(
+            compute_next_status(Approved, &Dispatch).unwrap(),
+            Dispatched
+        );
     }
 
     #[test]
     fn dispatch_auto_approved() {
-        assert_eq!(compute_next_status(AutoApproved, &Dispatch).unwrap(), Dispatched);
+        assert_eq!(
+            compute_next_status(AutoApproved, &Dispatch).unwrap(),
+            Dispatched
+        );
     }
 
     #[test]
     fn dispatch_break_glass() {
-        assert_eq!(compute_next_status(BreakGlass, &Dispatch).unwrap(), Dispatched);
+        assert_eq!(
+            compute_next_status(BreakGlass, &Dispatch).unwrap(),
+            Dispatched
+        );
     }
 
     #[test]
@@ -260,28 +295,46 @@ mod tests {
 
     #[test]
     fn complete_success() {
-        assert_eq!(compute_next_status(Running, &Complete { success: true }).unwrap(), Executed);
+        assert_eq!(
+            compute_next_status(Running, &Complete { success: true }).unwrap(),
+            Executed
+        );
     }
 
     #[test]
     fn complete_failure() {
-        assert_eq!(compute_next_status(Running, &Complete { success: false }).unwrap(), Failed);
+        assert_eq!(
+            compute_next_status(Running, &Complete { success: false }).unwrap(),
+            Failed
+        );
     }
 
     #[test]
     fn cancelled_accepts_complete() {
-        assert_eq!(compute_next_status(Cancelled, &Complete { success: false }).unwrap(), Cancelled);
-        assert_eq!(compute_next_status(Cancelled, &Complete { success: true }).unwrap(), Cancelled);
+        assert_eq!(
+            compute_next_status(Cancelled, &Complete { success: false }).unwrap(),
+            Cancelled
+        );
+        assert_eq!(
+            compute_next_status(Cancelled, &Complete { success: true }).unwrap(),
+            Cancelled
+        );
     }
 
     #[test]
     fn lease_expired() {
-        assert_eq!(compute_next_status(Running, &LeaseExpired).unwrap(), ExecutionLost);
+        assert_eq!(
+            compute_next_status(Running, &LeaseExpired).unwrap(),
+            ExecutionLost
+        );
     }
 
     #[test]
     fn redispatch_executed() {
-        assert_eq!(compute_next_status(Executed, &Dispatch).unwrap(), Dispatched);
+        assert_eq!(
+            compute_next_status(Executed, &Dispatch).unwrap(),
+            Dispatched
+        );
     }
 
     #[test]
@@ -316,6 +369,9 @@ mod tests {
 
     #[test]
     fn dispatch_timeout() {
-        assert_eq!(compute_next_status(Dispatched, &DispatchTimeout).unwrap(), Approved);
+        assert_eq!(
+            compute_next_status(Dispatched, &DispatchTimeout).unwrap(),
+            Approved
+        );
     }
 }

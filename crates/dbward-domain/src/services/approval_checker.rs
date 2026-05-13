@@ -26,16 +26,15 @@ pub fn is_approvable_by(
     }
 
     // Cross-step distinct actors check
-    if !allow_same_approver_across_steps
-        && previous_approver_ids.contains(&user.subject_id)
-    {
+    if !allow_same_approver_across_steps && previous_approver_ids.contains(&user.subject_id) {
         return false;
     }
 
     // 3. Check if user matches any approver group's selector
     let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
     approvers.iter().any(|ag| {
-        ag.selector.matches(&role_names, &user.groups, &user.subject_id, false)
+        ag.selector
+            .matches(&role_names, &user.groups, &user.subject_id, false)
     })
 }
 
@@ -103,69 +102,146 @@ mod tests {
     #[test]
     fn matches_by_role() {
         let user = make_user("alice", &["dba"], &[]);
-        assert!(is_approvable_by(&user, &[approver_role("dba")], "bob", &[], true, true));
+        assert!(is_approvable_by(
+            &user,
+            &[approver_role("dba")],
+            "bob",
+            &[],
+            true,
+            true
+        ));
     }
 
     #[test]
     fn matches_by_group() {
         let user = make_user("alice", &[], &["dba-team"]);
-        assert!(is_approvable_by(&user, &[approver_group("dba-team")], "bob", &[], true, true));
+        assert!(is_approvable_by(
+            &user,
+            &[approver_group("dba-team")],
+            "bob",
+            &[],
+            true,
+            true
+        ));
     }
 
     #[test]
     fn matches_by_user() {
         let user = make_user("alice", &[], &[]);
-        assert!(is_approvable_by(&user, &[approver_user("alice")], "bob", &[], true, true));
+        assert!(is_approvable_by(
+            &user,
+            &[approver_user("alice")],
+            "bob",
+            &[],
+            true,
+            true
+        ));
     }
 
     #[test]
     fn no_match() {
         let user = make_user("alice", &["viewer"], &["frontend"]);
-        assert!(!is_approvable_by(&user, &[approver_role("dba")], "bob", &[], true, true));
+        assert!(!is_approvable_by(
+            &user,
+            &[approver_role("dba")],
+            "bob",
+            &[],
+            true,
+            true
+        ));
     }
 
     #[test]
     fn self_approve_blocked() {
         let user = make_user("alice", &["dba"], &[]);
-        assert!(!is_approvable_by(&user, &[approver_role("dba")], "alice", &[], false, true));
+        assert!(!is_approvable_by(
+            &user,
+            &[approver_role("dba")],
+            "alice",
+            &[],
+            false,
+            true
+        ));
     }
 
     #[test]
     fn self_approve_allowed() {
         let user = make_user("alice", &["dba"], &[]);
-        assert!(is_approvable_by(&user, &[approver_role("dba")], "alice", &[], true, true));
+        assert!(is_approvable_by(
+            &user,
+            &[approver_role("dba")],
+            "alice",
+            &[],
+            true,
+            true
+        ));
     }
 
     #[test]
     fn cross_step_blocked() {
         let user = make_user("alice", &["dba"], &[]);
         let prev = vec!["alice".to_string()];
-        assert!(!is_approvable_by(&user, &[approver_role("dba")], "bob", &prev, true, false));
+        assert!(!is_approvable_by(
+            &user,
+            &[approver_role("dba")],
+            "bob",
+            &prev,
+            true,
+            false
+        ));
     }
 
     #[test]
     fn cross_step_allowed() {
         let user = make_user("alice", &["dba"], &[]);
         let prev = vec!["alice".to_string()];
-        assert!(is_approvable_by(&user, &[approver_role("dba")], "bob", &prev, true, true));
+        assert!(is_approvable_by(
+            &user,
+            &[approver_role("dba")],
+            "bob",
+            &prev,
+            true,
+            true
+        ));
     }
 
     #[test]
     fn admin_bypasses_approver_matching() {
         let admin = make_admin("admin-user");
-        assert!(is_approvable_by(&admin, &[approver_role("dba")], "bob", &[], true, true));
+        assert!(is_approvable_by(
+            &admin,
+            &[approver_role("dba")],
+            "bob",
+            &[],
+            true,
+            true
+        ));
     }
 
     #[test]
     fn admin_bypasses_cross_step() {
         let admin = make_admin("admin-user");
         let prev = vec!["admin-user".to_string()];
-        assert!(is_approvable_by(&admin, &[approver_role("dba")], "bob", &prev, true, false));
+        assert!(is_approvable_by(
+            &admin,
+            &[approver_role("dba")],
+            "bob",
+            &prev,
+            true,
+            false
+        ));
     }
 
     #[test]
     fn admin_still_blocked_by_self_approve() {
         let admin = make_admin("admin-user");
-        assert!(!is_approvable_by(&admin, &[approver_role("dba")], "admin-user", &[], false, true));
+        assert!(!is_approvable_by(
+            &admin,
+            &[approver_role("dba")],
+            "admin-user",
+            &[],
+            false,
+            true
+        ));
     }
 }

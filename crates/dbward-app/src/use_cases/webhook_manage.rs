@@ -38,14 +38,17 @@ pub struct WebhookDeleteInput {
 
 impl WebhookManage {
     pub fn create(&self, input: WebhookCreateInput, user: &AuthUser) -> Result<Webhook, AppError> {
-        self.authorizer.authorize_global(user, Permission::WebhookManage)
+        self.authorizer
+            .authorize_global(user, Permission::WebhookManage)
             .map_err(AppError::Forbidden)?;
 
         if input.url.is_empty() {
             return Err(AppError::Validation("url is required".into()));
         }
         if !matches!(input.format.as_str(), "generic" | "slack") {
-            return Err(AppError::Validation("format must be 'generic' or 'slack'".into()));
+            return Err(AppError::Validation(
+                "format must be 'generic' or 'slack'".into(),
+            ));
         }
         if let Some(ref s) = input.secret {
             if s.is_empty() {
@@ -78,7 +81,12 @@ impl WebhookManage {
         self.webhook_repo.create(&webhook)?;
 
         // Audit
-        self.audit.record(&AuditEvent::simple("webhook_created", "policy", &user.subject_id, Some(&webhook.id)))?;
+        self.audit.record(&AuditEvent::simple(
+            "webhook_created",
+            "policy",
+            &user.subject_id,
+            Some(&webhook.id),
+        ))?;
 
         // Reload dispatcher config
         let _ = self.notifier.reload();
@@ -87,10 +95,13 @@ impl WebhookManage {
     }
 
     pub fn update(&self, input: WebhookUpdateInput, user: &AuthUser) -> Result<Webhook, AppError> {
-        self.authorizer.authorize_global(user, Permission::WebhookManage)
+        self.authorizer
+            .authorize_global(user, Permission::WebhookManage)
             .map_err(AppError::Forbidden)?;
 
-        let mut webhook = self.webhook_repo.get(&input.id)?
+        let mut webhook = self
+            .webhook_repo
+            .get(&input.id)?
             .ok_or_else(|| AppError::NotFound("webhook not found".into()))?;
 
         if let Some(url) = input.url {
@@ -102,7 +113,9 @@ impl WebhookManage {
         }
         if let Some(ref format) = input.format {
             if !matches!(format.as_str(), "generic" | "slack") {
-                return Err(AppError::Validation("format must be 'generic' or 'slack'".into()));
+                return Err(AppError::Validation(
+                    "format must be 'generic' or 'slack'".into(),
+                ));
             }
             webhook.format = match format.as_str() {
                 "slack" => dbward_domain::entities::WebhookFormat::Slack,
@@ -119,7 +132,12 @@ impl WebhookManage {
         }
 
         self.webhook_repo.update(&webhook)?;
-        self.audit.record(&AuditEvent::simple("webhook_updated", "policy", &user.subject_id, Some(&webhook.id)))?;
+        self.audit.record(&AuditEvent::simple(
+            "webhook_updated",
+            "policy",
+            &user.subject_id,
+            Some(&webhook.id),
+        ))?;
 
         // Reload dispatcher config
         let _ = self.notifier.reload();
@@ -128,25 +146,35 @@ impl WebhookManage {
     }
 
     pub fn list(&self, user: &AuthUser) -> Result<Vec<Webhook>, AppError> {
-        self.authorizer.authorize_global(user, Permission::WebhookManage)
+        self.authorizer
+            .authorize_global(user, Permission::WebhookManage)
             .map_err(AppError::Forbidden)?;
         self.webhook_repo.list()
     }
 
     pub fn get(&self, id: &str, user: &AuthUser) -> Result<Webhook, AppError> {
-        self.authorizer.authorize_global(user, Permission::WebhookManage)
+        self.authorizer
+            .authorize_global(user, Permission::WebhookManage)
             .map_err(AppError::Forbidden)?;
-        self.webhook_repo.get(id)?
+        self.webhook_repo
+            .get(id)?
             .ok_or_else(|| AppError::NotFound("webhook not found".into()))
     }
 
     pub fn delete(&self, input: WebhookDeleteInput, user: &AuthUser) -> Result<(), AppError> {
-        self.authorizer.authorize_global(user, Permission::WebhookManage)
+        self.authorizer
+            .authorize_global(user, Permission::WebhookManage)
             .map_err(AppError::Forbidden)?;
-        self.webhook_repo.get(&input.id)?
+        self.webhook_repo
+            .get(&input.id)?
             .ok_or_else(|| AppError::NotFound("webhook not found".into()))?;
         self.webhook_repo.delete(&input.id)?;
-        self.audit.record(&AuditEvent::simple("webhook_deleted", "policy", &user.subject_id, Some(&input.id)))?;
+        self.audit.record(&AuditEvent::simple(
+            "webhook_deleted",
+            "policy",
+            &user.subject_id,
+            Some(&input.id),
+        ))?;
 
         // Reload dispatcher config
         let _ = self.notifier.reload();
@@ -158,33 +186,74 @@ impl WebhookManage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::AuthzError;
     use dbward_domain::auth::{Permission, SubjectType};
     use dbward_domain::entities::{Webhook, WebhookFormat, WebhookStatus};
-    use crate::error::AuthzError;
 
     struct AllowAll;
     impl Authorizer for AllowAll {
-        fn authorize_scoped(&self, _: &dbward_domain::auth::AuthUser, _: Permission, _: &dbward_domain::values::DatabaseName, _: &dbward_domain::values::Environment, _: &dbward_domain::auth::ResourceContext) -> Result<(), AuthzError> { Ok(()) }
-        fn authorize_global(&self, _: &dbward_domain::auth::AuthUser, _: Permission) -> Result<(), AuthzError> { Ok(()) }
+        fn authorize_scoped(
+            &self,
+            _: &dbward_domain::auth::AuthUser,
+            _: Permission,
+            _: &dbward_domain::values::DatabaseName,
+            _: &dbward_domain::values::Environment,
+            _: &dbward_domain::auth::ResourceContext,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
+        fn authorize_global(
+            &self,
+            _: &dbward_domain::auth::AuthUser,
+            _: Permission,
+        ) -> Result<(), AuthzError> {
+            Ok(())
+        }
     }
     struct FakeClock;
-    impl Clock for FakeClock { fn now(&self) -> chrono::DateTime<chrono::Utc> { chrono::Utc::now() } }
+    impl Clock for FakeClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc::now()
+        }
+    }
     struct FakeIdGen;
-    impl IdGenerator for FakeIdGen { fn generate(&self) -> String { "wh-1".into() } }
+    impl IdGenerator for FakeIdGen {
+        fn generate(&self) -> String {
+            "wh-1".into()
+        }
+    }
     struct AllowSsrf;
-    impl SsrfValidator for AllowSsrf { fn validate_url(&self, _: &str) -> Result<(), AppError> { Ok(()) } }
+    impl SsrfValidator for AllowSsrf {
+        fn validate_url(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
     struct FakeLicense;
     impl LicenseChecker for FakeLicense {
-        fn max_tokens(&self) -> u32 { 10 }
-        fn max_workflows(&self) -> u32 { 5 }
-        fn max_webhooks(&self) -> u32 { 3 }
-        fn max_roles(&self) -> u32 { 8 }
-        fn max_agents(&self) -> u32 { 3 }
-        fn is_pro(&self) -> bool { false }
+        fn max_tokens(&self) -> u32 {
+            10
+        }
+        fn max_workflows(&self) -> u32 {
+            5
+        }
+        fn max_webhooks(&self) -> u32 {
+            3
+        }
+        fn max_roles(&self) -> u32 {
+            8
+        }
+        fn max_agents(&self) -> u32 {
+            3
+        }
+        fn is_pro(&self) -> bool {
+            false
+        }
     }
     struct FakeAudit;
     impl AuditLogger for FakeAudit {
-        fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> { Ok(()) }
+        fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> {
+            Ok(())
+        }
     }
     struct FakeNotifier;
     impl Notifier for FakeNotifier {
@@ -192,17 +261,40 @@ mod tests {
     }
     struct FakeWebhookRepo;
     impl WebhookRepo for FakeWebhookRepo {
-        fn create(&self, _: &Webhook) -> Result<(), AppError> { Ok(()) }
-        fn get(&self, _: &str) -> Result<Option<Webhook>, AppError> {
-            Ok(Some(Webhook { id: "wh-1".into(), url: "https://example.com".into(), events: vec![], format: WebhookFormat::Generic, secret: None, status: WebhookStatus::Active, created_at: None, updated_at: None }))
+        fn create(&self, _: &Webhook) -> Result<(), AppError> {
+            Ok(())
         }
-        fn list(&self) -> Result<Vec<Webhook>, AppError> { Ok(vec![]) }
-        fn update(&self, _: &Webhook) -> Result<(), AppError> { Ok(()) }
-        fn delete(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+        fn get(&self, _: &str) -> Result<Option<Webhook>, AppError> {
+            Ok(Some(Webhook {
+                id: "wh-1".into(),
+                url: "https://example.com".into(),
+                events: vec![],
+                format: WebhookFormat::Generic,
+                secret: None,
+                status: WebhookStatus::Active,
+                created_at: None,
+                updated_at: None,
+            }))
+        }
+        fn list(&self) -> Result<Vec<Webhook>, AppError> {
+            Ok(vec![])
+        }
+        fn update(&self, _: &Webhook) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn delete(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     fn make_user() -> dbward_domain::auth::AuthUser {
-        dbward_domain::auth::AuthUser { subject_id: "alice".into(), subject_type: SubjectType::User, roles: vec![], groups: vec![], token_id: None }
+        dbward_domain::auth::AuthUser {
+            subject_id: "alice".into(),
+            subject_type: SubjectType::User,
+            roles: vec![],
+            groups: vec![],
+            token_id: None,
+        }
     }
 
     fn make_uc() -> WebhookManage {
@@ -221,27 +313,47 @@ mod tests {
     #[test]
     fn update_rejects_invalid_format() {
         let uc = make_uc();
-        let result = uc.update(WebhookUpdateInput {
-            id: "wh-1".into(), url: None, events: None, format: Some("xml".into()), secret: None,
-        }, &make_user());
+        let result = uc.update(
+            WebhookUpdateInput {
+                id: "wh-1".into(),
+                url: None,
+                events: None,
+                format: Some("xml".into()),
+                secret: None,
+            },
+            &make_user(),
+        );
         assert!(matches!(result, Err(AppError::Validation(_))));
     }
 
     #[test]
     fn update_rejects_empty_secret() {
         let uc = make_uc();
-        let result = uc.update(WebhookUpdateInput {
-            id: "wh-1".into(), url: None, events: None, format: None, secret: Some(Some("".into())),
-        }, &make_user());
+        let result = uc.update(
+            WebhookUpdateInput {
+                id: "wh-1".into(),
+                url: None,
+                events: None,
+                format: None,
+                secret: Some(Some("".into())),
+            },
+            &make_user(),
+        );
         assert!(matches!(result, Err(AppError::Validation(_))));
     }
 
     #[test]
     fn create_rejects_empty_secret() {
         let uc = make_uc();
-        let result = uc.create(WebhookCreateInput {
-            url: "https://example.com/hook".into(), events: vec![], format: "generic".into(), secret: Some("".into()),
-        }, &make_user());
+        let result = uc.create(
+            WebhookCreateInput {
+                url: "https://example.com/hook".into(),
+                events: vec![],
+                format: "generic".into(),
+                secret: Some("".into()),
+            },
+            &make_user(),
+        );
         assert!(matches!(result, Err(AppError::Validation(_))));
     }
 }

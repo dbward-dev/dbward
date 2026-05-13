@@ -14,7 +14,10 @@ impl Authorizer for RbacAuthorizer {
         }
         Err(AuthzError::Forbidden {
             permission,
-            reason: format!("user '{}' lacks permission '{}'", user.subject_id, permission),
+            reason: format!(
+                "user '{}' lacks permission '{}'",
+                user.subject_id, permission
+            ),
         })
     }
 
@@ -103,10 +106,10 @@ impl RbacAuthorizer {
                 }
                 let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
                 for sel_str in access_selectors {
-                    if let Ok(sel) = Selector::parse(sel_str) {
-                        if sel.matches(&role_names, &user.groups, &user.subject_id, false) {
-                            return Ok(());
-                        }
+                    if let Ok(sel) = Selector::parse(sel_str)
+                        && sel.matches(&role_names, &user.groups, &user.subject_id, false)
+                    {
+                        return Ok(());
                     }
                 }
                 Err(denied(permission, "no access to this result"))
@@ -149,8 +152,6 @@ fn denied(permission: Permission, reason: &str) -> AuthzError {
 mod tests {
     use super::*;
     use dbward_domain::auth::{ResolvedRole, SubjectType};
-    use dbward_domain::policies::workflow::ApproverGroup;
-    use std::collections::HashSet;
 
     fn user_with(id: &str, perms: &[Permission], dbs: &[&str], envs: &[&str]) -> AuthUser {
         AuthUser {
@@ -167,20 +168,24 @@ mod tests {
         }
     }
 
-    fn admin(id: &str) -> AuthUser {
-        user_with(id, &[Permission::All], &["*"], &["*"])
-    }
-
     #[test]
     fn global_allows_with_permission() {
         let u = user_with("alice", &[Permission::WorkflowManage], &["*"], &["*"]);
-        assert!(RbacAuthorizer.authorize_global(&u, Permission::WorkflowManage).is_ok());
+        assert!(
+            RbacAuthorizer
+                .authorize_global(&u, Permission::WorkflowManage)
+                .is_ok()
+        );
     }
 
     #[test]
     fn global_denies_without_permission() {
         let u = user_with("alice", &[Permission::RequestView], &["*"], &["*"]);
-        assert!(RbacAuthorizer.authorize_global(&u, Permission::WorkflowManage).is_err());
+        assert!(
+            RbacAuthorizer
+                .authorize_global(&u, Permission::WorkflowManage)
+                .is_err()
+        );
     }
 
     #[test]
@@ -188,7 +193,13 @@ mod tests {
         let u = user_with("alice", &[Permission::RequestCreate], &["app"], &["*"]);
         let db = DatabaseName::new("other").unwrap();
         let env = Environment::new("production").unwrap();
-        let r = RbacAuthorizer.authorize_scoped(&u, Permission::RequestCreate, &db, &env, &ResourceContext::Global);
+        let r = RbacAuthorizer.authorize_scoped(
+            &u,
+            Permission::RequestCreate,
+            &db,
+            &env,
+            &ResourceContext::Global,
+        );
         assert!(r.is_err());
     }
 
@@ -197,8 +208,14 @@ mod tests {
         let u = user_with("alice", &[Permission::RequestView], &["*"], &["*"]);
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("production").unwrap();
-        let ctx = ResourceContext::Request { requester_id: "alice".to_string() };
-        assert!(RbacAuthorizer.authorize_scoped(&u, Permission::RequestView, &db, &env, &ctx).is_ok());
+        let ctx = ResourceContext::Request {
+            requester_id: "alice".to_string(),
+        };
+        assert!(
+            RbacAuthorizer
+                .authorize_scoped(&u, Permission::RequestView, &db, &env, &ctx)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -206,8 +223,14 @@ mod tests {
         let u = user_with("bob", &[Permission::RequestView], &["*"], &["*"]);
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("production").unwrap();
-        let ctx = ResourceContext::Request { requester_id: "alice".to_string() };
-        assert!(RbacAuthorizer.authorize_scoped(&u, Permission::RequestView, &db, &env, &ctx).is_err());
+        let ctx = ResourceContext::Request {
+            requester_id: "alice".to_string(),
+        };
+        assert!(
+            RbacAuthorizer
+                .authorize_scoped(&u, Permission::RequestView, &db, &env, &ctx)
+                .is_err()
+        );
     }
 
     #[test]
@@ -215,8 +238,14 @@ mod tests {
         let u = user_with("agent-1", &[Permission::AgentClaim], &["*"], &["*"]);
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("production").unwrap();
-        let ctx = ResourceContext::AgentExecution { agent_id: "agent-1".to_string() };
-        assert!(RbacAuthorizer.authorize_scoped(&u, Permission::AgentClaim, &db, &env, &ctx).is_ok());
+        let ctx = ResourceContext::AgentExecution {
+            agent_id: "agent-1".to_string(),
+        };
+        assert!(
+            RbacAuthorizer
+                .authorize_scoped(&u, Permission::AgentClaim, &db, &env, &ctx)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -224,8 +253,14 @@ mod tests {
         let u = user_with("alice", &[Permission::TokenRevokeOwn], &["*"], &["*"]);
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("production").unwrap();
-        let ctx = ResourceContext::Token { owner_id: "bob".to_string() };
-        assert!(RbacAuthorizer.authorize_scoped(&u, Permission::TokenRevokeOwn, &db, &env, &ctx).is_err());
+        let ctx = ResourceContext::Token {
+            owner_id: "bob".to_string(),
+        };
+        assert!(
+            RbacAuthorizer
+                .authorize_scoped(&u, Permission::TokenRevokeOwn, &db, &env, &ctx)
+                .is_err()
+        );
     }
 
     #[test]
@@ -233,11 +268,23 @@ mod tests {
         let u = user_with("alice", &[Permission::AuditView], &["*"], &["*"]);
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("production").unwrap();
-        let ctx = ResourceContext::AuditQuery { requested_actor_id: Some("bob".to_string()) };
-        assert!(RbacAuthorizer.authorize_scoped(&u, Permission::AuditView, &db, &env, &ctx).is_err());
+        let ctx = ResourceContext::AuditQuery {
+            requested_actor_id: Some("bob".to_string()),
+        };
+        assert!(
+            RbacAuthorizer
+                .authorize_scoped(&u, Permission::AuditView, &db, &env, &ctx)
+                .is_err()
+        );
 
-        let ctx_own = ResourceContext::AuditQuery { requested_actor_id: Some("alice".to_string()) };
-        assert!(RbacAuthorizer.authorize_scoped(&u, Permission::AuditView, &db, &env, &ctx_own).is_ok());
+        let ctx_own = ResourceContext::AuditQuery {
+            requested_actor_id: Some("alice".to_string()),
+        };
+        assert!(
+            RbacAuthorizer
+                .authorize_scoped(&u, Permission::AuditView, &db, &env, &ctx_own)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -250,6 +297,10 @@ mod tests {
             requester_id: "alice".to_string(),
             access_selectors: vec!["role:dba".to_string()],
         };
-        assert!(RbacAuthorizer.authorize_scoped(&u, Permission::ResultView, &db, &env, &ctx).is_ok());
+        assert!(
+            RbacAuthorizer
+                .authorize_scoped(&u, Permission::ResultView, &db, &env, &ctx)
+                .is_ok()
+        );
     }
 }

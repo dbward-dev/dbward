@@ -131,7 +131,12 @@ mod tests {
             Permission::All,
         ];
         for p in all {
-            assert_eq!(p.as_str().parse::<Permission>().unwrap(), p, "failed for {:?}", p);
+            assert_eq!(
+                p.as_str().parse::<Permission>().unwrap(),
+                p,
+                "failed for {:?}",
+                p
+            );
         }
     }
 

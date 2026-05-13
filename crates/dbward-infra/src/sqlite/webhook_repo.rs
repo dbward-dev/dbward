@@ -16,7 +16,8 @@ impl SqliteWebhookRepo {
 impl WebhookRepo for SqliteWebhookRepo {
     fn create(&self, webhook: &Webhook) -> Result<(), AppError> {
         let conn = self.conn.lock().unwrap();
-        let events_json = serde_json::to_string(&webhook.events).map_err(|e| AppError::Internal(e.to_string()))?;
+        let events_json = serde_json::to_string(&webhook.events)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
             "INSERT INTO webhooks (id, url, events_json, format, secret, status, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
@@ -31,7 +32,10 @@ impl WebhookRepo for SqliteWebhookRepo {
 
     fn get(&self, id: &str) -> Result<Option<Webhook>, AppError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT id, url, events_json, format, secret, status FROM webhooks WHERE id = ?1")
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, url, events_json, format, secret, status FROM webhooks WHERE id = ?1",
+            )
             .map_err(|e| AppError::Internal(e.to_string()))?;
         let result = stmt.query_row(rusqlite::params![id], row_to_webhook);
         match result {
@@ -43,15 +47,20 @@ impl WebhookRepo for SqliteWebhookRepo {
 
     fn list(&self) -> Result<Vec<Webhook>, AppError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT id, url, events_json, format, secret, status FROM webhooks")
+        let mut stmt = conn
+            .prepare("SELECT id, url, events_json, format, secret, status FROM webhooks")
             .map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt.query_map([], row_to_webhook).map_err(|e| AppError::Internal(e.to_string()))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| AppError::Internal(e.to_string()))
+        let rows = stmt
+            .query_map([], row_to_webhook)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Internal(e.to_string()))
     }
 
     fn update(&self, webhook: &Webhook) -> Result<(), AppError> {
         let conn = self.conn.lock().unwrap();
-        let events_json = serde_json::to_string(&webhook.events).map_err(|e| AppError::Internal(e.to_string()))?;
+        let events_json = serde_json::to_string(&webhook.events)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE webhooks SET url=?1, events_json=?2, format=?3, secret=?4, status=?5, updated_at=?6 WHERE id=?7",

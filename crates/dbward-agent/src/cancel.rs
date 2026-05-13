@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use dbward_driver::CancelState;
 
@@ -66,7 +66,10 @@ impl CancelToken {
             };
             match dbward_driver::connect(url, Some(5)).await {
                 Ok(driver) => {
-                    if let Err(e) = driver.execute(&format!("SELECT pg_cancel_backend({pid_int})")).await {
+                    if let Err(e) = driver
+                        .execute(&format!("SELECT pg_cancel_backend({pid_int})"))
+                        .await
+                    {
                         tracing::error!("pg_cancel_backend failed: {e}");
                         return false;
                     }

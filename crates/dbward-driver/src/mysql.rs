@@ -1,7 +1,10 @@
 use futures::TryStreamExt;
 use sqlx::{Column, Row, TypeInfo, ValueRef};
 
-use crate::{text_to_json, CancelState, DatabaseDriver, DriverError, JsonMapping, QueryOutput, MAX_RESULT_BYTES, MAX_RESULT_ROWS};
+use crate::{
+    CancelState, DatabaseDriver, DriverError, JsonMapping, MAX_RESULT_BYTES, MAX_RESULT_ROWS,
+    QueryOutput, text_to_json,
+};
 
 pub struct MysqlDriver {
     pool: sqlx::MySqlPool,
@@ -160,15 +163,25 @@ impl DatabaseDriver for MysqlDriver {
         Ok(rows.into_iter().map(|(v,)| v).collect())
     }
 
-    async fn query_cancellable(&self, sql: &str, timeout_secs: u64, cancel: &CancelState) -> Result<QueryOutput, DriverError> {
-        let mut conn = self.pool.acquire().await
+    async fn query_cancellable(
+        &self,
+        sql: &str,
+        timeout_secs: u64,
+        cancel: &CancelState,
+    ) -> Result<QueryOutput, DriverError> {
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
         let ms = timeout_secs * 1000;
         sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
-            .execute(&mut *conn).await
+            .execute(&mut *conn)
+            .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         let id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
-            .fetch_one(&mut *conn).await
+            .fetch_one(&mut *conn)
+            .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         cancel.set_connection_id(id.to_string());
 
@@ -183,8 +196,11 @@ impl DatabaseDriver for MysqlDriver {
         let mut truncated = false;
         let mut truncation_reason = None;
 
-        while let Some(row) = stream.try_next().await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))? {
+        while let Some(row) = stream
+            .try_next()
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?
+        {
             let json = mysql_row_to_json(&row);
             total_bytes += json.to_string().len();
             if rows.len() >= MAX_RESULT_ROWS {
@@ -199,18 +215,32 @@ impl DatabaseDriver for MysqlDriver {
             }
             rows.push(json);
         }
-        Ok(QueryOutput { rows, truncated, truncation_reason })
+        Ok(QueryOutput {
+            rows,
+            truncated,
+            truncation_reason,
+        })
     }
 
-    async fn execute_cancellable(&self, sql: &str, timeout_secs: u64, cancel: &CancelState) -> Result<u64, DriverError> {
-        let mut conn = self.pool.acquire().await
+    async fn execute_cancellable(
+        &self,
+        sql: &str,
+        timeout_secs: u64,
+        cancel: &CancelState,
+    ) -> Result<u64, DriverError> {
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
         let ms = timeout_secs * 1000;
         sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
-            .execute(&mut *conn).await
+            .execute(&mut *conn)
+            .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         let id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
-            .fetch_one(&mut *conn).await
+            .fetch_one(&mut *conn)
+            .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         cancel.set_connection_id(id.to_string());
 
@@ -218,7 +248,9 @@ impl DatabaseDriver for MysqlDriver {
             return Err(DriverError::Cancelled);
         }
 
-        let result = sqlx::query(sql).execute(&mut *conn).await
+        let result = sqlx::query(sql)
+            .execute(&mut *conn)
+            .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         Ok(result.rows_affected())
     }
@@ -267,8 +299,9 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
 fn mysql_type_mapping(type_name: &str) -> JsonMapping {
     match type_name {
         "TINYINT" | "TINYINT UNSIGNED" | "SMALLINT" | "SMALLINT UNSIGNED" | "INT"
-        | "INT UNSIGNED" | "MEDIUMINT" | "MEDIUMINT UNSIGNED" | "BIGINT"
-        | "BIGINT UNSIGNED" => JsonMapping::Integer,
+        | "INT UNSIGNED" | "MEDIUMINT" | "MEDIUMINT UNSIGNED" | "BIGINT" | "BIGINT UNSIGNED" => {
+            JsonMapping::Integer
+        }
         "FLOAT" | "DOUBLE" => JsonMapping::Float,
         "BOOLEAN" => JsonMapping::Bool,
         "JSON" => JsonMapping::Json,

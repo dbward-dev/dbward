@@ -1,7 +1,7 @@
 use std::io::{self, BufRead, Write};
 
-use crate::error::CliError;
 use super::Cli;
+use crate::error::CliError;
 
 pub fn run_init(cli: &Cli, non_interactive: bool, force: bool) -> Result<(), CliError> {
     let config_path = &cli.config;

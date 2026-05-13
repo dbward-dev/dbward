@@ -4,7 +4,9 @@ use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Request, RequestStatus};
 use dbward_domain::services::classification::{ClassifyError, Dialect};
 use dbward_domain::services::sql_classifier;
-use dbward_domain::services::status_machine::{self, EventMetadata, RequestTrigger, TransitionContext};
+use dbward_domain::services::status_machine::{
+    self, EventMetadata, RequestTrigger, TransitionContext,
+};
 use dbward_domain::services::workflow_matcher;
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
@@ -54,16 +56,22 @@ pub struct CreateRequestOutput {
 }
 
 impl CreateRequest {
-    pub fn execute(&self, input: CreateRequestInput, user: &AuthUser) -> Result<CreateRequestOutput, AppError> {
+    pub fn execute(
+        &self,
+        input: CreateRequestInput,
+        user: &AuthUser,
+    ) -> Result<CreateRequestOutput, AppError> {
         // 1. Determine operation: migration types are explicit, others classified from SQL
         let operation = match input.operation {
-            Operation::MigrateUp | Operation::MigrateDown | Operation::MigrateStatus => input.operation,
+            Operation::MigrateUp | Operation::MigrateDown | Operation::MigrateStatus => {
+                input.operation
+            }
             _ => {
                 let classification = sql_classifier::classify(&input.detail, Dialect::PostgreSql)
                     .map_err(|e| match e {
-                        ClassifyError::Empty => AppError::Validation("empty query".into()),
-                        ClassifyError::Rejected { reason } => AppError::Validation(reason),
-                    })?;
+                    ClassifyError::Empty => AppError::Validation("empty query".into()),
+                    ClassifyError::Rejected { reason } => AppError::Validation(reason),
+                })?;
                 classification.operation
             }
         };
@@ -77,21 +85,41 @@ impl CreateRequest {
             Permission::RequestCreate
         };
         self.authorizer
-            .authorize_scoped(user, perm, &input.database, &input.environment, &ResourceContext::Global)
+            .authorize_scoped(
+                user,
+                perm,
+                &input.database,
+                &input.environment,
+                &ResourceContext::Global,
+            )
             .map_err(AppError::Forbidden)?;
 
-        // 1b-2. Emergency requires reason
+        // 1b-2. SELECT cannot use share_with
+        if operation == Operation::ExecuteSelect && !input.share_with.is_empty() {
+            return Err(AppError::Validation(
+                "share_with is not allowed for SELECT queries".into(),
+            ));
+        }
+
+        // 1b. Emergency requires reason
         if input.emergency && input.reason.is_none() {
-            return Err(AppError::Validation("reason is required for emergency requests".into()));
+            return Err(AppError::Validation(
+                "reason is required for emergency requests".into(),
+            ));
         }
 
         // 1c. MCP channel cannot use break_glass
         if input.emergency && input.channel == RequestChannel::Mcp {
-            return Err(AppError::Validation("emergency requests are not allowed via MCP".into()));
+            return Err(AppError::Validation(
+                "emergency requests are not allowed via MCP".into(),
+            ));
         }
 
         // 2. DB registered?
-        if !self.db_registry.exists(&input.database, &input.environment)? {
+        if !self
+            .db_registry
+            .exists(&input.database, &input.environment)?
+        {
             return Err(AppError::Validation("database not registered".into()));
         }
 
@@ -109,7 +137,9 @@ impl CreateRequest {
         }
 
         // 4. Workflow evaluation
-        let workflow = self.policy.evaluate_workflow(&input.database, &input.environment, operation)?;
+        let workflow =
+            self.policy
+                .evaluate_workflow(&input.database, &input.environment, operation)?;
         let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
         // Fail-closed: no workflow configured = reject (unless break-glass)
         let decision = if workflow.is_none() {
@@ -138,14 +168,16 @@ impl CreateRequest {
         // 5b. Workflow require_reason check
         if let Some(ref wf) = workflow {
             if wf.require_reason && input.reason.is_none() {
-                return Err(AppError::Validation("reason is required by workflow policy".into()));
+                return Err(AppError::Validation(
+                    "reason is required by workflow policy".into(),
+                ));
             }
         }
 
         // 6. Serialize workflow snapshot for approve/reject
         let workflow_snapshot_json = workflow
             .as_ref()
-            .map(|wf| serde_json::to_string(wf))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| AppError::Internal(format!("serialize workflow: {e}")))?;
 
@@ -153,7 +185,8 @@ impl CreateRequest {
         let now = self.clock.now();
         let id = self.id_gen.generate();
         let expires_at = if status == RequestStatus::Pending {
-            workflow.as_ref()
+            workflow
+                .as_ref()
                 .and_then(|wf| wf.pending_ttl_secs)
                 .or(self.default_approval_ttl_secs)
                 .map(|secs| now + chrono::Duration::seconds(secs as i64))
@@ -183,7 +216,10 @@ impl CreateRequest {
             expires_at,
         };
         // 8. Persist request — atomic create+dispatch for auto-dispatch path
-        let final_status = if matches!(status, RequestStatus::AutoApproved | RequestStatus::BreakGlass) {
+        let final_status = if matches!(
+            status,
+            RequestStatus::AutoApproved | RequestStatus::BreakGlass
+        ) {
             self.request_repo.create_and_dispatch(&request)?;
 
             // Emit creation event
@@ -197,7 +233,10 @@ impl CreateRequest {
                     environment: input.environment.clone(),
                     operation,
                     timestamp: now,
-                    metadata: EventMetadata::Created { detail: input.detail, emergency: input.emergency },
+                    metadata: EventMetadata::Created {
+                        detail: input.detail,
+                        emergency: input.emergency,
+                    },
                 },
             );
             create_result.commit(&*self.event_dispatcher);
@@ -215,7 +254,8 @@ impl CreateRequest {
                     timestamp: now,
                     metadata: EventMetadata::Dispatched,
                 },
-            ).map_err(|e| AppError::Internal(e.to_string()))?;
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
             let s = dispatch_result.status();
             dispatch_result.commit(&*self.event_dispatcher);
             s
@@ -232,14 +272,23 @@ impl CreateRequest {
                     environment: input.environment,
                     operation,
                     timestamp: now,
-                    metadata: EventMetadata::Created { detail: input.detail, emergency: input.emergency },
+                    metadata: EventMetadata::Created {
+                        detail: input.detail,
+                        emergency: input.emergency,
+                    },
                 },
             );
             create_result.commit(&*self.event_dispatcher);
             status
         };
 
-        Ok(CreateRequestOutput { id, status: final_status, operation, is_existing: false, expires_at })
+        Ok(CreateRequestOutput {
+            id,
+            status: final_status,
+            operation,
+            is_existing: false,
+            expires_at,
+        })
     }
 }
 
@@ -250,23 +299,60 @@ mod tests {
 
     struct AllowAll;
     impl Authorizer for AllowAll {
-        fn authorize_scoped(&self, _: &AuthUser, _: Permission, _: &DatabaseName, _: &Environment, _: &ResourceContext) -> Result<(), crate::error::AuthzError> { Ok(()) }
-        fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), crate::error::AuthzError> { Ok(()) }
+        fn authorize_scoped(
+            &self,
+            _: &AuthUser,
+            _: Permission,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), crate::error::AuthzError> {
+            Ok(())
+        }
+        fn authorize_global(
+            &self,
+            _: &AuthUser,
+            _: Permission,
+        ) -> Result<(), crate::error::AuthzError> {
+            Ok(())
+        }
     }
 
     struct DenyAll;
     impl Authorizer for DenyAll {
-        fn authorize_scoped(&self, _: &AuthUser, p: Permission, _: &DatabaseName, _: &Environment, _: &ResourceContext) -> Result<(), crate::error::AuthzError> {
-            Err(crate::error::AuthzError::Forbidden { permission: p, reason: "denied".into() })
+        fn authorize_scoped(
+            &self,
+            _: &AuthUser,
+            p: Permission,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), crate::error::AuthzError> {
+            Err(crate::error::AuthzError::Forbidden {
+                permission: p,
+                reason: "denied".into(),
+            })
         }
-        fn authorize_global(&self, _: &AuthUser, p: Permission) -> Result<(), crate::error::AuthzError> {
-            Err(crate::error::AuthzError::Forbidden { permission: p, reason: "denied".into() })
+        fn authorize_global(
+            &self,
+            _: &AuthUser,
+            p: Permission,
+        ) -> Result<(), crate::error::AuthzError> {
+            Err(crate::error::AuthzError::Forbidden {
+                permission: p,
+                reason: "denied".into(),
+            })
         }
     }
 
     struct FakePolicy;
     impl PolicyEvaluator for FakePolicy {
-        fn evaluate_workflow(&self, _: &DatabaseName, _: &Environment, _: Operation) -> Result<Option<dbward_domain::policies::Workflow>, AppError> {
+        fn evaluate_workflow(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+            _: Operation,
+        ) -> Result<Option<dbward_domain::policies::Workflow>, AppError> {
             Ok(Some(dbward_domain::policies::Workflow {
                 id: "test-wf".into(),
                 database: DatabaseName::wildcard(),
@@ -284,44 +370,156 @@ mod tests {
                 updated_at: None,
             }))
         }
-        fn get_execution_policy(&self, _: &DatabaseName, _: &Environment) -> dbward_domain::policies::ExecutionPolicy { Default::default() }
+        fn get_execution_policy(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+        ) -> dbward_domain::policies::ExecutionPolicy {
+            Default::default()
+        }
     }
 
     struct FakeRequestRepo;
     impl RequestRepo for FakeRequestRepo {
-        fn insert(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
-        fn get(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(None) }
-        fn list(&self, _: u32, _: u32, _: Option<&str>) -> Result<(Vec<Request>, u32), AppError> { Ok((vec![], 0)) }
-        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(None) }
-        fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> { Ok(()) }
-        fn get_approvals(&self, _: &str) -> Result<Vec<dbward_domain::entities::Approval>, AppError> { Ok(vec![]) }
-        fn count_executions(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
-        fn mark_approved(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn approve_and_mark_approved(&self, _: &dbward_domain::entities::Approval, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn mark_rejected(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn reject_and_record(&self, _: &str, _: &dbward_domain::entities::Approval, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn mark_dispatched(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> { Ok(()) }
-        fn mark_running(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn mark_executed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn cancel_all_for_user(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError> { Ok(0) }
-        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn mark_expired_and_record(&self, _: &str, _: &dbward_domain::entities::AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
-        fn count_by_status(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
-        fn wal_checkpoint(&self) -> Result<(), AppError> { Ok(()) }
+        fn insert(&self, _: &Request) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
+            Ok(None)
+        }
+        fn list(&self, _: u32, _: u32, _: Option<&str>) -> Result<(Vec<Request>, u32), AppError> {
+            Ok((vec![], 0))
+        }
+        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
+            Ok(None)
+        }
+        fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_approvals(
+            &self,
+            _: &str,
+        ) -> Result<Vec<dbward_domain::entities::Approval>, AppError> {
+            Ok(vec![])
+        }
+        fn count_executions(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn mark_approved(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn approve_and_mark_approved(
+            &self,
+            _: &dbward_domain::entities::Approval,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_rejected(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn reject_and_record(
+            &self,
+            _: &str,
+            _: &dbward_domain::entities::Approval,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_cancelled(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_dispatched(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn mark_running(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_executed(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn cancel_all_for_user(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_expired_and_record(
+            &self,
+            _: &str,
+            _: &dbward_domain::entities::AuditEvent,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn wal_checkpoint(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     struct FakeDbRegistry;
     impl DatabaseRegistry for FakeDbRegistry {
-        fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> { Ok(true) }
-        fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> { Ok(vec![]) }
+        fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+            Ok(vec![])
+        }
     }
 
     struct NoopDispatcher;
@@ -331,12 +529,16 @@ mod tests {
 
     struct FakeClock;
     impl Clock for FakeClock {
-        fn now(&self) -> chrono::DateTime<chrono::Utc> { chrono::Utc::now() }
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc::now()
+        }
     }
 
     struct FakeIdGen;
     impl IdGenerator for FakeIdGen {
-        fn generate(&self) -> String { "test-id-001".into() }
+        fn generate(&self) -> String {
+            "test-id-001".into()
+        }
     }
 
     fn make_uc(authorizer: Arc<dyn Authorizer>) -> CreateRequest {
@@ -358,7 +560,9 @@ mod tests {
             subject_type: SubjectType::User,
             roles: vec![ResolvedRole {
                 name: "app-dev".into(),
-                permissions: [Permission::RequestCreate, Permission::RequestView].into_iter().collect(),
+                permissions: [Permission::RequestCreate, Permission::RequestView]
+                    .into_iter()
+                    .collect(),
                 databases: vec![DatabaseName::new("app").unwrap()],
                 environments: vec![Environment::new("production").unwrap()],
             }],

@@ -24,7 +24,8 @@ pub struct MigrationEntry {
 
 impl MigrationDetail {
     pub fn to_detail_string(&self) -> Result<String, MigrateError> {
-        serde_json::to_string(self).map_err(|e| MigrateError::Config(format!("serialize detail: {e}")))
+        serde_json::to_string(self)
+            .map_err(|e| MigrateError::Config(format!("serialize detail: {e}")))
     }
 
     pub fn parse(detail: &str) -> Result<Self, MigrateError> {
@@ -52,7 +53,7 @@ pub fn build_migrate_up_detail(
             versions: vec![],
             migrations: vec![],
             dir_sha256: hash_migrations_dir(dir)?,
-        max_count: None,
+            max_count: None,
         });
     }
 
@@ -130,7 +131,10 @@ pub fn canonicalize_migration_detail(detail: &str) -> Result<String, MigrateErro
 
 /// List migration files in a directory, filtered by direction (up/down).
 /// Returns (version, path) pairs sorted by version.
-fn list_migration_files(dir: &Path, direction: &str) -> Result<Vec<(String, std::path::PathBuf)>, MigrateError> {
+fn list_migration_files(
+    dir: &Path,
+    direction: &str,
+) -> Result<Vec<(String, std::path::PathBuf)>, MigrateError> {
     let suffix = format!(".{direction}.sql");
     let mut entries = Vec::new();
 
@@ -142,7 +146,10 @@ fn list_migration_files(dir: &Path, direction: &str) -> Result<Vec<(String, std:
         let entry = entry.map_err(MigrateError::Io)?;
         let filename = entry.file_name().to_string_lossy().to_string();
         if filename.ends_with(&suffix) {
-            let version = filename.strip_suffix(&suffix).unwrap_or(&filename).to_string();
+            let version = filename
+                .strip_suffix(&suffix)
+                .unwrap_or(&filename)
+                .to_string();
             entries.push((version, entry.path()));
         }
     }
@@ -237,7 +244,10 @@ pub fn build_migration_approval_detail(dir: &Path, count: usize) -> Result<Strin
     .format())
 }
 
-pub fn canonicalize_migration_approval_detail(dir: &Path, detail: &str) -> Result<String, MigrateError> {
+pub fn canonicalize_migration_approval_detail(
+    dir: &Path,
+    detail: &str,
+) -> Result<String, MigrateError> {
     // Try v2 JSON first
     if detail.starts_with('{') {
         return canonicalize_migration_detail(detail);
@@ -267,8 +277,16 @@ mod tests {
     #[test]
     fn builds_v2_migrate_up_detail() {
         let dir = temp_dir("v2up");
-        std::fs::write(dir.join("001_create_users.up.sql"), "CREATE TABLE users (id INT);").unwrap();
-        std::fs::write(dir.join("002_add_email.up.sql"), "ALTER TABLE users ADD email TEXT;").unwrap();
+        std::fs::write(
+            dir.join("001_create_users.up.sql"),
+            "CREATE TABLE users (id INT);",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("002_add_email.up.sql"),
+            "ALTER TABLE users ADD email TEXT;",
+        )
+        .unwrap();
 
         let detail = build_migrate_up_detail(&dir, &[]).unwrap();
         assert_eq!(detail.versions, vec!["001_create_users", "002_add_email"]);

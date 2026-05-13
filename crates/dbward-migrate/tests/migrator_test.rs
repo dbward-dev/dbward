@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
-use dbward_driver;
 use dbward_migrate::Migrator;
 
 fn fixtures_dir() -> PathBuf {

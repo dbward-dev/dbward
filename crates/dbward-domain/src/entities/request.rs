@@ -47,10 +47,7 @@ impl RequestStatus {
     }
 
     pub fn is_dispatchable(&self) -> bool {
-        matches!(
-            self,
-            Self::Approved | Self::AutoApproved | Self::BreakGlass
-        )
+        matches!(self, Self::Approved | Self::AutoApproved | Self::BreakGlass)
     }
 
     pub fn is_re_dispatchable(&self) -> bool {
@@ -64,7 +61,6 @@ impl RequestStatus {
         )
     }
 }
-
 
 impl std::fmt::Display for RequestStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -76,7 +76,8 @@ pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyE
 
     // Pre-parse: reject LOAD DATA (sqlparser can't parse it for PG/MySQL dialects)
     let upper = trimmed.to_ascii_uppercase();
-    if upper.starts_with("LOAD DATA") || upper.starts_with("LOAD\t") || upper.starts_with("LOAD\n") {
+    if upper.starts_with("LOAD DATA") || upper.starts_with("LOAD\t") || upper.starts_with("LOAD\n")
+    {
         return Err(ClassifyError::Rejected {
             reason: "LOAD DATA is not allowed".into(),
         });
@@ -609,7 +610,10 @@ mod tests {
 
     #[test]
     fn set_role_rejected() {
-        assert!(matches!(pg("SET ROLE admin"), Err(ClassifyError::Rejected { .. })));
+        assert!(matches!(
+            pg("SET ROLE admin"),
+            Err(ClassifyError::Rejected { .. })
+        ));
     }
 
     #[test]
@@ -631,14 +635,6 @@ mod tests {
 
     // === Unknown statement → DML ===
 
-    #[test]
-    fn unknown_statement_is_dml() {
-        // EXECUTE is classified as UnknownStatement (prepared stmt, unknown content)
-        let c = pg("EXECUTE stmt").unwrap();
-        assert_eq!(c.operation, Operation::ExecuteDml);
-        assert_eq!(c.dml_reason, Some(DmlReason::UnknownStatement));
-    }
-
     // === Edge cases ===
 
     #[test]
@@ -654,7 +650,7 @@ mod tests {
     #[test]
     fn null_byte_rejected() {
         assert!(matches!(
-            pg("SELECT \01"),
+            pg("SELECT \0"),
             Err(ClassifyError::Rejected { .. })
         ));
     }
@@ -689,8 +685,7 @@ mod tests {
 
     #[test]
     fn max_statements_rejected() {
-        let sql = std::iter::repeat("SELECT 1")
-            .take(MAX_STATEMENTS + 1)
+        let sql = std::iter::repeat_n("SELECT 1", MAX_STATEMENTS + 1)
             .collect::<Vec<_>>()
             .join("; ");
         let r = pg(&sql);

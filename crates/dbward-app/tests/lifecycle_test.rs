@@ -43,24 +43,46 @@ impl RequestRepo for SharedRepo {
         Ok(())
     }
     fn get(&self, id: &str) -> Result<Option<Request>, AppError> {
-        Ok(self.requests.lock().unwrap().iter().find(|r| r.id == id).cloned())
+        Ok(self
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|r| r.id == id)
+            .cloned())
     }
-    fn list(&self, _limit: u32, _offset: u32, _status: Option<&str>) -> Result<(Vec<Request>, u32), AppError> {
+    fn list(
+        &self,
+        _limit: u32,
+        _offset: u32,
+        _status: Option<&str>,
+    ) -> Result<(Vec<Request>, u32), AppError> {
         let reqs = self.requests.lock().unwrap().clone();
         let total = reqs.len() as u32;
         Ok((reqs, total))
     }
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {
-        Ok(self.requests.lock().unwrap().iter()
-            .find(|r| r.idempotency_key.as_deref() == Some(key)).cloned())
+        Ok(self
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|r| r.idempotency_key.as_deref() == Some(key))
+            .cloned())
     }
     fn insert_approval(&self, a: &Approval) -> Result<(), AppError> {
         self.approvals.lock().unwrap().push(a.clone());
         Ok(())
     }
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError> {
-        Ok(self.approvals.lock().unwrap().iter()
-            .filter(|a| a.request_id == request_id).cloned().collect())
+        Ok(self
+            .approvals
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|a| a.request_id == request_id)
+            .cloned()
+            .collect())
     }
     fn count_executions(&self, _: &str) -> Result<u32, AppError> {
         Ok(0)
@@ -76,7 +98,12 @@ impl RequestRepo for SharedRepo {
             Ok(false)
         }
     }
-    fn approve_and_mark_approved(&self, approval: &Approval, request_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+    fn approve_and_mark_approved(
+        &self,
+        approval: &Approval,
+        request_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
         self.approvals.lock().unwrap().push(approval.clone());
         self.mark_approved(request_id, now)
     }
@@ -90,11 +117,22 @@ impl RequestRepo for SharedRepo {
             Ok(false)
         }
     }
-    fn reject_and_record(&self, request_id: &str, approval: &Approval, now: DateTime<Utc>) -> Result<bool, AppError> {
+    fn reject_and_record(
+        &self,
+        request_id: &str,
+        approval: &Approval,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
         self.approvals.lock().unwrap().push(approval.clone());
         self.mark_rejected(request_id, now)
     }
-    fn mark_cancelled(&self, id: &str, actor: &str, reason: Option<&str>, now: DateTime<Utc>) -> Result<bool, AppError> {
+    fn mark_cancelled(
+        &self,
+        id: &str,
+        actor: &str,
+        reason: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
         let mut reqs = self.requests.lock().unwrap();
         if let Some(r) = reqs.iter_mut().find(|r| r.id == id) {
             r.status = RequestStatus::Cancelled;
@@ -153,22 +191,53 @@ impl RequestRepo for SharedRepo {
             Ok(false)
         }
     }
-    fn cancel_all_for_user(&self, _: &str, _: DateTime<Utc>) -> Result<u32, AppError> { Ok(0) }
-    fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-    fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-    fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-    fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-    fn mark_expired_and_record(&self, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
-    fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-    fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
-    fn count_by_status(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
-    fn wal_checkpoint(&self) -> Result<(), AppError> { Ok(()) }
+    fn cancel_all_for_user(&self, _: &str, _: DateTime<Utc>) -> Result<u32, AppError> {
+        Ok(0)
+    }
+    fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
+    }
+    fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
+    }
+    fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
+    }
+    fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn mark_expired_and_record(&self, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
+        Ok(0)
+    }
+    fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
+        Ok(0)
+    }
+    fn wal_checkpoint(&self) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 struct AllowAll;
 impl Authorizer for AllowAll {
-    fn authorize_scoped(&self, _: &AuthUser, _: Permission, _: &DatabaseName, _: &Environment, _: &ResourceContext) -> Result<(), AuthzError> { Ok(()) }
-    fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> { Ok(()) }
+    fn authorize_scoped(
+        &self,
+        _: &AuthUser,
+        _: Permission,
+        _: &DatabaseName,
+        _: &Environment,
+        _: &ResourceContext,
+    ) -> Result<(), AuthzError> {
+        Ok(())
+    }
+    fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
+        Ok(())
+    }
 }
 
 struct FakePolicy {
@@ -176,7 +245,12 @@ struct FakePolicy {
     exec_policy: ExecutionPolicy,
 }
 impl PolicyEvaluator for FakePolicy {
-    fn evaluate_workflow(&self, _: &DatabaseName, _: &Environment, _: Operation) -> Result<Option<Workflow>, AppError> {
+    fn evaluate_workflow(
+        &self,
+        _: &DatabaseName,
+        _: &Environment,
+        _: Operation,
+    ) -> Result<Option<Workflow>, AppError> {
         Ok(self.workflow.clone())
     }
     fn get_execution_policy(&self, _: &DatabaseName, _: &Environment) -> ExecutionPolicy {
@@ -186,29 +260,43 @@ impl PolicyEvaluator for FakePolicy {
 
 struct FakeDbRegistry;
 impl DatabaseRegistry for FakeDbRegistry {
-    fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> { Ok(true) }
-    fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> { Ok(vec![]) }
+    fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+        Ok(vec![])
+    }
 }
-
-
 
 struct FakeClock {
     now: Mutex<DateTime<Utc>>,
 }
 impl FakeClock {
-    fn new() -> Self { Self { now: Mutex::new(Utc::now()) } }
+    fn new() -> Self {
+        Self {
+            now: Mutex::new(Utc::now()),
+        }
+    }
     fn advance(&self, secs: i64) {
         let mut n = self.now.lock().unwrap();
-        *n = *n + Duration::seconds(secs);
+        *n += Duration::seconds(secs);
     }
 }
 impl Clock for FakeClock {
-    fn now(&self) -> DateTime<Utc> { *self.now.lock().unwrap() }
+    fn now(&self) -> DateTime<Utc> {
+        *self.now.lock().unwrap()
+    }
 }
 
-struct SeqIdGen { counter: Mutex<u32> }
+struct SeqIdGen {
+    counter: Mutex<u32>,
+}
 impl SeqIdGen {
-    fn new() -> Self { Self { counter: Mutex::new(0) } }
+    fn new() -> Self {
+        Self {
+            counter: Mutex::new(0),
+        }
+    }
 }
 impl IdGenerator for SeqIdGen {
     fn generate(&self) -> String {
@@ -224,12 +312,22 @@ fn make_user(id: &str, roles: &[&str]) -> AuthUser {
     AuthUser {
         subject_id: id.to_string(),
         subject_type: SubjectType::User,
-        roles: roles.iter().map(|name| ResolvedRole {
-            name: name.to_string(),
-            permissions: [Permission::RequestCreate, Permission::RequestApprove, Permission::RequestDispatch, Permission::RequestCancel].into_iter().collect(),
-            databases: vec![],
-            environments: vec![],
-        }).collect(),
+        roles: roles
+            .iter()
+            .map(|name| ResolvedRole {
+                name: name.to_string(),
+                permissions: [
+                    Permission::RequestCreate,
+                    Permission::RequestApprove,
+                    Permission::RequestDispatch,
+                    Permission::RequestCancel,
+                ]
+                .into_iter()
+                .collect(),
+                databases: vec![],
+                environments: vec![],
+            })
+            .collect(),
         groups: vec![],
         token_id: None,
     }
@@ -242,7 +340,10 @@ fn single_step_workflow() -> Workflow {
         environment: Environment::new("production").unwrap(),
         operations: vec![],
         steps: vec![WorkflowStep {
-            approvers: vec![ApproverGroup { selector: Selector::Role("dba".into()), min: 1 }],
+            approvers: vec![ApproverGroup {
+                selector: Selector::Role("dba".into()),
+                min: 1,
+            }],
             mode: WorkflowStepMode::Any,
         }],
         skip_approval_for: vec![],
@@ -265,11 +366,17 @@ fn two_step_workflow() -> Workflow {
         operations: vec![],
         steps: vec![
             WorkflowStep {
-                approvers: vec![ApproverGroup { selector: Selector::Role("dba".into()), min: 1 }],
+                approvers: vec![ApproverGroup {
+                    selector: Selector::Role("dba".into()),
+                    min: 1,
+                }],
                 mode: WorkflowStepMode::Any,
             },
             WorkflowStep {
-                approvers: vec![ApproverGroup { selector: Selector::Role("cto".into()), min: 1 }],
+                approvers: vec![ApproverGroup {
+                    selector: Selector::Role("cto".into()),
+                    min: 1,
+                }],
                 mode: WorkflowStepMode::Any,
             },
         ],
@@ -307,8 +414,14 @@ struct RecordingDispatcher {
     events: Mutex<Vec<TransitionEvent>>,
 }
 impl RecordingDispatcher {
-    fn new() -> Self { Self { events: Mutex::new(vec![]) } }
-    fn events(&self) -> Vec<TransitionEvent> { self.events.lock().unwrap().clone() }
+    fn new() -> Self {
+        Self {
+            events: Mutex::new(vec![]),
+        }
+    }
+    fn events(&self) -> Vec<TransitionEvent> {
+        self.events.lock().unwrap().clone()
+    }
 }
 impl EventDispatcher for RecordingDispatcher {
     fn dispatch(&self, event: TransitionEvent) {
@@ -321,42 +434,101 @@ struct FakeResultChannel;
 impl ResultChannel for FakeResultChannel {
     fn create_slot(&self, _: &str) {}
     async fn publish(&self, _: &str, _: ResultSummary) {}
-    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> { Ok(None) }
+    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> {
+        Ok(None)
+    }
     async fn notify_all(&self) {}
 }
 
 struct FakeAuditLogger;
 impl AuditLogger for FakeAuditLogger {
-    fn record(&self, _: &AuditEvent) -> Result<(), AppError> { Ok(()) }
+    fn record(&self, _: &AuditEvent) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 struct FakeLicenseChecker;
 impl LicenseChecker for FakeLicenseChecker {
-    fn max_tokens(&self) -> u32 { 10 }
-    fn max_workflows(&self) -> u32 { 5 }
-    fn max_webhooks(&self) -> u32 { 3 }
-    fn max_roles(&self) -> u32 { 8 }
-    fn max_agents(&self) -> u32 { 3 }
-    fn is_pro(&self) -> bool { false }
+    fn max_tokens(&self) -> u32 {
+        10
+    }
+    fn max_workflows(&self) -> u32 {
+        5
+    }
+    fn max_webhooks(&self) -> u32 {
+        3
+    }
+    fn max_roles(&self) -> u32 {
+        8
+    }
+    fn max_agents(&self) -> u32 {
+        3
+    }
+    fn is_pro(&self) -> bool {
+        false
+    }
 }
 
 struct FakePolicyRepoForDispatch;
 impl PolicyRepo for FakePolicyRepoForDispatch {
-    fn create_workflow(&self, _: &dbward_domain::policies::workflow::Workflow) -> Result<(), AppError> { Ok(()) }
-    fn get_workflow(&self, _: &str) -> Result<Option<dbward_domain::policies::workflow::Workflow>, AppError> { Ok(None) }
-    fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::workflow::Workflow>, AppError> { Ok(vec![]) }
-    fn delete_workflow(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
-    fn count_workflows(&self) -> Result<u32, AppError> { Ok(0) }
-    fn create_execution_policy(&self, _: &ExecutionPolicy) -> Result<(), AppError> { Ok(()) }
-    fn get_execution_policy(&self, _: &str) -> Result<Option<ExecutionPolicy>, AppError> { Ok(None) }
-    fn list_execution_policies(&self) -> Result<Vec<ExecutionPolicy>, AppError> { Ok(vec![]) }
-    fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
-    fn find_result_policy(&self, _: &DatabaseName, _: &Environment) -> Result<Option<ResultPolicy>, AppError> { Ok(None) }
-    fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> { Ok(()) }
-    fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
-    fn get_roles_by_names(&self, _: &[String]) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
-    fn delete_role(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
-    fn count_roles(&self) -> Result<u32, AppError> { Ok(0) }
+    fn create_workflow(
+        &self,
+        _: &dbward_domain::policies::workflow::Workflow,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get_workflow(
+        &self,
+        _: &str,
+    ) -> Result<Option<dbward_domain::policies::workflow::Workflow>, AppError> {
+        Ok(None)
+    }
+    fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::workflow::Workflow>, AppError> {
+        Ok(vec![])
+    }
+    fn delete_workflow(&self, _: &str) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn count_workflows(&self) -> Result<u32, AppError> {
+        Ok(0)
+    }
+    fn create_execution_policy(&self, _: &ExecutionPolicy) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get_execution_policy(&self, _: &str) -> Result<Option<ExecutionPolicy>, AppError> {
+        Ok(None)
+    }
+    fn list_execution_policies(&self) -> Result<Vec<ExecutionPolicy>, AppError> {
+        Ok(vec![])
+    }
+    fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn find_result_policy(
+        &self,
+        _: &DatabaseName,
+        _: &Environment,
+    ) -> Result<Option<ResultPolicy>, AppError> {
+        Ok(None)
+    }
+    fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> {
+        Ok(vec![])
+    }
+    fn get_roles_by_names(
+        &self,
+        _: &[String],
+    ) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> {
+        Ok(vec![])
+    }
+    fn delete_role(&self, _: &str) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn count_roles(&self) -> Result<u32, AppError> {
+        Ok(0)
+    }
 }
 
 struct TestHarness {
@@ -379,7 +551,10 @@ impl TestHarness {
             clock: Arc::new(FakeClock::new()),
             id_gen: Arc::new(SeqIdGen::new()),
             authorizer: Arc::new(AllowAll),
-            policy: Arc::new(FakePolicy { workflow, exec_policy: ExecutionPolicy::default() }),
+            policy: Arc::new(FakePolicy {
+                workflow,
+                exec_policy: ExecutionPolicy::default(),
+            }),
             event_dispatcher: Arc::new(RecordingDispatcher::new()),
             db_registry: Arc::new(FakeDbRegistry),
             result_channel: Arc::new(FakeResultChannel),
@@ -389,7 +564,10 @@ impl TestHarness {
     }
 
     fn with_exec_policy(mut self, ep: ExecutionPolicy) -> Self {
-        self.policy = Arc::new(FakePolicy { workflow: self.policy.workflow.clone(), exec_policy: ep });
+        self.policy = Arc::new(FakePolicy {
+            workflow: self.policy.workflow.clone(),
+            exec_policy: ep,
+        });
         self
     }
 
@@ -461,17 +639,28 @@ fn full_lifecycle_create_approve_dispatch() {
     assert_eq!(created.status, RequestStatus::Pending);
 
     // Approve
-    let approved = h.approve_uc().execute(
-        ApproveRequestInput { request_id: created.id.clone(), comment: Some("LGTM".into()) },
-        &approver,
-    ).unwrap();
+    let approved = h
+        .approve_uc()
+        .execute(
+            ApproveRequestInput {
+                request_id: created.id.clone(),
+                comment: Some("LGTM".into()),
+            },
+            &approver,
+        )
+        .unwrap();
     assert_eq!(approved.status, RequestStatus::Approved);
 
     // Dispatch
-    let dispatched = h.dispatch_uc().execute(
-        DispatchRequestInput { request_id: created.id.clone() },
-        &requester,
-    ).unwrap();
+    let dispatched = h
+        .dispatch_uc()
+        .execute(
+            DispatchRequestInput {
+                request_id: created.id.clone(),
+            },
+            &requester,
+        )
+        .unwrap();
     assert_eq!(dispatched.status, RequestStatus::Dispatched);
 }
 
@@ -485,18 +674,30 @@ fn multi_step_approval_progresses_correctly() {
     let created = h.create_uc().execute(make_input(), &requester).unwrap();
 
     // Step 1: dba approves → still pending
-    let step1 = h.approve_uc().execute(
-        ApproveRequestInput { request_id: created.id.clone(), comment: None },
-        &dba,
-    ).unwrap();
+    let step1 = h
+        .approve_uc()
+        .execute(
+            ApproveRequestInput {
+                request_id: created.id.clone(),
+                comment: None,
+            },
+            &dba,
+        )
+        .unwrap();
     assert_eq!(step1.status, RequestStatus::Pending);
     assert_eq!(step1.step_completed, 1);
 
     // Step 2: cto approves → approved
-    let step2 = h.approve_uc().execute(
-        ApproveRequestInput { request_id: created.id.clone(), comment: None },
-        &cto,
-    ).unwrap();
+    let step2 = h
+        .approve_uc()
+        .execute(
+            ApproveRequestInput {
+                request_id: created.id.clone(),
+                comment: None,
+            },
+            &cto,
+        )
+        .unwrap();
     assert_eq!(step2.status, RequestStatus::Approved);
     assert_eq!(step2.step_completed, 2);
     assert_eq!(step2.total_steps, 2);
@@ -511,21 +712,31 @@ fn reject_blocks_further_actions() {
     let created = h.create_uc().execute(make_input(), &requester).unwrap();
 
     // Reject
-    h.reject_uc().execute(
-        RejectRequestInput { request_id: created.id.clone(), comment: None },
-        &approver,
-    ).unwrap();
+    h.reject_uc()
+        .execute(
+            RejectRequestInput {
+                request_id: created.id.clone(),
+                comment: None,
+            },
+            &approver,
+        )
+        .unwrap();
 
     // Approve after reject → conflict
     let result = h.approve_uc().execute(
-        ApproveRequestInput { request_id: created.id.clone(), comment: None },
+        ApproveRequestInput {
+            request_id: created.id.clone(),
+            comment: None,
+        },
         &approver,
     );
     assert!(matches!(result, Err(AppError::Conflict(_))));
 
     // Dispatch after reject → conflict
     let result = h.dispatch_uc().execute(
-        DispatchRequestInput { request_id: created.id.clone() },
+        DispatchRequestInput {
+            request_id: created.id.clone(),
+        },
         &requester,
     );
     assert!(matches!(result, Err(AppError::Conflict(_))));
@@ -540,19 +751,26 @@ fn cancel_blocks_further_actions() {
     let created = h.create_uc().execute(make_input(), &requester).unwrap();
 
     // Cancel
-    h.cancel_uc().execute(
-        CancelRequestInput { request_id: created.id.clone(), reason: Some("no longer needed".into()) },
-        &requester,
-    ).unwrap();
+    h.cancel_uc()
+        .execute(
+            CancelRequestInput {
+                request_id: created.id.clone(),
+                reason: Some("no longer needed".into()),
+            },
+            &requester,
+        )
+        .unwrap();
 
     // Approve after cancel → conflict
     let result = h.approve_uc().execute(
-        ApproveRequestInput { request_id: created.id.clone(), comment: None },
+        ApproveRequestInput {
+            request_id: created.id.clone(),
+            comment: None,
+        },
         &approver,
     );
     assert!(matches!(result, Err(AppError::Conflict(_))));
 }
-
 
 #[test]
 fn emergency_without_reason_rejected() {
@@ -628,16 +846,23 @@ fn dispatch_after_approval_ttl_expired_fails() {
     let approver = make_user("bob", &["dba"]);
 
     let created = h.create_uc().execute(make_input(), &requester).unwrap();
-    h.approve_uc().execute(
-        ApproveRequestInput { request_id: created.id.clone(), comment: None },
-        &approver,
-    ).unwrap();
+    h.approve_uc()
+        .execute(
+            ApproveRequestInput {
+                request_id: created.id.clone(),
+                comment: None,
+            },
+            &approver,
+        )
+        .unwrap();
 
     // Advance clock past approval_ttl (3600s)
     h.clock.advance(3601);
 
     let result = h.dispatch_uc().execute(
-        DispatchRequestInput { request_id: created.id.clone() },
+        DispatchRequestInput {
+            request_id: created.id.clone(),
+        },
         &requester,
     );
     assert!(matches!(result, Err(AppError::Gone(_))));
@@ -656,14 +881,23 @@ fn redispatch_respects_max_executions() {
     let approver = make_user("bob", &["dba"]);
 
     let created = h.create_uc().execute(make_input(), &requester).unwrap();
-    h.approve_uc().execute(
-        ApproveRequestInput { request_id: created.id.clone(), comment: None },
-        &approver,
-    ).unwrap();
-    h.dispatch_uc().execute(
-        DispatchRequestInput { request_id: created.id.clone() },
-        &requester,
-    ).unwrap();
+    h.approve_uc()
+        .execute(
+            ApproveRequestInput {
+                request_id: created.id.clone(),
+                comment: None,
+            },
+            &approver,
+        )
+        .unwrap();
+    h.dispatch_uc()
+        .execute(
+            DispatchRequestInput {
+                request_id: created.id.clone(),
+            },
+            &requester,
+        )
+        .unwrap();
 
     // Simulate execution completed → set status to Executed
     {
@@ -684,9 +918,9 @@ fn redispatch_respects_max_executions() {
 // === Agent Flow Tests ===
 
 use dbward_app::use_cases::{
-    agent_poll::{AgentPoll, AgentPollInput},
     agent_claim::{AgentClaim, AgentClaimInput},
     agent_heartbeat::{AgentHeartbeat, AgentHeartbeatInput},
+    agent_poll::{AgentPoll, AgentPollInput},
 };
 
 struct SharedAgentRepo {
@@ -696,14 +930,23 @@ struct SharedAgentRepo {
 
 impl SharedAgentRepo {
     fn new(request_repo: Arc<SharedRepo>) -> Self {
-        Self { executions: Mutex::new(vec![]), request_repo }
+        Self {
+            executions: Mutex::new(vec![]),
+            request_repo,
+        }
     }
 }
 
 impl AgentRepo for SharedAgentRepo {
-    fn upsert(&self, _: &Agent) -> Result<(), AppError> { Ok(()) }
-    fn get(&self, _: &str) -> Result<Option<Agent>, AppError> { Ok(None) }
-    fn list(&self) -> Result<Vec<Agent>, AppError> { Ok(vec![]) }
+    fn upsert(&self, _: &Agent) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get(&self, _: &str) -> Result<Option<Agent>, AppError> {
+        Ok(None)
+    }
+    fn list(&self) -> Result<Vec<Agent>, AppError> {
+        Ok(vec![])
+    }
     fn create_execution(&self, exec: &Execution) -> Result<(), AppError> {
         self.executions.lock().unwrap().push(exec.clone());
         // Also mark request as running
@@ -714,7 +957,13 @@ impl AgentRepo for SharedAgentRepo {
         Ok(())
     }
     fn get_execution(&self, id: &str) -> Result<Option<Execution>, AppError> {
-        Ok(self.executions.lock().unwrap().iter().find(|e| e.id == id).cloned())
+        Ok(self
+            .executions
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|e| e.id == id)
+            .cloned())
     }
     fn update_execution_status(&self, id: &str, status: ExecutionStatus) -> Result<(), AppError> {
         let mut execs = self.executions.lock().unwrap();
@@ -730,17 +979,34 @@ impl AgentRepo for SharedAgentRepo {
         }
         Ok(())
     }
-    fn find_dispatched_jobs(&self, _caps: &[(DatabaseName, Environment)]) -> Result<Vec<Request>, AppError> {
+    fn find_dispatched_jobs(
+        &self,
+        _caps: &[(DatabaseName, Environment)],
+    ) -> Result<Vec<Request>, AppError> {
         let reqs = self.request_repo.requests.lock().unwrap();
-        Ok(reqs.iter().filter(|r| r.status == RequestStatus::Dispatched).cloned().collect())
+        Ok(reqs
+            .iter()
+            .filter(|r| r.status == RequestStatus::Dispatched)
+            .cloned()
+            .collect())
     }
-    fn has_running_migration(&self, _: &DatabaseName, _: &Environment, _: &str) -> Result<bool, AppError> {
+    fn has_running_migration(
+        &self,
+        _: &DatabaseName,
+        _: &Environment,
+        _: &str,
+    ) -> Result<bool, AppError> {
         Ok(false)
     }
     fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> {
         Ok(vec![])
     }
-    fn claim_and_mark_running(&self, exec: &Execution, _request_id: &str, _now: DateTime<Utc>) -> Result<bool, AppError> {
+    fn claim_and_mark_running(
+        &self,
+        exec: &Execution,
+        _request_id: &str,
+        _now: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
         self.executions.lock().unwrap().push(exec.clone());
         let mut reqs = self.request_repo.requests.lock().unwrap();
         if let Some(r) = reqs.iter_mut().find(|r| r.id == exec.request_id) {
@@ -748,26 +1014,62 @@ impl AgentRepo for SharedAgentRepo {
         }
         Ok(true)
     }
-    fn complete_execution(&self, execution_id: &str, request_id: &str, success: bool, now: DateTime<Utc>, _audit_event: &AuditEvent, _result_manifest: Option<&ExecutionResult>, _share_with: &[ResultAccess]) -> Result<bool, AppError> {
+    fn complete_execution(
+        &self,
+        execution_id: &str,
+        request_id: &str,
+        success: bool,
+        now: DateTime<Utc>,
+        _audit_event: &AuditEvent,
+        _result_manifest: Option<&ExecutionResult>,
+        _share_with: &[ResultAccess],
+    ) -> Result<bool, AppError> {
         let mut execs = self.executions.lock().unwrap();
         if let Some(e) = execs.iter_mut().find(|e| e.id == execution_id) {
-            e.status = if success { ExecutionStatus::Completed } else { ExecutionStatus::Failed };
+            e.status = if success {
+                ExecutionStatus::Completed
+            } else {
+                ExecutionStatus::Failed
+            };
             e.finished_at = Some(now);
         }
         let mut reqs = self.request_repo.requests.lock().unwrap();
-        if let Some(r) = reqs.iter_mut().find(|r| r.id == request_id && r.status == RequestStatus::Running) {
-            r.status = if success { RequestStatus::Executed } else { RequestStatus::Failed };
+        if let Some(r) = reqs
+            .iter_mut()
+            .find(|r| r.id == request_id && r.status == RequestStatus::Running)
+        {
+            r.status = if success {
+                RequestStatus::Executed
+            } else {
+                RequestStatus::Failed
+            };
             r.updated_at = now;
             Ok(true)
         } else {
             Ok(false)
         }
     }
-    fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
-    fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-    fn mark_execution_lost_and_record(&self, _: &str, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
-    fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
-    fn delete_result(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+    fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+        Ok(vec![])
+    }
+    fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn mark_execution_lost_and_record(
+        &self,
+        _: &str,
+        _: &str,
+        _: &AuditEvent,
+        _: &str,
+    ) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+        Ok(vec![])
+    }
+    fn delete_result(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 struct FakeTokenSigner;
@@ -775,24 +1077,50 @@ impl TokenSigner for FakeTokenSigner {
     fn sign(&self, claims: &ExecutionTokenClaims) -> String {
         format!("token:{}:{}", claims.request_id, claims.database)
     }
-    fn public_key_hex(&self) -> String { "fake".into() }
+    fn public_key_hex(&self) -> String {
+        "fake".into()
+    }
 }
 
 struct FakeUserRepoForAgent;
 impl UserRepo for FakeUserRepoForAgent {
-    fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> { Ok(None) }
-    fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> { Ok(()) }
-    fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> { Ok(vec![]) }
-    fn suspend(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-    fn activate(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-    fn is_suspended(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
-    fn ensure_exists(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+    fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
+        Ok(None)
+    }
+    fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> {
+        Ok(vec![])
+    }
+    fn suspend(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn activate(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 struct FakeRoleResolverForAgent;
 impl RoleResolver for FakeRoleResolverForAgent {
-    fn resolve(&self, _: &str, _: dbward_domain::auth::SubjectType, _: &[String]) -> Result<Vec<dbward_domain::auth::ResolvedRole>, dbward_app::error::AuthError> {
-        Ok(vec![dbward_domain::auth::ResolvedRole { name: "developer".into(), permissions: Default::default(), databases: vec![], environments: vec![] }])
+    fn resolve(
+        &self,
+        _: &str,
+        _: dbward_domain::auth::SubjectType,
+        _: &[String],
+    ) -> Result<Vec<dbward_domain::auth::ResolvedRole>, dbward_app::error::AuthError> {
+        Ok(vec![dbward_domain::auth::ResolvedRole {
+            name: "developer".into(),
+            permissions: Default::default(),
+            databases: vec![],
+            environments: vec![],
+        }])
     }
 }
 
@@ -802,7 +1130,14 @@ fn make_agent_user(id: &str) -> AuthUser {
         subject_type: SubjectType::Agent,
         roles: vec![ResolvedRole {
             name: "agent-default".into(),
-            permissions: [Permission::AgentPoll, Permission::AgentClaim, Permission::AgentHeartbeat, Permission::AgentSubmitResult].into_iter().collect(),
+            permissions: [
+                Permission::AgentPoll,
+                Permission::AgentClaim,
+                Permission::AgentHeartbeat,
+                Permission::AgentSubmitResult,
+            ]
+            .into_iter()
+            .collect(),
             databases: vec![],
             environments: vec![],
         }],
@@ -820,14 +1155,23 @@ fn agent_full_flow_poll_claim_heartbeat() {
 
     // Create + Approve + Dispatch
     let created = h.create_uc().execute(make_input(), &requester).unwrap();
-    h.approve_uc().execute(
-        ApproveRequestInput { request_id: created.id.clone(), comment: None },
-        &approver,
-    ).unwrap();
-    h.dispatch_uc().execute(
-        DispatchRequestInput { request_id: created.id.clone() },
-        &requester,
-    ).unwrap();
+    h.approve_uc()
+        .execute(
+            ApproveRequestInput {
+                request_id: created.id.clone(),
+                comment: None,
+            },
+            &approver,
+        )
+        .unwrap();
+    h.dispatch_uc()
+        .execute(
+            DispatchRequestInput {
+                request_id: created.id.clone(),
+            },
+            &requester,
+        )
+        .unwrap();
 
     // Agent flow
     let agent_repo = Arc::new(SharedAgentRepo::new(h.repo.clone()));
@@ -840,10 +1184,21 @@ fn agent_full_flow_poll_claim_heartbeat() {
         license_checker: h.license_checker.clone(),
         clock: h.clock.clone(),
     };
-    let poll_result = poll_uc.execute(
-        AgentPollInput { capabilities: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }], operations: vec![], limit: None, in_flight: 0, max_concurrent: 1 },
-        &agent,
-    ).unwrap();
+    let poll_result = poll_uc
+        .execute(
+            AgentPollInput {
+                capabilities: vec![DatabaseCapability {
+                    database: DatabaseName::new("app").unwrap(),
+                    environment: Environment::new("production").unwrap(),
+                }],
+                operations: vec![],
+                limit: None,
+                in_flight: 0,
+                max_concurrent: 1,
+            },
+            &agent,
+        )
+        .unwrap();
     assert_eq!(poll_result.jobs.len(), 1);
     assert_eq!(poll_result.jobs[0].id, created.id);
 
@@ -860,10 +1215,19 @@ fn agent_full_flow_poll_claim_heartbeat() {
         user_repo: Arc::new(FakeUserRepoForAgent),
         role_resolver: Arc::new(FakeRoleResolverForAgent),
     };
-    let claim_result = claim_uc.execute(
-        AgentClaimInput { request_id: created.id.clone(), agent_id: "agent-1".into(), agent_databases: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }] },
-        &agent,
-    ).unwrap();
+    let claim_result = claim_uc
+        .execute(
+            AgentClaimInput {
+                request_id: created.id.clone(),
+                agent_id: "agent-1".into(),
+                agent_databases: vec![DatabaseCapability {
+                    database: DatabaseName::new("app").unwrap(),
+                    environment: Environment::new("production").unwrap(),
+                }],
+            },
+            &agent,
+        )
+        .unwrap();
     assert!(!claim_result.execution_token.is_empty());
     assert_eq!(claim_result.database, "app");
 
@@ -879,10 +1243,14 @@ fn agent_full_flow_poll_claim_heartbeat() {
         event_dispatcher: h.event_dispatcher.clone(),
         clock: h.clock.clone(),
     };
-    let hb_result = hb_uc.execute(
-        AgentHeartbeatInput { execution_id: claim_result.execution_id.clone() },
-        &agent,
-    ).unwrap();
+    let hb_result = hb_uc
+        .execute(
+            AgentHeartbeatInput {
+                execution_id: claim_result.execution_id.clone(),
+            },
+            &agent,
+        )
+        .unwrap();
     assert!(!hb_result.cancelled);
 }
 
@@ -894,14 +1262,23 @@ fn heartbeat_detects_cancelled_request() {
     let agent = make_agent_user("agent-1");
 
     let created = h.create_uc().execute(make_input(), &requester).unwrap();
-    h.approve_uc().execute(
-        ApproveRequestInput { request_id: created.id.clone(), comment: None },
-        &approver,
-    ).unwrap();
-    h.dispatch_uc().execute(
-        DispatchRequestInput { request_id: created.id.clone() },
-        &requester,
-    ).unwrap();
+    h.approve_uc()
+        .execute(
+            ApproveRequestInput {
+                request_id: created.id.clone(),
+                comment: None,
+            },
+            &approver,
+        )
+        .unwrap();
+    h.dispatch_uc()
+        .execute(
+            DispatchRequestInput {
+                request_id: created.id.clone(),
+            },
+            &requester,
+        )
+        .unwrap();
 
     let agent_repo = Arc::new(SharedAgentRepo::new(h.repo.clone()));
     let claim_uc = AgentClaim {
@@ -916,7 +1293,19 @@ fn heartbeat_detects_cancelled_request() {
         user_repo: Arc::new(FakeUserRepoForAgent),
         role_resolver: Arc::new(FakeRoleResolverForAgent),
     };
-    let claim_result = claim_uc.execute(AgentClaimInput { request_id: created.id.clone(), agent_id: "agent-1".into(), agent_databases: vec![DatabaseCapability { database: DatabaseName::new("app").unwrap(), environment: Environment::new("production").unwrap() }] }, &agent).unwrap();
+    let claim_result = claim_uc
+        .execute(
+            AgentClaimInput {
+                request_id: created.id.clone(),
+                agent_id: "agent-1".into(),
+                agent_databases: vec![DatabaseCapability {
+                    database: DatabaseName::new("app").unwrap(),
+                    environment: Environment::new("production").unwrap(),
+                }],
+            },
+            &agent,
+        )
+        .unwrap();
 
     // Cancel the request while agent is running
     {
@@ -933,10 +1322,14 @@ fn heartbeat_detects_cancelled_request() {
         event_dispatcher: h.event_dispatcher.clone(),
         clock: h.clock.clone(),
     };
-    let hb_result = hb_uc.execute(
-        AgentHeartbeatInput { execution_id: claim_result.execution_id },
-        &agent,
-    ).unwrap();
+    let hb_result = hb_uc
+        .execute(
+            AgentHeartbeatInput {
+                execution_id: claim_result.execution_id,
+            },
+            &agent,
+        )
+        .unwrap();
     assert!(hb_result.cancelled);
 }
 
@@ -951,22 +1344,37 @@ fn event_dispatcher_records_full_lifecycle() {
     assert_eq!(created.status, RequestStatus::Pending);
 
     // Approve → Approved
-    let approved = h.approve_uc().execute(
-        ApproveRequestInput { request_id: created.id.clone(), comment: None },
-        &approver,
-    ).unwrap();
+    let approved = h
+        .approve_uc()
+        .execute(
+            ApproveRequestInput {
+                request_id: created.id.clone(),
+                comment: None,
+            },
+            &approver,
+        )
+        .unwrap();
     assert_eq!(approved.status, RequestStatus::Approved);
 
     // Dispatch → Dispatched
-    let dispatched = h.dispatch_uc().execute(
-        DispatchRequestInput { request_id: created.id.clone() },
-        &requester,
-    ).unwrap();
+    let dispatched = h
+        .dispatch_uc()
+        .execute(
+            DispatchRequestInput {
+                request_id: created.id.clone(),
+            },
+            &requester,
+        )
+        .unwrap();
     assert_eq!(dispatched.status, RequestStatus::Dispatched);
 
     // Verify events
     let events = h.event_dispatcher.events();
-    assert_eq!(events.len(), 3, "expected 3 events: created, approved, dispatched");
+    assert_eq!(
+        events.len(),
+        3,
+        "expected 3 events: created, approved, dispatched"
+    );
     assert_eq!(events[0].new_status, RequestStatus::Pending);
     assert_eq!(events[1].new_status, RequestStatus::Approved);
     assert_eq!(events[2].new_status, RequestStatus::Dispatched);
@@ -1019,7 +1427,11 @@ fn event_dispatcher_records_auto_approved_two_events() {
     assert_eq!(created.status, RequestStatus::Dispatched);
 
     let events = h.event_dispatcher.events();
-    assert_eq!(events.len(), 2, "auto_approved emits 2 events: Created + Dispatched");
+    assert_eq!(
+        events.len(),
+        2,
+        "auto_approved emits 2 events: Created + Dispatched"
+    );
     assert_eq!(events[0].new_status, RequestStatus::AutoApproved);
     assert_eq!(events[1].new_status, RequestStatus::Dispatched);
     assert_eq!(events[1].previous_status, RequestStatus::AutoApproved);
@@ -1033,42 +1445,25 @@ fn reject_from_non_pending_returns_conflict() {
 
     // Create + Approve → Approved
     let created = h.create_uc().execute(make_input(), &requester).unwrap();
-    h.approve_uc().execute(
-        ApproveRequestInput { request_id: created.id.clone(), comment: None },
-        &approver,
-    ).unwrap();
+    h.approve_uc()
+        .execute(
+            ApproveRequestInput {
+                request_id: created.id.clone(),
+                comment: None,
+            },
+            &approver,
+        )
+        .unwrap();
 
     // Reject from Approved → should fail
     let result = h.reject_uc().execute(
-        RejectRequestInput { request_id: created.id.clone(), comment: None },
+        RejectRequestInput {
+            request_id: created.id.clone(),
+            comment: None,
+        },
         &approver,
     );
     assert!(matches!(result, Err(AppError::Conflict(_))));
-}
-
-#[test]
-fn cancelled_request_complete_stays_cancelled() {
-    // Verified via status_machine unit test:
-    // (Cancelled, Complete { success: true }) → Cancelled
-    // Full integration test deferred to async test suite (requires ResultStore + tokio runtime)
-    let result = dbward_domain::services::status_machine::transition(
-        RequestStatus::Cancelled,
-        &dbward_domain::services::status_machine::RequestTrigger::Complete { success: true },
-        dbward_domain::services::status_machine::TransitionContext {
-            request_id: "req-001".into(),
-            actor_id: "agent-1".into(),
-            actor_type: SubjectType::Agent,
-            database: DatabaseName::new("app").unwrap(),
-            environment: Environment::new("production").unwrap(),
-            operation: Operation::ExecuteDml,
-            timestamp: chrono::Utc::now(),
-            metadata: dbward_domain::services::status_machine::EventMetadata::Completed {
-                success: true,
-                execution_id: "exec-1".into(),
-            },
-        },
-    ).unwrap();
-    assert_eq!(result.status(), RequestStatus::Cancelled);
 }
 
 // === Regression Tests ===
@@ -1082,7 +1477,10 @@ fn no_workflow_configured_rejects_non_emergency() {
 
     let result = h.create_uc().execute(input, &requester);
     match result {
-        Err(AppError::Validation(msg)) => assert!(msg.contains("no workflow configured"), "unexpected msg: {msg}"),
+        Err(AppError::Validation(msg)) => assert!(
+            msg.contains("no workflow configured"),
+            "unexpected msg: {msg}"
+        ),
         Err(e) => panic!("expected Validation error, got: {e:?}"),
         Ok(_) => panic!("expected Validation error, got Ok"),
     }
@@ -1107,50 +1505,140 @@ fn no_workflow_configured_allows_break_glass() {
 // BUG-6: Token prefix = raw[4..12]
 #[test]
 fn token_prefix_is_raw_4_to_12() {
-    use dbward_app::use_cases::token_manage::{TokenManage, TokenCreateInput};
+    use dbward_app::use_cases::token_manage::{TokenCreateInput, TokenManage};
 
     struct FakeTokenRepo(std::sync::Mutex<Vec<dbward_domain::entities::Token>>);
     impl TokenRepo for FakeTokenRepo {
         fn create(&self, t: &dbward_domain::entities::Token) -> Result<(), AppError> {
-            self.0.lock().unwrap().push(t.clone()); Ok(())
+            self.0.lock().unwrap().push(t.clone());
+            Ok(())
         }
-        fn verify(&self, _: &str, _: &str) -> Result<Option<dbward_domain::entities::Token>, AppError> { Ok(None) }
-        fn list(&self) -> Result<Vec<dbward_domain::entities::Token>, AppError> { Ok(vec![]) }
-        fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Token>, AppError> { Ok(None) }
-        fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn revoke_all_for_user(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<u32, AppError> { Ok(0) }
-        fn count_active(&self) -> Result<u32, AppError> { Ok(0) }
-        fn purge_revoked(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+        fn verify(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+            Ok(None)
+        }
+        fn list(&self) -> Result<Vec<dbward_domain::entities::Token>, AppError> {
+            Ok(vec![])
+        }
+        fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+            Ok(None)
+        }
+        fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn revoke_all_for_user(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn count_active(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
     }
 
     struct FakeUserRepoNotSuspended;
     impl UserRepo for FakeUserRepoNotSuspended {
-        fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> { Ok(None) }
-        fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> { Ok(()) }
-        fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> { Ok(vec![]) }
-        fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn activate(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn is_suspended(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
-        fn ensure_exists(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+        fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
+            Ok(None)
+        }
+        fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> {
+            Ok(vec![])
+        }
+        fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn activate(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     struct FakePolicyRepoForToken;
     impl PolicyRepo for FakePolicyRepoForToken {
-        fn create_workflow(&self, _: &dbward_domain::policies::workflow::Workflow) -> Result<(), AppError> { Ok(()) }
-        fn get_workflow(&self, _: &str) -> Result<Option<dbward_domain::policies::workflow::Workflow>, AppError> { Ok(None) }
-        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::workflow::Workflow>, AppError> { Ok(vec![]) }
-        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn count_workflows(&self) -> Result<u32, AppError> { Ok(0) }
-        fn create_execution_policy(&self, _: &dbward_domain::policies::ExecutionPolicy) -> Result<(), AppError> { Ok(()) }
-        fn get_execution_policy(&self, _: &str) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(None) }
-        fn list_execution_policies(&self) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(vec![]) }
-        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn find_result_policy(&self, _: &DatabaseName, _: &Environment) -> Result<Option<ResultPolicy>, AppError> { Ok(None) }
-        fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> { Ok(()) }
-        fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
-        fn get_roles_by_names(&self, _: &[String]) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
-        fn delete_role(&self, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn count_roles(&self) -> Result<u32, AppError> { Ok(0) }
+        fn create_workflow(
+            &self,
+            _: &dbward_domain::policies::workflow::Workflow,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_workflow(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::workflow::Workflow>, AppError> {
+            Ok(None)
+        }
+        fn list_workflows(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::workflow::Workflow>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn count_workflows(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn create_execution_policy(
+            &self,
+            _: &dbward_domain::policies::ExecutionPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_execution_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_execution_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn find_result_policy(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+        ) -> Result<Option<ResultPolicy>, AppError> {
+            Ok(None)
+        }
+        fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> {
+            Ok(vec![])
+        }
+        fn get_roles_by_names(
+            &self,
+            _: &[String],
+        ) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_role(&self, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn count_roles(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
     }
 
     let token_repo = Arc::new(FakeTokenRepo(std::sync::Mutex::new(vec![])));
@@ -1166,14 +1654,19 @@ fn token_prefix_is_raw_4_to_12() {
     };
 
     let admin = make_user("admin", &["admin"]);
-    let output = uc.create(TokenCreateInput {
-        subject_id: "bob".into(),
-        subject_type: "user".into(),
-        name: Some("test-token".into()),
-        roles: vec![],
-        groups: vec![],
-        expires_at: None,
-    }, &admin).unwrap();
+    let output = uc
+        .create(
+            TokenCreateInput {
+                subject_id: "bob".into(),
+                subject_type: "user".into(),
+                name: Some("test-token".into()),
+                roles: vec![],
+                groups: vec![],
+                expires_at: None,
+            },
+            &admin,
+        )
+        .unwrap();
 
     // Token format: "dbw_{uuid}" → prefix = raw[4..12]
     assert!(output.token.starts_with("dbw_"));

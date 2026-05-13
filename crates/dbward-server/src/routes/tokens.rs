@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Extension, Path, State},
     http::StatusCode,
-    Json,
 };
 use chrono::{DateTime, Utc};
 use dbward_app::use_cases::token_manage::{TokenCreateInput, TokenManage, TokenRevokeInput};
@@ -39,26 +39,31 @@ pub async fn create(
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
     };
-    let output = uc.create(
-        TokenCreateInput {
-            subject_id: body.subject_id,
-            subject_type: body.subject_type,
-            name: body.name,
-            roles: body.roles,
-            groups: body.groups,
-            expires_at: body.expires_at,
-        },
-        &user,
-    ).map_err(map_error)?;
+    let output = uc
+        .create(
+            TokenCreateInput {
+                subject_id: body.subject_id,
+                subject_type: body.subject_type,
+                name: body.name,
+                roles: body.roles,
+                groups: body.groups,
+                expires_at: body.expires_at,
+            },
+            &user,
+        )
+        .map_err(map_error)?;
 
-    Ok((StatusCode::CREATED, Json(serde_json::json!({
-        "id": output.id,
-        "token": output.token,
-        "prefix": output.prefix,
-        "subject_id": output.subject_id,
-        "expires_at": output.expires_at,
-        "permissions": output.permissions,
-    }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": output.id,
+            "token": output.token,
+            "prefix": output.prefix,
+            "subject_id": output.subject_id,
+            "expires_at": output.expires_at,
+            "permissions": output.permissions,
+        })),
+    ))
 }
 
 pub async fn list(
@@ -76,7 +81,10 @@ pub async fn list(
         id_gen: state.id_generator.clone(),
     };
     let output = uc.list(&user).map_err(map_error)?;
-    Ok((StatusCode::OK, Json(serde_json::json!({ "tokens": output.tokens }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({ "tokens": output.tokens })),
+    ))
 }
 
 pub async fn revoke(
@@ -94,11 +102,15 @@ pub async fn revoke(
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
     };
-    let output = uc.revoke(TokenRevokeInput { token_id: id }, &user)
+    let output = uc
+        .revoke(TokenRevokeInput { token_id: id }, &user)
         .map_err(map_error)?;
 
-    Ok((StatusCode::OK, Json(serde_json::json!({
-        "id": output.id,
-        "revoked_at": output.revoked_at,
-    }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": output.id,
+            "revoked_at": output.revoked_at,
+        })),
+    ))
 }

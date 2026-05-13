@@ -1,11 +1,11 @@
-use std::sync::{Arc, RwLock};
-use std::ops::ControlFlow;
-use dbward_app::ports::{Notifier, WebhookEvent, AuditLogger, EventDispatcher, WebhookRepo};
+use dbward_app::ports::{AuditLogger, EventDispatcher, Notifier, WebhookEvent, WebhookRepo};
 use dbward_domain::entities::{AuditEvent, WebhookStatus};
 use dbward_domain::services::status_machine::TransitionEvent;
-use sqlparser::ast::{Value, VisitorMut, VisitMut};
+use sqlparser::ast::{Value, VisitMut, VisitorMut};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
+use std::ops::ControlFlow;
+use std::sync::{Arc, RwLock};
 
 #[derive(Clone, Copy, Default)]
 pub enum RedactionMode {
@@ -44,11 +44,18 @@ pub fn redact_sql_literals(sql: &str) -> String {
     match Parser::parse_sql(&GenericDialect {}, sql) {
         Ok(mut stmts) => {
             let _ = stmts.visit(&mut LiteralRedactor);
-            stmts.iter().map(|s| s.to_string()).collect::<Vec<_>>().join("; ")
+            stmts
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
         }
         Err(_) => {
             use sha2::{Digest, Sha256};
-            format!("parse-failed:{}", hex::encode(Sha256::digest(sql.as_bytes())))
+            format!(
+                "parse-failed:{}",
+                hex::encode(Sha256::digest(sql.as_bytes()))
+            )
         }
     }
 }
@@ -75,7 +82,11 @@ impl WebhookDispatcher {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_default();
-        Self { client, hooks: RwLock::new(hooks), webhook_repo: None }
+        Self {
+            client,
+            hooks: RwLock::new(hooks),
+            webhook_repo: None,
+        }
     }
 
     pub fn with_repo(webhook_repo: Arc<dyn WebhookRepo>) -> Self {
@@ -84,7 +95,11 @@ impl WebhookDispatcher {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_default();
-        Self { client, hooks: RwLock::new(vec![]), webhook_repo: Some(webhook_repo) }
+        Self {
+            client,
+            hooks: RwLock::new(vec![]),
+            webhook_repo: Some(webhook_repo),
+        }
     }
 }
 
@@ -109,7 +124,8 @@ impl Notifier for WebhookDispatcher {
                 "environment": event.environment,
                 "actor": event.actor,
                 "detail": event.detail,
-            })).unwrap_or_default();
+            }))
+            .unwrap_or_default();
 
             tokio::spawn(async move {
                 let _ = send_with_retry(&client, &url, &body, secret.as_deref()).await;
@@ -120,7 +136,8 @@ impl Notifier for WebhookDispatcher {
     fn reload(&self) -> Result<(), dbward_app::error::AppError> {
         if let Some(ref repo) = self.webhook_repo {
             let webhooks = repo.list()?;
-            let configs: Vec<WebhookConfig> = webhooks.into_iter()
+            let configs: Vec<WebhookConfig> = webhooks
+                .into_iter()
                 .filter(|w| w.status == WebhookStatus::Active)
                 .map(|w| WebhookConfig {
                     url: w.url,
@@ -136,7 +153,12 @@ impl Notifier for WebhookDispatcher {
     }
 }
 
-async fn send_with_retry(client: &reqwest::Client, url: &str, body: &str, secret: Option<&str>) -> Result<(), ()> {
+async fn send_with_retry(
+    client: &reqwest::Client,
+    url: &str,
+    body: &str,
+    secret: Option<&str>,
+) -> Result<(), ()> {
     // DNS rebinding protection: resolve once, validate, and connect to pinned IP
     let parsed = url::Url::parse(url).map_err(|_| ())?;
     let host = parsed.host_str().ok_or(())?;
@@ -167,7 +189,8 @@ async fn send_with_retry(client: &reqwest::Client, url: &str, body: &str, secret
     );
 
     for attempt in 0..3 {
-        let mut req = client.post(&pinned_url)
+        let mut req = client
+            .post(&pinned_url)
             .header("content-type", "application/json")
             .header("host", host)
             .body(body.to_string());
@@ -194,8 +217,11 @@ async fn send_with_retry(client: &reqwest::Client, url: &str, body: &str, secret
 fn is_private_ip(ip: &std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => {
-            v4.is_loopback() || v4.is_private() || v4.is_link_local()
-                || v4.is_broadcast() || v4.is_unspecified()
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_unspecified()
                 || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
                 || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
         }
@@ -203,7 +229,8 @@ fn is_private_ip(ip: &std::net::IpAddr) -> bool {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return v4.is_loopback() || v4.is_private() || v4.is_link_local();
             }
-            v6.is_loopback() || v6.is_unspecified()
+            v6.is_loopback()
+                || v6.is_unspecified()
                 || (v6.segments()[0] & 0xfe00) == 0xfc00
                 || (v6.segments()[0] & 0xffc0) == 0xfe80
         }
@@ -224,8 +251,14 @@ impl EventDispatcher for CompositeEventDispatcher {
         use dbward_domain::services::status_machine::EventMetadata;
 
         let (event_type, category) = match &event.metadata {
-            EventMetadata::Created { emergency: true, .. } => ("break_glass", "approval"),
-            EventMetadata::Created { .. } if event.new_status == dbward_domain::entities::RequestStatus::AutoApproved => ("request_auto_approved", "approval"),
+            EventMetadata::Created {
+                emergency: true, ..
+            } => ("break_glass", "approval"),
+            EventMetadata::Created { .. }
+                if event.new_status == dbward_domain::entities::RequestStatus::AutoApproved =>
+            {
+                ("request_auto_approved", "approval")
+            }
             EventMetadata::Created { .. } => ("request_created", "approval"),
             EventMetadata::StepApproved { .. } => ("step_approved", "approval"),
             EventMetadata::Approved { .. } => ("request_approved", "approval"),
@@ -253,7 +286,9 @@ impl EventDispatcher for CompositeEventDispatcher {
             audit_event.detail_fingerprint = Some(redact_sql_literals(detail));
             match self.redaction_mode {
                 RedactionMode::None => audit_event.detail_raw = Some(detail.clone()),
-                RedactionMode::Literals => audit_event.detail_raw = Some(redact_sql_literals(detail)),
+                RedactionMode::Literals => {
+                    audit_event.detail_raw = Some(redact_sql_literals(detail))
+                }
                 RedactionMode::Full => {}
             }
         }
@@ -274,10 +309,10 @@ impl EventDispatcher for CompositeEventDispatcher {
         }
 
         // Create result channel slot when request is dispatched
-        if let Some(ref rc) = self.result_channel {
-            if matches!(&event.metadata, EventMetadata::Dispatched) {
-                rc.create_slot(&event.request_id);
-            }
+        if let Some(ref rc) = self.result_channel
+            && matches!(&event.metadata, EventMetadata::Dispatched)
+        {
+            rc.create_slot(&event.request_id);
         }
 
         // Fan out to additional subscribers (ADR-004)
@@ -295,8 +330,14 @@ mod redaction_tests {
     fn redacts_string_literals() {
         let sql = "SELECT * FROM users WHERE name = 'secret' AND age > 25";
         let result = redact_sql_literals(sql);
-        assert!(!result.contains("secret"), "string literal not redacted: {result}");
-        assert!(!result.contains("25"), "numeric literal not redacted: {result}");
+        assert!(
+            !result.contains("secret"),
+            "string literal not redacted: {result}"
+        );
+        assert!(
+            !result.contains("25"),
+            "numeric literal not redacted: {result}"
+        );
         assert!(result.contains("?"), "placeholder missing: {result}");
     }
 
@@ -304,21 +345,30 @@ mod redaction_tests {
     fn redacts_typed_string() {
         let sql = "SELECT * FROM events WHERE ts > DATE '2024-01-01'";
         let result = redact_sql_literals(sql);
-        assert!(!result.contains("2024-01-01"), "typed string not redacted: {result}");
+        assert!(
+            !result.contains("2024-01-01"),
+            "typed string not redacted: {result}"
+        );
     }
 
     #[test]
     fn preserves_null_and_placeholders() {
         let sql = "SELECT * FROM t WHERE a IS NULL AND b = $1";
         let result = redact_sql_literals(sql);
-        assert!(result.contains("NULL"), "NULL should be preserved: {result}");
+        assert!(
+            result.contains("NULL"),
+            "NULL should be preserved: {result}"
+        );
     }
 
     #[test]
     fn parse_failure_returns_hash() {
         let sql = "NOT VALID SQL {{{{";
         let result = redact_sql_literals(sql);
-        assert!(result.starts_with("parse-failed:"), "should fallback: {result}");
+        assert!(
+            result.starts_with("parse-failed:"),
+            "should fallback: {result}"
+        );
         assert_eq!(result.len(), "parse-failed:".len() + 64); // sha256 hex
     }
 

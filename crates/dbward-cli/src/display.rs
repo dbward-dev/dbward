@@ -140,11 +140,11 @@ pub(crate) fn print_execution_result(resp: &serde_json::Value) {
         return;
     }
     // Try "result_data" (stream format - JSON string)
-    if let Some(data) = resp["result_data"].as_str() {
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data) {
-            display_result_value(&parsed);
-            return;
-        }
+    if let Some(data) = resp["result_data"].as_str()
+        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
+    {
+        display_result_value(&parsed);
+        return;
     }
     // DML result
     if let Some(affected) = resp["rows_affected"].as_u64() {
@@ -567,7 +567,8 @@ mod tests {
     #[test]
     fn execution_result_routes_to_rows_when_rows_key_present() {
         // Simulates SELECT with empty result — must NOT fall through to rows_affected
-        let resp = json!({"success": true, "result": {"rows": [], "row_count": 0, "truncated": false}});
+        let resp =
+            json!({"success": true, "result": {"rows": [], "row_count": 0, "truncated": false}});
         let result = resp.get("result").unwrap();
         // The routing check: rows key present → print_result_table path
         assert!(result.get("rows").and_then(|r| r.as_array()).is_some());
@@ -585,6 +586,9 @@ mod tests {
     fn execution_result_error_detected() {
         let resp = json!({"success": false, "error": "syntax error at position 5"});
         assert_eq!(resp["success"].as_bool(), Some(false));
-        assert_eq!(resp["error"].as_str().unwrap(), "syntax error at position 5");
+        assert_eq!(
+            resp["error"].as_str().unwrap(),
+            "syntax error at position 5"
+        );
     }
 }

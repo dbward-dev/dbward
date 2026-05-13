@@ -6,9 +6,7 @@ pub enum ResourceContext {
     /// No resource-level check needed (manage_* operations).
     Global,
     /// Request operations: ownership check.
-    Request {
-        requester_id: String,
-    },
+    Request { requester_id: String },
     /// Approval operations: workflow approvers + constraints.
     ApprovalStep {
         requester_id: String,
@@ -19,20 +17,14 @@ pub enum ResourceContext {
         previous_approver_ids: Vec<String>,
     },
     /// Agent operations: agent_id match.
-    AgentExecution {
-        agent_id: String,
-    },
+    AgentExecution { agent_id: String },
     /// Result access: requester + share_with selectors.
     Result {
         requester_id: String,
         access_selectors: Vec<String>,
     },
     /// Audit query: scope restriction.
-    AuditQuery {
-        requested_actor_id: Option<String>,
-    },
+    AuditQuery { requested_actor_id: Option<String> },
     /// Token operations: ownership check.
-    Token {
-        owner_id: String,
-    },
+    Token { owner_id: String },
 }

@@ -17,7 +17,7 @@ pub async fn run_databases(sc: &ServerClient, _json_output: bool) -> Result<(), 
                 grouped.entry(name).or_default().push(env);
             }
             println!("{:<20} ENVIRONMENTS", "NAME");
-            println!("{:<20} {}", "----", "------------");
+            println!("{:<20} ------------", "----");
             for (name, envs) in &grouped {
                 println!("{:<20} {}", name, envs.join(", "));
             }

@@ -1,5 +1,5 @@
-use std::path::Path;
 use serde::Deserialize;
+use std::path::Path;
 
 /// Server configuration loaded from TOML.
 #[derive(Debug, Deserialize)]
@@ -32,10 +32,18 @@ pub struct RetentionConfig {
     pub approval_ttl_secs: u64,
 }
 
-fn default_request_ttl() -> u64 { 90 }
-fn default_audit_ttl() -> u64 { 365 }
-fn default_result_ttl() -> u64 { 30 }
-fn default_approval_ttl() -> u64 { 86400 }
+fn default_request_ttl() -> u64 {
+    90
+}
+fn default_audit_ttl() -> u64 {
+    365
+}
+fn default_result_ttl() -> u64 {
+    30
+}
+fn default_approval_ttl() -> u64 {
+    86400
+}
 
 #[derive(Debug, Deserialize, Default)]
 pub struct AuthConfig {
@@ -79,7 +87,9 @@ pub struct OidcRoleMapping {
     pub role: String,
 }
 
-fn default_auth_mode() -> String { "both".into() }
+fn default_auth_mode() -> String {
+    "both".into()
+}
 
 #[derive(Debug, Deserialize, Default)]
 pub struct AuditConfig {
@@ -87,7 +97,9 @@ pub struct AuditConfig {
     pub redaction: String,
 }
 
-fn default_redaction() -> String { "literals".into() }
+fn default_redaction() -> String {
+    "literals".into()
+}
 
 #[derive(Debug, Deserialize, Default)]
 pub struct ResultStorageConfig {
@@ -100,8 +112,12 @@ pub struct ResultStorageConfig {
     pub endpoint: Option<String>,
 }
 
-fn default_backend() -> String { "local".into() }
-fn default_root_dir() -> String { "./data/results".into() }
+fn default_backend() -> String {
+    "local".into()
+}
+fn default_root_dir() -> String {
+    "./data/results".into()
+}
 
 #[derive(Debug, Deserialize)]
 pub struct DatabaseDef {
@@ -134,9 +150,13 @@ pub struct WorkflowDef {
     pub statement_timeout_secs: Option<u64>,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
-fn star() -> String { "*".into() }
+fn star() -> String {
+    "*".into()
+}
 
 #[derive(Debug, Deserialize)]
 pub struct WebhookDef {
@@ -148,11 +168,10 @@ pub struct WebhookDef {
 
 impl ServerConfig {
     pub fn load(path: &Path) -> Result<Self, String> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let content =
+            std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let expanded = expand_env_vars(&content)?;
-        toml::from_str(&expanded)
-            .map_err(|e| format!("{}: {e}", path.display()))
+        toml::from_str(&expanded).map_err(|e| format!("{}: {e}", path.display()))
     }
 }
 
@@ -164,7 +183,9 @@ fn expand_env_vars(input: &str) -> Result<String, String> {
             chars.next();
             let mut var_name = String::new();
             for ch in chars.by_ref() {
-                if ch == '}' { break; }
+                if ch == '}' {
+                    break;
+                }
                 var_name.push(ch);
             }
             let val = std::env::var(&var_name)

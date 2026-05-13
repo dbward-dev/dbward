@@ -78,7 +78,7 @@ mod tests {
         assert!(DatabaseName::new("1app").is_err());
         assert!(DatabaseName::new("App").is_err());
         assert!(DatabaseName::new("a b").is_err());
-        assert!(DatabaseName::new(&"a".repeat(64)).is_err());
+        assert!(DatabaseName::new("a".repeat(64)).is_err());
     }
 
     #[test]

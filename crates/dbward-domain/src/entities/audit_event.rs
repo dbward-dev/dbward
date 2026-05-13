@@ -14,7 +14,7 @@ pub enum EventCategory {
 }
 
 impl EventCategory {
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "approval" => Self::Approval,
             "execution" => Self::Execution,
@@ -74,11 +74,16 @@ pub struct AuditEvent {
 impl AuditEvent {
     /// Create a minimal audit event for management operations.
     /// Hash chain fields (prev_hash, event_hash) are filled by the infra layer.
-    pub fn simple(event_type: &str, category: &str, actor_id: &str, resource_id: Option<&str>) -> Self {
+    pub fn simple(
+        event_type: &str,
+        category: &str,
+        actor_id: &str,
+        resource_id: Option<&str>,
+    ) -> Self {
         Self {
             id: String::new(), // filled by infra
             event_type: event_type.to_string(),
-            event_category: EventCategory::from_str(category),
+            event_category: EventCategory::parse(category),
             event_version: 1,
             outcome: EventOutcome::Success,
             actor_id: actor_id.to_string(),

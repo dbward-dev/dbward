@@ -19,9 +19,17 @@ pub struct InMemoryResultChannel {
     slots: Arc<StdMutex<HashMap<String, Arc<ResultSlot>>>>,
 }
 
+impl Default for InMemoryResultChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InMemoryResultChannel {
     pub fn new() -> Self {
-        Self { slots: Arc::new(StdMutex::new(HashMap::new())) }
+        Self {
+            slots: Arc::new(StdMutex::new(HashMap::new())),
+        }
     }
 }
 
@@ -30,38 +38,51 @@ impl ResultChannel for InMemoryResultChannel {
     fn create_slot(&self, request_id: &str) {
         let mut slots = self.slots.lock().unwrap();
         slots.retain(|_, s| s.created_at.elapsed().as_secs() < 600);
-        slots.insert(request_id.to_string(), Arc::new(ResultSlot {
-            data: Mutex::new(None),
-            notify: Notify::new(),
-            created_at: Instant::now(),
-        }));
+        slots.insert(
+            request_id.to_string(),
+            Arc::new(ResultSlot {
+                data: Mutex::new(None),
+                notify: Notify::new(),
+                created_at: Instant::now(),
+            }),
+        );
     }
 
     async fn publish(&self, request_id: &str, summary: ResultSummary) {
         let slot = {
             let mut slots = self.slots.lock().unwrap();
-            slots.entry(request_id.to_string()).or_insert_with(|| {
-                Arc::new(ResultSlot {
-                    data: Mutex::new(None),
-                    notify: Notify::new(),
-                    created_at: Instant::now(),
+            slots
+                .entry(request_id.to_string())
+                .or_insert_with(|| {
+                    Arc::new(ResultSlot {
+                        data: Mutex::new(None),
+                        notify: Notify::new(),
+                        created_at: Instant::now(),
+                    })
                 })
-            }).clone()
+                .clone()
         };
         *slot.data.lock().await = Some(summary);
         slot.notify.notify_waiters();
     }
 
-    async fn subscribe(&self, request_id: &str, timeout_secs: u64) -> Result<Option<ResultSummary>, AppError> {
+    async fn subscribe(
+        &self,
+        request_id: &str,
+        timeout_secs: u64,
+    ) -> Result<Option<ResultSummary>, AppError> {
         let slot = {
             let mut slots = self.slots.lock().unwrap();
-            slots.entry(request_id.to_string()).or_insert_with(|| {
-                Arc::new(ResultSlot {
-                    data: Mutex::new(None),
-                    notify: Notify::new(),
-                    created_at: Instant::now(),
+            slots
+                .entry(request_id.to_string())
+                .or_insert_with(|| {
+                    Arc::new(ResultSlot {
+                        data: Mutex::new(None),
+                        notify: Notify::new(),
+                        created_at: Instant::now(),
+                    })
                 })
-            }).clone()
+                .clone()
         };
 
         // Check if already available
@@ -73,7 +94,8 @@ impl ResultChannel for InMemoryResultChannel {
         let timeout = tokio::time::timeout(
             std::time::Duration::from_secs(timeout_secs),
             slot.notify.notified(),
-        ).await;
+        )
+        .await;
 
         if timeout.is_ok() {
             Ok(slot.data.lock().await.clone())

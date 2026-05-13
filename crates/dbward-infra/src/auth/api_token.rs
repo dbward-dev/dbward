@@ -20,7 +20,12 @@ impl ApiTokenVerifier {
         user_repo: Arc<dyn UserRepo>,
         policy_repo: Arc<dyn PolicyRepo>,
     ) -> Self {
-        Self { token_repo, user_repo, policy_repo, oidc: None }
+        Self {
+            token_repo,
+            user_repo,
+            policy_repo,
+            oidc: None,
+        }
     }
 
     pub fn with_oidc(mut self, oidc: super::OidcVerifier) -> Self {
@@ -40,19 +45,23 @@ impl TokenVerifier for ApiTokenVerifier {
         let prefix = &without_prefix[..8];
         let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
 
-        let token = self.token_repo.verify(prefix, &hash)
+        let token = self
+            .token_repo
+            .verify(prefix, &hash)
             .map_err(|e| AuthError::Internal(e.to_string()))?
             .ok_or(AuthError::InvalidToken)?;
 
         // Check expiration
-        if let Some(expires_at) = token.expires_at {
-            if expires_at < chrono::Utc::now() {
-                return Err(AuthError::TokenExpired);
-            }
+        if let Some(expires_at) = token.expires_at
+            && expires_at < chrono::Utc::now()
+        {
+            return Err(AuthError::TokenExpired);
         }
 
         // fail-closed: propagate DB errors
-        let suspended = self.user_repo.is_suspended(&token.subject_id)
+        let suspended = self
+            .user_repo
+            .is_suspended(&token.subject_id)
             .map_err(|e| AuthError::Internal(e.to_string()))?;
         if suspended {
             return Err(AuthError::UserSuspended);
@@ -60,26 +69,32 @@ impl TokenVerifier for ApiTokenVerifier {
 
         // Resolve roles from token.roles by looking up role definitions
         // Token.roles stores role NAMES fixed at creation time (source of truth)
-        let matched_roles = self.policy_repo.get_roles_by_names(&token.roles)
+        let matched_roles = self
+            .policy_repo
+            .get_roles_by_names(&token.roles)
             .map_err(|e| AuthError::Internal(e.to_string()))?;
 
-        let roles: Vec<ResolvedRole> = matched_roles.into_iter().map(|rd| {
-            ResolvedRole {
+        let roles: Vec<ResolvedRole> = matched_roles
+            .into_iter()
+            .map(|rd| ResolvedRole {
                 name: rd.name,
                 permissions: rd.permissions.into_iter().collect(),
                 databases: rd.databases,
                 environments: rd.environments,
-            }
-        }).collect();
+            })
+            .collect();
 
         if roles.is_empty() {
-            return Err(AuthError::Internal(
-                format!("no matching role definitions for token roles: {:?}", token.roles)
-            ));
+            return Err(AuthError::Internal(format!(
+                "no matching role definitions for token roles: {:?}",
+                token.roles
+            )));
         }
 
         // Auto-create user on first auth
-        self.user_repo.ensure_exists(&token.subject_id).map_err(|e| AuthError::Internal(e.to_string()))?;
+        self.user_repo
+            .ensure_exists(&token.subject_id)
+            .map_err(|e| AuthError::Internal(e.to_string()))?;
 
         Ok(AuthUser {
             subject_id: token.subject_id,

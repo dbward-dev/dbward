@@ -9,7 +9,9 @@ pub struct SqliteUserRepo {
 }
 
 impl SqliteUserRepo {
-    pub fn new(conn: DbConn) -> Self { Self { conn } }
+    pub fn new(conn: DbConn) -> Self {
+        Self { conn }
+    }
 }
 
 impl UserRepo for SqliteUserRepo {
@@ -21,12 +23,21 @@ impl UserRepo for SqliteUserRepo {
                 id: row.get(0)?,
                 display_name: row.get(1)?,
                 email: row.get(2)?,
-                groups: serde_json::from_str::<Vec<String>>(&row.get::<_, String>(3)?).unwrap_or_default(),
+                groups: serde_json::from_str::<Vec<String>>(&row.get::<_, String>(3)?)
+                    .unwrap_or_default(),
                 roles: vec![],
                 status: parse_user_status(&row.get::<_, String>(4)?),
-                last_seen_at: row.get::<_, Option<String>>(5)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?).unwrap().with_timezone(&Utc),
-                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?).unwrap().with_timezone(&Utc),
+                last_seen_at: row.get::<_, Option<String>>(5)?.and_then(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .ok()
+                        .map(|d| d.with_timezone(&Utc))
+                }),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
+                    .unwrap()
+                    .with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
+                    .unwrap()
+                    .with_timezone(&Utc),
             })
         });
         match result {
@@ -55,20 +66,32 @@ impl UserRepo for SqliteUserRepo {
     fn list(&self) -> Result<Vec<User>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT id, display_name, email, groups_json, status, last_seen_at, created_at, updated_at FROM users ORDER BY created_at DESC").map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt.query_map([], |row| {
-            Ok(User {
-                id: row.get(0)?,
-                display_name: row.get(1)?,
-                email: row.get(2)?,
-                groups: serde_json::from_str::<Vec<String>>(&row.get::<_, String>(3)?).unwrap_or_default(),
-                roles: vec![],
-                status: parse_user_status(&row.get::<_, String>(4)?),
-                last_seen_at: row.get::<_, Option<String>>(5)?.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|d| d.with_timezone(&Utc))),
-                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?).unwrap().with_timezone(&Utc),
-                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?).unwrap().with_timezone(&Utc),
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(User {
+                    id: row.get(0)?,
+                    display_name: row.get(1)?,
+                    email: row.get(2)?,
+                    groups: serde_json::from_str::<Vec<String>>(&row.get::<_, String>(3)?)
+                        .unwrap_or_default(),
+                    roles: vec![],
+                    status: parse_user_status(&row.get::<_, String>(4)?),
+                    last_seen_at: row.get::<_, Option<String>>(5)?.and_then(|s| {
+                        DateTime::parse_from_rfc3339(&s)
+                            .ok()
+                            .map(|d| d.with_timezone(&Utc))
+                    }),
+                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
+                        .unwrap()
+                        .with_timezone(&Utc),
+                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
+                        .unwrap()
+                        .with_timezone(&Utc),
+                })
             })
-        }).map_err(|e| AppError::Internal(e.to_string()))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| AppError::Internal(e.to_string()))
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Internal(e.to_string()))
     }
 
     fn suspend(&self, user_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
@@ -85,7 +108,13 @@ impl UserRepo for SqliteUserRepo {
 
     fn is_suspended(&self, user_id: &str) -> Result<bool, AppError> {
         let conn = self.conn.lock().unwrap();
-        let status: Option<String> = conn.query_row("SELECT status FROM users WHERE id = ?1", rusqlite::params![user_id], |r| r.get(0)).ok();
+        let status: Option<String> = conn
+            .query_row(
+                "SELECT status FROM users WHERE id = ?1",
+                rusqlite::params![user_id],
+                |r| r.get(0),
+            )
+            .ok();
         Ok(status.as_deref() == Some("suspended"))
     }
 

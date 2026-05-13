@@ -637,10 +637,9 @@ async fn submit_and_wait(
 
     match status.as_str() {
         "dispatched" | "break_glass" | "running" => {
-            match tokio::time::timeout(
-                Duration::from_secs(60),
-                client.wait_for_result(&req_id),
-            ).await {
+            match tokio::time::timeout(Duration::from_secs(60), client.wait_for_result(&req_id))
+                .await
+            {
                 Ok(Ok(resp)) => format_result(&resp),
                 Ok(Err(e)) => Err(e.to_string()),
                 Err(_) => Ok(format!(
@@ -659,10 +658,9 @@ async fn submit_and_wait(
         "approved" | "auto_approved" => {
             // Dispatch and wait
             client.dispatch(&req_id).await.map_err(|e| e.body.clone())?;
-            match tokio::time::timeout(
-                Duration::from_secs(60),
-                client.wait_for_result(&req_id),
-            ).await {
+            match tokio::time::timeout(Duration::from_secs(60), client.wait_for_result(&req_id))
+                .await
+            {
                 Ok(Ok(resp)) => format_result(&resp),
                 Ok(Err(e)) => Err(e.to_string()),
                 Err(_) => Ok(format!(

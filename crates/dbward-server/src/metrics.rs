@@ -1,6 +1,6 @@
 use std::fmt::Write;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use dbward_app::ports::{AgentRepo, RequestRepo};
 
@@ -21,8 +21,13 @@ pub struct Metrics {
     pub http_request_duration: HistogramVec<2>,
     pub approval_wait: Histogram,
     pub execution_duration: HistogramVec<2>,
-
     // Gauge snapshots are computed at render time from repos
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Metrics {
@@ -53,37 +58,108 @@ pub fn render(
     let mut out = String::with_capacity(4096);
 
     // Counters
-    write_counter_vec(&mut out, "dbward_requests_total", &["status", "environment", "database"], &metrics.requests_total);
-    write_counter_vec(&mut out, "dbward_approvals_total", &["action"], &metrics.approvals_total);
+    write_counter_vec(
+        &mut out,
+        "dbward_requests_total",
+        &["status", "environment", "database"],
+        &metrics.requests_total,
+    );
+    write_counter_vec(
+        &mut out,
+        "dbward_approvals_total",
+        &["action"],
+        &metrics.approvals_total,
+    );
     writeln!(out, "# TYPE dbward_break_glass_total counter").ok();
-    writeln!(out, "dbward_break_glass_total {}", metrics.break_glass_total.load(Ordering::Relaxed)).ok();
-    write_counter_vec(&mut out, "dbward_agent_executions_total", &["status"], &metrics.agent_executions_total);
-    write_counter_vec(&mut out, "dbward_auth_failures_total", &["reason"], &metrics.auth_failures_total);
-    write_counter_vec(&mut out, "dbward_http_requests_total", &["method", "path", "status"], &metrics.http_requests_total);
+    writeln!(
+        out,
+        "dbward_break_glass_total {}",
+        metrics.break_glass_total.load(Ordering::Relaxed)
+    )
+    .ok();
+    write_counter_vec(
+        &mut out,
+        "dbward_agent_executions_total",
+        &["status"],
+        &metrics.agent_executions_total,
+    );
+    write_counter_vec(
+        &mut out,
+        "dbward_auth_failures_total",
+        &["reason"],
+        &metrics.auth_failures_total,
+    );
+    write_counter_vec(
+        &mut out,
+        "dbward_http_requests_total",
+        &["method", "path", "status"],
+        &metrics.http_requests_total,
+    );
     writeln!(out, "# TYPE dbward_agent_lease_expirations_total counter").ok();
-    writeln!(out, "dbward_agent_lease_expirations_total {}", metrics.agent_lease_expirations_total.load(Ordering::Relaxed)).ok();
-    write_counter_vec(&mut out, "dbward_webhook_deliveries_total", &["status"], &metrics.webhook_deliveries_total);
-    write_counter_vec(&mut out, "dbward_result_storage_total", &["status"], &metrics.result_storage_total);
+    writeln!(
+        out,
+        "dbward_agent_lease_expirations_total {}",
+        metrics
+            .agent_lease_expirations_total
+            .load(Ordering::Relaxed)
+    )
+    .ok();
+    write_counter_vec(
+        &mut out,
+        "dbward_webhook_deliveries_total",
+        &["status"],
+        &metrics.webhook_deliveries_total,
+    );
+    write_counter_vec(
+        &mut out,
+        "dbward_result_storage_total",
+        &["status"],
+        &metrics.result_storage_total,
+    );
 
     // Histograms
-    write_histogram_vec(&mut out, "dbward_http_request_duration_seconds", &["method", "path"], &metrics.http_request_duration);
-    write_histogram_single(&mut out, "dbward_approval_wait_seconds", &metrics.approval_wait);
-    write_histogram_vec(&mut out, "dbward_execution_duration_seconds", &["database", "environment"], &metrics.execution_duration);
+    write_histogram_vec(
+        &mut out,
+        "dbward_http_request_duration_seconds",
+        &["method", "path"],
+        &metrics.http_request_duration,
+    );
+    write_histogram_single(
+        &mut out,
+        "dbward_approval_wait_seconds",
+        &metrics.approval_wait,
+    );
+    write_histogram_vec(
+        &mut out,
+        "dbward_execution_duration_seconds",
+        &["database", "environment"],
+        &metrics.execution_duration,
+    );
 
     // Gauges (queried at render time)
     writeln!(out, "# TYPE dbward_requests_current gauge").ok();
     for status in &["pending", "approved", "dispatched", "running"] {
         let count = request_repo.count_by_status(status).unwrap_or(0);
-        writeln!(out, "dbward_requests_current{{status=\"{status}\"}} {count}").ok();
+        writeln!(
+            out,
+            "dbward_requests_current{{status=\"{status}\"}} {count}"
+        )
+        .ok();
     }
 
     writeln!(out, "# TYPE dbward_agents_active gauge").ok();
     let agents = agent_repo.list().unwrap_or_default();
-    let active = agents.iter().filter(|a| a.status == dbward_domain::entities::AgentStatus::Active).count();
+    let active = agents
+        .iter()
+        .filter(|a| a.status == dbward_domain::entities::AgentStatus::Active)
+        .count();
     writeln!(out, "dbward_agents_active {active}").ok();
 
     writeln!(out, "# TYPE dbward_agents_saturated gauge").ok();
-    let saturated = agents.iter().filter(|a| a.in_flight >= a.max_concurrent).count();
+    let saturated = agents
+        .iter()
+        .filter(|a| a.in_flight >= a.max_concurrent)
+        .count();
     writeln!(out, "dbward_agents_saturated {saturated}").ok();
 
     out
@@ -95,9 +171,17 @@ pub struct CounterVec<const N: usize> {
     entries: std::sync::Mutex<Vec<([String; N], u64)>>,
 }
 
+impl<const N: usize> Default for CounterVec<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> CounterVec<N> {
     pub fn new() -> Self {
-        Self { entries: std::sync::Mutex::new(Vec::new()) }
+        Self {
+            entries: std::sync::Mutex::new(Vec::new()),
+        }
     }
 
     pub fn inc(&self, labels: [&str; N]) {
@@ -118,12 +202,20 @@ impl<const N: usize> CounterVec<N> {
 
 // --- Histogram infrastructure ---
 
-const BUCKETS: &[f64] = &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0];
+const BUCKETS: &[f64] = &[
+    0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0,
+];
 
 pub struct Histogram {
     buckets: Vec<AtomicU64>,
     sum: AtomicU64, // stored as f64 bits
     count: AtomicU64,
+}
+
+impl Default for Histogram {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Histogram {
@@ -141,7 +233,16 @@ impl Histogram {
             let old_bits = self.sum.load(Ordering::Relaxed);
             let old = f64::from_bits(old_bits);
             let new = old + value;
-            if self.sum.compare_exchange(old_bits, new.to_bits(), Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+            if self
+                .sum
+                .compare_exchange(
+                    old_bits,
+                    new.to_bits(),
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
                 break;
             }
         }
@@ -159,9 +260,17 @@ pub struct HistogramVec<const N: usize> {
     entries: std::sync::Mutex<Vec<([String; N], Arc<Histogram>)>>,
 }
 
+impl<const N: usize> Default for HistogramVec<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> HistogramVec<N> {
     pub fn new() -> Self {
-        Self { entries: std::sync::Mutex::new(Vec::new()) }
+        Self {
+            entries: std::sync::Mutex::new(Vec::new()),
+        }
     }
 
     pub fn observe(&self, labels: [&str; N], value: f64) {
@@ -184,14 +293,21 @@ impl<const N: usize> HistogramVec<N> {
 
 // --- Rendering helpers ---
 
-fn write_counter_vec<const N: usize>(out: &mut String, name: &str, label_names: &[&str; N], cv: &CounterVec<N>) {
+fn write_counter_vec<const N: usize>(
+    out: &mut String,
+    name: &str,
+    label_names: &[&str; N],
+    cv: &CounterVec<N>,
+) {
     let entries = cv.snapshot();
     if entries.is_empty() {
         return;
     }
     writeln!(out, "# TYPE {name} counter").ok();
     for (labels, value) in &entries {
-        let pairs: Vec<String> = label_names.iter().zip(labels.iter())
+        let pairs: Vec<String> = label_names
+            .iter()
+            .zip(labels.iter())
             .map(|(k, v)| format!("{k}=\"{v}\""))
             .collect();
         writeln!(out, "{name}{{{pairs}}} {value}", pairs = pairs.join(",")).ok();
@@ -215,7 +331,12 @@ fn write_histogram_single(out: &mut String, name: &str, h: &Histogram) {
     writeln!(out, "{name}_count {count}").ok();
 }
 
-fn write_histogram_vec<const N: usize>(out: &mut String, name: &str, label_names: &[&str; N], hv: &HistogramVec<N>) {
+fn write_histogram_vec<const N: usize>(
+    out: &mut String,
+    name: &str,
+    label_names: &[&str; N],
+    hv: &HistogramVec<N>,
+) {
     let entries = hv.snapshot();
     if entries.is_empty() {
         return;
@@ -226,14 +347,20 @@ fn write_histogram_vec<const N: usize>(out: &mut String, name: &str, label_names
         if count == 0 {
             continue;
         }
-        let pairs: Vec<String> = label_names.iter().zip(labels.iter())
+        let pairs: Vec<String> = label_names
+            .iter()
+            .zip(labels.iter())
             .map(|(k, v)| format!("{k}=\"{v}\""))
             .collect();
         let label_str = pairs.join(",");
         let mut cumulative = 0u64;
         for (i, &bound) in BUCKETS.iter().enumerate() {
             cumulative += h.buckets[i].load(Ordering::Relaxed);
-            writeln!(out, "{name}_bucket{{{label_str},le=\"{bound}\"}} {cumulative}").ok();
+            writeln!(
+                out,
+                "{name}_bucket{{{label_str},le=\"{bound}\"}} {cumulative}"
+            )
+            .ok();
         }
         writeln!(out, "{name}_bucket{{{label_str},le=\"+Inf\"}} {count}").ok();
         let sum = f64::from_bits(h.sum.load(Ordering::Relaxed));

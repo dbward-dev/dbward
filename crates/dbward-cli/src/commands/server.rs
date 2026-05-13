@@ -44,14 +44,20 @@ pub enum TokenAction {
 }
 
 fn parse_role(s: &str) -> Result<String, String> {
-    if s.is_empty() { Err("role cannot be empty".into()) } else { Ok(s.to_string()) }
+    if s.is_empty() {
+        Err("role cannot be empty".into())
+    } else {
+        Ok(s.to_string())
+    }
 }
 
 pub async fn run_server_command(action: &ServerAction) -> Result<(), CliError> {
     match action {
-        ServerAction::Start { listen, data, config } => {
-            run_server_start(listen, data, config).await
-        }
+        ServerAction::Start {
+            listen,
+            data,
+            config,
+        } => run_server_start(listen, data, config).await,
         ServerAction::Token { action } => run_token_command(action).await,
     }
 }
@@ -59,9 +65,12 @@ pub async fn run_server_command(action: &ServerAction) -> Result<(), CliError> {
 async fn run_server_start(listen: &str, data: &str, config: &str) -> Result<(), CliError> {
     let binary = find_server_binary()?;
     let status = ProcessCommand::new(&binary)
-        .arg("--listen").arg(listen)
-        .arg("--data").arg(data)
-        .arg("--config").arg(config)
+        .arg("--listen")
+        .arg(listen)
+        .arg("--data")
+        .arg(data)
+        .arg("--config")
+        .arg(config)
         .status()
         .map_err(|e| CliError::Server(format!("failed to start server: {e}")))?;
     if !status.success() {
@@ -73,29 +82,45 @@ async fn run_server_start(listen: &str, data: &str, config: &str) -> Result<(), 
 async fn run_token_command(action: &TokenAction) -> Result<(), CliError> {
     let binary = find_server_binary()?;
     let status = match action {
-        TokenAction::Create { user, role, agent, groups, data } => {
+        TokenAction::Create {
+            user,
+            role,
+            agent,
+            groups,
+            data,
+        } => {
             let mut cmd = ProcessCommand::new(&binary);
-            cmd.arg("token").arg("create")
-                .arg("--user").arg(user)
-                .arg("--role").arg(role)
-                .arg("--data").arg(data);
-            if *agent { cmd.arg("--agent"); }
+            cmd.arg("token")
+                .arg("create")
+                .arg("--user")
+                .arg(user)
+                .arg("--role")
+                .arg(role)
+                .arg("--data")
+                .arg(data);
+            if *agent {
+                cmd.arg("--agent");
+            }
             if !groups.is_empty() {
                 cmd.arg("--groups").arg(groups.join(","));
             }
             cmd.status()
         }
-        TokenAction::Revoke { id, data } => {
-            ProcessCommand::new(&binary)
-                .arg("token").arg("revoke")
-                .arg("--id").arg(id)
-                .arg("--data").arg(data)
-                .status()
-        }
+        TokenAction::Revoke { id, data } => ProcessCommand::new(&binary)
+            .arg("token")
+            .arg("revoke")
+            .arg("--id")
+            .arg(id)
+            .arg("--data")
+            .arg(data)
+            .status(),
     };
-    let status = status.map_err(|e| CliError::Server(format!("failed to run server binary: {e}")))?;
+    let status =
+        status.map_err(|e| CliError::Server(format!("failed to run server binary: {e}")))?;
     if !status.success() {
-        return Err(CliError::Server(format!("server command exited with {status}")));
+        return Err(CliError::Server(format!(
+            "server command exited with {status}"
+        )));
     }
     Ok(())
 }

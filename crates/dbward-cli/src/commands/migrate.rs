@@ -39,7 +39,9 @@ pub enum MigrateAction {
         #[arg(long = "idempotency-key")]
         idempotency_key: Option<String>,
     },
-    Create { name: String },
+    Create {
+        name: String,
+    },
 }
 
 pub async fn run_migrate(
@@ -52,31 +54,70 @@ pub async fn run_migrate(
     _selected_db: Option<&str>,
 ) -> Result<(), CliError> {
     let (operation, detail, metadata, idempotency_key, share_with) = match action {
-        MigrateAction::Up { count, ticket, repo, idempotency_key, share_with } => {
+        MigrateAction::Up {
+            count,
+            ticket,
+            repo,
+            idempotency_key,
+            share_with,
+        } => {
             let migrations_dir = config.migrations_dir_for(db_name);
             let mut d = dbward_migrate::build_migrate_up_detail(&migrations_dir, &[])
                 .map_err(|e| CliError::Other(e.to_string()))?;
             d.max_count = *count;
-            let detail_str = d.to_detail_string().map_err(|e| CliError::Other(e.to_string()))?;
-            ("migrate_up", detail_str, build_request_metadata(ticket.as_deref(), repo.as_deref()), idempotency_key.as_deref(), share_with.as_slice())
+            let detail_str = d
+                .to_detail_string()
+                .map_err(|e| CliError::Other(e.to_string()))?;
+            (
+                "migrate_up",
+                detail_str,
+                build_request_metadata(ticket.as_deref(), repo.as_deref()),
+                idempotency_key.as_deref(),
+                share_with.as_slice(),
+            )
         }
-        MigrateAction::Down { count, ticket, repo, idempotency_key } => {
+        MigrateAction::Down {
+            count,
+            ticket,
+            repo,
+            idempotency_key,
+        } => {
             let migrations_dir = config.migrations_dir_for(db_name);
             let all_down = dbward_migrate::list_down_versions(&migrations_dir)
                 .map_err(|e| CliError::Other(e.to_string()))?;
             let mut d = dbward_migrate::build_migrate_down_detail(&migrations_dir, &all_down)
                 .map_err(|e| CliError::Other(e.to_string()))?;
             d.max_count = Some(*count);
-            let detail_str = d.to_detail_string().map_err(|e| CliError::Other(e.to_string()))?;
-            ("migrate_down", detail_str, build_request_metadata(ticket.as_deref(), repo.as_deref()), idempotency_key.as_deref(), [].as_slice())
+            let detail_str = d
+                .to_detail_string()
+                .map_err(|e| CliError::Other(e.to_string()))?;
+            (
+                "migrate_down",
+                detail_str,
+                build_request_metadata(ticket.as_deref(), repo.as_deref()),
+                idempotency_key.as_deref(),
+                [].as_slice(),
+            )
         }
-        MigrateAction::Status { ticket, repo, idempotency_key } => {
-            ("migrate_status", String::new(), build_request_metadata(ticket.as_deref(), repo.as_deref()), idempotency_key.as_deref(), [].as_slice())
-        }
+        MigrateAction::Status {
+            ticket,
+            repo,
+            idempotency_key,
+        } => (
+            "migrate_status",
+            String::new(),
+            build_request_metadata(ticket.as_deref(), repo.as_deref()),
+            idempotency_key.as_deref(),
+            [].as_slice(),
+        ),
         MigrateAction::Create { .. } => unreachable!(),
     };
 
-    let sw = if share_with.is_empty() { None } else { Some(share_with) };
+    let sw = if share_with.is_empty() {
+        None
+    } else {
+        Some(share_with)
+    };
     let (id, status, approvers) = sc
         .create_request(CreateRequest {
             operation,

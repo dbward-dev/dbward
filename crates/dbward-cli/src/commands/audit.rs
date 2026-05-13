@@ -40,8 +40,16 @@ pub async fn run_audit(
 
     let body = sc
         .list_audit_events(
-            limit, user, operation, status, event_type, category, outcome,
-            environment, since, until,
+            limit,
+            user,
+            operation,
+            status,
+            event_type,
+            category,
+            outcome,
+            environment,
+            since,
+            until,
         )
         .await?;
 
@@ -73,7 +81,9 @@ fn print_audit_csv(body: &serde_json::Value) {
             total
         );
     }
-    println!("id,event_type,event_category,outcome,actor_id,created_at,environment,database_name,operation,client_ip,resource_type,resource_id,request_id,event_hash,reason");
+    println!(
+        "id,event_type,event_category,outcome,actor_id,created_at,environment,database_name,operation,client_ip,resource_type,resource_id,request_id,event_hash,reason"
+    );
     for e in entries {
         let escape = |s: &str| {
             if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
@@ -85,11 +95,21 @@ fn print_audit_csv(body: &serde_json::Value) {
         let f = |key: &str| e[key].as_str().unwrap_or("").to_string();
         println!(
             "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
-            escape(&f("id")), escape(&f("event_type")), escape(&f("event_category")),
-            escape(&f("outcome")), escape(&f("actor_id")), escape(&f("created_at")),
-            escape(&f("environment")), escape(&f("database_name")), escape(&f("operation")),
-            escape(&f("client_ip")), escape(&f("resource_type")), escape(&f("resource_id")),
-            escape(&f("request_id")), escape(&f("event_hash")), escape(&f("reason")),
+            escape(&f("id")),
+            escape(&f("event_type")),
+            escape(&f("event_category")),
+            escape(&f("outcome")),
+            escape(&f("actor_id")),
+            escape(&f("created_at")),
+            escape(&f("environment")),
+            escape(&f("database_name")),
+            escape(&f("operation")),
+            escape(&f("client_ip")),
+            escape(&f("resource_type")),
+            escape(&f("resource_id")),
+            escape(&f("request_id")),
+            escape(&f("event_hash")),
+            escape(&f("reason")),
         );
     }
 }

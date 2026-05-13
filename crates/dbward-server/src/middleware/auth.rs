@@ -1,9 +1,11 @@
-use axum::{extract::Request, extract::State, http::StatusCode, middleware::Next, response::Response};
+use axum::{
+    extract::Request, extract::State, http::StatusCode, middleware::Next, response::Response,
+};
 use dbward_app::error::AuthError;
 use dbward_domain::auth::{AuthUser, SubjectType};
 use dbward_domain::entities::{User, UserStatus};
-use std::sync::Mutex;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use crate::state::AppState;
 
@@ -16,17 +18,19 @@ fn auth_error_response(e: AuthError) -> (StatusCode, String) {
     match e {
         AuthError::Internal(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            serde_json::json!({"error": "internal server error", "code": "internal_error"}).to_string(),
+            serde_json::json!({"error": "internal server error", "code": "internal_error"})
+                .to_string(),
         ),
         _ => (
             StatusCode::UNAUTHORIZED,
-            serde_json::json!({"error": "authentication failed", "code": "unauthorized"}).to_string(),
+            serde_json::json!({"error": "authentication failed", "code": "unauthorized"})
+                .to_string(),
         ),
     }
 }
 
 fn log_auth_failure(state: &AppState, e: &AuthError) {
-    use dbward_domain::entities::{AuditEvent, EventCategory, EventOutcome, ActorType};
+    use dbward_domain::entities::{ActorType, AuditEvent, EventCategory, EventOutcome};
     let event = AuditEvent {
         id: String::new(),
         event_type: "auth.failure".to_string(),
@@ -67,7 +71,8 @@ pub async fn auth_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or((
             StatusCode::UNAUTHORIZED,
-            serde_json::json!({"error": "authentication failed", "code": "unauthorized"}).to_string(),
+            serde_json::json!({"error": "authentication failed", "code": "unauthorized"})
+                .to_string(),
         ))?;
 
     // H-17: Enforce auth_mode
@@ -103,7 +108,9 @@ pub async fn auth_middleware(
         };
         if let Err(e) = state.user_repo.upsert(&user_entity) {
             tracing::error!("user upsert failed: {e}");
-            return Err(auth_error_response(AuthError::Internal("user upsert failed".into())));
+            return Err(auth_error_response(AuthError::Internal(
+                "user upsert failed".into(),
+            )));
         }
 
         // Check suspended (fail-closed: DB error → reject)
@@ -114,7 +121,9 @@ pub async fn auth_middleware(
                 return Err(auth_error_response(AuthError::UserSuspended));
             }
             Err(_) => {
-                return Err(auth_error_response(AuthError::Internal("suspended check failed".into())));
+                return Err(auth_error_response(AuthError::Internal(
+                    "suspended check failed".into(),
+                )));
             }
             Ok(false) => {}
         }
@@ -131,12 +140,16 @@ pub async fn auth_middleware(
         {
             let should_emit = {
                 let cache = LOGIN_AUDIT_CACHE.lock().unwrap();
-                cache.get(&subject_id)
-                    .map_or(true, |t| t.elapsed() > std::time::Duration::from_secs(3600))
+                cache
+                    .get(&subject_id)
+                    .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(3600))
             };
             if should_emit {
                 let event = dbward_domain::entities::AuditEvent::simple(
-                    "login_success", "auth", &subject_id, None,
+                    "login_success",
+                    "auth",
+                    &subject_id,
+                    None,
                 );
                 let _ = state.audit_logger.record(&event);
                 let mut cache = LOGIN_AUDIT_CACHE.lock().unwrap();

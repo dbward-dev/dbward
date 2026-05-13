@@ -47,7 +47,9 @@ pub async fn run_execute(
         })
         .await?;
     if no_store {
-        eprintln!("⚠ --no-store: result will not be persisted. If you disconnect, it cannot be recovered.");
+        eprintln!(
+            "⚠ --no-store: result will not be persisted. If you disconnect, it cannot be recovered."
+        );
     }
 
     match status.as_str() {

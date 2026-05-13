@@ -223,7 +223,8 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                     Ok(resp) => {
                         let subject = resp["subject_id"].as_str().unwrap_or("unknown");
                         let stype = resp["subject_type"].as_str().unwrap_or("unknown");
-                        let roles: Vec<&str> = resp["roles"].as_array()
+                        let roles: Vec<&str> = resp["roles"]
+                            .as_array()
                             .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
                             .unwrap_or_default();
                         println!("Subject: {subject} ({stype})");
@@ -298,7 +299,9 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
     let (server_url, api_token) = authenticate(&cfg).await?;
     let sc = ServerClient::new(&server_url, &api_token);
     let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
-    let env_str = cli.environment.as_deref()
+    let env_str = cli
+        .environment
+        .as_deref()
         .or(cfg.default_environment.as_deref())
         .unwrap_or("development");
     let json_output = cli.format == "json";
@@ -317,21 +320,46 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             no_store,
         } => {
             execute::run_execute(
-                &sc, &db_name, env_str, json_output, sql, emergency, reason.as_deref(),
-                output.as_deref(), no_save, ticket.as_deref(), repo.as_deref(),
-                idempotency_key.as_deref(), share_with, no_store,
+                &sc,
+                &db_name,
+                env_str,
+                json_output,
+                sql,
+                emergency,
+                reason.as_deref(),
+                output.as_deref(),
+                no_save,
+                ticket.as_deref(),
+                repo.as_deref(),
+                idempotency_key.as_deref(),
+                share_with,
+                no_store,
             )
             .await
         }
         Command::Migrate { ref action } => {
-            migrate::run_migrate(&sc, &cfg, &db_name, env_str, json_output, action, cli.database.as_deref()).await
+            migrate::run_migrate(
+                &sc,
+                &cfg,
+                &db_name,
+                env_str,
+                json_output,
+                action,
+                cli.database.as_deref(),
+            )
+            .await
         }
         Command::Request { action } => {
-            request::run_request(&sc, json_output, action, cli.database.as_deref(), cli.environment.as_deref()).await
+            request::run_request(
+                &sc,
+                json_output,
+                action,
+                cli.database.as_deref(),
+                cli.environment.as_deref(),
+            )
+            .await
         }
-        Command::Result { action } => {
-            result::run_result(&sc, json_output, action).await
-        }
+        Command::Result { action } => result::run_result(&sc, json_output, action).await,
         Command::Databases => misc::run_databases(&sc, json_output).await,
         Command::Mcp => crate::mcp::run_stdio(cfg, cli.database.as_deref(), sc).await,
         Command::Audit {
@@ -348,10 +376,20 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             ref output,
         } => {
             audit::run_audit(
-                &sc, json_output, *limit, user.as_deref(), operation.as_deref(),
-                status.as_deref(), event_type.as_deref(), category.as_deref(),
-                outcome.as_deref(), since.as_deref(), until.as_deref(),
-                cli.environment.as_deref(), verify, output,
+                &sc,
+                json_output,
+                *limit,
+                user.as_deref(),
+                operation.as_deref(),
+                status.as_deref(),
+                event_type.as_deref(),
+                category.as_deref(),
+                outcome.as_deref(),
+                since.as_deref(),
+                until.as_deref(),
+                cli.environment.as_deref(),
+                verify,
+                output,
             )
             .await
         }
@@ -377,10 +415,14 @@ mod tests {
     fn global_options_parse_before_subcommand() {
         let cli = Cli::try_parse_from([
             "dbward",
-            "--environment", "production",
-            "--database", "primary",
-            "execute", "SELECT 1",
-        ]).unwrap();
+            "--environment",
+            "production",
+            "--database",
+            "primary",
+            "execute",
+            "SELECT 1",
+        ])
+        .unwrap();
 
         assert_eq!(cli.environment.as_deref(), Some("production"));
         assert_eq!(cli.database.as_deref(), Some("primary"));
@@ -391,10 +433,14 @@ mod tests {
     fn global_options_parse_after_subcommand() {
         let cli = Cli::try_parse_from([
             "dbward",
-            "execute", "SELECT 1",
-            "--environment", "production",
-            "--database", "primary",
-        ]).unwrap();
+            "execute",
+            "SELECT 1",
+            "--environment",
+            "production",
+            "--database",
+            "primary",
+        ])
+        .unwrap();
 
         assert_eq!(cli.environment.as_deref(), Some("production"));
         assert_eq!(cli.database.as_deref(), Some("primary"));
@@ -419,11 +465,19 @@ mod tests {
     #[test]
     fn request_approve_comment_option_parses() {
         let cli = Cli::try_parse_from([
-            "dbward", "request", "approve", "abc12345", "--comment", "LGTM",
-        ]).unwrap();
+            "dbward",
+            "request",
+            "approve",
+            "abc12345",
+            "--comment",
+            "LGTM",
+        ])
+        .unwrap();
 
         match cli.command {
-            Command::Request { action: request::RequestAction::Approve { comment, .. } } => {
+            Command::Request {
+                action: request::RequestAction::Approve { comment, .. },
+            } => {
                 assert_eq!(comment.as_deref(), Some("LGTM"));
             }
             _ => panic!("unexpected command"),
@@ -433,14 +487,24 @@ mod tests {
     #[test]
     fn request_list_user_option_parses() {
         let cli = Cli::try_parse_from([
-            "dbward", "--database", "primary", "--environment", "production",
-            "request", "list", "--user", "alice",
-        ]).unwrap();
+            "dbward",
+            "--database",
+            "primary",
+            "--environment",
+            "production",
+            "request",
+            "list",
+            "--user",
+            "alice",
+        ])
+        .unwrap();
 
         assert_eq!(cli.database.as_deref(), Some("primary"));
         assert_eq!(cli.environment.as_deref(), Some("production"));
         match cli.command {
-            Command::Request { action: request::RequestAction::List { user, .. } } => {
+            Command::Request {
+                action: request::RequestAction::List { user, .. },
+            } => {
                 assert_eq!(user.as_deref(), Some("alice"));
             }
             _ => panic!("unexpected command"),

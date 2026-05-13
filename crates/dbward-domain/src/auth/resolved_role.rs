@@ -16,9 +16,7 @@ pub struct ResolvedRole {
 impl ResolvedRole {
     /// Whether this role grants the given permission on the given db+env.
     pub fn allows(&self, perm: Permission, db: &DatabaseName, env: &Environment) -> bool {
-        self.has_permission(perm)
-            && self.covers_database(db)
-            && self.covers_environment(env)
+        self.has_permission(perm) && self.covers_database(db) && self.covers_environment(env)
     }
 
     pub fn has_permission(&self, perm: Permission) -> bool {
@@ -30,7 +28,9 @@ impl ResolvedRole {
     }
 
     fn covers_environment(&self, env: &Environment) -> bool {
-        self.environments.iter().any(|e| e.as_str() == "*" || e == env)
+        self.environments
+            .iter()
+            .any(|e| e.as_str() == "*" || e == env)
     }
 }
 

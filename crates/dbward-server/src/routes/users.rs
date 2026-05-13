@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     extract::{Extension, Path, State},
     http::StatusCode,
-    Json,
 };
 use dbward_app::use_cases::user_manage::{UserManage, UserSuspendInput};
 use dbward_domain::auth::AuthUser;
@@ -10,16 +10,17 @@ use crate::state::AppState;
 
 use super::map_error;
 
-pub async fn me(
-    Extension(user): Extension<AuthUser>,
-) -> (StatusCode, Json<serde_json::Value>) {
+pub async fn me(Extension(user): Extension<AuthUser>) -> (StatusCode, Json<serde_json::Value>) {
     let role_names: Vec<&str> = user.roles.iter().map(|r| r.name.as_str()).collect();
-    (StatusCode::OK, Json(serde_json::json!({
-        "subject_id": user.subject_id,
-        "subject_type": user.subject_type,
-        "roles": role_names,
-        "groups": user.groups,
-    })))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "subject_id": user.subject_id,
+            "subject_type": user.subject_type,
+            "roles": role_names,
+            "groups": user.groups,
+        })),
+    )
 }
 
 pub async fn list(
@@ -35,7 +36,10 @@ pub async fn list(
         clock: state.clock.clone(),
     };
     let output = uc.list(&user).map_err(map_error)?;
-    Ok((StatusCode::OK, Json(serde_json::json!({ "users": output.users }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({ "users": output.users })),
+    ))
 }
 
 pub async fn suspend(
@@ -51,14 +55,18 @@ pub async fn suspend(
         audit: state.audit_logger.clone(),
         clock: state.clock.clone(),
     };
-    let output = uc.suspend(UserSuspendInput { user_id: id }, &user)
+    let output = uc
+        .suspend(UserSuspendInput { user_id: id }, &user)
         .map_err(map_error)?;
 
-    Ok((StatusCode::OK, Json(serde_json::json!({
-        "id": output.id,
-        "revoked_tokens": output.revoked_tokens,
-        "cancelled_requests": output.cancelled_requests,
-    }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": output.id,
+            "revoked_tokens": output.revoked_tokens,
+            "cancelled_requests": output.cancelled_requests,
+        })),
+    ))
 }
 
 pub async fn activate(
