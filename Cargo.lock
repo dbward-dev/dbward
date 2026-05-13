@@ -629,6 +629,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "hostname",
+ "rand 0.8.6",
  "reqwest",
  "serde",
  "serde_json",
