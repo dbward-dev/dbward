@@ -29,9 +29,6 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-      - name: Build release
-        run: cargo build --workspace --release
-
   security:
     runs-on: ubuntu-latest
     steps:
