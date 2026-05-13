@@ -79,6 +79,7 @@ impl AgentClaim {
                     execution_id: execution_id.clone(),
                     agent_id: input.agent_id.clone(),
                 },
+                requester_id: request.requester.clone(),
             },
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;

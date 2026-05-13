@@ -139,6 +139,7 @@ impl RejectRequest {
                 metadata: EventMetadata::Rejected {
                     comment: input.comment.clone(),
                 },
+                requester_id: request.requester.clone(),
             },
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;

@@ -98,6 +98,7 @@ impl AgentSubmitResult {
                     success: input.success,
                     execution_id: execution.id.clone(),
                 },
+                requester_id: request.requester.clone(),
             },
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;

@@ -72,6 +72,7 @@ pub struct TransitionContext {
     pub operation: Operation,
     pub timestamp: DateTime<Utc>,
     pub metadata: EventMetadata,
+    pub requester_id: String,
 }
 
 /// Event emitted after a successful state transition.
@@ -87,6 +88,7 @@ pub struct TransitionEvent {
     pub operation: Operation,
     pub timestamp: DateTime<Utc>,
     pub metadata: EventMetadata,
+    pub requester_id: String,
 }
 
 /// Result of a state transition. Must be committed via .commit().
@@ -139,6 +141,7 @@ pub fn transition(
         operation: context.operation,
         timestamp: context.timestamp,
         metadata: context.metadata,
+        requester_id: context.requester_id,
     };
 
     Ok(TransitionResult { new_status, event })
@@ -166,6 +169,7 @@ pub fn create_event(new_status: RequestStatus, context: TransitionContext) -> Tr
         operation: context.operation,
         timestamp: context.timestamp,
         metadata: context.metadata,
+        requester_id: context.requester_id,
     };
     TransitionResult { new_status, event }
 }

@@ -72,6 +72,7 @@ impl CancelRequest {
                 metadata: EventMetadata::Cancelled {
                     reason: input.reason.clone(),
                 },
+                requester_id: request.requester.clone(),
             },
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;

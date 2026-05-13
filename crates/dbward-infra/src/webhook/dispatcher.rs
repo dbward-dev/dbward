@@ -334,7 +334,7 @@ impl EventDispatcher for CompositeEventDispatcher {
             environment: Some(event.environment.as_str().to_string()),
             actor: Some(event.actor_id.clone()),
             detail: None,
-            requester: Some(event.actor_id.clone()),
+            requester: Some(event.requester_id.clone()),
             reason: match &event.metadata {
                 EventMetadata::Created { .. } => None,
                 EventMetadata::Rejected { comment, .. } => comment.clone(),

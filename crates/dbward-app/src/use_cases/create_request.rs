@@ -246,6 +246,7 @@ impl CreateRequest {
                         detail: input.detail,
                         emergency: input.emergency,
                     },
+                    requester_id: user.subject_id.clone(),
                 },
             );
             create_result.commit(&*self.event_dispatcher);
@@ -262,6 +263,7 @@ impl CreateRequest {
                     operation,
                     timestamp: now,
                     metadata: EventMetadata::Dispatched,
+                    requester_id: user.subject_id.clone(),
                 },
             )
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -285,6 +287,7 @@ impl CreateRequest {
                         detail: input.detail,
                         emergency: input.emergency,
                     },
+                    requester_id: user.subject_id.clone(),
                 },
             );
             create_result.commit(&*self.event_dispatcher);
