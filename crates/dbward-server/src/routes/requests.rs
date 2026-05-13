@@ -7,8 +7,8 @@ use serde_json::json;
 
 use dbward_app::error::AppError;
 use dbward_app::use_cases::{
-    approve_request, cancel_request, create_request, dispatch_request, get_result, reject_request,
-    stream_result,
+    approve_request, cancel_request, create_request, dispatch_request, get_result, list_requests,
+    reject_request, stream_result,
 };
 use dbward_domain::auth::AuthUser;
 use dbward_domain::values::{DatabaseName, Environment, Operation};
@@ -173,87 +173,41 @@ pub async fn list(
     Extension(user): Extension<AuthUser>,
     axum::extract::Query(params): axum::extract::Query<ListParams>,
 ) -> ApiResult {
-    // Require request.view permission
-    state
-        .authorizer
-        .authorize_global(&user, dbward_domain::auth::Permission::RequestView)
-        .map_err(|e| (StatusCode::FORBIDDEN, Json(json!({"error": e.to_string()}))))?;
-
-    let limit = params.limit.unwrap_or(50).min(100);
-    let offset = params.offset.unwrap_or(0);
-    let pending_for_me = params.pending_for_me.unwrap_or(false);
-
-    // pending_for_me uses denormalized table (no N+1)
-    if pending_for_me {
-        let roles: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
-        let (requests, total) = state
-            .request_repo
-            .list_pending_for_user(&user.subject_id, &user.groups, &roles, limit, offset)
-            .map_err(map_error)?;
-        let items: Vec<serde_json::Value> = requests
-            .iter()
-            .map(|r| {
-                json!({
-                    "id": r.id,
-                    "requester": r.requester,
-                    "database": r.database,
-                    "environment": r.environment,
-                    "operation": r.operation.as_str(),
-                    "status": r.status.as_str(),
-                    "created_at": r.created_at,
-                })
-            })
-            .collect();
-        return Ok((
-            StatusCode::OK,
-            Json(json!({"requests": items, "total": total, "limit": limit, "offset": offset})),
-        ));
-    }
-
-    let (requests, total) = state
-        .request_repo
-        .list(
-            limit,
-            offset,
-            params.status.as_deref(),
-            params.user.as_deref(),
+    let uc = list_requests::ListRequests {
+        request_repo: state.request_repo.clone(),
+        authorizer: state.authorizer.clone(),
+    };
+    let output = uc
+        .execute(
+            list_requests::ListRequestsInput {
+                limit: params.limit,
+                offset: params.offset,
+                status: params.status,
+                user: params.user,
+                pending_for_me: params.pending_for_me,
+            },
+            &user,
         )
         .map_err(map_error)?;
-    // Non-admin users only see their own requests + pending requests they can approve
-    let is_admin = user.roles.iter().any(|r| r.name == "admin");
-    let can_approve = user.has_permission(dbward_domain::auth::Permission::RequestApprove);
-    let items: Vec<serde_json::Value> = requests
+
+    let items: Vec<serde_json::Value> = output
+        .requests
         .iter()
-        .filter(|r| {
-            if is_admin {
-                return true;
-            }
-            if r.requester == user.subject_id {
-                return true;
-            }
-            if can_approve && r.status == dbward_domain::entities::RequestStatus::Pending {
-                return true;
-            }
-            false
-        })
         .map(|r| {
             json!({
                 "id": r.id,
                 "requester": r.requester,
                 "database": r.database,
                 "environment": r.environment,
-                "operation": r.operation.as_str(),
-                "status": r.status.as_str(),
+                "operation": r.operation,
+                "status": r.status,
                 "created_at": r.created_at,
             })
         })
         .collect();
-    let effective_total = if is_admin { total } else { items.len() as u32 };
     Ok((
         StatusCode::OK,
-        Json(
-            json!({"requests": items, "total": effective_total, "limit": limit, "offset": offset}),
-        ),
+        Json(json!({"requests": items, "total": output.total, "limit": output.limit, "offset": output.offset})),
     ))
 }
 
