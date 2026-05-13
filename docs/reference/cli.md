@@ -1,221 +1,312 @@
 # CLI Reference
 
-## Global options
+## Global Options
 
 ```
-dbward [OPTIONS] <COMMAND>
-
-Options:
-  --config <PATH>        Config file path (default: dbward.toml)
-  --database <NAME>      Target database (env: DBWARD_DATABASE)
-  --environment, -e <ENV> Target environment (env: DBWARD_ENV)
-  --format <FORMAT>      Output format: human | json (default: human)
+--config <PATH>     Config file path (env: DBWARD_CONFIG)
+--database <NAME>   Target database (env: DBWARD_DATABASE)
+--environment <ENV> Target environment (env: DBWARD_ENV)
+--format <FORMAT>   Output format: human (default), json
 ```
+
+---
 
 ## Commands
 
-### `dbward init`
+### dbward init
 
-Create a `dbward.toml` config file interactively.
-
-```bash
-dbward init                    # Interactive prompts
-dbward init --non-interactive  # Use defaults
-dbward init --force            # Overwrite existing
-```
-
-### `dbward dev`
-
-Start a local dev server + agent (single process, auto-approve all).
+Initialize configuration file interactively.
 
 ```bash
-dbward dev --database-url "postgres://user:pass@localhost:5432/mydb"
-dbward dev --database-url "..." --port 4000
+dbward init
+dbward init --non-interactive --force
 ```
 
-### `dbward login`
+| Option | Description |
+|--------|-------------|
+| `--non-interactive` | Skip prompts, use defaults |
+| `--force` | Overwrite existing config |
 
-Authenticate via OIDC (requires `[server.oidc]` in config).
+---
 
-```bash
-dbward login            # Opens browser
-dbward login --device   # Device flow (headless)
-```
-
-### `dbward logout`
-
-Remove stored credentials.
-
-### `dbward whoami`
-
-Display current authenticated identity.
-
-### `dbward execute`
+### dbward execute
 
 Execute a SQL query through the approval workflow.
 
 ```bash
-dbward execute "SELECT * FROM users LIMIT 10"
-dbward execute "UPDATE users SET active = false WHERE id = 42"
-dbward -e production execute "SELECT count(*) FROM orders"
+dbward execute "SELECT * FROM users"
+dbward execute "UPDATE users SET active = false WHERE id = 5" --reason "Disable inactive user"
+dbward execute "DROP TABLE temp" --emergency --reason "Production incident"
 ```
 
-Options:
-| Flag | Description |
-|------|-------------|
-| `--emergency` | Break-glass bypass (skips approval) |
-| `--reason <TEXT>` | Reason for the operation (required by some workflows) |
+| Option | Description |
+|--------|-------------|
+| `--reason <TEXT>` | Reason for this request |
+| `--emergency` | Break-glass bypass (requires `--reason`) |
 | `--output <PATH>` | Save result to file |
-| `--no-save` | Don't save result locally |
-| `--ticket <URL>` | Link to ticket/issue |
-| `--repo <URL>` | Repository reference |
-| `--idempotency-key <KEY>` | Prevent duplicate requests |
-| `--share-with <SELECTOR>` | Share result (Pro). e.g., `group:backend-team` |
+| `--no-save` | Do not save result locally |
+| `--no-store` | Do not persist result to server storage |
+| `--share-with <SELECTOR>` | Share result (e.g. `group:dba`, `user:bob`) |
+| `--ticket <ID>` | Attach ticket metadata |
+| `--repo <NAME>` | Attach repository metadata |
+| `--idempotency-key <KEY>` | Deduplication key |
 
-Exit codes: 0 = success, 1 = error, 2 = pending approval.
+---
 
-### `dbward migrate`
+### dbward request
 
-#### `dbward migrate create <name>`
+Manage approval requests.
 
-Create migration files locally (no server needed).
-
-```bash
-dbward migrate create add_users_table
-```
-
-#### `dbward migrate up`
-
-Apply pending migrations.
-
-```bash
-dbward migrate up              # All pending
-dbward migrate up --count 1    # Next one only
-dbward -e production migrate up --ticket "JIRA-123"
-```
-
-Options: `--count`, `--ticket`, `--repo`, `--idempotency-key`, `--share-with`
-
-#### `dbward migrate down`
-
-Rollback migrations.
-
-```bash
-dbward migrate down            # Last one (default --count 1)
-dbward migrate down --count 2
-```
-
-#### `dbward migrate status`
-
-Show migration status.
-
-```bash
-dbward migrate status
-dbward -e production migrate status
-```
-
-### `dbward request`
-
-#### `dbward request list`
+#### dbward request list
 
 ```bash
 dbward request list
-dbward request list --status pending
-dbward request list --pending-for-me
-dbward request list --user alice --limit 20
+dbward request list --status pending --user alice
 ```
 
-#### `dbward request show <id>`
+| Option | Description |
+|--------|-------------|
+| `--status <STATUS>` | Filter by status |
+| `--user <USER>` | Filter by requester |
 
-Display request details, approval progress, and SQL.
-
-#### `dbward request approve <id>`
+#### dbward request show
 
 ```bash
-dbward request approve req_abc123
-dbward request approve req_abc123 --comment "Verified row count"
+dbward request show <ID>
 ```
 
-#### `dbward request reject <id>`
+#### dbward request approve
 
 ```bash
-dbward request reject req_abc123 --reason "Wrong table"
+dbward request approve <ID>
+dbward request approve <ID> --comment "LGTM"
 ```
 
-#### `dbward request cancel <id>`
+| Option | Description |
+|--------|-------------|
+| `--comment <TEXT>` | Approval comment |
+
+#### dbward request reject
 
 ```bash
-dbward request cancel req_abc123 --reason "No longer needed"
+dbward request reject <ID> --reason "Needs review"
 ```
 
-#### `dbward request resume <id>`
+| Option | Description |
+|--------|-------------|
+| `--reason <TEXT>` | Rejection reason (alias: `--comment`) |
 
-Dispatch an approved request and wait for the result.
+#### dbward request cancel
 
 ```bash
-dbward request resume req_abc123
-dbward request resume req_abc123 --output result.json
+dbward request cancel <ID>
+dbward request cancel <ID> --reason "No longer needed"
 ```
 
-#### `dbward request result <id>`
+#### dbward request resume
 
-Display a locally saved result.
+Wait for a pending/running request to complete.
 
-### `dbward result list`
+```bash
+dbward request resume <ID>
+dbward request resume <ID> --no-save
+```
 
-List shared results available to you.
+| Option | Description |
+|--------|-------------|
+| `--no-save` | Do not save result locally |
 
-### `dbward audit`
+---
 
-Search audit events.
+### dbward result
+
+Manage execution results.
+
+#### dbward result list
+
+```bash
+dbward result list
+```
+
+#### dbward result get
+
+```bash
+dbward result get <ID>
+```
+
+---
+
+### dbward migrate
+
+Run database migrations.
+
+#### dbward migrate up
+
+```bash
+dbward migrate up
+dbward migrate up --count 3
+dbward migrate up --share-with "group:backend-team"
+```
+
+| Option | Description |
+|--------|-------------|
+| `--count <N>` | Apply at most N migrations |
+| `--share-with <SELECTOR>` | Share result |
+| `--ticket <ID>` | Ticket metadata |
+| `--repo <NAME>` | Repository metadata |
+| `--idempotency-key <KEY>` | Deduplication key |
+
+#### dbward migrate down
+
+```bash
+dbward migrate down --count 1
+```
+
+| Option | Description |
+|--------|-------------|
+| `--count <N>` | Revert N migrations (required) |
+| `--ticket <ID>` | Ticket metadata |
+| `--repo <NAME>` | Repository metadata |
+| `--idempotency-key <KEY>` | Deduplication key |
+
+#### dbward migrate status
+
+```bash
+dbward migrate status
+```
+
+#### dbward migrate create
+
+```bash
+dbward migrate create "add_email_index"
+```
+
+---
+
+### dbward audit
+
+Search and verify audit logs.
 
 ```bash
 dbward audit
-dbward audit --user alice --limit 50
-dbward audit --event-type request_approved --since 2026-05-01
-dbward audit --category auth --outcome failure
-dbward audit --verify   # Verify hash chain integrity
+dbward audit --output json
+dbward audit --verify
 ```
 
-Options: `--limit`, `--user`, `--operation`, `--status`, `--event-type`, `--category`, `--outcome`, `--since`, `--until`, `--verify`
+| Option | Description |
+|--------|-------------|
+| `--output <FORMAT>` | Output format: table (default), json, csv |
+| `--verify` | Verify hash chain integrity |
 
-### `dbward server`
+---
 
-#### `dbward server start`
+### dbward databases
+
+List registered databases.
 
 ```bash
-dbward server start
-dbward server start --listen 0.0.0.0:3000 --data /var/lib/dbward/dbward.db --config dbward-server.toml
+dbward databases
 ```
 
-#### `dbward server token create`
+---
+
+### dbward agents
+
+Show agent status (admin only).
 
 ```bash
-dbward server token create --user alice --role admin --data dbward.db
-dbward server token create --user bot --role developer --agent --data dbward.db
-dbward server token create --user bob --role developer --groups "backend-team,dba-team" --data dbward.db
+dbward agents
 ```
 
-#### `dbward server token revoke`
+---
 
-```bash
-dbward server token revoke --id tok_abc123 --data dbward.db
-```
+### dbward agent
 
-### `dbward agent`
-
-Start the agent process.
+Start the dbward agent process.
 
 ```bash
 dbward agent --config dbward-agent.toml
 ```
 
-### `dbward mcp`
+| Option | Description |
+|--------|-------------|
+| `--config <PATH>` | Agent config file (default: `dbward-agent.toml`) |
 
-Start the MCP stdio server (for AI IDE integration).
+---
+
+### dbward login / logout / whoami
+
+OIDC authentication.
+
+```bash
+dbward login              # Browser-based login
+dbward login --device     # Device flow (headless)
+dbward logout
+dbward whoami
+```
+
+---
+
+### dbward dev
+
+Start local development server + agent.
+
+```bash
+dbward dev --database-url "postgres://localhost/myapp"
+```
+
+---
+
+### dbward server
+
+Start the dbward HTTP server (production).
+
+```bash
+dbward server start --config server.toml --data /data/dbward.db --listen 0.0.0.0:3000
+```
+
+#### dbward server token create
+
+```bash
+dbward server token create --user alice --role admin --data /data/dbward.db
+dbward server token create --user agent-1 --role agent-default --agent --data /data/dbward.db
+dbward server token create --user bob --role developer --groups "backend,dba" --data /data/dbward.db
+```
+
+| Option | Description |
+|--------|-------------|
+| `--user <NAME>` | Token subject |
+| `--role <ROLE>` | Role to assign |
+| `--agent` | Create agent token |
+| `--groups <LIST>` | Comma-separated groups |
+| `--data <PATH>` | SQLite database path |
+
+---
+
+### dbward self-update
+
+Update dbward to the latest version.
+
+```bash
+dbward self-update
+```
+
+---
+
+### dbward mcp
+
+Start MCP stdio server (for AI agent integration).
 
 ```bash
 dbward mcp
 ```
 
-Reads config from `dbward.toml` (or `--config`). See [MCP Integration](../guides/mcp-integration.md).
+---
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Error |
+| 2 | Request pending (awaiting approval) |

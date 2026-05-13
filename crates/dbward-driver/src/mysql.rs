@@ -274,6 +274,7 @@ fn split_statements(sql: &str) -> Vec<String> {
 }
 
 fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
+    use sqlx::Row;
     let mut map = serde_json::Map::new();
     for col in row.columns() {
         let name = col.name();
@@ -283,28 +284,14 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
         let val = if raw.is_null() {
             serde_json::Value::Null
         } else {
-            let type_name = col.type_info().name();
-            match mysql_type_mapping(type_name) {
-                JsonMapping::Integer => row.try_get::<i64, _>(col.ordinal())
-                    .map(|v| serde_json::Value::Number(v.into()))
-                    .or_else(|_| row.try_get::<u64, _>(col.ordinal()).map(|v| serde_json::Value::Number(v.into())))
-                    .unwrap_or_else(|_| serde_json::Value::String("(binary data)".into())),
-                JsonMapping::Float => row.try_get::<f64, _>(col.ordinal())
-                    .ok()
-                    .and_then(serde_json::Number::from_f64)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or_else(|| serde_json::Value::String("(binary data)".into())),
-                JsonMapping::Bool => row.try_get::<bool, _>(col.ordinal())
-                    .map(serde_json::Value::Bool)
-                    .unwrap_or_else(|_| serde_json::Value::String("(binary data)".into())),
-                JsonMapping::Json => row.try_get::<String, _>(col.ordinal())
-                    .ok()
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_else(|| serde_json::Value::String("(binary data)".into())),
-                JsonMapping::Binary => serde_json::Value::String("(binary data)".into()),
-                JsonMapping::Text => row.try_get::<String, _>(col.ordinal())
-                    .map(|s| serde_json::Value::String(s))
-                    .unwrap_or_else(|_| serde_json::Value::String("(binary data)".into())),
+            // SAFETY: try_get_unchecked bypasses sqlx's type compatibility check but does not
+            // cause UB. MySQL text protocol (COM_QUERY via raw_sql) sends all values as UTF-8
+            // strings regardless of column type. sqlx's checked Decode<String> rejects non-TEXT
+            // types, so we bypass the check to access the raw string value.
+            let text: Result<String, _> = unsafe { row.try_get_unchecked(col.ordinal()) };
+            match text {
+                Ok(s) => text_to_json(&s, mysql_type_mapping(col.type_info().name())),
+                Err(_) => serde_json::Value::String("(binary data)".into()),
             }
         };
         map.insert(name.to_string(), val);
