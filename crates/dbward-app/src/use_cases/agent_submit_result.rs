@@ -202,3 +202,174 @@ fn parse_selector_for_access(sel: &str) -> (SelectorType, String) {
         (SelectorType::User, sel.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::AuthzError;
+    use dbward_domain::auth::{ResolvedRole, ResourceContext, SubjectType, Permission as P};
+    use dbward_domain::entities::{Request as DomainRequest, RequestStatus, Execution, ExecutionStatus, Approval, AuditEvent, Agent};
+    use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
+    use dbward_domain::values::{DatabaseName, Environment, Operation, ResultSummary};
+    use async_trait::async_trait;
+    use chrono::{DateTime, Utc};
+    use std::sync::Mutex;
+
+    struct AllowAll;
+    impl Authorizer for AllowAll {
+        fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> { Ok(()) }
+        fn authorize_scoped(&self, _: &AuthUser, _: Permission, _: &DatabaseName, _: &Environment, _: &ResourceContext) -> Result<(), AuthzError> { Ok(()) }
+    }
+
+    struct FakeClock;
+    impl Clock for FakeClock { fn now(&self) -> DateTime<Utc> { Utc::now() } }
+
+    struct NoopDispatcher;
+    impl EventDispatcher for NoopDispatcher { fn dispatch(&self, _: TransitionEvent) {} }
+
+    struct FakeAgentRepo { execution: Mutex<Option<Execution>> }
+    impl AgentRepo for FakeAgentRepo {
+        fn get_execution(&self, _: &str) -> Result<Option<Execution>, AppError> { Ok(self.execution.lock().unwrap().clone()) }
+        fn upsert(&self, _: &Agent) -> Result<(), AppError> { Ok(()) }
+        fn get(&self, _: &str) -> Result<Option<Agent>, AppError> { Ok(None) }
+        fn list(&self) -> Result<Vec<Agent>, AppError> { Ok(vec![]) }
+        fn create_execution(&self, _: &Execution) -> Result<(), AppError> { Ok(()) }
+        fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> { Ok(()) }
+        fn extend_lease(&self, _: &str, _: DateTime<Utc>) -> Result<(), AppError> { Ok(()) }
+        fn find_dispatched_jobs(&self, _: &[(DatabaseName, Environment)]) -> Result<Vec<DomainRequest>, AppError> { Ok(vec![]) }
+        fn has_running_migration(&self, _: &DatabaseName, _: &Environment, _: &str) -> Result<bool, AppError> { Ok(false) }
+        fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> { Ok(vec![]) }
+        fn claim_and_mark_running(&self, _: &Execution, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn complete_execution(&self, _: &str, _: &str, _: bool, _: DateTime<Utc>, _: &AuditEvent, _: Option<&ExecutionResult>, _: &[ResultAccess]) -> Result<bool, AppError> { Ok(true) }
+        fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
+        fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn mark_execution_lost_and_record(&self, _: &str, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
+        fn delete_result(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+    }
+
+    struct FakeRequestRepo { request: Mutex<Option<DomainRequest>> }
+    impl RequestRepo for FakeRequestRepo {
+        fn get(&self, _: &str) -> Result<Option<DomainRequest>, AppError> { Ok(self.request.lock().unwrap().clone()) }
+        fn insert(&self, _: &DomainRequest) -> Result<(), AppError> { Ok(()) }
+        fn list(&self, _: u32, _: u32) -> Result<(Vec<DomainRequest>, u32), AppError> { Ok((vec![], 0)) }
+        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<DomainRequest>, AppError> { Ok(None) }
+        fn insert_approval(&self, _: &Approval) -> Result<(), AppError> { Ok(()) }
+        fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> { Ok(vec![]) }
+        fn count_executions(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+        fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn approve_and_mark_approved(&self, _: &Approval, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn reject_and_record(&self, _: &str, _: &Approval, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn mark_cancelled(&self, _: &str, _: &str, _: Option<&str>, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn create_and_dispatch(&self, _: &DomainRequest) -> Result<(), AppError> { Ok(()) }
+        fn mark_running(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn mark_executed(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn mark_failed(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn cancel_all_for_user(&self, _: &str, _: DateTime<Utc>) -> Result<u32, AppError> { Ok(0) }
+        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn mark_expired_and_record(&self, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+        fn count_by_status(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+        fn wal_checkpoint(&self) -> Result<(), AppError> { Ok(()) }
+    }
+
+    struct FakeResultStore { stored: Mutex<Vec<String>> }
+    #[async_trait]
+    impl ResultStore for FakeResultStore {
+        async fn put(&self, key: &str, _: &[u8]) -> Result<(), AppError> { self.stored.lock().unwrap().push(key.into()); Ok(()) }
+        async fn get(&self, _: &str) -> Result<Vec<u8>, AppError> { Ok(vec![]) }
+        async fn delete(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+    }
+
+    struct FakeResultChannel;
+    #[async_trait]
+    impl ResultChannel for FakeResultChannel {
+        fn create_slot(&self, _: &str) {}
+        async fn publish(&self, _: &str, _: ResultSummary) {}
+        async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> { Ok(None) }
+        async fn notify_all(&self) {}
+    }
+
+    fn agent_user() -> AuthUser {
+        AuthUser { subject_id: "agent-1".into(), subject_type: SubjectType::Agent, roles: vec![ResolvedRole { name: "agent-default".into(), permissions: [P::AgentSubmitResult].into_iter().collect(), databases: vec![], environments: vec![] }], groups: vec![], token_id: None }
+    }
+
+    fn make_execution(status: ExecutionStatus) -> Execution {
+        Execution { id: "exec-1".into(), request_id: "req-1".into(), agent_id: "agent-1".into(), status, token: "tok".into(), lease_expires_at: Utc::now() + chrono::Duration::minutes(5), started_at: Some(Utc::now()), finished_at: None, error_message: None, created_at: Utc::now() }
+    }
+
+    fn make_request(status: RequestStatus) -> DomainRequest {
+        DomainRequest {
+            id: "req-1".into(), requester: "alice".into(), database: DatabaseName::new("app").unwrap(),
+            environment: Environment::new("production").unwrap(), operation: Operation::ExecuteDml,
+            detail: "UPDATE t SET x=1".into(), status, emergency: false, reason: None,
+            idempotency_key: None, metadata_json: "{}".into(), share_with: vec![],
+            no_store: false, workflow_snapshot_json: None, cancel_reason: None, cancelled_by: None,
+            created_at: Utc::now(), updated_at: Utc::now(), resolved_at: None, expires_at: None,
+        }
+    }
+
+    fn make_uc(exec_status: ExecutionStatus, req_status: RequestStatus) -> AgentSubmitResult {
+        AgentSubmitResult {
+            authorizer: Arc::new(AllowAll),
+            agent_repo: Arc::new(FakeAgentRepo { execution: Mutex::new(Some(make_execution(exec_status))) }),
+            request_repo: Arc::new(FakeRequestRepo { request: Mutex::new(Some(make_request(req_status))) }),
+            result_store: Arc::new(FakeResultStore { stored: Mutex::new(vec![]) }),
+            result_channel: Arc::new(FakeResultChannel),
+            event_dispatcher: Arc::new(NoopDispatcher),
+            clock: Arc::new(FakeClock),
+        }
+    }
+
+    #[tokio::test]
+    async fn execution_not_found_returns_error() {
+        let uc = AgentSubmitResult {
+            authorizer: Arc::new(AllowAll),
+            agent_repo: Arc::new(FakeAgentRepo { execution: Mutex::new(None) }),
+            request_repo: Arc::new(FakeRequestRepo { request: Mutex::new(None) }),
+            result_store: Arc::new(FakeResultStore { stored: Mutex::new(vec![]) }),
+            result_channel: Arc::new(FakeResultChannel),
+            event_dispatcher: Arc::new(NoopDispatcher),
+            clock: Arc::new(FakeClock),
+        };
+        let input = AgentSubmitResultInput { execution_id: "nope".into(), success: true, result_data: None, error_message: None };
+        assert!(matches!(uc.execute(input, &agent_user()).await, Err(AppError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn not_claimed_returns_conflict() {
+        let uc = make_uc(ExecutionStatus::Completed, RequestStatus::Running);
+        let input = AgentSubmitResultInput { execution_id: "exec-1".into(), success: true, result_data: None, error_message: None };
+        assert!(matches!(uc.execute(input, &agent_user()).await, Err(AppError::Conflict(_))));
+    }
+
+    #[tokio::test]
+    async fn success_submit_returns_executed() {
+        let uc = make_uc(ExecutionStatus::Claimed, RequestStatus::Running);
+        let input = AgentSubmitResultInput { execution_id: "exec-1".into(), success: true, result_data: Some(b"rows".to_vec()), error_message: None };
+        let out = uc.execute(input, &agent_user()).await.unwrap();
+        assert_eq!(out.status, RequestStatus::Executed);
+    }
+
+    #[tokio::test]
+    async fn failure_submit_returns_failed() {
+        let uc = make_uc(ExecutionStatus::Claimed, RequestStatus::Running);
+        let input = AgentSubmitResultInput { execution_id: "exec-1".into(), success: false, result_data: None, error_message: Some("timeout".into()) };
+        let out = uc.execute(input, &agent_user()).await.unwrap();
+        assert_eq!(out.status, RequestStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn cancelled_request_stays_cancelled() {
+        let uc = make_uc(ExecutionStatus::Claimed, RequestStatus::Cancelled);
+        let input = AgentSubmitResultInput { execution_id: "exec-1".into(), success: true, result_data: None, error_message: None };
+        let out = uc.execute(input, &agent_user()).await.unwrap();
+        assert_eq!(out.status, RequestStatus::Cancelled);
+    }
+}

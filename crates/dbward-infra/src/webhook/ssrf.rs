@@ -45,3 +45,69 @@ fn is_private(ip: &IpAddr) -> bool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dbward_app::ports::SsrfValidator;
+
+    #[test]
+    fn rejects_non_http_schemes() {
+        let g = SsrfGuard;
+        assert!(g.validate_url("ftp://example.com").is_err());
+        assert!(g.validate_url("file:///etc/passwd").is_err());
+        assert!(g.validate_url("gopher://evil.com").is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_url() {
+        let g = SsrfGuard;
+        assert!(g.validate_url("not a url").is_err());
+    }
+
+    #[test]
+    fn rejects_missing_host() {
+        let g = SsrfGuard;
+        assert!(g.validate_url("http://").is_err());
+    }
+
+    #[test]
+    fn rejects_loopback() {
+        let g = SsrfGuard;
+        assert!(g.validate_url("http://127.0.0.1/hook").is_err());
+        assert!(g.validate_url("http://[::1]/hook").is_err());
+    }
+
+    #[test]
+    fn rejects_private_ranges() {
+        let g = SsrfGuard;
+        assert!(g.validate_url("http://10.0.0.1/hook").is_err());
+        assert!(g.validate_url("http://172.16.0.1/hook").is_err());
+        assert!(g.validate_url("http://192.168.1.1/hook").is_err());
+        assert!(g.validate_url("http://169.254.169.254/metadata").is_err());
+    }
+
+    #[test]
+    #[ignore] // requires DNS resolution
+    fn allows_public_url() {
+        let g = SsrfGuard;
+        assert!(g.validate_url("https://example.com/webhook").is_ok());
+    }
+
+    #[test]
+    fn is_private_covers_all_ranges() {
+        use std::net::{Ipv4Addr, Ipv6Addr};
+        assert!(is_private(&IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+        assert!(is_private(&IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3))));
+        assert!(is_private(&IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
+        assert!(is_private(&IpAddr::V4(Ipv4Addr::new(192, 168, 0, 1))));
+        assert!(is_private(&IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1))));
+        assert!(is_private(&IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
+        assert!(is_private(&IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
+        assert!(is_private(&IpAddr::V4(Ipv4Addr::BROADCAST)));
+        assert!(is_private(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        assert!(is_private(&IpAddr::V6(Ipv6Addr::UNSPECIFIED)));
+        assert!(!is_private(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+        assert!(!is_private(&IpAddr::V4(Ipv4Addr::new(93, 184, 215, 14))));
+    }
+}

@@ -88,3 +88,82 @@ impl TokenSigner for Ed25519TokenSigner {
         hex::encode(self.signing_key.verifying_key().to_bytes())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dbward_app::ports::TokenSigner as _;
+    use tempfile::tempdir;
+
+    #[test]
+    fn generate_and_sign() {
+        let dir = tempdir().unwrap();
+        let signer = Ed25519TokenSigner::load_or_generate(dir.path()).unwrap();
+        let hex = signer.public_key_hex();
+        assert_eq!(hex.len(), 64);
+
+        let claims = ExecutionTokenClaims {
+            request_id: "req-1".into(),
+            operation: "execute_dml".into(),
+            environment: "production".into(),
+            database: "app".into(),
+            detail_hash: "abc123".into(),
+            requester_role: "developer".into(),
+            requester: "alice".into(),
+        };
+        let token_json = signer.sign(&claims);
+        let v: serde_json::Value = serde_json::from_str(&token_json).unwrap();
+        assert_eq!(v["request_id"], "req-1");
+        assert_eq!(v["database"], "app");
+        assert!(v["signature"].as_str().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn load_existing_key_is_stable() {
+        let dir = tempdir().unwrap();
+        let s1 = Ed25519TokenSigner::load_or_generate(dir.path()).unwrap();
+        let s2 = Ed25519TokenSigner::load_or_generate(dir.path()).unwrap();
+        assert_eq!(s1.public_key_hex(), s2.public_key_hex());
+    }
+
+    #[test]
+    fn invalid_key_file_returns_error() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("signing.key"), &[0u8; 16]).unwrap();
+        let result = Ed25519TokenSigner::load_or_generate(dir.path());
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn sign_produces_valid_ed25519_signature() {
+        let dir = tempdir().unwrap();
+        let signer = Ed25519TokenSigner::load_or_generate(dir.path()).unwrap();
+        let claims = ExecutionTokenClaims {
+            request_id: "req-2".into(),
+            operation: "migrate_up".into(),
+            environment: "staging".into(),
+            database: "mydb".into(),
+            detail_hash: "deadbeef".into(),
+            requester_role: "admin".into(),
+            requester: "bob".into(),
+        };
+        let token_json = signer.sign(&claims);
+        let v: serde_json::Value = serde_json::from_str(&token_json).unwrap();
+
+        // Verify signature with public key
+        use ed25519_dalek::Verifier;
+        let sig_hex = v["signature"].as_str().unwrap();
+        let sig_bytes = hex::decode(sig_hex).unwrap();
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes.try_into().unwrap());
+        let message = format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}",
+            v["request_id"].as_str().unwrap(), v["operation"].as_str().unwrap(),
+            v["environment"].as_str().unwrap(), v["database"].as_str().unwrap(),
+            v["detail_hash"].as_str().unwrap(), v["expires_at"].as_str().unwrap(),
+            v["requester_role"].as_str().unwrap(), v["requester_subject_id"].as_str().unwrap(),
+        );
+        assert!(signer.public_key().verify(message.as_bytes(), &signature).is_ok());
+    }
+}
