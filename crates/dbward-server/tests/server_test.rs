@@ -675,7 +675,7 @@ fn test_state() -> AppState {
 
 #[tokio::test]
 async fn health_returns_200() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -690,7 +690,7 @@ async fn health_returns_200() {
 
 #[tokio::test]
 async fn ready_returns_200() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -705,7 +705,7 @@ async fn ready_returns_200() {
 
 #[tokio::test]
 async fn unauthenticated_request_returns_401() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -720,7 +720,7 @@ async fn unauthenticated_request_returns_401() {
 
 #[tokio::test]
 async fn invalid_token_returns_401() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -736,7 +736,7 @@ async fn invalid_token_returns_401() {
 
 #[tokio::test]
 async fn valid_token_passes_auth_middleware() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -756,7 +756,7 @@ async fn valid_token_passes_auth_middleware() {
 
 #[tokio::test]
 async fn list_requests_returns_empty_array() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -775,7 +775,7 @@ async fn list_requests_returns_empty_array() {
 
 #[tokio::test]
 async fn get_request_not_found_returns_404() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -791,7 +791,7 @@ async fn get_request_not_found_returns_404() {
 
 #[tokio::test]
 async fn list_databases_returns_empty() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -807,7 +807,7 @@ async fn list_databases_returns_empty() {
 
 #[tokio::test]
 async fn list_tokens_returns_empty() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -823,7 +823,7 @@ async fn list_tokens_returns_empty() {
 
 #[tokio::test]
 async fn list_webhooks_returns_empty() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -839,7 +839,7 @@ async fn list_webhooks_returns_empty() {
 
 #[tokio::test]
 async fn list_workflows_returns_empty() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -855,7 +855,7 @@ async fn list_workflows_returns_empty() {
 
 #[tokio::test]
 async fn list_agents_returns_empty() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -871,7 +871,7 @@ async fn list_agents_returns_empty() {
 
 #[tokio::test]
 async fn metrics_endpoint_returns_text() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()

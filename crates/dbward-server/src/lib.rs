@@ -27,17 +27,31 @@ pub async fn run_from_args(
     config_path: &str,
     dev_bootstrap: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Logging
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,dbward_server=debug".parse().unwrap()),
-        )
-        .init();
-
-    // Load config
+    // Load config first (logging depends on it)
     let cfg = config::ServerConfig::load(std::path::Path::new(config_path))
         .map_err(|e| format!("config: {e}"))?;
+
+    // Logging: apply config, with RUST_LOG env override taking precedence
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        cfg.logging.level.parse().unwrap_or_else(|_| {
+            eprintln!(
+                "warning: invalid log level '{}', falling back to 'info'",
+                cfg.logging.level
+            );
+            "info".parse().unwrap()
+        })
+    });
+    match cfg.logging.format {
+        config::LogFormat::Json => {
+            tracing_subscriber::fmt()
+                .json()
+                .with_env_filter(env_filter)
+                .init();
+        }
+        config::LogFormat::Text => {
+            tracing_subscriber::fmt().with_env_filter(env_filter).init();
+        }
+    }
 
     // Open SQLite (open already calls initialize internally)
     let conn = dbward_infra::sqlite::open(data)?;
@@ -297,7 +311,12 @@ pub async fn run_from_args(
     // BUG-31: OIDC verifier initialized above (injected into ApiTokenVerifier)
 
     let addr: std::net::SocketAddr = listen.parse()?;
-    start(addr, state, cfg.retention).await
+
+    // Parse trusted_proxies at startup (fail fast on invalid config)
+    let trusted = middleware::trusted_proxies::parse_trusted_proxies(&cfg.trusted_proxies)
+        .map_err(|e| format!("trusted_proxies config: {e}"))?;
+
+    start(addr, state, cfg.retention, trusted).await
 }
 
 fn register_databases(
@@ -418,14 +437,19 @@ fn sync_webhooks(
     Ok(())
 }
 
-pub fn build_app(state: AppState) -> Router {
-    routes::build_router(state)
+pub fn build_app(state: AppState, trusted: Vec<ipnet::IpNet>) -> Router {
+    let trusted_proxies = middleware::trusted_proxies::TrustedProxies(trusted);
+    routes::build_router(state).layer(axum::middleware::from_fn_with_state(
+        trusted_proxies,
+        middleware::trusted_proxies::resolve_client_ip,
+    ))
 }
 
 pub async fn start(
     addr: std::net::SocketAddr,
     state: AppState,
     retention: config::RetentionConfig,
+    trusted: Vec<ipnet::IpNet>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let draining = state.draining.clone();
     let result_channel = state.result_channel.clone();
@@ -457,7 +481,7 @@ pub async fn start(
     let (bg_shutdown, mut bg_set) =
         background::spawn_background_tasks(state.clone(), draining.clone(), retention);
 
-    let app = build_app(state);
+    let app = build_app(state, trusted);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "server started");
 
@@ -471,9 +495,12 @@ pub async fn start(
         tokio::time::sleep(Duration::from_secs(20)).await;
     };
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_fut)
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_fut)
+    .await?;
 
     // Collect background task results (detect panics)
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);

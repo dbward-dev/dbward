@@ -239,7 +239,7 @@ fn auth_header(token: &str) -> (&str, String) {
 #[tokio::test]
 async fn create_request_persists_and_returns_id() {
     let state = real_state();
-    let app = build_app(state);
+    let app = build_app(state, vec![]);
 
     let body = serde_json::json!({
         "database": "app",
@@ -271,7 +271,7 @@ async fn create_request_persists_and_returns_id() {
 #[tokio::test]
 async fn list_requests_returns_created_request() {
     let state = real_state();
-    let app = build_app(state.clone());
+    let app = build_app(state.clone(), vec![]);
 
     // Create
     let body = serde_json::json!({
@@ -295,7 +295,7 @@ async fn list_requests_returns_created_request() {
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     // List
-    let app2 = build_app(state);
+    let app2 = build_app(state, vec![]);
     let resp = app2
         .oneshot(
             Request::builder()
@@ -315,7 +315,7 @@ async fn list_requests_returns_created_request() {
 #[tokio::test]
 async fn get_request_returns_detail() {
     let state = real_state();
-    let app = build_app(state.clone());
+    let app = build_app(state.clone(), vec![]);
 
     let body = serde_json::json!({
         "database": "app",
@@ -340,7 +340,7 @@ async fn get_request_returns_detail() {
             .unwrap();
     let id = created["id"].as_str().unwrap();
 
-    let app2 = build_app(state);
+    let app2 = build_app(state, vec![]);
     let resp = app2
         .oneshot(
             Request::builder()
@@ -361,7 +361,7 @@ async fn get_request_returns_detail() {
 #[tokio::test]
 async fn unregistered_database_rejected() {
     let state = real_state();
-    let app = build_app(state);
+    let app = build_app(state, vec![]);
 
     let body = serde_json::json!({
         "database": "unknown_db",

@@ -749,6 +749,7 @@ dependencies = [
  "dbward-infra",
  "http-body-util",
  "hyper",
+ "ipnet",
  "rusqlite",
  "serde",
  "serde_json",

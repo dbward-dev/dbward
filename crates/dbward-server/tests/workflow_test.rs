@@ -323,7 +323,7 @@ fn create_request(token: &str, env: &str, detail: &str, reason: Option<&str>) ->
 
 #[tokio::test]
 async fn reject_then_approve_returns_conflict() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     // Create pending request
     let resp = app
@@ -365,7 +365,7 @@ async fn reject_then_approve_returns_conflict() {
 
 #[tokio::test]
 async fn step1_approve_then_reject_at_step2() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     let resp = app
         .call(create_request(
@@ -410,7 +410,7 @@ async fn step1_approve_then_reject_at_step2() {
 
 #[tokio::test]
 async fn cancel_pending_succeeds() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     let resp = app
         .call(create_request(
@@ -440,7 +440,7 @@ async fn cancel_pending_succeeds() {
 
 #[tokio::test]
 async fn cancel_approved_succeeds() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     let resp = app
         .call(create_request(
@@ -487,7 +487,7 @@ async fn cancel_approved_succeeds() {
 
 #[tokio::test]
 async fn other_user_cannot_cancel() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     let resp = app
         .call(create_request(
@@ -516,7 +516,7 @@ async fn other_user_cannot_cancel() {
 
 #[tokio::test]
 async fn admin_can_cancel_others_request() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     let resp = app
         .call(create_request(
@@ -544,7 +544,7 @@ async fn admin_can_cancel_others_request() {
 
 #[tokio::test]
 async fn break_glass_skips_approval() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     let body = serde_json::json!({
         "database": "app",
@@ -564,7 +564,7 @@ async fn break_glass_skips_approval() {
 
 #[tokio::test]
 async fn developer_cannot_break_glass() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     let body = serde_json::json!({
         "database": "app",
@@ -582,7 +582,7 @@ async fn developer_cannot_break_glass() {
 
 #[tokio::test]
 async fn approve_already_approved_returns_conflict() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     let resp = app
         .call(create_request(
@@ -629,7 +629,7 @@ async fn approve_already_approved_returns_conflict() {
 
 #[tokio::test]
 async fn self_approve_blocked_even_for_admin() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     // Admin creates request
     let body = serde_json::json!({
@@ -660,7 +660,7 @@ async fn self_approve_blocked_even_for_admin() {
 
 #[tokio::test]
 async fn reject_then_cancel_returns_conflict() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     let resp = app
         .call(create_request(
@@ -699,7 +699,7 @@ async fn reject_then_cancel_returns_conflict() {
 
 #[tokio::test]
 async fn development_auto_approves() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     let resp = app
         .call(create_request("dev-token", "development", "SELECT 1", None))
@@ -712,7 +712,7 @@ async fn development_auto_approves() {
 
 #[tokio::test]
 async fn require_reason_enforced() {
-    let mut app = build_app(workflow_state());
+    let mut app = build_app(workflow_state(), vec![]);
 
     // Production requires reason
     let resp = app
