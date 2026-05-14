@@ -179,6 +179,32 @@ fn display_result_value(result: &serde_json::Value) {
                 .unwrap_or("result limit reached");
             eprintln!("\n⚠ Result truncated: {reason}");
         }
+    } else if let Some(applied) = result
+        .get("applied")
+        .or_else(|| result.get("applied_versions"))
+        .and_then(|v| v.as_array())
+    {
+        if applied.is_empty() {
+            println!("No applied migrations.");
+        } else {
+            println!("Applied migrations:");
+            for v in applied {
+                if let Some(s) = v.as_str() {
+                    println!("  ✓ {s}");
+                }
+            }
+        }
+    } else if let Some(reverted) = result.get("reverted").and_then(|v| v.as_array()) {
+        if reverted.is_empty() {
+            println!("Nothing to revert.");
+        } else {
+            println!("Reverted migrations:");
+            for v in reverted {
+                if let Some(s) = v.as_str() {
+                    println!("  ↩ {s}");
+                }
+            }
+        }
     } else {
         println!(
             "{}",
@@ -590,5 +616,27 @@ mod tests {
             resp["error"].as_str().unwrap(),
             "syntax error at position 5"
         );
+    }
+
+    #[test]
+    fn display_result_routes_to_applied_migrations() {
+        let result = json!({"applied": ["20260501120000", "20260502120000"]});
+        // Verify routing: applied key present → migration display path
+        assert!(result.get("applied").and_then(|v| v.as_array()).is_some());
+        let arr = result["applied"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+    }
+
+    #[test]
+    fn display_result_routes_to_reverted_migrations() {
+        let result = json!({"reverted": ["20260502120000"]});
+        assert!(result.get("reverted").and_then(|v| v.as_array()).is_some());
+    }
+
+    #[test]
+    fn display_result_empty_applied() {
+        let result = json!({"applied": []});
+        let arr = result["applied"].as_array().unwrap();
+        assert!(arr.is_empty());
     }
 }

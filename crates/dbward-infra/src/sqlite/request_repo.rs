@@ -116,7 +116,7 @@ fn row_to_request(row: &rusqlite::Row<'_>) -> Result<Request, rusqlite::Error> {
     })?;
 
     let op_str: String = row.get("operation")?;
-    let operation: Operation = op_str.parse().map_err(|e: &str| {
+    let operation: Operation = op_str.parse().map_err(|e: String| {
         rusqlite::Error::FromSqlConversionFailure(
             0,
             rusqlite::types::Type::Text,

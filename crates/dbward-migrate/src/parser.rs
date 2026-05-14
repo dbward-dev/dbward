@@ -113,4 +113,42 @@ mod tests {
     fn rejects_missing_marker() {
         assert!(parse_migration_file("20260501_x.sql", "SELECT 1;").is_none());
     }
+
+    #[test]
+    fn parse_migrations_dir_skips_invalid_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "dbward-parser-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Valid file
+        std::fs::write(
+            dir.join("20260501120000_valid.sql"),
+            "-- migrate:up\nSELECT 1;\n",
+        )
+        .unwrap();
+        // Invalid: no marker
+        std::fs::write(dir.join("20260502120000_no_marker.sql"), "SELECT 2;\n").unwrap();
+        // Invalid: bad filename
+        std::fs::write(dir.join("bad.sql"), "-- migrate:up\nSELECT 3;\n").unwrap();
+        // Non-sql file (ignored)
+        std::fs::write(dir.join("README.md"), "hello").unwrap();
+
+        let migrations = parse_migrations_dir(&dir).unwrap();
+        assert_eq!(migrations.len(), 1);
+        assert_eq!(migrations[0].version, "20260501120000");
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn parse_migrations_dir_nonexistent_returns_empty() {
+        let dir = std::path::Path::new("/tmp/dbward-nonexistent-dir-xyz");
+        let migrations = parse_migrations_dir(dir).unwrap();
+        assert!(migrations.is_empty());
+    }
 }

@@ -64,6 +64,40 @@ pub async fn run_migrate(
             let migrations_dir = config.migrations_dir_for(db_name);
             let mut d = dbward_migrate::build_migrate_up_detail(&migrations_dir, &[])
                 .map_err(|e| CliError::Other(e.to_string()))?;
+            if d.migrations.is_empty() {
+                if !migrations_dir.exists() {
+                    return Err(CliError::Other(format!(
+                        "migrations directory not found: {}",
+                        migrations_dir.display()
+                    )));
+                }
+                // Check if there are .sql files that weren't parsed
+                let has_sql_files = match std::fs::read_dir(&migrations_dir) {
+                    Ok(entries) => entries
+                        .filter_map(|e| e.ok())
+                        .any(|e| e.path().extension().is_some_and(|ext| ext == "sql")),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+                    Err(e) => {
+                        return Err(CliError::Other(format!(
+                            "cannot read migrations directory {}: {e}",
+                            migrations_dir.display()
+                        )));
+                    }
+                };
+                if has_sql_files {
+                    return Err(CliError::Other(format!(
+                        "found .sql files in {} but none matched the expected format.\n\
+                         Expected: <timestamp>_<name>.sql with '-- migrate:up' marker inside.\n\
+                         Run 'dbward migrate create <name>' to generate a correctly formatted file.",
+                        migrations_dir.display()
+                    )));
+                }
+                eprintln!(
+                    "No pending migrations found in {}",
+                    migrations_dir.display()
+                );
+                return Ok(());
+            }
             d.max_count = *count;
             let detail_str = d
                 .to_detail_string()

@@ -59,13 +59,16 @@ pub async fn run_request(
 ) -> Result<(), CliError> {
     match action {
         RequestAction::Approve { id, comment } => {
-            run_approve(sc, json_output, &id, comment.as_deref()).await
+            let resolved = resolve_request_id(sc, &id).await?;
+            run_approve(sc, json_output, &resolved, comment.as_deref()).await
         }
         RequestAction::Reject { id, reason } => {
-            run_reject(sc, json_output, &id, reason.as_deref()).await
+            let resolved = resolve_request_id(sc, &id).await?;
+            run_reject(sc, json_output, &resolved, reason.as_deref()).await
         }
         RequestAction::Cancel { id, reason } => {
-            run_cancel(sc, json_output, &id, reason.as_deref()).await
+            let resolved = resolve_request_id(sc, &id).await?;
+            run_cancel(sc, json_output, &resolved, reason.as_deref()).await
         }
         RequestAction::List {
             limit,
@@ -346,4 +349,75 @@ async fn run_result(sc: &ServerClient, json_output: bool, id: &str) -> Result<()
         }
     }
     Ok(())
+}
+
+/// Resolve a potentially shortened request ID to a full UUID via prefix match.
+/// If the ID is already a full UUID (36 chars), return as-is.
+async fn resolve_request_id(sc: &ServerClient, id: &str) -> Result<String, CliError> {
+    if looks_like_full_uuid(id) {
+        return Ok(id.to_string());
+    }
+    let resp = sc.list_requests(Some(100), None, None, None, None).await?;
+    let requests = resp["requests"]
+        .as_array()
+        .ok_or_else(|| CliError::Server("unexpected response from list_requests".into()))?;
+    let matches: Vec<&str> = requests
+        .iter()
+        .filter_map(|r| r["id"].as_str())
+        .filter(|full_id| full_id.starts_with(id))
+        .collect();
+    match matches.len() {
+        0 => {
+            let hint = if requests.len() >= 100 {
+                " (searched last 100 requests; older requests not checked)"
+            } else {
+                ""
+            };
+            Err(CliError::Server(format!(
+                "no request found matching prefix '{id}'{hint}"
+            )))
+        }
+        1 => Ok(matches[0].to_string()),
+        _ => Err(CliError::Server(format!(
+            "ambiguous prefix '{id}': matches {} requests. Use a longer prefix.",
+            matches.len()
+        ))),
+    }
+}
+
+fn looks_like_full_uuid(s: &str) -> bool {
+    s.len() == 36
+        && s.as_bytes()[8] == b'-'
+        && s.as_bytes()[13] == b'-'
+        && s.as_bytes()[18] == b'-'
+        && s.as_bytes()[23] == b'-'
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_uuid_detected() {
+        assert!(looks_like_full_uuid("550e8400-e29b-41d4-a716-446655440000"));
+        assert!(looks_like_full_uuid("818ed6c0-1234-5678-9abc-def012345678"));
+    }
+
+    #[test]
+    fn short_prefix_not_uuid() {
+        assert!(!looks_like_full_uuid("818ed6c0"));
+        assert!(!looks_like_full_uuid("550e8400-e29b"));
+    }
+
+    #[test]
+    fn wrong_format_not_uuid() {
+        // 36 chars but no hyphens at right positions
+        assert!(!looks_like_full_uuid(
+            "550e8400xe29bx41d4xa716x446655440000"
+        ));
+        // Too long
+        assert!(!looks_like_full_uuid(
+            "550e8400-e29b-41d4-a716-4466554400001"
+        ));
+    }
 }

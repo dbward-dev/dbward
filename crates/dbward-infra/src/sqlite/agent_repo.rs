@@ -725,7 +725,7 @@ fn row_to_request(r: RequestRow) -> Result<Request, AppError> {
     let operation: Operation = r
         .operation
         .parse()
-        .map_err(|e: &str| AppError::Internal(e.to_string()))?;
+        .map_err(|e: String| AppError::Internal(e))?;
     let status = parse_request_status(&r.status)?;
     let share_with: Vec<String> =
         serde_json::from_str(&r.share_with_json).map_err(|e| AppError::Internal(e.to_string()))?;

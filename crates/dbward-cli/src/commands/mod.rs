@@ -24,7 +24,12 @@ use crate::server_client::ServerClient;
 #[command(name = "dbward", about = "DB operations workflow + approval engine")]
 pub struct Cli {
     /// Path to config file
-    #[arg(long, env = "DBWARD_CONFIG", default_value = "dbward.toml")]
+    #[arg(
+        long,
+        env = "DBWARD_CONFIG",
+        default_value = "dbward.toml",
+        global = true
+    )]
     pub config: PathBuf,
 
     /// Select named database from config

@@ -66,7 +66,9 @@ impl ApproveRequest {
         let now = self.clock.now();
         if let Some(expires_at) = request.expires_at {
             if now >= expires_at {
-                return Err(AppError::Gone("request has expired".into()));
+                return Err(AppError::Gone(
+                    "request has expired. Hint: set pending_ttl_secs in your workflow configuration to increase the approval window".into(),
+                ));
             }
         }
 

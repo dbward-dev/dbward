@@ -6,18 +6,23 @@ dbward manages database migrations with approval workflows. Migrations go throug
 
 ```
 db/migrations/
-├── 20260501120000_create_users/
-│   ├── up.sql
-│   └── down.sql
-├── 20260502090000_add_email_index/
-│   ├── up.sql
-│   └── down.sql
-└── 20260503140000_create_orders/
-    ├── up.sql
-    └── down.sql
+├── 20260501120000_create_users.sql
+├── 20260502090000_add_email_index.sql
+└── 20260503140000_create_orders.sql
 ```
 
-Each migration is a directory with a timestamp prefix and `up.sql` / `down.sql` files.
+Each migration is a single `.sql` file with a timestamp prefix. The file contains `-- migrate:up` and `-- migrate:down` markers:
+
+```sql
+-- migrate:up
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+-- migrate:down
+DROP TABLE users;
+```
 
 ## Commands
 
@@ -25,11 +30,10 @@ Each migration is a directory with a timestamp prefix and `up.sql` / `down.sql` 
 
 ```bash
 dbward migrate create add_users_table
-# Created: db/migrations/20260508120000_add_users_table/up.sql
-# Created: db/migrations/20260508120000_add_users_table/down.sql
+# Created: db/migrations/20260508120000_add_users_table.sql
 ```
 
-This is a local-only operation — no server connection needed.
+This is a local-only operation — no server connection needed. The generated file contains placeholder markers for up and down SQL.
 
 ### Check status
 
