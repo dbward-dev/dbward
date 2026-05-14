@@ -1,5 +1,8 @@
-use dbward_app::ports::{AuditLogger, EventDispatcher, Notifier, WebhookEvent, WebhookRepo};
-use dbward_domain::entities::{AuditEvent, WebhookStatus};
+use dbward_app::ports::{
+    AuditLogger, EventDispatcher, IdGenerator, Notifier, WebhookDeliveryRepo, WebhookEvent,
+    WebhookRepo,
+};
+use dbward_domain::entities::{AuditEvent, DeliveryStatus, WebhookDelivery, WebhookStatus};
 use dbward_domain::services::status_machine::TransitionEvent;
 use sqlparser::ast::{Value, VisitMut, VisitorMut};
 use sqlparser::dialect::GenericDialect;
@@ -65,6 +68,8 @@ pub struct WebhookDispatcher {
     client: reqwest::Client,
     hooks: RwLock<Vec<WebhookConfig>>,
     webhook_repo: Option<Arc<dyn WebhookRepo>>,
+    delivery_repo: Option<Arc<dyn WebhookDeliveryRepo>>,
+    id_gen: Option<Arc<dyn IdGenerator>>,
 }
 
 #[derive(Clone)]
@@ -86,6 +91,8 @@ impl WebhookDispatcher {
             client,
             hooks: RwLock::new(hooks),
             webhook_repo: None,
+            delivery_repo: None,
+            id_gen: None,
         }
     }
 
@@ -99,7 +106,31 @@ impl WebhookDispatcher {
             client,
             hooks: RwLock::new(vec![]),
             webhook_repo: Some(webhook_repo),
+            delivery_repo: None,
+            id_gen: None,
         }
+    }
+
+    pub fn with_delivery_repo(
+        mut self,
+        delivery_repo: Arc<dyn WebhookDeliveryRepo>,
+        id_gen: Arc<dyn IdGenerator>,
+    ) -> Self {
+        self.delivery_repo = Some(delivery_repo);
+        self.id_gen = Some(id_gen);
+        self
+    }
+
+    /// Send a single webhook payload. Used by background retry task.
+    pub async fn send_one(
+        &self,
+        url: &str,
+        body: &str,
+        secret: Option<&str>,
+    ) -> Result<(), String> {
+        send_with_retry(&self.client, url, body, secret)
+            .await
+            .map_err(|()| "delivery failed after retries".to_string())
     }
 }
 
@@ -122,9 +153,49 @@ impl Notifier for WebhookDispatcher {
                 _ => build_generic_body(&event),
             };
 
-            tokio::spawn(async move {
-                let _ = send_with_retry(&client, &url, &body, secret.as_deref()).await;
-            });
+            // Persist-first: record delivery before sending
+            if let (Some(repo), Some(id_gen)) = (&self.delivery_repo, &self.id_gen) {
+                let delivery = WebhookDelivery {
+                    id: format!("wd-{}", id_gen.generate()),
+                    webhook_id: url.clone(),
+                    event_type: event.event_type.clone(),
+                    payload: body.clone(),
+                    status: DeliveryStatus::Pending,
+                    attempts: 0,
+                    max_attempts: 10,
+                    next_retry_at: None,
+                    last_error: None,
+                    created_at: chrono::Utc::now(),
+                    last_attempted_at: None,
+                    claimed_at: None,
+                };
+                if let Err(e) = repo.insert(&delivery) {
+                    tracing::error!(error = %e, "failed to persist webhook delivery");
+                }
+                let delivery_id = delivery.id.clone();
+                let repo = repo.clone();
+                tokio::spawn(async move {
+                    match send_with_retry(&client, &url, &body, secret.as_deref()).await {
+                        Ok(()) => {
+                            let now = chrono::Utc::now().to_rfc3339();
+                            let _ = repo.mark_delivered(&delivery_id, &now);
+                        }
+                        Err(()) => {
+                            let next = chrono::Utc::now() + chrono::Duration::seconds(60);
+                            let _ = repo.mark_failed(
+                                &delivery_id,
+                                "initial delivery failed after 3 attempts",
+                                &next.to_rfc3339(),
+                                3,
+                            );
+                        }
+                    }
+                });
+            } else {
+                tokio::spawn(async move {
+                    let _ = send_with_retry(&client, &url, &body, secret.as_deref()).await;
+                });
+            }
         }
     }
 
