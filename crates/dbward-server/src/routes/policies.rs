@@ -3,10 +3,13 @@ use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
 };
-use dbward_app::use_cases::policy_manage::{CreateWorkflowInput, PolicyManage};
+use dbward_app::use_cases::policy_manage::{
+    CreateNotificationPolicyInput, CreateResultPolicyInput, CreateWorkflowInput, PolicyManage,
+    UpdateNotificationPolicyInput, UpdateResultPolicyInput,
+};
 use dbward_domain::auth::{AuthUser, RoleDefinition};
-use dbward_domain::policies::{ExecutionPolicy, WorkflowStep};
-use dbward_domain::values::{DatabaseName, Environment, Operation};
+use dbward_domain::policies::{DeliveryMode, ExecutionPolicy, WorkflowStep};
+use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
 
 use crate::state::AppState;
 
@@ -141,5 +144,295 @@ pub async fn delete_role(
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     let uc = make_uc(&state);
     uc.delete_role(&name, &user).map_err(map_error)?;
+    Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
+}
+
+// --- ResultPolicy CRUD ---
+
+pub(super) async fn create_result_policy(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<dbward_api_types::policies::CreateResultPolicyRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let database = DatabaseName::new(&body.database)
+        .map_err(|e| map_error(dbward_app::error::AppError::Validation(e.to_string())))?;
+    let environment = Environment::new(&body.environment)
+        .map_err(|e| map_error(dbward_app::error::AppError::Validation(e.to_string())))?;
+    let delivery_mode: DeliveryMode = serde_json::from_value(serde_json::Value::String(
+        body.delivery_mode.clone(),
+    ))
+    .map_err(|_| {
+        map_error(dbward_app::error::AppError::Validation(format!(
+            "invalid delivery_mode: {}",
+            body.delivery_mode
+        )))
+    })?;
+    let access: Vec<Selector> = body
+        .access
+        .iter()
+        .map(|s| {
+            Selector::parse(s)
+                .map_err(|e| map_error(dbward_app::error::AppError::Validation(e.0.clone())))
+        })
+        .collect::<Result<_, _>>()?;
+
+    let uc = make_uc(&state);
+    let policy = uc
+        .create_result_policy(
+            CreateResultPolicyInput {
+                database,
+                environment,
+                retention_days: body.retention_days,
+                delivery_mode,
+                access,
+            },
+            &user,
+        )
+        .map_err(map_error)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": policy.id,
+            "database": policy.database.as_str(),
+            "environment": policy.environment.as_str(),
+            "retention_days": policy.retention_days,
+            "delivery_mode": policy.delivery_mode,
+            "access": policy.access.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            "created_at": policy.created_at.map(|d| d.to_rfc3339()),
+            "updated_at": policy.updated_at.map(|d| d.to_rfc3339()),
+        })),
+    ))
+}
+
+pub(super) async fn list_result_policies(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let uc = make_uc(&state);
+    let policies = uc.list_result_policies(&user).map_err(map_error)?;
+    let items: Vec<serde_json::Value> = policies
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "id": p.id,
+                "database": p.database.as_str(),
+                "environment": p.environment.as_str(),
+                "retention_days": p.retention_days,
+                "delivery_mode": p.delivery_mode,
+                "access": p.access.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                "created_at": p.created_at.map(|d| d.to_rfc3339()),
+                "updated_at": p.updated_at.map(|d| d.to_rfc3339()),
+            })
+        })
+        .collect();
+    Ok((StatusCode::OK, Json(serde_json::json!(items))))
+}
+
+pub(super) async fn get_result_policy(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let uc = make_uc(&state);
+    let policy = uc.get_result_policy(&id, &user).map_err(map_error)?;
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": policy.id,
+            "database": policy.database.as_str(),
+            "environment": policy.environment.as_str(),
+            "retention_days": policy.retention_days,
+            "delivery_mode": policy.delivery_mode,
+            "access": policy.access.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            "created_at": policy.created_at.map(|d| d.to_rfc3339()),
+            "updated_at": policy.updated_at.map(|d| d.to_rfc3339()),
+        })),
+    ))
+}
+
+pub(super) async fn update_result_policy(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    Json(body): Json<dbward_api_types::policies::UpdateResultPolicyRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let delivery_mode =
+        body.delivery_mode
+            .map(|s| {
+                serde_json::from_value::<DeliveryMode>(serde_json::Value::String(s.clone()))
+                    .map_err(|_| {
+                        map_error(dbward_app::error::AppError::Validation(format!(
+                            "invalid delivery_mode: {s}"
+                        )))
+                    })
+            })
+            .transpose()?;
+    let access = body
+        .access
+        .map(|v| {
+            v.iter()
+                .map(|s| {
+                    Selector::parse(s).map_err(|e| {
+                        map_error(dbward_app::error::AppError::Validation(e.0.clone()))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?;
+
+    let uc = make_uc(&state);
+    let policy = uc
+        .update_result_policy(
+            &id,
+            UpdateResultPolicyInput {
+                retention_days: body.retention_days,
+                delivery_mode,
+                access,
+            },
+            &user,
+        )
+        .map_err(map_error)?;
+
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": policy.id,
+            "database": policy.database.as_str(),
+            "environment": policy.environment.as_str(),
+            "retention_days": policy.retention_days,
+            "delivery_mode": policy.delivery_mode,
+            "access": policy.access.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            "created_at": policy.created_at.map(|d| d.to_rfc3339()),
+            "updated_at": policy.updated_at.map(|d| d.to_rfc3339()),
+        })),
+    ))
+}
+
+pub(super) async fn delete_result_policy(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let uc = make_uc(&state);
+    uc.delete_result_policy(&id, &user).map_err(map_error)?;
+    Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
+}
+
+// --- NotificationPolicy CRUD ---
+
+pub(super) async fn create_notification_policy(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<dbward_api_types::policies::CreateNotificationPolicyRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let database = DatabaseName::new(&body.database)
+        .map_err(|e| map_error(dbward_app::error::AppError::Validation(e.to_string())))?;
+    let environment = Environment::new(&body.environment)
+        .map_err(|e| map_error(dbward_app::error::AppError::Validation(e.to_string())))?;
+
+    let uc = make_uc(&state);
+    let policy = uc
+        .create_notification_policy(
+            CreateNotificationPolicyInput {
+                database,
+                environment,
+                webhooks: body.webhooks,
+                events: body.events,
+            },
+            &user,
+        )
+        .map_err(map_error)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": policy.id,
+            "database": policy.database.as_str(),
+            "environment": policy.environment.as_str(),
+            "webhooks": policy.webhooks,
+            "events": policy.events,
+        })),
+    ))
+}
+
+pub(super) async fn list_notification_policies(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let uc = make_uc(&state);
+    let policies = uc.list_notification_policies(&user).map_err(map_error)?;
+    let items: Vec<serde_json::Value> = policies
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "id": p.id,
+                "database": p.database.as_str(),
+                "environment": p.environment.as_str(),
+                "webhooks": p.webhooks,
+                "events": p.events,
+            })
+        })
+        .collect();
+    Ok((StatusCode::OK, Json(serde_json::json!(items))))
+}
+
+pub(super) async fn get_notification_policy(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let uc = make_uc(&state);
+    let policy = uc.get_notification_policy(&id, &user).map_err(map_error)?;
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": policy.id,
+            "database": policy.database.as_str(),
+            "environment": policy.environment.as_str(),
+            "webhooks": policy.webhooks,
+            "events": policy.events,
+        })),
+    ))
+}
+
+pub(super) async fn update_notification_policy(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    Json(body): Json<dbward_api_types::policies::UpdateNotificationPolicyRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let uc = make_uc(&state);
+    let policy = uc
+        .update_notification_policy(
+            &id,
+            UpdateNotificationPolicyInput {
+                webhooks: body.webhooks,
+                events: body.events,
+            },
+            &user,
+        )
+        .map_err(map_error)?;
+
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": policy.id,
+            "database": policy.database.as_str(),
+            "environment": policy.environment.as_str(),
+            "webhooks": policy.webhooks,
+            "events": policy.events,
+        })),
+    ))
+}
+
+pub(super) async fn delete_notification_policy(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let uc = make_uc(&state);
+    uc.delete_notification_policy(&id, &user)
+        .map_err(map_error)?;
     Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
 }

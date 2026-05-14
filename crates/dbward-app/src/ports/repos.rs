@@ -27,6 +27,17 @@ pub trait RequestRepo: Send + Sync {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<Request>, u32), AppError>;
+    /// List requests visible to a non-admin user: own requests OR pending requests
+    /// where the user is a designated approver. Returns correct total for pagination.
+    fn list_visible_to_user(
+        &self,
+        user_id: &str,
+        groups: &[String],
+        roles: &[String],
+        status: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<Request>, u32), AppError>;
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError>;
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError>;
     fn count_executions(&self, request_id: &str) -> Result<u32, AppError>;
@@ -293,6 +304,40 @@ pub trait PolicyRepo: Send + Sync {
         db: &DatabaseName,
         env: &Environment,
     ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError>;
+
+    // ResultPolicy CRUD
+    fn create_result_policy(
+        &self,
+        policy: &dbward_domain::policies::ResultPolicy,
+    ) -> Result<(), AppError>;
+    fn get_result_policy(
+        &self,
+        id: &str,
+    ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError>;
+    fn list_result_policies(&self) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError>;
+    fn update_result_policy(
+        &self,
+        policy: &dbward_domain::policies::ResultPolicy,
+    ) -> Result<bool, AppError>;
+    fn delete_result_policy(&self, id: &str) -> Result<bool, AppError>;
+
+    // NotificationPolicy CRUD
+    fn create_notification_policy(
+        &self,
+        policy: &dbward_domain::policies::NotificationPolicy,
+    ) -> Result<(), AppError>;
+    fn get_notification_policy(
+        &self,
+        id: &str,
+    ) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError>;
+    fn list_notification_policies(
+        &self,
+    ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError>;
+    fn update_notification_policy(
+        &self,
+        policy: &dbward_domain::policies::NotificationPolicy,
+    ) -> Result<bool, AppError>;
+    fn delete_notification_policy(&self, id: &str) -> Result<bool, AppError>;
 
     fn create_role(&self, role: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError>;
     fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError>;

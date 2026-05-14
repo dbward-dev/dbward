@@ -53,6 +53,8 @@ pub struct ClaimResponse {
     pub execution_token: String,
     #[serde(default)]
     pub statement_timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub lease_expires_at: Option<String>,
 }
 
 /// POST /api/agent/jobs/{id}/heartbeat — response

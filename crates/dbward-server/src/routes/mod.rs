@@ -158,6 +158,29 @@ pub fn build_router(state: AppState) -> Router {
             "/api/roles/{name}",
             axum::routing::delete(policies::delete_role),
         )
+        // Result policies
+        .route(
+            "/api/result-policies",
+            axum::routing::post(policies::create_result_policy).get(policies::list_result_policies),
+        )
+        .route(
+            "/api/result-policies/{id}",
+            axum::routing::get(policies::get_result_policy)
+                .put(policies::update_result_policy)
+                .delete(policies::delete_result_policy),
+        )
+        // Notification policies
+        .route(
+            "/api/notification-policies",
+            axum::routing::post(policies::create_notification_policy)
+                .get(policies::list_notification_policies),
+        )
+        .route(
+            "/api/notification-policies/{id}",
+            axum::routing::get(policies::get_notification_policy)
+                .put(policies::update_notification_policy)
+                .delete(policies::delete_notification_policy),
+        )
         // Audit
         .route("/api/audit/events", axum::routing::get(audit::list_events))
         .route("/api/audit/verify", axum::routing::get(audit::verify_chain))

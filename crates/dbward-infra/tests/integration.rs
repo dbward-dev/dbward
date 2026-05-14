@@ -1642,6 +1642,97 @@ fn result_policy_lookup_returns_none() {
     assert!(repo.find_result_policy(&db, &env).unwrap().is_none());
 }
 
+#[test]
+fn result_policy_crud_roundtrip() {
+    let conn = setup();
+    let repo = SqlitePolicyRepo::new(conn.clone());
+
+    let policy = ResultPolicy {
+        id: "rp-1".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        retention_days: 30,
+        delivery_mode: DeliveryMode::Both,
+        access: vec![Selector::parse("role:admin").unwrap()],
+        created_at: None,
+        updated_at: None,
+    };
+    repo.create_result_policy(&policy).unwrap();
+
+    let got = repo.get_result_policy("rp-1").unwrap().unwrap();
+    assert_eq!(got.retention_days, 30);
+    assert_eq!(got.access.len(), 1);
+
+    assert_eq!(repo.list_result_policies().unwrap().len(), 1);
+
+    let mut updated = got;
+    updated.retention_days = 90;
+    assert!(repo.update_result_policy(&updated).unwrap());
+
+    let got2 = repo.get_result_policy("rp-1").unwrap().unwrap();
+    assert_eq!(got2.retention_days, 90);
+
+    assert!(repo.delete_result_policy("rp-1").unwrap());
+    assert!(repo.get_result_policy("rp-1").unwrap().is_none());
+    assert!(!repo.delete_result_policy("rp-1").unwrap());
+}
+
+#[test]
+fn result_policy_conflict_on_duplicate() {
+    let conn = setup();
+    let repo = SqlitePolicyRepo::new(conn.clone());
+
+    let policy = ResultPolicy {
+        id: "rp-1".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        retention_days: 30,
+        delivery_mode: DeliveryMode::Both,
+        access: vec![],
+        created_at: None,
+        updated_at: None,
+    };
+    repo.create_result_policy(&policy).unwrap();
+
+    let dup = ResultPolicy {
+        id: "rp-2".into(),
+        ..policy
+    };
+    let err = repo.create_result_policy(&dup).unwrap_err();
+    assert!(matches!(err, dbward_app::error::AppError::Conflict(_)));
+}
+
+#[test]
+fn notification_policy_crud_roundtrip() {
+    let conn = setup();
+    let repo = SqlitePolicyRepo::new(conn.clone());
+
+    let policy = dbward_domain::policies::NotificationPolicy {
+        id: "np-1".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        webhooks: vec!["https://example.com/hook".into()],
+        events: vec!["request.created".into()],
+    };
+    repo.create_notification_policy(&policy).unwrap();
+
+    let got = repo.get_notification_policy("np-1").unwrap().unwrap();
+    assert_eq!(got.webhooks.len(), 1);
+    assert_eq!(got.events, vec!["request.created"]);
+
+    assert_eq!(repo.list_notification_policies().unwrap().len(), 1);
+
+    let mut updated = got;
+    updated.webhooks = vec!["https://new.example.com/hook".into()];
+    assert!(repo.update_notification_policy(&updated).unwrap());
+
+    let got2 = repo.get_notification_policy("np-1").unwrap().unwrap();
+    assert_eq!(got2.webhooks[0], "https://new.example.com/hook");
+
+    assert!(repo.delete_notification_policy("np-1").unwrap());
+    assert!(repo.get_notification_policy("np-1").unwrap().is_none());
+}
+
 // === User CRUD ===
 
 #[test]

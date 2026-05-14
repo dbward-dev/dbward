@@ -20,6 +20,10 @@ pub struct ServerConfig {
     pub auth: AuthConfig,
     #[serde(default)]
     pub audit: AuditConfig,
+    #[serde(default)]
+    pub logging: LoggingConfig,
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +116,35 @@ pub struct AuditConfig {
 
 fn default_redaction() -> String {
     "literals".into()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoggingConfig {
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    #[serde(default)]
+    pub format: LogFormat,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            level: "info".into(),
+            format: LogFormat::Text,
+        }
+    }
+}
+
+fn default_log_level() -> String {
+    "info".into()
+}
+
+#[derive(Debug, Deserialize, Default, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum LogFormat {
+    #[default]
+    Text,
+    Json,
 }
 
 #[derive(Debug, Deserialize, Default)]

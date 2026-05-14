@@ -99,6 +99,17 @@ impl RequestRepo for StubRequestRepo {
     ) -> Result<Option<dbward_domain::entities::Request>, AppError> {
         Ok(None)
     }
+    fn list_visible_to_user(
+        &self,
+        _: &str,
+        _: &[String],
+        _: &[String],
+        _: Option<&str>,
+        _: u32,
+        _: u32,
+    ) -> Result<(Vec<dbward_domain::entities::Request>, u32), AppError> {
+        Ok((vec![], 0))
+    }
     fn list_pending_for_user(
         &self,
         _: &str,
@@ -403,6 +414,56 @@ impl PolicyRepo for StubPolicyRepo {
         _: &Environment,
     ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
         Ok(None)
+    }
+    fn create_result_policy(
+        &self,
+        _: &dbward_domain::policies::ResultPolicy,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get_result_policy(
+        &self,
+        _: &str,
+    ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
+        Ok(None)
+    }
+    fn list_result_policies(&self) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> {
+        Ok(vec![])
+    }
+    fn update_result_policy(
+        &self,
+        _: &dbward_domain::policies::ResultPolicy,
+    ) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn delete_result_policy(&self, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn create_notification_policy(
+        &self,
+        _: &dbward_domain::policies::NotificationPolicy,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get_notification_policy(
+        &self,
+        _: &str,
+    ) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError> {
+        Ok(None)
+    }
+    fn list_notification_policies(
+        &self,
+    ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> {
+        Ok(vec![])
+    }
+    fn update_notification_policy(
+        &self,
+        _: &dbward_domain::policies::NotificationPolicy,
+    ) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn delete_notification_policy(&self, _: &str) -> Result<bool, AppError> {
+        Ok(false)
     }
     fn create_role(&self, _: &RoleDefinition) -> Result<(), AppError> {
         Ok(())

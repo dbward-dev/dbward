@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, RoleDefinition};
 use dbward_domain::entities::AuditEvent;
-use dbward_domain::policies::{ExecutionPolicy, Workflow, WorkflowStep};
-use dbward_domain::values::{DatabaseName, Environment, Operation};
+use dbward_domain::policies::{DeliveryMode, ExecutionPolicy, Workflow, WorkflowStep};
+use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -23,6 +23,32 @@ pub struct CreateWorkflowInput {
     pub operations: Vec<Operation>,
     pub steps: Vec<WorkflowStep>,
     pub require_reason: bool,
+}
+
+pub struct CreateResultPolicyInput {
+    pub database: DatabaseName,
+    pub environment: Environment,
+    pub retention_days: u32,
+    pub delivery_mode: DeliveryMode,
+    pub access: Vec<Selector>,
+}
+
+pub struct UpdateResultPolicyInput {
+    pub retention_days: Option<u32>,
+    pub delivery_mode: Option<DeliveryMode>,
+    pub access: Option<Vec<Selector>>,
+}
+
+pub struct CreateNotificationPolicyInput {
+    pub database: DatabaseName,
+    pub environment: Environment,
+    pub webhooks: Vec<String>,
+    pub events: Vec<String>,
+}
+
+pub struct UpdateNotificationPolicyInput {
+    pub webhooks: Option<Vec<String>>,
+    pub events: Option<Vec<String>>,
 }
 
 // --- Workflow ---
@@ -187,6 +213,238 @@ impl PolicyManage {
         }
         Ok(())
     }
+
+    // --- ResultPolicy ---
+
+    pub fn create_result_policy(
+        &self,
+        input: CreateResultPolicyInput,
+        user: &AuthUser,
+    ) -> Result<dbward_domain::policies::ResultPolicy, AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::PolicyManage)
+            .map_err(AppError::Forbidden)?;
+        if input.retention_days == 0 || input.retention_days > 3650 {
+            return Err(AppError::Validation(
+                "retention_days must be 1..=3650".into(),
+            ));
+        }
+        let now = self.clock.now();
+        let policy = dbward_domain::policies::ResultPolicy {
+            id: format!("rp-{}", self.id_gen.generate()),
+            database: input.database,
+            environment: input.environment,
+            retention_days: input.retention_days,
+            delivery_mode: input.delivery_mode,
+            access: input.access,
+            created_at: Some(now),
+            updated_at: Some(now),
+        };
+        self.policy_repo.create_result_policy(&policy)?;
+        self.audit.record(&AuditEvent::simple(
+            "policy_created",
+            "policy",
+            &user.subject_id,
+            Some(&policy.id),
+            self.clock.now(),
+        ))?;
+        Ok(policy)
+    }
+
+    pub fn get_result_policy(
+        &self,
+        id: &str,
+        user: &AuthUser,
+    ) -> Result<dbward_domain::policies::ResultPolicy, AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::PolicyManage)
+            .map_err(AppError::Forbidden)?;
+        self.policy_repo
+            .get_result_policy(id)?
+            .ok_or_else(|| AppError::NotFound("result policy not found".into()))
+    }
+
+    pub fn list_result_policies(
+        &self,
+        user: &AuthUser,
+    ) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::PolicyManage)
+            .map_err(AppError::Forbidden)?;
+        self.policy_repo.list_result_policies()
+    }
+
+    pub fn update_result_policy(
+        &self,
+        id: &str,
+        input: UpdateResultPolicyInput,
+        user: &AuthUser,
+    ) -> Result<dbward_domain::policies::ResultPolicy, AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::PolicyManage)
+            .map_err(AppError::Forbidden)?;
+        let mut policy = self
+            .policy_repo
+            .get_result_policy(id)?
+            .ok_or_else(|| AppError::NotFound("result policy not found".into()))?;
+        if let Some(days) = input.retention_days {
+            if days == 0 || days > 3650 {
+                return Err(AppError::Validation(
+                    "retention_days must be 1..=3650".into(),
+                ));
+            }
+            policy.retention_days = days;
+        }
+        if let Some(mode) = input.delivery_mode {
+            policy.delivery_mode = mode;
+        }
+        if let Some(access) = input.access {
+            policy.access = access;
+        }
+        policy.updated_at = Some(self.clock.now());
+        self.policy_repo.update_result_policy(&policy)?;
+        self.audit.record(&AuditEvent::simple(
+            "policy_updated",
+            "policy",
+            &user.subject_id,
+            Some(id),
+            self.clock.now(),
+        ))?;
+        Ok(policy)
+    }
+
+    pub fn delete_result_policy(&self, id: &str, user: &AuthUser) -> Result<(), AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::PolicyManage)
+            .map_err(AppError::Forbidden)?;
+        let deleted = self.policy_repo.delete_result_policy(id)?;
+        if !deleted {
+            return Err(AppError::NotFound("result policy not found".into()));
+        }
+        self.audit.record(&AuditEvent::simple(
+            "policy_deleted",
+            "policy",
+            &user.subject_id,
+            Some(id),
+            self.clock.now(),
+        ))?;
+        Ok(())
+    }
+
+    // --- NotificationPolicy ---
+
+    pub fn create_notification_policy(
+        &self,
+        input: CreateNotificationPolicyInput,
+        user: &AuthUser,
+    ) -> Result<dbward_domain::policies::NotificationPolicy, AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::PolicyManage)
+            .map_err(AppError::Forbidden)?;
+        if input.webhooks.is_empty() {
+            return Err(AppError::Validation("webhooks must not be empty".into()));
+        }
+        for url in &input.webhooks {
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                return Err(AppError::Validation(format!("invalid webhook URL: {url}")));
+            }
+        }
+        let policy = dbward_domain::policies::NotificationPolicy {
+            id: format!("np-{}", self.id_gen.generate()),
+            database: input.database,
+            environment: input.environment,
+            webhooks: input.webhooks,
+            events: input.events,
+        };
+        self.policy_repo.create_notification_policy(&policy)?;
+        self.audit.record(&AuditEvent::simple(
+            "policy_created",
+            "policy",
+            &user.subject_id,
+            Some(&policy.id),
+            self.clock.now(),
+        ))?;
+        Ok(policy)
+    }
+
+    pub fn get_notification_policy(
+        &self,
+        id: &str,
+        user: &AuthUser,
+    ) -> Result<dbward_domain::policies::NotificationPolicy, AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::PolicyManage)
+            .map_err(AppError::Forbidden)?;
+        self.policy_repo
+            .get_notification_policy(id)?
+            .ok_or_else(|| AppError::NotFound("notification policy not found".into()))
+    }
+
+    pub fn list_notification_policies(
+        &self,
+        user: &AuthUser,
+    ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::PolicyManage)
+            .map_err(AppError::Forbidden)?;
+        self.policy_repo.list_notification_policies()
+    }
+
+    pub fn update_notification_policy(
+        &self,
+        id: &str,
+        input: UpdateNotificationPolicyInput,
+        user: &AuthUser,
+    ) -> Result<dbward_domain::policies::NotificationPolicy, AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::PolicyManage)
+            .map_err(AppError::Forbidden)?;
+        let mut policy = self
+            .policy_repo
+            .get_notification_policy(id)?
+            .ok_or_else(|| AppError::NotFound("notification policy not found".into()))?;
+        if let Some(webhooks) = input.webhooks {
+            if webhooks.is_empty() {
+                return Err(AppError::Validation("webhooks must not be empty".into()));
+            }
+            for url in &webhooks {
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    return Err(AppError::Validation(format!("invalid webhook URL: {url}")));
+                }
+            }
+            policy.webhooks = webhooks;
+        }
+        if let Some(events) = input.events {
+            policy.events = events;
+        }
+        self.policy_repo.update_notification_policy(&policy)?;
+        self.audit.record(&AuditEvent::simple(
+            "policy_updated",
+            "policy",
+            &user.subject_id,
+            Some(id),
+            self.clock.now(),
+        ))?;
+        Ok(policy)
+    }
+
+    pub fn delete_notification_policy(&self, id: &str, user: &AuthUser) -> Result<(), AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::PolicyManage)
+            .map_err(AppError::Forbidden)?;
+        let deleted = self.policy_repo.delete_notification_policy(id)?;
+        if !deleted {
+            return Err(AppError::NotFound("notification policy not found".into()));
+        }
+        self.audit.record(&AuditEvent::simple(
+            "policy_deleted",
+            "policy",
+            &user.subject_id,
+            Some(id),
+            self.clock.now(),
+        ))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -319,6 +577,59 @@ mod tests {
             _: &Environment,
         ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
             Ok(None)
+        }
+
+        fn create_result_policy(
+            &self,
+            _: &dbward_domain::policies::ResultPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_result_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_result_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn update_result_policy(
+            &self,
+            _: &dbward_domain::policies::ResultPolicy,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_result_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn create_notification_policy(
+            &self,
+            _: &dbward_domain::policies::NotificationPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_notification_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_notification_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn update_notification_policy(
+            &self,
+            _: &dbward_domain::policies::NotificationPolicy,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_notification_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
         }
         fn create_role(&self, _: &RoleDefinition) -> Result<(), AppError> {
             *self.role_count.lock().unwrap() += 1;

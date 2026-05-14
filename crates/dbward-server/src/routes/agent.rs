@@ -205,6 +205,7 @@ pub async fn claim(
             "environment": output.environment,
             "detail": output.detail,
             "statement_timeout_secs": output.statement_timeout_secs,
+            "lease_expires_at": output.lease_expires_at.to_rfc3339(),
         })),
     ))
 }

@@ -742,6 +742,7 @@ dependencies = [
  "axum",
  "chrono",
  "clap",
+ "dbward-api-types",
  "dbward-app",
  "dbward-domain",
  "dbward-infra",
