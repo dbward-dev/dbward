@@ -115,7 +115,6 @@ impl ListRequests {
         )?;
 
         let is_admin = user.roles.iter().any(|r| r.name == "admin");
-        let can_approve = user.has_permission(Permission::RequestApprove);
 
         let items: Vec<RequestSummary> = requests
             .iter()
@@ -123,11 +122,13 @@ impl ListRequests {
                 if is_admin {
                     return true;
                 }
+                // Own requests are always visible
                 if r.requester == user.subject_id {
                     return true;
                 }
-                if can_approve && r.status == RequestStatus::Pending {
-                    return true;
+                // Pending requests visible if user has scoped approve permission for this db/env
+                if r.status == RequestStatus::Pending {
+                    return self.is_in_user_scope(user, &r.database, &r.environment);
                 }
                 false
             })
@@ -141,6 +142,29 @@ impl ListRequests {
             total: effective_total,
             limit,
             offset,
+        })
+    }
+
+    fn is_in_user_scope(
+        &self,
+        user: &AuthUser,
+        db: &dbward_domain::values::DatabaseName,
+        env: &dbward_domain::values::Environment,
+    ) -> bool {
+        // A role must grant BOTH RequestApprove AND cover this db/env
+        user.roles.iter().any(|role| {
+            let has_approve = role.permissions.contains(&Permission::RequestApprove);
+            if !has_approve {
+                return false;
+            }
+            let db_match = role.databases.is_empty()
+                || role.databases.iter().any(|d| d.is_wildcard() || d == db);
+            let env_match = role.environments.is_empty()
+                || role
+                    .environments
+                    .iter()
+                    .any(|e| e.is_wildcard() || e == env);
+            db_match && env_match
         })
     }
 }

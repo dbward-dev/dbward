@@ -409,6 +409,59 @@ mod tests {
         ) -> Result<Option<ResultPolicy>, AppError> {
             Ok(self.policy.lock().unwrap().clone())
         }
+
+        fn create_result_policy(
+            &self,
+            _: &dbward_domain::policies::ResultPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_result_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_result_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn update_result_policy(
+            &self,
+            _: &dbward_domain::policies::ResultPolicy,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_result_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn create_notification_policy(
+            &self,
+            _: &dbward_domain::policies::NotificationPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_notification_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_notification_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn update_notification_policy(
+            &self,
+            _: &dbward_domain::policies::NotificationPolicy,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_notification_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
         fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> {
             Ok(())
         }

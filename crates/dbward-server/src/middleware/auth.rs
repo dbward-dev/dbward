@@ -171,14 +171,19 @@ pub async fn auth_middleware(
             token_id: None,
         }
     } else {
-        state
+        let auth_user = state
             .token_verifier
             .verify_api_token(token)
             .await
             .map_err(|e| {
                 log_auth_failure(&state, &e);
                 auth_error_response(e)
-            })?
+            })?;
+        // F-3: auto-create user record on first API token auth
+        if let Err(e) = state.user_repo.ensure_exists(&auth_user.subject_id) {
+            tracing::error!("user ensure_exists failed: {e}");
+        }
+        auth_user
     };
 
     req.extensions_mut().insert(user);

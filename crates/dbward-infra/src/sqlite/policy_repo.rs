@@ -220,6 +220,316 @@ impl PolicyRepo for SqlitePolicyRepo {
         Ok(best)
     }
 
+    fn create_result_policy(
+        &self,
+        policy: &dbward_domain::policies::ResultPolicy,
+    ) -> Result<(), AppError> {
+        let conn = self.conn.lock().unwrap();
+        let access_json = serde_json::to_string(
+            &policy
+                .access
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+        let delivery_str = serde_json::to_string(&policy.delivery_mode)
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .trim_matches('"')
+            .to_string();
+        conn.execute(
+            "INSERT INTO result_policies (id, database_name, environment, retention_days, delivery_mode, access_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                policy.id,
+                policy.database.as_str(),
+                policy.environment.as_str(),
+                policy.retention_days,
+                delivery_str,
+                access_json,
+            ],
+        )
+        .map_err(|e| {
+            if let rusqlite::Error::SqliteFailure(ref err, _) = e
+                && err.extended_code == 2067
+            {
+                return AppError::Conflict(
+                    "result policy already exists for this database/environment".into(),
+                );
+            }
+            AppError::Internal(e.to_string())
+        })?;
+        Ok(())
+    }
+
+    fn get_result_policy(
+        &self,
+        id: &str,
+    ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, database_name, environment, retention_days, delivery_mode, access_json FROM result_policies WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, u32>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map(|(id, db_str, env_str, retention_days, delivery_str, access_json)| {
+            let database =
+                DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            let environment =
+                Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            let delivery_mode: dbward_domain::policies::DeliveryMode =
+                serde_json::from_value(serde_json::Value::String(delivery_str))
+                    .unwrap_or_default();
+            let access_strs: Vec<String> = serde_json::from_str(&access_json)
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            let access = access_strs
+                .iter()
+                .filter_map(|s| dbward_domain::values::Selector::parse(s).ok())
+                .collect();
+            Ok(dbward_domain::policies::ResultPolicy {
+                id,
+                database,
+                environment,
+                retention_days,
+                delivery_mode,
+                access,
+                created_at: None,
+                updated_at: None,
+            })
+        })
+        .transpose()
+    }
+
+    fn list_result_policies(&self) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT id, database_name, environment, retention_days, delivery_mode, access_json FROM result_policies")
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, u32>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (id, db_str, env_str, retention_days, delivery_str, access_json) =
+                row.map_err(|e| AppError::Internal(e.to_string()))?;
+            let database =
+                DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            let environment =
+                Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            let delivery_mode: dbward_domain::policies::DeliveryMode =
+                serde_json::from_value(serde_json::Value::String(delivery_str)).unwrap_or_default();
+            let access_strs: Vec<String> = serde_json::from_str(&access_json).unwrap_or_default();
+            let access = access_strs
+                .iter()
+                .filter_map(|s| dbward_domain::values::Selector::parse(s).ok())
+                .collect();
+            result.push(dbward_domain::policies::ResultPolicy {
+                id,
+                database,
+                environment,
+                retention_days,
+                delivery_mode,
+                access,
+                created_at: None,
+                updated_at: None,
+            });
+        }
+        Ok(result)
+    }
+
+    fn update_result_policy(
+        &self,
+        policy: &dbward_domain::policies::ResultPolicy,
+    ) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let access_json = serde_json::to_string(
+            &policy
+                .access
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+        let delivery_str = serde_json::to_string(&policy.delivery_mode)
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .trim_matches('"')
+            .to_string();
+        let changed = conn
+            .execute(
+                "UPDATE result_policies SET retention_days = ?1, delivery_mode = ?2, access_json = ?3 WHERE id = ?4",
+                params![policy.retention_days, delivery_str, access_json, policy.id],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(changed > 0)
+    }
+
+    fn delete_result_policy(&self, id: &str) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn
+            .execute("DELETE FROM result_policies WHERE id = ?1", params![id])
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(changed > 0)
+    }
+
+    fn create_notification_policy(
+        &self,
+        policy: &dbward_domain::policies::NotificationPolicy,
+    ) -> Result<(), AppError> {
+        let conn = self.conn.lock().unwrap();
+        let webhooks_json = serde_json::to_string(&policy.webhooks)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let events_json =
+            serde_json::to_string(&policy.events).map_err(|e| AppError::Internal(e.to_string()))?;
+        conn.execute(
+            "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, events_json) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                policy.id,
+                policy.database.as_str(),
+                policy.environment.as_str(),
+                webhooks_json,
+                events_json,
+            ],
+        )
+        .map_err(|e| {
+            if let rusqlite::Error::SqliteFailure(ref err, _) = e
+                && err.extended_code == 2067
+            {
+                return AppError::Conflict(
+                    "notification policy already exists for this database/environment".into(),
+                );
+            }
+            AppError::Internal(e.to_string())
+        })?;
+        Ok(())
+    }
+
+    fn get_notification_policy(
+        &self,
+        id: &str,
+    ) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, database_name, environment, webhooks_json, events_json FROM notification_policies WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map(|(id, db_str, env_str, webhooks_json, events_json)| {
+            let database =
+                DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            let environment =
+                Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            let webhooks: Vec<String> = serde_json::from_str(&webhooks_json)
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            let events: Vec<String> = serde_json::from_str(&events_json)
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            Ok(dbward_domain::policies::NotificationPolicy {
+                id,
+                database,
+                environment,
+                webhooks,
+                events,
+            })
+        })
+        .transpose()
+    }
+
+    fn list_notification_policies(
+        &self,
+    ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT id, database_name, environment, webhooks_json, events_json FROM notification_policies")
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (id, db_str, env_str, webhooks_json, events_json) =
+                row.map_err(|e| AppError::Internal(e.to_string()))?;
+            let database =
+                DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            let environment =
+                Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            let webhooks: Vec<String> = serde_json::from_str(&webhooks_json).unwrap_or_default();
+            let events: Vec<String> = serde_json::from_str(&events_json).unwrap_or_default();
+            result.push(dbward_domain::policies::NotificationPolicy {
+                id,
+                database,
+                environment,
+                webhooks,
+                events,
+            });
+        }
+        Ok(result)
+    }
+
+    fn update_notification_policy(
+        &self,
+        policy: &dbward_domain::policies::NotificationPolicy,
+    ) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let webhooks_json = serde_json::to_string(&policy.webhooks)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let events_json =
+            serde_json::to_string(&policy.events).map_err(|e| AppError::Internal(e.to_string()))?;
+        let changed = conn
+            .execute(
+                "UPDATE notification_policies SET webhooks_json = ?1, events_json = ?2 WHERE id = ?3",
+                params![webhooks_json, events_json, policy.id],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(changed > 0)
+    }
+
+    fn delete_notification_policy(&self, id: &str) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn
+            .execute(
+                "DELETE FROM notification_policies WHERE id = ?1",
+                params![id],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(changed > 0)
+    }
+
     fn create_role(&self, role: &RoleDefinition) -> Result<(), AppError> {
         let conn = self.conn.lock().unwrap();
         let perms_json = serde_json::to_string(

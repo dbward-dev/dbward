@@ -294,6 +294,40 @@ pub trait PolicyRepo: Send + Sync {
         env: &Environment,
     ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError>;
 
+    // ResultPolicy CRUD
+    fn create_result_policy(
+        &self,
+        policy: &dbward_domain::policies::ResultPolicy,
+    ) -> Result<(), AppError>;
+    fn get_result_policy(
+        &self,
+        id: &str,
+    ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError>;
+    fn list_result_policies(&self) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError>;
+    fn update_result_policy(
+        &self,
+        policy: &dbward_domain::policies::ResultPolicy,
+    ) -> Result<bool, AppError>;
+    fn delete_result_policy(&self, id: &str) -> Result<bool, AppError>;
+
+    // NotificationPolicy CRUD
+    fn create_notification_policy(
+        &self,
+        policy: &dbward_domain::policies::NotificationPolicy,
+    ) -> Result<(), AppError>;
+    fn get_notification_policy(
+        &self,
+        id: &str,
+    ) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError>;
+    fn list_notification_policies(
+        &self,
+    ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError>;
+    fn update_notification_policy(
+        &self,
+        policy: &dbward_domain::policies::NotificationPolicy,
+    ) -> Result<bool, AppError>;
+    fn delete_notification_policy(&self, id: &str) -> Result<bool, AppError>;
+
     fn create_role(&self, role: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError>;
     fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError>;
     fn get_roles_by_names(
