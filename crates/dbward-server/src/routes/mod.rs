@@ -32,6 +32,7 @@ fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
         AppError::Gone(_) => StatusCode::GONE,
         AppError::Validation(_) => StatusCode::BAD_REQUEST,
         AppError::PlanLimit(_) => StatusCode::PAYMENT_REQUIRED,
+        AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
         AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     let code = e.code();
@@ -97,8 +98,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/agent/jobs/{id}/result",
-            axum::routing::post(agent::submit_result)
-                .layer(DefaultBodyLimit::max(10 * 1024 * 1024)),
+            axum::routing::post(agent::submit_result).layer(DefaultBodyLimit::max(
+                // Headroom for JSON envelope + escaping (worst case ~2x expansion)
+                state.max_persist_bytes * 2 + 2 * 1024 * 1024,
+            )),
         )
         .route("/api/agents", axum::routing::get(agent::list_agents))
         // Tokens

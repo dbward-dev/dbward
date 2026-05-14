@@ -20,6 +20,7 @@ pub struct AgentSubmitResult {
     pub result_channel: Arc<dyn ResultChannel>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
+    pub max_persist_bytes: usize,
 }
 
 pub struct AgentSubmitResultInput {
@@ -110,6 +111,13 @@ impl AgentSubmitResult {
         let data_len: u64;
         if input.success && !request.no_store {
             if let Some(data) = &input.result_data {
+                if data.len() > self.max_persist_bytes {
+                    return Err(AppError::PayloadTooLarge(format!(
+                        "result size {} exceeds limit {}",
+                        data.len(),
+                        self.max_persist_bytes
+                    )));
+                }
                 let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
                 self.result_store.put(&storage_key, data).await?;
                 data_len = data.len() as u64;
@@ -132,9 +140,13 @@ impl AgentSubmitResult {
             }
         } else if !input.success {
             // Store failure info
+            let truncated_err = truncate_utf8(
+                input.error_message.as_deref().unwrap_or("unknown error"),
+                4096,
+            );
             let err_json = serde_json::json!({
                 "success": false,
-                "error": input.error_message.as_deref().unwrap_or("unknown error"),
+                "error": truncated_err,
             });
             let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
             self.result_store
@@ -238,6 +250,17 @@ impl AgentSubmitResult {
             status: final_status,
         })
     }
+}
+
+fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 fn parse_selector_for_access(sel: &str) -> (SelectorType, String) {
@@ -612,6 +635,7 @@ mod tests {
             result_channel: Arc::new(FakeResultChannel),
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FakeClock),
+            max_persist_bytes: 10 * 1024 * 1024,
         }
     }
 
@@ -631,6 +655,7 @@ mod tests {
             result_channel: Arc::new(FakeResultChannel),
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FakeClock),
+            max_persist_bytes: 10 * 1024 * 1024,
         };
         let input = AgentSubmitResultInput {
             execution_id: "nope".into(),
@@ -696,5 +721,21 @@ mod tests {
         };
         let out = uc.execute(input, &agent_user()).await.unwrap();
         assert_eq!(out.status, RequestStatus::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn payload_too_large_rejected() {
+        let mut uc = make_uc(ExecutionStatus::Claimed, RequestStatus::Running);
+        uc.max_persist_bytes = 10;
+        let input = AgentSubmitResultInput {
+            execution_id: "exec-1".into(),
+            success: true,
+            result_data: Some(vec![0u8; 11]),
+            error_message: None,
+        };
+        assert!(matches!(
+            uc.execute(input, &agent_user()).await,
+            Err(AppError::PayloadTooLarge(_))
+        ));
     }
 }

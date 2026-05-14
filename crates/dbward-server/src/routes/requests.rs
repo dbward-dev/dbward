@@ -28,6 +28,7 @@ fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
         AppError::Gone(_) => StatusCode::GONE,
         AppError::Validation(_) => StatusCode::BAD_REQUEST,
         AppError::PlanLimit(_) => StatusCode::PAYMENT_REQUIRED,
+        AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
         AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     let code = e.code();

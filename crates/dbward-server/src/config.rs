@@ -7,6 +7,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub result_storage: ResultStorageConfig,
     #[serde(default)]
+    pub result_channel: ResultChannelConfig,
+    #[serde(default)]
     pub databases: Vec<DatabaseDef>,
     #[serde(default)]
     pub workflows: Vec<WorkflowDef>,
@@ -110,6 +112,8 @@ pub struct ResultStorageConfig {
     pub bucket: Option<String>,
     pub region: Option<String>,
     pub endpoint: Option<String>,
+    #[serde(default = "default_max_persist_bytes")]
+    pub max_persist_bytes: usize,
 }
 
 fn default_backend() -> String {
@@ -117,6 +121,33 @@ fn default_backend() -> String {
 }
 fn default_root_dir() -> String {
     "./data/results".into()
+}
+fn default_max_persist_bytes() -> usize {
+    10 * 1024 * 1024
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResultChannelConfig {
+    #[serde(default = "default_max_slots")]
+    pub max_slots: usize,
+    #[serde(default = "default_slot_ttl_secs")]
+    pub slot_ttl_secs: u64,
+}
+
+impl Default for ResultChannelConfig {
+    fn default() -> Self {
+        Self {
+            max_slots: default_max_slots(),
+            slot_ttl_secs: default_slot_ttl_secs(),
+        }
+    }
+}
+
+fn default_max_slots() -> usize {
+    10_000
+}
+fn default_slot_ttl_secs() -> u64 {
+    600
 }
 
 #[derive(Debug, Deserialize)]

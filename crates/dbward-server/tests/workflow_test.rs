@@ -274,6 +274,7 @@ fn workflow_state() -> AppState {
         draining: Arc::new(AtomicBool::new(false)),
         auth_mode: "token".into(),
         default_approval_ttl_secs: Some(3600),
+        max_persist_bytes: 10 * 1024 * 1024,
     }
 }
 

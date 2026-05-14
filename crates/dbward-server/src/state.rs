@@ -42,6 +42,7 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     // Config
     pub default_approval_ttl_secs: Option<u64>,
+    pub max_persist_bytes: usize,
     pub auth_mode: String,
     // Shutdown
     pub draining: Arc<AtomicBool>,

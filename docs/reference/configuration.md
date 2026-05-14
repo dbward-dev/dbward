@@ -78,10 +78,16 @@ secret = "${WEBHOOK_SECRET}"  # HMAC-SHA256 signing (optional)
 [result_storage]
 backend = "local"          # "local" | "s3" (default: "local")
 root_dir = "./data/results"  # Local backend path (default: "./data/results")
+max_persist_bytes = 10485760  # Max result size to store (default: 10MB)
 # S3 backend:
 # bucket = "my-dbward-results"
 # region = "ap-northeast-1"
 # endpoint = "https://s3.amazonaws.com"  # Optional (for MinIO etc.)
+
+# --- Result Channel (in-memory streaming) ---
+[result_channel]
+max_slots = 10000          # Max concurrent result slots (default: 10000)
+slot_ttl_secs = 600        # Slot expiry for completed results (default: 600)
 
 # --- Retention ---
 [retention]
@@ -102,6 +108,9 @@ redaction = "literals"     # "literals" | "none" (default: "literals")
 | `auth.mode` | `"both"` |
 | `result_storage.backend` | `"local"` |
 | `result_storage.root_dir` | `"./data/results"` |
+| `result_storage.max_persist_bytes` | 10485760 (10MB) |
+| `result_channel.max_slots` | 10000 |
+| `result_channel.slot_ttl_secs` | 600 |
 | `retention.request_ttl_days` | 90 |
 | `retention.audit_ttl_days` | 365 |
 | `retention.result_ttl_days` | 30 |
