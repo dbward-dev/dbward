@@ -109,6 +109,14 @@ pub trait RequestRepo: Send + Sync {
         roles: &[String],
         limit: u32,
     ) -> Result<Vec<StoredResultEntry>, AppError>;
+    /// Check if a user is a pending approver for a specific request (current step only).
+    fn is_pending_approver(
+        &self,
+        request_id: &str,
+        user_id: &str,
+        groups: &[String],
+        roles: &[String],
+    ) -> Result<bool, AppError>;
 }
 
 // --- AgentRepo ---

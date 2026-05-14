@@ -22,6 +22,18 @@ fn map_err(e: rusqlite::Error) -> AppError {
     AppError::Internal(e.to_string())
 }
 
+/// Build selector strings for approver matching: user:X, group:G1, role:R1, ...
+fn build_selectors(user_id: &str, groups: &[String], roles: &[String]) -> Vec<String> {
+    let mut selectors = vec![format!("user:{user_id}")];
+    for g in groups {
+        selectors.push(format!("group:{g}"));
+    }
+    for r in roles {
+        selectors.push(format!("role:{r}"));
+    }
+    selectors
+}
+
 fn database_id(db: &DatabaseName, env: &Environment) -> String {
     format!("{}:{}", db.as_str(), env.as_str())
 }
@@ -374,15 +386,7 @@ impl RequestRepo for SqliteRequestRepo {
         offset: u32,
     ) -> Result<(Vec<Request>, u32), AppError> {
         let conn = self.conn.lock().unwrap();
-        // Build selector list: user:X, group:G1, group:G2, role:R1, role:R2
-        let mut selectors = vec![format!("user:{user_id}")];
-        for g in groups {
-            selectors.push(format!("group:{g}"));
-        }
-        for r in roles {
-            selectors.push(format!("role:{r}"));
-        }
-        // ?1..N = selectors
+        let selectors = build_selectors(user_id, groups, roles);
         let placeholders: String = selectors
             .iter()
             .enumerate()
@@ -957,6 +961,41 @@ impl RequestRepo for SqliteRequestRepo {
             .map_err(map_err)?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| AppError::Internal(e.to_string()))
+    }
+
+    fn is_pending_approver(
+        &self,
+        request_id: &str,
+        user_id: &str,
+        groups: &[String],
+        roles: &[String],
+    ) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let selectors = build_selectors(user_id, groups, roles);
+        let sel_placeholders: String = selectors
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 2)) // ?1 = request_id
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT 1 FROM request_pending_approvers rpa
+             JOIN requests r ON r.id = rpa.request_id
+             WHERE rpa.request_id = ?1 AND r.status = 'pending'
+               AND rpa.selector IN ({sel_placeholders})
+             LIMIT 1"
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(request_id.to_string())];
+        for s in selectors {
+            params.push(Box::new(s));
+        }
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let exists: bool = conn
+            .query_row(&sql, param_refs.as_slice(), |_| Ok(true))
+            .unwrap_or(false);
+        Ok(exists)
     }
 }
 
