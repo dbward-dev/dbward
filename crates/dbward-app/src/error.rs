@@ -23,6 +23,9 @@ pub enum AppError {
     #[error("plan limit: {0}")]
     PlanLimit(String),
 
+    #[error("payload too large: {0}")]
+    PayloadTooLarge(String),
+
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -37,6 +40,7 @@ impl AppError {
             AppError::Gone(_) => "request.gone",
             AppError::Validation(_) => "validation.failed",
             AppError::PlanLimit(_) => "policy.limit_exceeded",
+            AppError::PayloadTooLarge(_) => "payload.too_large",
             AppError::Internal(_) => "internal_error",
         }
     }

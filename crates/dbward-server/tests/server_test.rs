@@ -588,6 +588,7 @@ fn test_state() -> AppState {
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         default_approval_ttl_secs: Some(3600),
+        max_persist_bytes: 10 * 1024 * 1024,
         auth_mode: "both".to_string(),
     }
 }

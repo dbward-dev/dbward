@@ -174,7 +174,10 @@ pub async fn run_from_args(
     std::fs::write(&pub_key_path, token_signer.public_key_hex())?;
 
     let result_channel: Arc<dyn dbward_app::ports::ResultChannel> =
-        Arc::new(dbward_infra::InMemoryResultChannel::new());
+        Arc::new(dbward_infra::InMemoryResultChannel::new(
+            cfg.result_channel.max_slots,
+            cfg.result_channel.slot_ttl_secs,
+        ));
     let notifier: Arc<dyn dbward_app::ports::Notifier> = Arc::new(
         dbward_infra::webhook::WebhookDispatcher::with_repo(webhook_repo.clone()),
     );
@@ -234,6 +237,7 @@ pub async fn run_from_args(
         token_value_generator,
         metrics: Arc::new(metrics::Metrics::new()),
         default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
+        max_persist_bytes: cfg.result_storage.max_persist_bytes,
         auth_mode: cfg.auth.mode.clone(),
         draining: draining.clone(),
     };
