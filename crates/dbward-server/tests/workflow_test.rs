@@ -163,6 +163,14 @@ impl SsrfValidator for NoopSsrf {
     }
 }
 
+struct TestWebhookSender;
+#[async_trait::async_trait]
+impl dbward_app::ports::WebhookSender for TestWebhookSender {
+    async fn send_one(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 struct NoopLicense;
 impl LicenseChecker for NoopLicense {
     fn max_tokens(&self) -> u32 {
@@ -271,6 +279,8 @@ fn workflow_state() -> AppState {
         id_generator: Arc::new(SeqIdGen(std::sync::atomic::AtomicU64::new(1))),
         token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
+        webhook_delivery_repo: None,
+        webhook_sender: Arc::new(TestWebhookSender),
         draining: Arc::new(AtomicBool::new(false)),
         auth_mode: "token".into(),
         default_approval_ttl_secs: Some(3600),

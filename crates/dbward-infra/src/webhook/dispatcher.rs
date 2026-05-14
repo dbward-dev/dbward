@@ -134,6 +134,13 @@ impl WebhookDispatcher {
     }
 }
 
+#[async_trait::async_trait]
+impl dbward_app::ports::WebhookSender for WebhookDispatcher {
+    async fn send_one(&self, url: &str, body: &str, secret: Option<&str>) -> Result<(), String> {
+        self.send_one(url, body, secret).await
+    }
+}
+
 impl Notifier for WebhookDispatcher {
     fn dispatch(&self, event: WebhookEvent) {
         let hooks = self.hooks.read().unwrap();

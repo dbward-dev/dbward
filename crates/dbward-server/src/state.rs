@@ -32,12 +32,15 @@ pub struct AppState {
     pub result_channel: Arc<dyn ResultChannel>,
     pub token_signer: Arc<dyn TokenSigner>,
     pub notifier: Arc<dyn Notifier>,
+    pub webhook_sender: Arc<dyn dbward_app::ports::WebhookSender>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub ssrf_validator: Arc<dyn SsrfValidator>,
     pub license_checker: Arc<dyn LicenseChecker>,
     pub clock: Arc<dyn Clock>,
     pub id_generator: Arc<dyn IdGenerator>,
     pub token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator>,
+    // Repos (DLQ)
+    pub webhook_delivery_repo: Option<Arc<dyn dbward_app::ports::WebhookDeliveryRepo>>,
     // Metrics
     pub metrics: Arc<Metrics>,
     // Config

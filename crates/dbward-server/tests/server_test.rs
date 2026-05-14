@@ -594,6 +594,14 @@ impl SsrfValidator for StubSsrfValidator {
     }
 }
 
+struct TestWebhookSender;
+#[async_trait::async_trait]
+impl dbward_app::ports::WebhookSender for TestWebhookSender {
+    async fn send_one(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 struct StubLicenseChecker;
 impl LicenseChecker for StubLicenseChecker {
     fn max_tokens(&self) -> u32 {
@@ -656,6 +664,8 @@ fn test_state() -> AppState {
         id_generator: Arc::new(StubIdGenerator),
         token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
+        webhook_delivery_repo: None,
+        webhook_sender: Arc::new(TestWebhookSender),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         default_approval_ttl_secs: Some(3600),
         max_persist_bytes: 10 * 1024 * 1024,

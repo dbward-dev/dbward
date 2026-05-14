@@ -11,7 +11,7 @@ pub use repos::{
     SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner, UserRepo, WebhookDeliveryRepo,
     WebhookRepo,
 };
-pub use services::{Notifier, WebhookEvent};
+pub use services::{Notifier, WebhookEvent, WebhookSender};
 
 // Re-export EventDispatcher from domain (ADR-004)
 pub use dbward_domain::services::status_machine::EventDispatcher;

@@ -118,6 +118,13 @@ impl EventDispatcher for TestEventDispatcher {
 }
 
 struct TestSsrfValidator;
+struct TestWebhookSender;
+#[async_trait]
+impl dbward_app::ports::WebhookSender for TestWebhookSender {
+    async fn send_one(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), String> {
+        Ok(())
+    }
+}
 impl SsrfValidator for TestSsrfValidator {
     fn validate_url(&self, _: &str) -> Result<(), AppError> {
         Ok(())
@@ -214,6 +221,8 @@ fn real_state() -> AppState {
         id_generator: Arc::new(TestIdGen(std::sync::atomic::AtomicU64::new(1))),
         token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
+        webhook_delivery_repo: None,
+        webhook_sender: Arc::new(TestWebhookSender),
         draining: Arc::new(AtomicBool::new(false)),
         auth_mode: "token".into(),
         default_approval_ttl_secs: Some(3600),
