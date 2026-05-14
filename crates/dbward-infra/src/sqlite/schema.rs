@@ -1,6 +1,25 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
+
+const MIGRATION_V2: &str = "
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id TEXT PRIMARY KEY,
+    webhook_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 10,
+    next_retry_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    last_attempted_at TEXT,
+    claimed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status_retry
+    ON webhook_deliveries(status, next_retry_at);
+";
 
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -15,13 +34,13 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
     let current: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current == 0 {
         conn.execute_batch(SCHEMA_SQL)?;
+        conn.execute_batch(MIGRATION_V2)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
-        // Post-v0.1.0 incremental migrations go here
-        // if current < 2 { conn.execute_batch(MIGRATION_V2)?; }
-        panic!(
-            "schema migration from v{current} to v{SCHEMA_VERSION} not implemented — add migration steps above"
-        );
+        if current < 2 {
+            conn.execute_batch(MIGRATION_V2)?;
+        }
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())
 }

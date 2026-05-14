@@ -8,6 +8,7 @@ mod result;
 mod token;
 mod user;
 mod webhook;
+mod webhook_delivery;
 
 pub use agent::{Agent, AgentDerivedStatus, AgentStatus, DatabaseCapability};
 pub use approval::{Approval, ApprovalAction};
@@ -19,3 +20,4 @@ pub use result::{ExecutionResult, ResultAccess, ResultStatus, SelectorType};
 pub use token::{Token, TokenStatus};
 pub use user::{User, UserStatus};
 pub use webhook::{Webhook, WebhookFormat, WebhookStatus};
+pub use webhook_delivery::{DeliveryStatus, WebhookDelivery};

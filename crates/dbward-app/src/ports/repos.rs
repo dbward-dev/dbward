@@ -415,5 +415,29 @@ pub struct ExecutionTokenClaims {
     pub requester_role: String,
 }
 
+// --- WebhookDeliveryRepo ---
+
+pub trait WebhookDeliveryRepo: Send + Sync {
+    fn insert(&self, delivery: &WebhookDelivery) -> Result<(), AppError>;
+    fn claim_for_retry(&self, now: &str, limit: u32) -> Result<Vec<WebhookDelivery>, AppError>;
+    fn mark_delivered(&self, id: &str, now: &str) -> Result<(), AppError>;
+    fn mark_failed(
+        &self,
+        id: &str,
+        error: &str,
+        next_retry_at: &str,
+        attempts: u32,
+    ) -> Result<(), AppError>;
+    fn mark_dead(&self, id: &str) -> Result<(), AppError>;
+    fn reclaim_stale(&self, older_than: &str) -> Result<u32, AppError>;
+    fn list_by_status(
+        &self,
+        status: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<WebhookDelivery>, u32), AppError>;
+    fn purge_old(&self, before: &str) -> Result<u32, AppError>;
+}
+
 // --- Notifier ---
 // (in services.rs)

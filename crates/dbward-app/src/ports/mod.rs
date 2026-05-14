@@ -8,7 +8,8 @@ pub use clock::{Clock, IdGenerator, TokenValueGenerator};
 pub use repos::{
     AgentRepo, AuditFilter, AuditLogger, AuditRepo, AuditVerifyResult, DatabaseRegistry,
     ExecutionTokenClaims, LicenseChecker, PolicyRepo, RequestRepo, ResultChannel, ResultStore,
-    SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner, UserRepo, WebhookRepo,
+    SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner, UserRepo, WebhookDeliveryRepo,
+    WebhookRepo,
 };
 pub use services::{Notifier, WebhookEvent};
 

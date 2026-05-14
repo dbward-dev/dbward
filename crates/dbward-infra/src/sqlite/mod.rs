@@ -7,6 +7,7 @@ mod policy_repo;
 mod request_repo;
 mod token_repo;
 mod user_repo;
+mod webhook_delivery_repo;
 mod webhook_repo;
 
 pub use schema::initialize;
@@ -18,6 +19,7 @@ pub use policy_repo::{SqlitePolicyEvaluator, SqlitePolicyRepo};
 pub use request_repo::SqliteRequestRepo;
 pub use token_repo::SqliteTokenRepo;
 pub use user_repo::SqliteUserRepo;
+pub use webhook_delivery_repo::SqliteWebhookDeliveryRepo;
 pub use webhook_repo::SqliteWebhookRepo;
 
 use rusqlite::Connection;
