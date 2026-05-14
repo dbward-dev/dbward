@@ -288,6 +288,21 @@ pub fn is_step_satisfied(step: &WorkflowStep, step_index: u32, approvals: &[Appr
     }
 }
 
+/// Check if a user matches any approver selector in any step of the workflow.
+/// Used for view-access determination (not for actual approval eligibility).
+pub fn is_potential_approver(
+    steps: &[WorkflowStep],
+    role_names: &[String],
+    groups: &[String],
+    user_id: &str,
+) -> bool {
+    steps.iter().any(|step| {
+        step.approvers
+            .iter()
+            .any(|ag| ag.selector.matches(role_names, groups, user_id, false))
+    })
+}
+
 /// Check if all steps are satisfied.
 pub fn all_steps_satisfied(steps: &[WorkflowStep], approvals: &[Approval]) -> bool {
     steps
@@ -393,5 +408,57 @@ mod step_tests {
             make_approval(0, "role:security"),
         ];
         assert!(is_step_satisfied(&steps[0], 0, &full));
+    }
+
+    #[test]
+    fn is_potential_approver_matches_role() {
+        let steps = vec![WorkflowStep {
+            approvers: vec![ApproverGroup {
+                selector: Selector::Role("dba".into()),
+                min: 1,
+            }],
+            mode: WorkflowStepMode::Any,
+        }];
+        assert!(is_potential_approver(&steps, &["dba".into()], &[], "bob"));
+        assert!(!is_potential_approver(&steps, &["dev".into()], &[], "bob"));
+    }
+
+    #[test]
+    fn is_potential_approver_matches_group() {
+        let steps = vec![WorkflowStep {
+            approvers: vec![ApproverGroup {
+                selector: Selector::Group("dba-team".into()),
+                min: 1,
+            }],
+            mode: WorkflowStepMode::Any,
+        }];
+        assert!(is_potential_approver(
+            &steps,
+            &[],
+            &["dba-team".into()],
+            "bob"
+        ));
+    }
+
+    #[test]
+    fn is_potential_approver_checks_all_steps() {
+        let steps = vec![
+            WorkflowStep {
+                approvers: vec![ApproverGroup {
+                    selector: Selector::Role("dba".into()),
+                    min: 1,
+                }],
+                mode: WorkflowStepMode::Any,
+            },
+            WorkflowStep {
+                approvers: vec![ApproverGroup {
+                    selector: Selector::Role("cto".into()),
+                    min: 1,
+                }],
+                mode: WorkflowStepMode::Any,
+            },
+        ];
+        // cto matches step 2 only
+        assert!(is_potential_approver(&steps, &["cto".into()], &[], "alice"));
     }
 }
