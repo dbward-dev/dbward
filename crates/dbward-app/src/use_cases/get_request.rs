@@ -37,18 +37,15 @@ impl GetRequest {
         );
 
         let is_approver_view = if let Err(authz_err) = scoped_ok {
-            let approver = req.status == RequestStatus::Pending
-                && self
-                    .authorizer
-                    .authorize_scoped(
-                        user,
-                        Permission::RequestApprove,
-                        &req.database,
-                        &req.environment,
-                        &ResourceContext::Global,
-                    )
-                    .is_ok();
-            if !approver {
+            let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
+            let is_approver = req.status == RequestStatus::Pending
+                && self.request_repo.is_pending_approver(
+                    &req.id,
+                    &user.subject_id,
+                    &user.groups,
+                    &role_names,
+                )?;
+            if !is_approver {
                 return Err(AppError::Forbidden(authz_err));
             }
             true
@@ -84,6 +81,7 @@ mod tests {
 
     struct MockRequestRepo {
         request: Mutex<Option<Request>>,
+        is_approver: bool,
     }
 
     impl RequestRepo for MockRequestRepo {
@@ -115,10 +113,7 @@ mod tests {
         ) -> Result<(Vec<Request>, u32), AppError> {
             unimplemented!()
         }
-        fn insert_approval(
-            &self,
-            _: &dbward_domain::entities::Approval,
-        ) -> Result<(), AppError> {
+        fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> {
             unimplemented!()
         }
         fn get_approvals(
@@ -193,11 +188,7 @@ mod tests {
         ) -> Result<bool, AppError> {
             unimplemented!()
         }
-        fn mark_failed(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
+        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
             unimplemented!()
         }
         fn cancel_all_for_user(
@@ -247,6 +238,15 @@ mod tests {
             _: u32,
         ) -> Result<Vec<StoredResultEntry>, AppError> {
             unimplemented!()
+        }
+        fn is_pending_approver(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[String],
+            _: &[String],
+        ) -> Result<bool, AppError> {
+            Ok(self.is_approver)
         }
     }
 
@@ -331,6 +331,7 @@ mod tests {
         let uc = GetRequest {
             request_repo: Arc::new(MockRequestRepo {
                 request: Mutex::new(None),
+                is_approver: false,
             }),
             authorizer: Arc::new(AllowAuthorizer),
         };
@@ -343,6 +344,7 @@ mod tests {
         let uc = GetRequest {
             request_repo: Arc::new(MockRequestRepo {
                 request: Mutex::new(Some(test_request("u1", RequestStatus::Pending))),
+                is_approver: false,
             }),
             authorizer: Arc::new(AllowAuthorizer),
         };
@@ -356,6 +358,47 @@ mod tests {
         let uc = GetRequest {
             request_repo: Arc::new(MockRequestRepo {
                 request: Mutex::new(Some(test_request("u1", RequestStatus::Pending))),
+                is_approver: false,
+            }),
+            authorizer: Arc::new(DenyAuthorizer),
+        };
+        let err = uc.execute("req-1", &test_user("u2")).unwrap_err();
+        assert!(matches!(err, AppError::Forbidden(_)));
+    }
+
+    #[test]
+    fn current_step_approver_can_view_pending_request() {
+        let uc = GetRequest {
+            request_repo: Arc::new(MockRequestRepo {
+                request: Mutex::new(Some(test_request("u1", RequestStatus::Pending))),
+                is_approver: true,
+            }),
+            authorizer: Arc::new(DenyAuthorizer),
+        };
+        let out = uc.execute("req-1", &test_user("u2")).unwrap();
+        assert!(out.is_approver_view);
+        assert_eq!(out.detail, "[redacted - approve to view]");
+    }
+
+    #[test]
+    fn non_approver_forbidden() {
+        let uc = GetRequest {
+            request_repo: Arc::new(MockRequestRepo {
+                request: Mutex::new(Some(test_request("u1", RequestStatus::Pending))),
+                is_approver: false,
+            }),
+            authorizer: Arc::new(DenyAuthorizer),
+        };
+        let err = uc.execute("req-1", &test_user("u2")).unwrap_err();
+        assert!(matches!(err, AppError::Forbidden(_)));
+    }
+
+    #[test]
+    fn approver_cannot_view_non_pending_request() {
+        let uc = GetRequest {
+            request_repo: Arc::new(MockRequestRepo {
+                request: Mutex::new(Some(test_request("u1", RequestStatus::Approved))),
+                is_approver: true,
             }),
             authorizer: Arc::new(DenyAuthorizer),
         };

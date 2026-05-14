@@ -97,7 +97,10 @@ impl TokenManage {
             let known_names: Vec<&str> = known_roles.iter().map(|r| r.name.as_str()).collect();
             for role in &input.roles {
                 if !known_names.contains(&role.as_str())
-                    && !matches!(role.as_str(), "admin" | "developer" | "readonly" | "agent-default")
+                    && !matches!(
+                        role.as_str(),
+                        "admin" | "developer" | "readonly" | "agent-default"
+                    )
                 {
                     return Err(AppError::Validation(format!("unknown role: {}", role)));
                 }
@@ -112,7 +115,11 @@ impl TokenManage {
 
         // Generate token
         let raw = self.token_gen.generate_token_value();
-        let prefix = if raw.len() >= 12 { raw[4..12].to_string() } else { raw.chars().take(8).collect() };
+        let prefix = if raw.len() >= 12 {
+            raw[4..12].to_string()
+        } else {
+            raw.chars().take(8).collect()
+        };
         let hash = hex::encode(Sha256::digest(raw.as_bytes()));
 
         let now = self.clock.now();

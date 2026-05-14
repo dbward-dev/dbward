@@ -241,6 +241,15 @@ impl RequestRepo for SharedRepo {
     ) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
         Ok(vec![])
     }
+    fn is_pending_approver(
+        &self,
+        _: &str,
+        _: &str,
+        _: &[String],
+        _: &[String],
+    ) -> Result<bool, AppError> {
+        Ok(false)
+    }
 }
 
 struct AllowAll;

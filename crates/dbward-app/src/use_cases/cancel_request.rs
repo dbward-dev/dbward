@@ -296,6 +296,15 @@ mod tests {
         ) -> Result<Vec<crate::ports::repos::StoredResultEntry>, AppError> {
             Ok(vec![])
         }
+        fn is_pending_approver(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[String],
+            _: &[String],
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
     }
 
     fn make_request(status: RequestStatus) -> Request {

@@ -51,6 +51,54 @@ const SAFE_SET_VARIABLES: &[&str] = &[
     "wait_timeout",
 ];
 
+/// Check if the first significant keyword (skipping comments and whitespace) matches `target`.
+fn first_keyword_is(sql: &str, target: &str) -> bool {
+    let bytes = sql.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        let b = bytes[i];
+        if b.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        // Skip line comment (-- or #)
+        if (b == b'-' && i + 1 < len && bytes[i + 1] == b'-') || b == b'#' {
+            i += 1;
+            while i < len && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        // Skip block comment
+        if b == b'/' && i + 1 < len && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i += 2; // skip */
+            continue;
+        }
+        // Extract first word
+        let start = i;
+        while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+            i += 1;
+        }
+        return sql[start..i].eq_ignore_ascii_case(target);
+    }
+    false
+}
+
+/// Check if SQL contains a DO keyword that likely starts a statement (for parse-failure path).
+fn contains_opaque_keyword(sql: &str) -> bool {
+    for part in sql.split(';') {
+        if first_keyword_is(part, "DO") {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyError> {
     if sql.contains('\0') {
         return Err(ClassifyError::Rejected {
@@ -69,15 +117,13 @@ pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyE
         });
     }
 
-    let _parser_dialect: &dyn sqlparser::dialect::Dialect = match dialect {
-        Dialect::PostgreSql => &PostgreSqlDialect {},
-        Dialect::MySql => &MySqlDialect {},
-    };
-
-    // Pre-parse: reject LOAD DATA (sqlparser can't parse it for PG/MySQL dialects)
-    let upper = trimmed.to_ascii_uppercase();
-    if upper.starts_with("LOAD DATA") || upper.starts_with("LOAD\t") || upper.starts_with("LOAD\n")
-    {
+    // Pre-parse: reject statements whose body is opaque to sqlparser
+    if first_keyword_is(trimmed, "DO") {
+        return Err(ClassifyError::Rejected {
+            reason: "DO statements are not allowed; body content cannot be inspected".into(),
+        });
+    }
+    if first_keyword_is(trimmed, "LOAD") {
         return Err(ClassifyError::Rejected {
             reason: "LOAD DATA is not allowed".into(),
         });
@@ -92,6 +138,13 @@ pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyE
         match Parser::parse_sql(d, trimmed) {
             Ok(stmts) => stmts,
             Err(_) => {
+                // Parse failure with opaque statements → reject outright
+                if contains_opaque_keyword(trimmed) {
+                    return Err(ClassifyError::Rejected {
+                        reason: "DO statements are not allowed; body content cannot be inspected"
+                            .into(),
+                    });
+                }
                 // Parse failure → fail-closed: treat as DML (requires approval)
                 return Ok(Classification {
                     operation: Operation::ExecuteDml,
@@ -704,6 +757,56 @@ mod tests {
     fn mysql_select() {
         let c = mysql("SELECT * FROM users").unwrap();
         assert_eq!(c.operation, Operation::ExecuteSelect);
+    }
+
+    #[test]
+    fn mysql_replace_into_is_dml() {
+        let c = mysql("REPLACE INTO t (a) VALUES (1)").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteDml);
+    }
+
+    // === DO statements rejected ===
+
+    #[test]
+    fn do_block_pg_rejected() {
+        let err = pg("DO $$ BEGIN DELETE FROM t; END $$").unwrap_err();
+        assert!(matches!(err, ClassifyError::Rejected { .. }));
+    }
+
+    #[test]
+    fn do_mysql_rejected() {
+        let err = mysql("DO SLEEP(1)").unwrap_err();
+        assert!(matches!(err, ClassifyError::Rejected { .. }));
+    }
+
+    #[test]
+    fn do_with_comment_rejected() {
+        let err = pg("-- comment\nDO $$ BEGIN END $$").unwrap_err();
+        assert!(matches!(err, ClassifyError::Rejected { .. }));
+    }
+
+    #[test]
+    fn do_with_block_comment_rejected() {
+        let err = pg("/* comment */ DO $$ BEGIN END $$").unwrap_err();
+        assert!(matches!(err, ClassifyError::Rejected { .. }));
+    }
+
+    #[test]
+    fn do_in_multi_statement_rejected() {
+        let err = pg("SELECT 1; DO $$ BEGIN DELETE FROM t; END $$").unwrap_err();
+        assert!(matches!(err, ClassifyError::Rejected { .. }));
+    }
+
+    #[test]
+    fn do_in_multi_statement_with_comment_rejected() {
+        let err = pg("SELECT 1; -- comment\nDO $$ BEGIN END $$").unwrap_err();
+        assert!(matches!(err, ClassifyError::Rejected { .. }));
+    }
+
+    #[test]
+    fn do_with_hash_comment_rejected() {
+        let err = mysql("# comment\nDO SLEEP(1)").unwrap_err();
+        assert!(matches!(err, ClassifyError::Rejected { .. }));
     }
 
     // === statement_count ===
