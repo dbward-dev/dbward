@@ -402,6 +402,7 @@ pub async fn stream_result(
         authorizer: state.authorizer.clone(),
         request_repo: state.request_repo.clone(),
         result_channel: state.result_channel.clone(),
+        policy_repo: state.policy_repo.clone(),
     };
 
     let input = stream_result::StreamResultInput {

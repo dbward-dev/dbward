@@ -132,6 +132,10 @@ pub fn build_router(state: AppState) -> Router {
                 .put(webhooks::update)
                 .delete(webhooks::delete),
         )
+        .route(
+            "/api/webhook-deliveries",
+            axum::routing::get(webhooks::list_deliveries),
+        )
         // Policies
         .route(
             "/api/workflows",

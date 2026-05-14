@@ -257,6 +257,7 @@ pub async fn submit_result(
         event_dispatcher: state.event_dispatcher.clone(),
         clock: state.clock.clone(),
         max_persist_bytes: state.max_persist_bytes,
+        policy_repo: state.policy_repo.clone(),
     };
     let result_data = body.result_data.map(|s| s.into_bytes());
     let output = uc

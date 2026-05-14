@@ -10,6 +10,7 @@ pub struct StreamResult {
     pub authorizer: Arc<dyn Authorizer>,
     pub request_repo: Arc<dyn RequestRepo>,
     pub result_channel: Arc<dyn ResultChannel>,
+    pub policy_repo: Arc<dyn PolicyRepo>,
 }
 
 pub struct StreamResultInput {
@@ -33,6 +34,13 @@ impl StreamResult {
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
         // Live stream access: only requester + admin + ResultPolicy.access (NOT share_with)
+        let policy_access: Vec<String> = self
+            .policy_repo
+            .find_result_policy(&request.database, &request.environment)
+            .ok()
+            .flatten()
+            .map(|p| p.access.iter().map(|s| s.to_string()).collect())
+            .unwrap_or_default();
         self.authorizer
             .authorize_scoped(
                 user,
@@ -41,7 +49,7 @@ impl StreamResult {
                 &request.environment,
                 &ResourceContext::Result {
                     requester_id: request.requester.clone(),
-                    access_selectors: vec![], // share_with excluded from live stream
+                    access_selectors: policy_access,
                 },
             )
             .map_err(AppError::Forbidden)?;
@@ -328,6 +336,125 @@ mod tests {
         async fn notify_all(&self) {}
     }
 
+    struct FakePolicyRepo;
+    impl PolicyRepo for FakePolicyRepo {
+        fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_workflow(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::Workflow>, AppError> {
+            Ok(None)
+        }
+        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn count_workflows(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn create_execution_policy(
+            &self,
+            _: &dbward_domain::policies::ExecutionPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_execution_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_execution_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn find_result_policy(
+            &self,
+            _: &dbward_domain::values::DatabaseName,
+            _: &dbward_domain::values::Environment,
+        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(None)
+        }
+        fn create_result_policy(
+            &self,
+            _: &dbward_domain::policies::ResultPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_result_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_result_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn update_result_policy(
+            &self,
+            _: &dbward_domain::policies::ResultPolicy,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_result_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn create_notification_policy(
+            &self,
+            _: &dbward_domain::policies::NotificationPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_notification_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_notification_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn update_notification_policy(
+            &self,
+            _: &dbward_domain::policies::NotificationPolicy,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_notification_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> {
+            Ok(vec![])
+        }
+        fn get_roles_by_names(
+            &self,
+            _: &[String],
+        ) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_role(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn count_roles(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
+    }
+
     fn user() -> AuthUser {
         AuthUser {
             subject_id: "alice".into(),
@@ -344,6 +471,7 @@ mod tests {
             authorizer: Arc::new(AllowAll),
             request_repo: Arc::new(FakeRequestRepo::empty()),
             result_channel: Arc::new(FakeResultChannel),
+            policy_repo: Arc::new(FakePolicyRepo),
         };
         let result = uc
             .execute(
@@ -363,6 +491,7 @@ mod tests {
             authorizer: Arc::new(AllowAll),
             request_repo: Arc::new(FakeRequestRepo::with_status(RequestStatus::Executed)),
             result_channel: Arc::new(FakeResultChannel),
+            policy_repo: Arc::new(FakePolicyRepo),
         };
         let out = uc
             .execute(
@@ -384,6 +513,7 @@ mod tests {
             authorizer: Arc::new(AllowAll),
             request_repo: Arc::new(FakeRequestRepo::with_status(RequestStatus::Pending)),
             result_channel: Arc::new(FakeResultChannel),
+            policy_repo: Arc::new(FakePolicyRepo),
         };
         let out = uc
             .execute(

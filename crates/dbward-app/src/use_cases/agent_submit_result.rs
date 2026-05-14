@@ -21,6 +21,7 @@ pub struct AgentSubmitResult {
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
     pub max_persist_bytes: usize,
+    pub policy_repo: Arc<dyn PolicyRepo>,
 }
 
 pub struct AgentSubmitResultInput {
@@ -106,6 +107,28 @@ impl AgentSubmitResult {
 
         let new_request_status = result.status();
 
+        // 6b. Look up ResultPolicy for this database/environment
+        let policy = self
+            .policy_repo
+            .find_result_policy(&request.database, &request.environment)?;
+        let retention_days = policy.as_ref().map(|p| p.retention_days).unwrap_or(30);
+        let delivery_mode = policy
+            .as_ref()
+            .map(|p| p.delivery_mode)
+            .unwrap_or(dbward_domain::policies::DeliveryMode::Both);
+        let policy_access: Vec<&dbward_domain::values::Selector> = policy
+            .as_ref()
+            .map(|p| p.access.iter().collect())
+            .unwrap_or_default();
+
+        // delivery_mode only applies to successful results; failures always store
+        let should_store = !matches!(delivery_mode, dbward_domain::policies::DeliveryMode::Stream)
+            || !input.success;
+        let should_stream = !matches!(
+            delivery_mode,
+            dbward_domain::policies::DeliveryMode::StoreOnly
+        ) || !input.success;
+
         // 7. Store result to external storage
         let mut result_manifest: Option<ExecutionResult> = None;
         let data_len: u64;
@@ -119,7 +142,9 @@ impl AgentSubmitResult {
                     )));
                 }
                 let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
-                self.result_store.put(&storage_key, data).await?;
+                if should_store {
+                    self.result_store.put(&storage_key, data).await?;
+                }
                 data_len = data.len() as u64;
                 let stored_at = self.clock.now();
                 result_manifest = Some(ExecutionResult {
@@ -127,15 +152,19 @@ impl AgentSubmitResult {
                     request_id: execution.request_id.clone(),
                     execution_id: execution.id.clone(),
                     storage_backend: "local".to_string(),
-                    storage_key,
+                    storage_key: if should_store {
+                        storage_key
+                    } else {
+                        String::new()
+                    },
                     content_length: data_len,
                     checksum_sha256: String::new(),
-                    retention_days: 30,
+                    retention_days,
                     status: dbward_domain::entities::ResultStatus::Stored,
                     truncated: false,
                     truncation_reason: None,
                     stored_at,
-                    expires_at: stored_at + chrono::Duration::days(30),
+                    expires_at: stored_at + chrono::Duration::days(retention_days as i64),
                 });
             }
         } else if !input.success {
@@ -154,9 +183,9 @@ impl AgentSubmitResult {
                 .await?;
         }
 
-        // Build share_with ResultAccess records
+        // Build share_with ResultAccess records (UNION of request.share_with + policy.access)
         let share_with_records: Vec<ResultAccess> = if let Some(ref rm) = result_manifest {
-            request
+            let mut records: Vec<ResultAccess> = request
                 .share_with
                 .iter()
                 .enumerate()
@@ -169,7 +198,19 @@ impl AgentSubmitResult {
                         selector_value: sv,
                     }
                 })
-                .collect()
+                .collect();
+            let base = records.len();
+            for (i, sel) in policy_access.iter().enumerate() {
+                let sel_str = sel.to_string();
+                let (st, sv) = parse_selector_for_access(&sel_str);
+                records.push(ResultAccess {
+                    id: format!("{}-pa-{}", rm.id, base + i),
+                    result_id: rm.id.clone(),
+                    selector_type: st,
+                    selector_value: sv,
+                });
+            }
+            records
         } else {
             vec![]
         };
@@ -216,25 +257,27 @@ impl AgentSubmitResult {
             }
         };
 
-        // 9. Publish result to long-poll channel
-        let summary = ResultSummary {
-            execution_id: execution.id.clone(),
-            success: input.success,
-            rows_affected: None,
-            truncated: false,
-            error_message: input.error_message.clone(),
-            result_data: if input.success {
-                input
-                    .result_data
-                    .as_ref()
-                    .map(|d| String::from_utf8_lossy(d).into_owned())
-            } else {
-                None
-            },
-        };
-        self.result_channel
-            .publish(&execution.request_id, summary)
-            .await;
+        // 9. Publish result to long-poll channel (if delivery_mode allows streaming)
+        if should_stream {
+            let summary = ResultSummary {
+                execution_id: execution.id.clone(),
+                success: input.success,
+                rows_affected: None,
+                truncated: false,
+                error_message: input.error_message.clone(),
+                result_data: if input.success {
+                    input
+                        .result_data
+                        .as_ref()
+                        .map(|d| String::from_utf8_lossy(d).into_owned())
+                } else {
+                    None
+                },
+            };
+            self.result_channel
+                .publish(&execution.request_id, summary)
+                .await;
+        }
 
         // If request was cancelled, new_request_status reflects that
         let final_status = if !request_updated && new_request_status != RequestStatus::Cancelled {
@@ -585,6 +628,125 @@ mod tests {
         async fn notify_all(&self) {}
     }
 
+    struct FakePolicyRepo;
+    impl PolicyRepo for FakePolicyRepo {
+        fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_workflow(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::Workflow>, AppError> {
+            Ok(None)
+        }
+        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn count_workflows(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn create_execution_policy(
+            &self,
+            _: &dbward_domain::policies::ExecutionPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_execution_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_execution_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn find_result_policy(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(None)
+        }
+        fn create_result_policy(
+            &self,
+            _: &dbward_domain::policies::ResultPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_result_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_result_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn update_result_policy(
+            &self,
+            _: &dbward_domain::policies::ResultPolicy,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_result_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn create_notification_policy(
+            &self,
+            _: &dbward_domain::policies::NotificationPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_notification_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_notification_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn update_notification_policy(
+            &self,
+            _: &dbward_domain::policies::NotificationPolicy,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_notification_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> {
+            Ok(vec![])
+        }
+        fn get_roles_by_names(
+            &self,
+            _: &[String],
+        ) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_role(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn count_roles(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
+    }
+
     fn agent_user() -> AuthUser {
         AuthUser {
             subject_id: "agent-1".into(),
@@ -656,6 +818,7 @@ mod tests {
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FakeClock),
             max_persist_bytes: 10 * 1024 * 1024,
+            policy_repo: Arc::new(FakePolicyRepo),
         }
     }
 
@@ -676,6 +839,7 @@ mod tests {
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FakeClock),
             max_persist_bytes: 10 * 1024 * 1024,
+            policy_repo: Arc::new(FakePolicyRepo),
         };
         let input = AgentSubmitResultInput {
             execution_id: "nope".into(),

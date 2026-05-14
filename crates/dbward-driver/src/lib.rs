@@ -93,7 +93,15 @@ pub(crate) fn text_to_json(text: &str, mapping: JsonMapping) -> serde_json::Valu
         JsonMapping::Json => {
             serde_json::from_str(text).unwrap_or(serde_json::Value::String(text.to_owned()))
         }
-        JsonMapping::Binary => serde_json::Value::String("(binary data)".into()),
+        JsonMapping::Binary => {
+            // PostgreSQL BYTEA text format is already "\xHEX...", pass through
+            if text.starts_with("\\x") {
+                serde_json::Value::String(text.to_owned())
+            } else {
+                // Raw bytes as text — hex encode with \x prefix
+                serde_json::Value::String(format!("\\x{}", hex::encode(text.as_bytes())))
+            }
+        }
         JsonMapping::Text => serde_json::Value::String(text.to_owned()),
     }
 }

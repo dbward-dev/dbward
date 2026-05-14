@@ -178,14 +178,22 @@ pub async fn run_from_args(
             cfg.result_channel.max_slots,
             cfg.result_channel.slot_ttl_secs,
         ));
-    let notifier: Arc<dyn dbward_app::ports::Notifier> = Arc::new(
-        dbward_infra::webhook::WebhookDispatcher::with_repo(webhook_repo.clone()),
+    let clock: Arc<dyn dbward_app::ports::Clock> = Arc::new(dbward_infra::UtcClock);
+    let id_generator: Arc<dyn dbward_app::ports::IdGenerator> =
+        Arc::new(dbward_infra::UuidGenerator);
+    let webhook_delivery_repo: Arc<dyn dbward_app::ports::WebhookDeliveryRepo> = Arc::new(
+        dbward_infra::sqlite::SqliteWebhookDeliveryRepo::new(conn.clone()),
     );
+    let dispatcher = Arc::new(
+        dbward_infra::webhook::WebhookDispatcher::with_repo(webhook_repo.clone())
+            .with_delivery_repo(webhook_delivery_repo.clone(), id_generator.clone()),
+    );
+    let webhook_sender: Arc<dyn dbward_app::ports::WebhookSender> = dispatcher.clone();
+    let notifier: Arc<dyn dbward_app::ports::Notifier> = dispatcher;
     // Load initial webhooks from DB
     if let Err(e) = notifier.reload() {
         tracing::warn!("failed to load webhooks on startup: {e}");
     }
-    let clock: Arc<dyn dbward_app::ports::Clock> = Arc::new(dbward_infra::UtcClock);
     let event_dispatcher: Arc<dyn dbward_app::ports::EventDispatcher> =
         Arc::new(dbward_infra::webhook::CompositeEventDispatcher {
             audit: audit_logger.clone(),
@@ -204,8 +212,6 @@ pub async fn run_from_args(
     let license_checker: Arc<dyn dbward_app::ports::LicenseChecker> = Arc::new(
         dbward_infra::LicenseCheckerImpl::new(dbward_domain::license::License::default()),
     );
-    let id_generator: Arc<dyn dbward_app::ports::IdGenerator> =
-        Arc::new(dbward_infra::UuidGenerator);
     let token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator> =
         Arc::new(dbward_infra::SecureTokenGenerator);
 
@@ -229,12 +235,14 @@ pub async fn run_from_args(
         result_channel,
         token_signer,
         notifier,
+        webhook_sender,
         event_dispatcher,
         ssrf_validator,
         license_checker,
         clock,
         id_generator,
         token_value_generator,
+        webhook_delivery_repo: Some(webhook_delivery_repo),
         metrics: Arc::new(metrics::Metrics::new()),
         default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
         max_persist_bytes: cfg.result_storage.max_persist_bytes,

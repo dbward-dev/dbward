@@ -8,9 +8,10 @@ pub use clock::{Clock, IdGenerator, TokenValueGenerator};
 pub use repos::{
     AgentRepo, AuditFilter, AuditLogger, AuditRepo, AuditVerifyResult, DatabaseRegistry,
     ExecutionTokenClaims, LicenseChecker, PolicyRepo, RequestRepo, ResultChannel, ResultStore,
-    SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner, UserRepo, WebhookRepo,
+    SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner, UserRepo, WebhookDeliveryRepo,
+    WebhookRepo,
 };
-pub use services::{Notifier, WebhookEvent};
+pub use services::{Notifier, WebhookEvent, WebhookSender};
 
 // Re-export EventDispatcher from domain (ADR-004)
 pub use dbward_domain::services::status_machine::EventDispatcher;
