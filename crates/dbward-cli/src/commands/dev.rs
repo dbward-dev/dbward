@@ -69,10 +69,17 @@ environment = "*"
     let dev_token = tokens.get("developer").cloned().unwrap_or_default();
     let agent_token = tokens.get("agent").cloned().unwrap_or_default();
 
-    if admin_token.is_empty() {
+    let client_config_path = dev_dir.join("client.toml");
+    let agent_config_path = dev_dir.join("agent.toml");
+
+    // If bootstrap was skipped (tokens empty), reuse existing config files
+    let reusing_config =
+        admin_token.is_empty() && client_config_path.exists() && agent_config_path.exists();
+
+    if admin_token.is_empty() && !reusing_config {
         cleanup_child(&mut server_child);
         return Err(CliError::Server(
-            "server did not produce bootstrap tokens".into(),
+            "server did not produce bootstrap tokens and no existing config found. Remove ~/.dbward/dev and retry.".into(),
         ));
     }
 
@@ -85,18 +92,20 @@ environment = "*"
         ));
     }
 
-    // Write client config
-    let client_config_path = dev_dir.join("client.toml");
-    let client_config = format!("[server]\nurl = \"{server_url}\"\ntoken = \"{dev_token}\"\n");
-    if let Err(e) = write_secure(&client_config_path, client_config.as_bytes()) {
-        cleanup_child(&mut server_child);
-        return Err(e);
+    // Write client config (skip if reusing existing)
+    if !reusing_config {
+        let client_config = format!("[server]\nurl = \"{server_url}\"\ntoken = \"{dev_token}\"\n");
+        if let Err(e) = write_secure(&client_config_path, client_config.as_bytes()) {
+            cleanup_child(&mut server_child);
+            return Err(e);
+        }
     }
 
-    // Write agent config
-    let agent_config_path = dev_dir.join("agent.toml");
-    let agent_config = format!(
-        r#"agent_id = "dev-agent"
+    // Write agent config (skip if reusing existing)
+    if !reusing_config {
+        let agent_config_path_inner = dev_dir.join("agent.toml");
+        let agent_config = format!(
+            r#"agent_id = "dev-agent"
 poll_interval_ms = 500
 
 [server]
@@ -106,10 +115,11 @@ agent_token = "{agent_token}"
 [databases.app.development]
 url = "{database_url}"
 "#
-    );
-    if let Err(e) = write_secure(&agent_config_path, agent_config.as_bytes()) {
-        cleanup_child(&mut server_child);
-        return Err(e);
+        );
+        if let Err(e) = write_secure(&agent_config_path_inner, agent_config.as_bytes()) {
+            cleanup_child(&mut server_child);
+            return Err(e);
+        }
     }
 
     // Spawn agent
@@ -127,10 +137,14 @@ url = "{database_url}"
     eprintln!();
     eprintln!("  Config: {}", client_config_path.display());
     eprintln!(
-        "  Try: dbward --config {} execute \"SELECT 1\"",
+        "  Try: dbward --config {} --database app execute \"SELECT 1\"",
         client_config_path.display()
     );
     eprintln!();
+    if reusing_config {
+        eprintln!("  (reusing existing config from previous session)");
+        eprintln!();
+    }
     eprintln!("Press Ctrl-C to stop.");
 
     // Wait for ctrl-c

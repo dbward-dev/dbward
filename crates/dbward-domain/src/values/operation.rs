@@ -39,7 +39,7 @@ impl fmt::Display for Operation {
 }
 
 impl std::str::FromStr for Operation {
-    type Err = &'static str;
+    type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "execute_select" => Ok(Self::ExecuteSelect),
@@ -47,7 +47,9 @@ impl std::str::FromStr for Operation {
             "migrate_up" => Ok(Self::MigrateUp),
             "migrate_down" => Ok(Self::MigrateDown),
             "migrate_status" => Ok(Self::MigrateStatus),
-            _ => Err("unknown operation"),
+            _ => Err(format!(
+                "unknown operation '{s}'. Valid operations: execute_select, execute_dml, migrate_up, migrate_down, migrate_status"
+            )),
         }
     }
 }

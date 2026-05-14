@@ -22,7 +22,7 @@ pub struct ServerConfig {
     pub audit: AuditConfig,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 pub struct RetentionConfig {
     #[serde(default = "default_request_ttl")]
     pub request_ttl_days: u64,
@@ -32,6 +32,17 @@ pub struct RetentionConfig {
     pub result_ttl_days: u64,
     #[serde(default = "default_approval_ttl")]
     pub approval_ttl_secs: u64,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            request_ttl_days: default_request_ttl(),
+            audit_ttl_days: default_audit_ttl(),
+            result_ttl_days: default_result_ttl(),
+            approval_ttl_secs: default_approval_ttl(),
+        }
+    }
 }
 
 fn default_request_ttl() -> u64 {
@@ -208,7 +219,19 @@ impl ServerConfig {
         let content =
             std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let expanded = expand_env_vars(&content)?;
-        toml::from_str(&expanded).map_err(|e| format!("{}: {e}", path.display()))
+        let cfg: Self =
+            toml::from_str(&expanded).map_err(|e| format!("{}: {e}", path.display()))?;
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.retention.approval_ttl_secs == 0 {
+            return Err(
+                "retention.approval_ttl_secs must be > 0 (immediate expiry makes approval impossible)".into(),
+            );
+        }
+        Ok(())
     }
 }
 
@@ -233,4 +256,44 @@ fn expand_env_vars(input: &str) -> Result<String, String> {
         }
     }
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retention_config_default_has_correct_values() {
+        let cfg = RetentionConfig::default();
+        assert_eq!(cfg.request_ttl_days, 90);
+        assert_eq!(cfg.audit_ttl_days, 365);
+        assert_eq!(cfg.result_ttl_days, 30);
+        assert_eq!(cfg.approval_ttl_secs, 86400);
+    }
+
+    #[test]
+    fn server_config_without_retention_section_uses_defaults() {
+        let toml = r#"
+[[databases]]
+name = "app"
+environments = ["development"]
+
+[[workflows]]
+database = "*"
+environment = "*"
+"#;
+        let cfg: ServerConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.retention.approval_ttl_secs, 86400);
+    }
+
+    #[test]
+    fn validate_rejects_zero_approval_ttl() {
+        let toml = r#"
+[retention]
+approval_ttl_secs = 0
+"#;
+        let cfg: ServerConfig = toml::from_str(toml).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("approval_ttl_secs must be > 0"));
+    }
 }
