@@ -184,12 +184,12 @@ pub async fn run_from_args(
     let webhook_delivery_repo: Arc<dyn dbward_app::ports::WebhookDeliveryRepo> = Arc::new(
         dbward_infra::sqlite::SqliteWebhookDeliveryRepo::new(conn.clone()),
     );
-    let dispatcher = dbward_infra::webhook::WebhookDispatcher::with_repo(webhook_repo.clone())
-        .with_delivery_repo(webhook_delivery_repo.clone(), id_generator.clone());
-    let webhook_sender: Arc<dyn dbward_app::ports::WebhookSender> = Arc::new(
-        dbward_infra::webhook::WebhookDispatcher::with_repo(webhook_repo.clone()),
+    let dispatcher = Arc::new(
+        dbward_infra::webhook::WebhookDispatcher::with_repo(webhook_repo.clone())
+            .with_delivery_repo(webhook_delivery_repo.clone(), id_generator.clone()),
     );
-    let notifier: Arc<dyn dbward_app::ports::Notifier> = Arc::new(dispatcher);
+    let webhook_sender: Arc<dyn dbward_app::ports::WebhookSender> = dispatcher.clone();
+    let notifier: Arc<dyn dbward_app::ports::Notifier> = dispatcher;
     // Load initial webhooks from DB
     if let Err(e) = notifier.reload() {
         tracing::warn!("failed to load webhooks on startup: {e}");
