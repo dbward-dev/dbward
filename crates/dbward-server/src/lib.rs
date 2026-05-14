@@ -27,9 +27,14 @@ pub async fn run_from_args(
     config_path: &str,
     dev_bootstrap: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Load config first (logging depends on it)
-    let cfg = config::ServerConfig::load(std::path::Path::new(config_path))
-        .map_err(|e| format!("config: {e}"))?;
+    // Load config (logging depends on it, so errors go to stderr)
+    let cfg = match config::ServerConfig::load(std::path::Path::new(config_path)) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("fatal: failed to load config '{}': {}", config_path, e);
+            return Err(format!("config: {e}").into());
+        }
+    };
 
     // Logging: apply config, with RUST_LOG env override taking precedence
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {

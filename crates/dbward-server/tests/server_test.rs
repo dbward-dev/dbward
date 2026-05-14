@@ -884,3 +884,45 @@ async fn metrics_endpoint_returns_text() {
     // Metrics may return 200 or 500 depending on registry init; just verify route exists
     assert_ne!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn xff_resolves_client_ip_when_peer_trusted() {
+    use axum::extract::ConnectInfo;
+    use std::net::SocketAddr;
+
+    let trusted: Vec<ipnet::IpNet> = vec!["10.0.0.0/8".parse().unwrap()];
+    let app = build_app(test_state(), trusted);
+
+    // Simulate trusted peer (10.0.0.1) with XFF header
+    let mut req = Request::builder()
+        .uri("/health")
+        .header("x-forwarded-for", "203.0.113.50, 10.0.0.2")
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo("10.0.0.1:1234".parse::<SocketAddr>().unwrap()));
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn xff_ignored_when_peer_not_trusted() {
+    use axum::extract::ConnectInfo;
+    use std::net::SocketAddr;
+
+    let trusted: Vec<ipnet::IpNet> = vec!["10.0.0.0/8".parse().unwrap()];
+    let app = build_app(test_state(), trusted);
+
+    // Untrusted peer (1.2.3.4) — XFF should be ignored
+    let mut req = Request::builder()
+        .uri("/health")
+        .header("x-forwarded-for", "spoofed.ip")
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo("1.2.3.4:5678".parse::<SocketAddr>().unwrap()));
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
