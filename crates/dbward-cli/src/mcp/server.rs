@@ -619,62 +619,61 @@ async fn submit_and_wait(
     detail: &str,
     reason: Option<&str>,
 ) -> Result<String, String> {
-    let (req_id, status, _approvers) = client
-        .create_request(crate::server_client::CreateRequest {
-            operation,
-            environment,
-            database,
-            detail,
-            emergency: false,
-            reason,
-            metadata: None,
-            idempotency_key: None,
-            share_with: None,
-            no_store: false,
-        })
-        .await
-        .map_err(|e| e.to_string())?;
+    use crate::commands::workflow::{self, Outcome};
 
-    match status.as_str() {
-        "dispatched" | "break_glass" | "running" => {
-            match tokio::time::timeout(Duration::from_secs(60), client.wait_for_result(&req_id))
-                .await
-            {
-                Ok(Ok(resp)) => format_result(&resp),
-                Ok(Err(e)) => Err(e.to_string()),
-                Err(_) => Ok(format!(
-                    "Request {} is still executing. Use `dbward resume {}` to check the result.",
-                    req_id, req_id
-                )),
-            }
-        }
-        "executed" | "failed" => {
-            let resp = client
-                .get_terminal_result(&req_id)
-                .await
-                .map_err(|e| e.to_string())?;
-            format_result(&resp)
-        }
-        "approved" | "auto_approved" => {
-            // Dispatch and wait
-            client.dispatch(&req_id).await.map_err(|e| e.body.clone())?;
-            match tokio::time::timeout(Duration::from_secs(60), client.wait_for_result(&req_id))
-                .await
-            {
-                Ok(Ok(resp)) => format_result(&resp),
-                Ok(Err(e)) => Err(e.to_string()),
-                Err(_) => Ok(format!(
-                    "Request {} is still executing. Use `dbward resume {}` to check the result.",
-                    req_id, req_id
-                )),
-            }
-        }
-        "pending" => Ok(format!(
-            "Request {req_id} requires approval. \
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(60),
+        workflow::submit_and_orchestrate(
+            client,
+            crate::server_client::CreateRequest {
+                operation,
+                environment,
+                database,
+                detail,
+                emergency: false,
+                reason,
+                metadata: None,
+                idempotency_key: None,
+                share_with: None,
+                no_store: false,
+            },
+            false,
+        ),
+    )
+    .await;
+
+    match outcome {
+        Ok(Ok(Outcome::Completed { result, .. })) => format_result(&result),
+        Ok(Ok(Outcome::Pending { request_id, .. })) => Ok(format!(
+            "Request {request_id} requires approval. \
                  Use dbward_check_request to check status, \
                  then dbward_get_result to retrieve the result."
         )),
-        _ => Err(format!("unexpected status: {status}")),
+        Ok(Ok(Outcome::Approved { request_id })) => {
+            // Dispatch and wait
+            client
+                .dispatch(&request_id)
+                .await
+                .map_err(|e| e.body.clone())?;
+            match tokio::time::timeout(
+                Duration::from_secs(60),
+                workflow::wait_and_resolve(client, &request_id, false),
+            )
+            .await
+            {
+                Ok(Ok(resp)) => format_result(&resp),
+                Ok(Err(e)) => Err(e.to_string()),
+                Err(_) => Ok(format!(
+                    "Request {} is still executing. Use `dbward request resume {}` to check the result.",
+                    request_id, request_id
+                )),
+            }
+        }
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => {
+            // Timeout — we don't have the request_id easily here, so give generic message
+            Ok("Request is still executing. Use dbward_check_request to check status.".to_string())
+        }
     }
 }
 
@@ -747,29 +746,19 @@ async fn get_result(
         "approved" | "auto_approved" | "break_glass" => {
             // Dispatch first, then wait for result
             let _ = client.dispatch(request_id).await;
-            let result = client
-                .wait_for_result(request_id)
+            let result = crate::commands::workflow::wait_and_resolve(client, request_id, false)
                 .await
                 .map_err(|e| e.to_string())?;
             format_result(&result)
         }
         "dispatched" | "running" => {
-            let result = client
-                .wait_for_result(request_id)
+            let result = crate::commands::workflow::wait_and_resolve(client, request_id, false)
                 .await
                 .map_err(|e| e.to_string())?;
             format_result(&result)
         }
-        "executed" => {
-            let result = client
-                .get_terminal_result(request_id)
-                .await
-                .map_err(|e| e.to_string())?;
-            format_result(&result)
-        }
-        "failed" => {
-            let result = client
-                .get_terminal_result(request_id)
+        "executed" | "failed" => {
+            let result = crate::commands::workflow::resolve_terminal_result(client, request_id)
                 .await
                 .map_err(|e| e.to_string())?;
             format_result(&result)

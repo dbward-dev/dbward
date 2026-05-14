@@ -7,6 +7,7 @@ use crate::error::CliError;
 use crate::server_client::ServerClient;
 
 use super::helpers::{load_result, save_result};
+use super::workflow;
 
 #[derive(Subcommand)]
 pub enum RequestAction {
@@ -314,7 +315,7 @@ async fn run_resume(
         return Err(e.into_cli_error("dispatch"));
     }
     let resp = tokio::select! {
-        r = sc.wait_for_result(id) => r?,
+        r = workflow::wait_and_resolve(sc, id, true) => r?,
         _ = tokio::signal::ctrl_c() => {
             eprintln!("\nRequest will continue server-side. Run `dbward result get {id}` to fetch the result.");
             return Ok(());
