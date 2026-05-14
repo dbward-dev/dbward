@@ -23,9 +23,9 @@ mode = "token"   # "token" | "oidc" | "both"
 
 ```bash
 # Via CLI (requires access to the SQLite database file)
-dbward server token create --user alice --role admin --data dbward.db
-dbward server token create --user bob --role developer --data dbward.db
-dbward server token create --user prod-agent --role admin --agent --data dbward.db
+dbward token create --user alice --role admin --data dbward.db
+dbward token create --user bob --role developer --data dbward.db
+dbward token create --user prod-agent --role admin --agent --data dbward.db
 ```
 
 ```bash
@@ -192,7 +192,7 @@ IdP (groups: ["dba-team", "backend"])
   │
   │ JWT with groups claim
   ▼
-dbward server
+dbward-server
   │
   │ Reads groups directly from JWT (no sync, no storage)
   ▼
@@ -263,7 +263,7 @@ curl -X POST http://localhost:3000/api/tokens \
 Agents use API tokens with `subject_type = "agent"`:
 
 ```bash
-dbward server token create --user prod-agent --role admin --agent --data dbward.db
+dbward token create --user prod-agent --role admin --agent --data dbward.db
 ```
 
 In OIDC mode (`mode = "oidc"`), agents are the only entities allowed to use API tokens. Human users must authenticate via OIDC.
@@ -286,7 +286,7 @@ In `mode = "both"`, both API tokens and OIDC JWTs are accepted for all users.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `401 invalid token` | Token revoked or wrong | Check `dbward server token list` |
+| `401 invalid token` | Token revoked or wrong | Check `dbward-server token list` |
 | `401 token expired` | TTL exceeded | Create a new token |
 | `401 OIDC not configured` | JWT sent but `mode = "token"` | Change to `mode = "oidc"` or `"both"` |
 | `JWT verification failed` | Wrong issuer/audience/expired | Check `issuer` and `client_id` match IdP |

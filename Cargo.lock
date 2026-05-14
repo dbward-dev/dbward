@@ -599,6 +599,7 @@ dependencies = [
  "chrono",
  "clap",
  "dbward-api-types",
+ "dbward-infra",
  "dbward-migrate",
  "dirs",
  "flate2",

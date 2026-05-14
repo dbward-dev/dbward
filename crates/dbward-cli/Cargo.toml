@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 dbward-api-types = { path = "../dbward-api-types" }
+dbward-infra = { path = "../dbward-infra" }
 dbward-migrate = { path = "../dbward-migrate", version = "0.1.0" }
 clap = { version = "4", features = ["derive", "env"] }
 tokio.workspace = true

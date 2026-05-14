@@ -33,7 +33,7 @@ $ dbward request approve req_7f3a --comment "Confirmed with product team"
            │ REST API
            ▼
 ┌─────────────────────────────────────────────────────────┐
-│                    dbward server                          │
+│                    dbward-server                         │
 │  Approval engine │ Policy engine │ Audit log (hash chain) │
 │  Ed25519 token signing │ OIDC/API auth │ Webhooks        │
 │  In-memory result relay │ NO database credentials        │
@@ -214,7 +214,7 @@ Commands:
   execute       Execute SQL (--emergency --reason for break-glass)
   audit         Search audit log (--verify for hash chain check)
   mcp           Start MCP stdio server
-  server        Server management (start, token create/revoke)
+  token         Manage API tokens (create/revoke)
   agent         Start the agent
   dev           Start local dev server + agent
   request       Manage requests:
@@ -320,7 +320,7 @@ Auto-detected from URL scheme (`postgres://` or `mysql://`).
 ### API Tokens (Free)
 
 ```bash
-dbward server token create --user alice --role admin --data dbward.db
+dbward token create --user alice --role admin --data dbward.db
 # → dbw_f9a549aa...
 ```
 
@@ -553,8 +553,8 @@ EOF
 docker compose up -d
 
 # Generate tokens
-docker compose exec dbward-server dbward server token create --user admin --role admin
-docker compose exec dbward-server dbward server token create --user agent --role agent
+docker compose exec dbward-server dbward token create --user admin --role admin
+docker compose exec dbward-server dbward token create --user agent --role agent
 ```
 
 ### Backup & Recovery

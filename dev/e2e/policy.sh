@@ -11,8 +11,8 @@ echo ""
 echo "=== E2E Policy Tests ==="
 echo ""
 
-ADMIN_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user e2e-admin --role admin --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-DEV_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user e2e-dev --role developer --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+ADMIN_TOKEN=$(docker compose exec -T dbward-server dbward token create --user e2e-admin --role admin --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+DEV_TOKEN=$(docker compose exec -T dbward-server dbward token create --user e2e-dev --role developer --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
 
 # --- 1. Workflow CRUD ---

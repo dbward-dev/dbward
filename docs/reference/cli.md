@@ -257,20 +257,20 @@ dbward dev --database-url "postgres://localhost/myapp"
 
 ---
 
-### dbward server
+### dbward-server
 
 Start the dbward HTTP server (production).
 
 ```bash
-dbward server start --config server.toml --data /data/dbward.db --listen 0.0.0.0:3000
+dbward-server --config server.toml --data /data/dbward.db --listen 0.0.0.0:3000
 ```
 
-#### dbward server token create
+#### dbward token create
 
 ```bash
-dbward server token create --user alice --role admin --data /data/dbward.db
-dbward server token create --user agent-1 --role agent-default --agent --data /data/dbward.db
-dbward server token create --user bob --role developer --groups "backend,dba" --data /data/dbward.db
+dbward token create --user alice --role admin --data /data/dbward.db
+dbward token create --user agent-1 --role agent-default --agent --data /data/dbward.db
+dbward token create --user bob --role developer --groups "backend,dba" --data /data/dbward.db
 ```
 
 | Option | Description |

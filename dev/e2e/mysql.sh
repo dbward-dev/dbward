@@ -23,8 +23,8 @@ docker compose exec -T mysql mysqladmin ping -h localhost -uroot -pdbward 2>/dev
 echo "MySQL ready"
 
 # Create agent token pointing to MySQL
-ADMIN_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user admin1 --role admin --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-DEV_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user dev1 --role developer --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+ADMIN_TOKEN=$(docker compose exec -T dbward-server dbward token create --user admin1 --role admin --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+DEV_TOKEN=$(docker compose exec -T dbward-server dbward token create --user dev1 --role developer --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
 
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
 [ -z "$DEV_TOKEN" ] && { echo "Failed to create dev token"; exit 1; }

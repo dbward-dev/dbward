@@ -20,7 +20,7 @@
                │ HTTPS (OIDC JWT or API token)
                ▼
 ┌──────────────────────────────────────────────────────────┐
-│ Server (dbward server)                                   │
+│ Server (dbward-server)                                   │
 │   - OIDC JWT verification + API token auth               │
 │   - Policy engine (4 policy types, DB×env scoped)        │
 │   - Approval state (SQLite)                              │
@@ -207,7 +207,7 @@ Auto-refresh: before each command, if token expires within 5 minutes.
 
 ### API Tokens (for CI/CD, MCP agents)
 
-Managed via `dbward server token create/revoke`. Used when OIDC is not practical.
+Managed via `dbward token create/revoke`. Used when OIDC is not practical.
 
 ### Server Auth Configuration
 
@@ -462,7 +462,7 @@ CREATE TABLE notification_policies (
 | DB credential leak | Only agent has credentials |
 | Agent result spoofing | Only the claiming agent_id can submit result |
 | Auth token leak (OIDC) | Short-lived JWT + PKCE + revocation |
-| Auth token leak (API) | `dbward server token revoke` + audit log |
+| Auth token leak (API) | `dbward token revoke` + audit log |
 | Webhook secret leak | HMAC-SHA256 signature verification |
 
 ## CLI Commands
@@ -486,9 +486,9 @@ dbward resume <ID>              # Dispatch + wait for result
                                 # --output <path> / --no-save
 dbward result <ID>              # Show locally saved result
 dbward mcp                      # MCP stdio server
-dbward server start             # HTTP server
-dbward server token create --user <USER> --role <ROLE> --data <DB>
-dbward server token revoke --id <ID> --data <DB>
+dbward-server             # HTTP server
+dbward token create --user <USER> --role <ROLE> --data <DB>
+dbward token revoke --id <ID> --data <DB>
 dbward agent --config <PATH>    # Start agent
 ```
 

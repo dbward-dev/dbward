@@ -75,7 +75,7 @@ jobs:
 Create a dedicated CI token with appropriate permissions:
 
 ```bash
-dbward server token create \
+dbward token create \
   --user "github-actions" \
   --role developer \
   --data dbward.db

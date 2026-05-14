@@ -1,25 +1,11 @@
-use std::sync::Arc;
-
-use dbward_app::use_cases::token_manage::{TokenCreateInput, TokenManage, TokenRevokeInput};
-use dbward_domain::auth::{AuthUser, Permission, ResolvedRole, SubjectType};
-use dbward_domain::values::{DatabaseName, Environment};
+use dbward_app::use_cases::token_manage::{TokenCreateInput, TokenManage};
+use dbward_domain::auth::AuthUser;
 
 use crate::state::AppState;
 
 /// System-level AuthUser for bootstrap operations (bypasses normal auth).
 fn system_user() -> AuthUser {
-    AuthUser {
-        subject_id: "system".into(),
-        subject_type: SubjectType::User,
-        roles: vec![ResolvedRole {
-            name: "system".into(),
-            permissions: [Permission::All].into_iter().collect(),
-            databases: vec![DatabaseName::wildcard()],
-            environments: vec![Environment::wildcard()],
-        }],
-        groups: vec![],
-        token_id: None,
-    }
+    dbward_infra::token_admin::system_user()
 }
 
 pub fn create_bootstrap_token(
@@ -64,39 +50,7 @@ pub fn create_token_standalone(
     is_agent: bool,
     groups: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = dbward_infra::sqlite::open(data)?;
-
-    let token_repo = Arc::new(dbward_infra::sqlite::SqliteTokenRepo::new(conn.clone()));
-    let user_repo = Arc::new(dbward_infra::sqlite::SqliteUserRepo::new(conn.clone()));
-    let policy_repo = Arc::new(dbward_infra::sqlite::SqlitePolicyRepo::new(conn.clone()));
-    let audit_logger = Arc::new(dbward_infra::sqlite::SqliteAuditLogger::new(conn));
-
-    let uc = TokenManage {
-        authorizer: Arc::new(dbward_infra::auth::RbacAuthorizer),
-        token_repo,
-        user_repo,
-        policy_repo,
-        license: Arc::new(dbward_infra::LicenseCheckerImpl::new(
-            dbward_domain::license::License::default(),
-        )),
-        audit: audit_logger,
-        clock: Arc::new(dbward_infra::UtcClock),
-        id_gen: Arc::new(dbward_infra::UuidGenerator),
-        token_gen: Arc::new(dbward_infra::SecureTokenGenerator),
-    };
-
-    let subject_type = if is_agent { "agent" } else { "user" };
-    let output = uc.create(
-        TokenCreateInput {
-            subject_id: user.to_string(),
-            subject_type: subject_type.to_string(),
-            name: Some(format!("cli-{user}")),
-            roles: vec![role.to_string()],
-            groups: groups.to_vec(),
-            expires_at: None,
-        },
-        &system_user(),
-    )?;
+    let output = dbward_infra::token_admin::create_token(data, user, role, is_agent, groups)?;
 
     let token_type = if is_agent { "agent" } else { "user" };
     println!("Token created:");
@@ -106,8 +60,7 @@ pub fn create_token_standalone(
     println!("  Role:  {role}");
     println!("  Type:  {token_type}");
     println!();
-    println!("Save this token — it cannot be retrieved later.");
-
+    println!("Save this token \u{2014} it cannot be retrieved later.");
     Ok(())
 }
 
@@ -116,34 +69,7 @@ pub fn revoke_token_standalone(
     data: &str,
     token_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = dbward_infra::sqlite::open(data)?;
-
-    let token_repo = Arc::new(dbward_infra::sqlite::SqliteTokenRepo::new(conn.clone()));
-    let user_repo = Arc::new(dbward_infra::sqlite::SqliteUserRepo::new(conn.clone()));
-    let policy_repo = Arc::new(dbward_infra::sqlite::SqlitePolicyRepo::new(conn.clone()));
-    let audit_logger = Arc::new(dbward_infra::sqlite::SqliteAuditLogger::new(conn));
-
-    let uc = TokenManage {
-        authorizer: Arc::new(dbward_infra::auth::RbacAuthorizer),
-        token_repo,
-        user_repo,
-        policy_repo,
-        license: Arc::new(dbward_infra::LicenseCheckerImpl::new(
-            dbward_domain::license::License::default(),
-        )),
-        audit: audit_logger,
-        clock: Arc::new(dbward_infra::UtcClock),
-        id_gen: Arc::new(dbward_infra::UuidGenerator),
-        token_gen: Arc::new(dbward_infra::SecureTokenGenerator),
-    };
-
-    uc.revoke(
-        TokenRevokeInput {
-            token_id: token_id.to_string(),
-        },
-        &system_user(),
-    )?;
-
+    dbward_infra::token_admin::revoke_token(data, token_id)?;
     println!("Token revoked: {token_id}");
     Ok(())
 }

@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod sqlite;
 pub mod storage;
+pub mod token_admin;
 pub mod webhook;
 
 mod clock;

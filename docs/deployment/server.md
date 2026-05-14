@@ -26,10 +26,10 @@ min = 1
 EOF
 
 # 2. Create initial admin token
-dbward server token create --user admin --role admin --data /var/lib/dbward/dbward.db
+dbward token create --user admin --role admin --data /var/lib/dbward/dbward.db
 
 # 3. Start
-dbward server start --config dbward-server.toml
+dbward-server --config dbward-server.toml
 ```
 
 ## Configuration reference
@@ -185,7 +185,7 @@ After=network.target
 [Service]
 Type=simple
 User=dbward
-ExecStart=/usr/local/bin/dbward server start \
+ExecStart=/usr/local/bin/dbward-server \
   --config /etc/dbward/dbward-server.toml \
   --data /var/lib/dbward/dbward.db \
   --listen 0.0.0.0:3000
@@ -205,7 +205,7 @@ docker run -d \
   -v dbward-data:/data \
   -v ./dbward-server.toml:/etc/dbward/dbward-server.toml:ro \
   ghcr.io/dbward-dev/dbward:latest \
-  dbward server start \
+  dbward-server \
     --config /etc/dbward/dbward-server.toml \
     --data /data/dbward.db \
     --listen 0.0.0.0:3000
@@ -217,13 +217,13 @@ Create tokens for users and agents:
 
 ```bash
 # Admin token (full access)
-dbward server token create --user alice --role admin --data /var/lib/dbward/dbward.db
+dbward token create --user alice --role admin --data /var/lib/dbward/dbward.db
 
 # Developer token
-dbward server token create --user bob --role developer --data /var/lib/dbward/dbward.db
+dbward token create --user bob --role developer --data /var/lib/dbward/dbward.db
 
 # Agent token (for dbward-agent)
-dbward server token create --user prod-agent --role admin --agent --data /var/lib/dbward/dbward.db
+dbward token create --user prod-agent --role admin --agent --data /var/lib/dbward/dbward.db
 ```
 
 Tokens can also be managed via the REST API:

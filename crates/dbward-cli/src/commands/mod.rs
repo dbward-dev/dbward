@@ -8,7 +8,7 @@ mod migrate;
 mod misc;
 mod request;
 mod result;
-mod server;
+mod token;
 
 use std::path::PathBuf;
 
@@ -134,10 +134,10 @@ pub enum Command {
     Mcp,
     /// List registered databases
     Databases,
-    /// Start the dbward HTTP server
-    Server {
+    /// Manage API tokens (offline, direct SQLite access)
+    Token {
         #[command(subcommand)]
-        action: server::ServerAction,
+        action: token::TokenAction,
     },
     /// Start the dbward agent
     Agent {
@@ -244,7 +244,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             }
             return Ok(());
         }
-        Command::Server { action } => return server::run_server_command(action).await,
+        Command::Token { action } => return token::run_token(action),
         Command::Agent {
             config: agent_config_path,
         } => return agent::run_agent(agent_config_path).await,
@@ -404,7 +404,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         | Command::Login { .. }
         | Command::Logout
         | Command::Whoami
-        | Command::Server { .. }
+        | Command::Token { .. }
         | Command::Agent { .. }
         | Command::Dev { .. }
         | Command::SelfUpdate => unreachable!(),

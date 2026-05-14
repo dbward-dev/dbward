@@ -13,9 +13,9 @@ echo ""
 
 # Create tokens
 # Create tokens (production workflow: step1=backend-team, step2=dba-team, distinct actors required)
-ADMIN_BACKEND=$(docker compose exec -T dbward-server dbward server token create --user alice --role admin --groups backend-team --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-ADMIN_DBA=$(docker compose exec -T dbward-server dbward server token create --user carol --role admin --groups dba-team --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-DEV_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user bob --role developer --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+ADMIN_BACKEND=$(docker compose exec -T dbward-server dbward token create --user alice --role admin --groups backend-team --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+ADMIN_DBA=$(docker compose exec -T dbward-server dbward token create --user carol --role admin --groups dba-team --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+DEV_TOKEN=$(docker compose exec -T dbward-server dbward token create --user bob --role developer --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
 
 [ -z "$ADMIN_BACKEND" ] && { echo "Failed to create admin token"; exit 1; }
 [ -z "$ADMIN_DBA" ] && { echo "Failed to create dba token"; exit 1; }

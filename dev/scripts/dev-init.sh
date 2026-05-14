@@ -9,7 +9,7 @@ create_token() {
     path="$3"
     extra="${4:-}"
 
-    output="$(dbward server token create --user "$user" --role "$role" $extra --data /data/dbward.db)"
+    output="$(dbward token create --user "$user" --role "$role" $extra --data /data/dbward.db)"
     token="$(printf '%s\n' "$output" | awk -F': ' '/^  Token: /{print $2}')"
 
     if [ -z "$token" ]; then
