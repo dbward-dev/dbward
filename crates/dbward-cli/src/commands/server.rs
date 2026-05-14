@@ -90,14 +90,14 @@ async fn run_token_command(action: &TokenAction) -> Result<(), CliError> {
             data,
         } => {
             let mut cmd = ProcessCommand::new(&binary);
-            cmd.arg("token")
+            cmd.arg("--data")
+                .arg(data)
+                .arg("token")
                 .arg("create")
                 .arg("--user")
                 .arg(user)
                 .arg("--role")
-                .arg(role)
-                .arg("--data")
-                .arg(data);
+                .arg(role);
             if *agent {
                 cmd.arg("--agent");
             }
@@ -107,12 +107,12 @@ async fn run_token_command(action: &TokenAction) -> Result<(), CliError> {
             cmd.status()
         }
         TokenAction::Revoke { id, data } => ProcessCommand::new(&binary)
+            .arg("--data")
+            .arg(data)
             .arg("token")
             .arg("revoke")
             .arg("--id")
             .arg(id)
-            .arg("--data")
-            .arg(data)
             .status(),
     };
     let status =
