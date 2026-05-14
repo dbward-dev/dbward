@@ -1,0 +1,451 @@
+use serde_json::Value;
+
+use crate::error::CliError;
+use crate::server_client::{CreateRequest, ServerClient};
+
+const REQUEST_STATUS_WAIT_SECS: u64 = 30;
+
+/// Outcome of a request lifecycle orchestration.
+pub enum Outcome {
+    /// Request completed (executed or failed). Contains the terminal payload.
+    Completed { request_id: String, result: Value },
+    /// Request requires approval before execution.
+    Pending {
+        request_id: String,
+        approvers: Vec<String>,
+    },
+    /// Request is approved but not yet dispatched (caller should dispatch or inform user).
+    Approved { request_id: String },
+}
+
+/// Submit a request and orchestrate through to completion.
+///
+/// This handles the common pattern: create → status branch → dispatch → wait → resolve.
+/// ctrl+c handling, save_result, and process::exit are the caller's responsibility.
+pub async fn submit_and_orchestrate(
+    sc: &ServerClient,
+    params: CreateRequest<'_>,
+    verbose: bool,
+) -> Result<Outcome, CliError> {
+    let (id, status, approvers) = sc.create_request(params).await?;
+
+    match status.as_str() {
+        "dispatched" | "break_glass" | "running" => {
+            let result = wait_and_resolve(sc, &id, verbose).await?;
+            Ok(Outcome::Completed {
+                request_id: id,
+                result,
+            })
+        }
+        "executed" | "failed" => {
+            let result = resolve_terminal_result(sc, &id).await?;
+            Ok(Outcome::Completed {
+                request_id: id,
+                result,
+            })
+        }
+        "approved" | "auto_approved" => Ok(Outcome::Approved { request_id: id }),
+        "pending" => Ok(Outcome::Pending {
+            request_id: id,
+            approvers,
+        }),
+        _ => Err(CliError::Server(format!("unexpected status: {status}"))),
+    }
+}
+
+/// Wait for an already-dispatched request to complete.
+///
+/// Assumes the request has been dispatched. Handles stream failure by falling back
+/// to polling, and re-dispatches if the dispatch lease expired (status reverted to approved).
+pub async fn wait_and_resolve(
+    sc: &ServerClient,
+    request_id: &str,
+    verbose: bool,
+) -> Result<Value, CliError> {
+    if verbose {
+        eprintln!("Waiting for agent to execute...");
+    }
+
+    let _progress_guard = if verbose {
+        Some(spawn_progress_reporter(sc.clone(), request_id.to_string()))
+    } else {
+        None
+    };
+
+    loop {
+        match sc.stream_result(request_id).await {
+            Ok(v) => break Ok(v),
+            Err(_) => {
+                if let Some(v) = poll_until_terminal(sc, request_id).await? {
+                    break Ok(v);
+                }
+                // poll_until_terminal returned None means it re-dispatched; retry stream
+            }
+        }
+    }
+}
+
+/// Get the terminal result for a request that is already in executed/failed state.
+pub async fn resolve_terminal_result(
+    sc: &ServerClient,
+    request_id: &str,
+) -> Result<Value, CliError> {
+    let req = sc.get_request(request_id).await?;
+    resolve_from_request(sc, request_id, &req).await
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Spawn a background task that prints progress updates.
+/// Returns a guard that aborts the task on drop.
+fn spawn_progress_reporter(sc: ServerClient, request_id: String) -> AbortOnDrop {
+    AbortOnDrop(tokio::spawn(async move {
+        let mut last_status = String::new();
+        let start = std::time::Instant::now();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            let req = match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                sc.get_request(&request_id),
+            )
+            .await
+            {
+                Ok(Ok(r)) => r,
+                _ => continue,
+            };
+            let status = req["status"].as_str().unwrap_or("").to_string();
+            let elapsed = start.elapsed().as_secs();
+            if status != last_status {
+                match status.as_str() {
+                    "dispatched" => eprintln!("  → queued (waiting for agent)  [{}s]", elapsed),
+                    "executing" | "running" => {
+                        let agent = req["claimed_by"].as_str().unwrap_or("agent");
+                        eprintln!("  → executing by {}  [{}s]", agent, elapsed);
+                    }
+                    "execution_lost" => {
+                        eprintln!("  → execution_lost (agent disconnected)");
+                        break;
+                    }
+                    "approved" => {
+                        eprintln!("  → dispatch expired (no agent picked up)");
+                        break;
+                    }
+                    _ => {}
+                }
+                last_status = status;
+            }
+        }
+    }))
+}
+
+/// Poll the request until it reaches a terminal state or re-dispatches.
+/// Returns Some(result) if terminal, None if re-dispatched (caller should retry stream).
+async fn poll_until_terminal(
+    sc: &ServerClient,
+    request_id: &str,
+) -> Result<Option<Value>, CliError> {
+    let mut req = sc.get_request(request_id).await?;
+
+    loop {
+        let status = req["status"].as_str().unwrap_or("");
+        match status {
+            "executed" | "failed" => {
+                return resolve_from_request(sc, request_id, &req).await.map(Some);
+            }
+            "dispatched" | "running" => {
+                req = sc
+                    .get_request_with_wait(request_id, REQUEST_STATUS_WAIT_SECS)
+                    .await?;
+            }
+            "approved" | "auto_approved" | "break_glass" => {
+                // Stream failed and dispatch lease expired. Re-dispatch.
+                match sc.dispatch(request_id).await {
+                    Ok(_) => {
+                        // Re-dispatched successfully; return None to retry stream
+                        return Ok(None);
+                    }
+                    Err(e) => {
+                        return Err(CliError::Server(format!(
+                            "request {request_id} is approved but dispatch failed: {}. Run: dbward request resume {request_id}",
+                            e.body
+                        )));
+                    }
+                }
+            }
+            "pending" => {
+                return Err(CliError::Server(format!(
+                    "Request {request_id} requires approval. Check status: dbward request show {request_id}"
+                )));
+            }
+            _ => {
+                return Err(CliError::Server(format!(
+                    "unexpected status: {status}. Try: dbward request resume {request_id}"
+                )));
+            }
+        }
+    }
+}
+
+/// Resolve the terminal payload from a request JSON.
+async fn resolve_from_request(
+    sc: &ServerClient,
+    request_id: &str,
+    req: &Value,
+) -> Result<Value, CliError> {
+    let status = req["status"].as_str().unwrap_or("");
+
+    if let Some(payload) = terminal_payload_from_request(req) {
+        return Ok(payload);
+    }
+
+    match status {
+        "executed" | "failed" => match sc.get_result_content(request_id).await {
+            Ok(result) => Ok(serde_json::json!({"success": true, "result": result})),
+            Err(err) if is_missing_result_content_error(&err) => {
+                Ok(synthesized_terminal_payload(status, request_id))
+            }
+            Err(err) => Err(err),
+        },
+        _ => Err(CliError::Server(format!(
+            "unexpected status: {status}. Try: dbward request resume {request_id}"
+        ))),
+    }
+}
+
+/// Extract terminal payload from embedded execution_result/execution_error fields.
+fn terminal_payload_from_request(req: &Value) -> Option<Value> {
+    let status = req["status"].as_str().unwrap_or("");
+
+    if let Some(err) = req.get("execution_error") {
+        return Some(serde_json::json!({"success": false, "error": err}));
+    }
+    if let Some(result) = req.get("execution_result") {
+        return Some(serde_json::json!({
+            "success": status != "failed",
+            "result": result
+        }));
+    }
+
+    None
+}
+
+fn is_missing_result_content_error(err: &CliError) -> bool {
+    match err {
+        CliError::Server(msg) => msg.contains("result not stored for this request"),
+        _ => false,
+    }
+}
+
+fn synthesized_terminal_payload(status: &str, request_id: &str) -> Value {
+    match status {
+        "failed" => serde_json::json!({
+            "success": false,
+            "error": format!(
+                "Request {request_id} failed. Result not available (relay expired, no storage configured). Check: dbward result {request_id}"
+            )
+        }),
+        _ => serde_json::json!({
+            "success": true,
+            "error": format!(
+                "Request {request_id} executed successfully but result is no longer available. Check: dbward result {request_id}"
+            ),
+            "result": Value::Null
+        }),
+    }
+}
+
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_payload_prefers_embedded_execution_error() {
+        let req = serde_json::json!({
+            "status": "failed",
+            "execution_error": "boom",
+        });
+
+        let payload = terminal_payload_from_request(&req).unwrap();
+
+        assert_eq!(payload["success"], false);
+        assert_eq!(payload["error"], "boom");
+    }
+
+    #[test]
+    fn terminal_payload_extracts_execution_result() {
+        let req = serde_json::json!({
+            "status": "executed",
+            "execution_result": {"rows": []},
+        });
+
+        let payload = terminal_payload_from_request(&req).unwrap();
+
+        assert_eq!(payload["success"], true);
+        assert_eq!(payload["result"], serde_json::json!({"rows": []}));
+    }
+
+    #[test]
+    fn terminal_payload_returns_none_when_no_embedded_data() {
+        let req = serde_json::json!({
+            "status": "executed",
+        });
+
+        assert!(terminal_payload_from_request(&req).is_none());
+    }
+
+    #[test]
+    fn synthesized_terminal_payload_marks_failed_requests_unsuccessful() {
+        let payload = synthesized_terminal_payload("failed", "req-123");
+
+        assert_eq!(payload["success"], false);
+        assert!(
+            payload["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("req-123")
+        );
+    }
+
+    #[test]
+    fn synthesized_terminal_payload_marks_executed_requests_successful() {
+        let payload = synthesized_terminal_payload("executed", "req-123");
+
+        assert_eq!(payload["success"], true);
+        assert!(payload["result"].is_null());
+    }
+
+    #[tokio::test]
+    async fn wait_and_resolve_fallback_on_stream_failure() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 4096];
+                let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await;
+                let req_str = String::from_utf8_lossy(&buf);
+
+                let response = if req_str.contains("/result/stream") {
+                    "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n".to_string()
+                } else if req_str.contains("GET") && req_str.contains("/api/requests/") {
+                    let body = serde_json::json!({
+                        "id": "test-req", "status": "executed",
+                        "operation": "execute_query", "environment": "dev",
+                        "database": "app", "detail": "SELECT 1",
+                        "created_by": "alice", "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "resolved_at": null, "reason": null,
+                        "metadata": {}, "idempotency_key": null, "expires_at": null,
+                    })
+                    .to_string();
+                    format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                } else {
+                    "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n".to_string()
+                };
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let client = ServerClient::new(&format!("http://{addr}"), "test-token");
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            wait_and_resolve(&client, "test-req", false),
+        )
+        .await;
+
+        server.abort();
+        assert!(
+            result.is_ok(),
+            "wait_and_resolve should not hang on stream failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_until_terminal_redispatches_on_approved() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let call_count_clone = call_count.clone();
+
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = vec![0u8; 4096];
+                let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await;
+                let req_str = String::from_utf8_lossy(&buf);
+
+                let n = call_count_clone.fetch_add(1, Ordering::SeqCst);
+                let response = if req_str.contains("/result/stream") {
+                    // Stream always fails
+                    "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n".to_string()
+                } else if req_str.contains("POST") && req_str.contains("/dispatch") {
+                    // Dispatch succeeds
+                    let body = r#"{"status":"dispatched"}"#;
+                    format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                } else if req_str.contains("GET") && req_str.contains("/api/requests/") {
+                    // First GET returns "approved" (triggers re-dispatch), subsequent returns "executed"
+                    let status = if n <= 2 { "approved" } else { "executed" };
+                    let body = serde_json::json!({
+                        "id": "test-req", "status": status,
+                        "operation": "execute_query", "environment": "dev",
+                        "database": "app", "detail": "SELECT 1",
+                        "created_by": "alice", "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "resolved_at": null, "reason": null,
+                        "metadata": {}, "idempotency_key": null, "expires_at": null,
+                    })
+                    .to_string();
+                    format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                } else {
+                    "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\n\r\n".to_string()
+                };
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        let client = ServerClient::new(&format!("http://{addr}"), "test-token");
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            wait_and_resolve(&client, "test-req", false),
+        )
+        .await;
+
+        server.abort();
+        assert!(result.is_ok(), "should complete after re-dispatch");
+        // Verify dispatch was called (call_count includes stream + get + dispatch + stream + get)
+        assert!(
+            call_count.load(Ordering::SeqCst) >= 3,
+            "should have made multiple calls including dispatch"
+        );
+    }
+}
