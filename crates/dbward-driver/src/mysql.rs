@@ -338,7 +338,13 @@ fn mysql_row_to_json(row: &sqlx::mysql::MySqlRow) -> serde_json::Value {
             let text: Result<String, _> = row.try_get_unchecked(col.ordinal());
             match text {
                 Ok(s) => text_to_json(&s, mysql_type_mapping(col.type_info().name())),
-                Err(_) => serde_json::Value::String("(binary data)".into()),
+                Err(_) => {
+                    // Raw binary bytes — hex encode with \x prefix
+                    let bytes: Vec<u8> = row
+                        .try_get_unchecked::<Vec<u8>, _>(col.ordinal())
+                        .unwrap_or_default();
+                    serde_json::Value::String(format!("\\x{}", hex::encode(&bytes)))
+                }
             }
         };
         map.insert(name.to_string(), val);

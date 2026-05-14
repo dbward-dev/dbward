@@ -243,7 +243,11 @@ fn pg_row_to_json(row: &sqlx::postgres::PgRow) -> serde_json::Value {
         } else {
             match raw.as_str() {
                 Ok(text) => text_to_json(text, pg_type_mapping(col.type_info().name())),
-                Err(_) => serde_json::Value::String("(binary data)".into()),
+                Err(_) => {
+                    // Raw binary bytes — hex encode with \x prefix
+                    let bytes: &[u8] = raw.as_bytes().unwrap_or(b"");
+                    serde_json::Value::String(format!("\\x{}", hex::encode(bytes)))
+                }
             }
         };
         map.insert(name.to_string(), val);
