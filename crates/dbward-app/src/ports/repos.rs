@@ -27,6 +27,17 @@ pub trait RequestRepo: Send + Sync {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<Request>, u32), AppError>;
+    /// List requests visible to a non-admin user: own requests OR pending requests
+    /// where the user is a designated approver. Returns correct total for pagination.
+    fn list_visible_to_user(
+        &self,
+        user_id: &str,
+        groups: &[String],
+        roles: &[String],
+        status: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<Request>, u32), AppError>;
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError>;
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError>;
     fn count_executions(&self, request_id: &str) -> Result<u32, AppError>;

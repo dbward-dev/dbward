@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission};
-use dbward_domain::entities::{Request, RequestStatus};
+use dbward_domain::entities::Request;
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -116,55 +116,46 @@ impl ListRequests {
 
         let is_admin = user.roles.iter().any(|r| r.name == "admin");
 
-        let items: Vec<RequestSummary> = requests
-            .iter()
-            .filter(|r| {
-                if is_admin {
-                    return true;
-                }
-                // Own requests are always visible
-                if r.requester == user.subject_id {
-                    return true;
-                }
-                // Pending requests visible if user has scoped approve permission for this db/env
-                if r.status == RequestStatus::Pending {
-                    return self.is_in_user_scope(user, &r.database, &r.environment);
-                }
-                false
-            })
-            .map(RequestSummary::from)
-            .collect();
+        if is_admin {
+            let items = requests.iter().map(RequestSummary::from).collect();
+            return Ok(ListRequestsOutput {
+                requests: items,
+                total,
+                limit,
+                offset,
+            });
+        }
 
-        let effective_total = if is_admin { total } else { items.len() as u32 };
+        // Non-admin: use SQL-level visibility query for correct pagination
+        let roles: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
+        let (visible_requests, visible_total) = self.request_repo.list_visible_to_user(
+            &user.subject_id,
+            &user.groups,
+            &roles,
+            input.status.as_deref(),
+            limit,
+            offset,
+        )?;
+        let items: Vec<RequestSummary> = if let Some(ref filter_user) = input.user {
+            visible_requests
+                .iter()
+                .filter(|r| r.requester == *filter_user)
+                .map(RequestSummary::from)
+                .collect()
+        } else {
+            visible_requests.iter().map(RequestSummary::from).collect()
+        };
+        let total = if input.user.is_some() {
+            items.len() as u32
+        } else {
+            visible_total
+        };
 
         Ok(ListRequestsOutput {
             requests: items,
-            total: effective_total,
+            total,
             limit,
             offset,
-        })
-    }
-
-    fn is_in_user_scope(
-        &self,
-        user: &AuthUser,
-        db: &dbward_domain::values::DatabaseName,
-        env: &dbward_domain::values::Environment,
-    ) -> bool {
-        // A role must grant BOTH RequestApprove AND cover this db/env
-        user.roles.iter().any(|role| {
-            let has_approve = role.permissions.contains(&Permission::RequestApprove);
-            if !has_approve {
-                return false;
-            }
-            let db_match = role.databases.is_empty()
-                || role.databases.iter().any(|d| d.is_wildcard() || d == db);
-            let env_match = role.environments.is_empty()
-                || role
-                    .environments
-                    .iter()
-                    .any(|e| e.is_wildcard() || e == env);
-            db_match && env_match
         })
     }
 }
@@ -175,6 +166,7 @@ mod tests {
     use crate::error::AuthzError;
     use chrono::Utc;
     use dbward_domain::auth::{ResolvedRole, ResourceContext, SubjectType};
+    use dbward_domain::entities::RequestStatus;
     use dbward_domain::values::{DatabaseName, Environment, Operation};
     use std::sync::Mutex;
 
@@ -241,6 +233,24 @@ mod tests {
             let reqs = self.requests.lock().unwrap().clone();
             let total = reqs.len() as u32;
             Ok((reqs, total))
+        }
+        fn list_visible_to_user(
+            &self,
+            user_id: &str,
+            _: &[String],
+            _: &[String],
+            _: Option<&str>,
+            _: u32,
+            _: u32,
+        ) -> Result<(Vec<Request>, u32), AppError> {
+            let reqs = self.requests.lock().unwrap();
+            let visible: Vec<Request> = reqs
+                .iter()
+                .filter(|r| r.requester == user_id || r.status == RequestStatus::Pending)
+                .cloned()
+                .collect();
+            let total = visible.len() as u32;
+            Ok((visible, total))
         }
         fn list_pending_for_user(
             &self,

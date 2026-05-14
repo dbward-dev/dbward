@@ -159,6 +159,17 @@ mod tests {
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<DomainRequest>, AppError> {
             Ok(None)
         }
+        fn list_visible_to_user(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+            _: Option<&str>,
+            _: u32,
+            _: u32,
+        ) -> Result<(Vec<dbward_domain::entities::Request>, u32), AppError> {
+            Ok((vec![], 0))
+        }
         fn list_pending_for_user(
             &self,
             _: &str,

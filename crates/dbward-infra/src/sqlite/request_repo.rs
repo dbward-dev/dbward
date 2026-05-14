@@ -287,6 +287,84 @@ impl RequestRepo for SqliteRequestRepo {
         Ok((items, total))
     }
 
+    fn list_visible_to_user(
+        &self,
+        user_id: &str,
+        groups: &[String],
+        roles: &[String],
+        status: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<Request>, u32), AppError> {
+        let conn = self.conn.lock().unwrap();
+
+        // Build selector list for pending approver matching
+        let mut selectors = vec![format!("user:{user_id}")];
+        for g in groups {
+            selectors.push(format!("group:{g}"));
+        }
+        for r in roles {
+            selectors.push(format!("role:{r}"));
+        }
+        let placeholders: String = selectors
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        // user_id param index
+        let uid_idx = selectors.len() + 1;
+
+        let status_clause = if status.is_some() {
+            format!(" AND r.status = ?{}", uid_idx + 1)
+        } else {
+            String::new()
+        };
+
+        // Visibility: own requests OR pending requests where user is approver
+        let sql = format!(
+            "SELECT COUNT(DISTINCT r.id) FROM requests r
+             LEFT JOIN request_pending_approvers rpa ON r.id = rpa.request_id
+             WHERE (r.requester = ?{uid_idx} OR (r.status = 'pending' AND rpa.selector IN ({placeholders}))){status_clause}"
+        );
+        let query_sql = format!(
+            "SELECT DISTINCT r.* FROM requests r
+             LEFT JOIN request_pending_approvers rpa ON r.id = rpa.request_id
+             WHERE (r.requester = ?{uid_idx} OR (r.status = 'pending' AND rpa.selector IN ({placeholders}))){status_clause}
+             ORDER BY r.created_at DESC LIMIT ?{} OFFSET ?{}",
+            uid_idx + if status.is_some() { 2 } else { 1 },
+            uid_idx + if status.is_some() { 3 } else { 2 },
+        );
+
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = selectors
+            .into_iter()
+            .map(|s| Box::new(s) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
+        params.push(Box::new(user_id.to_string()));
+        if let Some(s) = status {
+            params.push(Box::new(s.to_string()));
+        }
+
+        let count_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let total: u32 = conn
+            .query_row(&sql, count_refs.as_slice(), |row| row.get(0))
+            .map_err(map_err)?;
+
+        params.push(Box::new(limit));
+        params.push(Box::new(offset));
+        let query_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+
+        let mut stmt = conn.prepare(&query_sql).map_err(map_err)?;
+        let rows = stmt
+            .query_and_then(query_refs.as_slice(), row_to_request)
+            .map_err(map_err)?;
+        let requests: Vec<Request> = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
+        Ok((requests, total))
+    }
+
     fn list_pending_for_user(
         &self,
         user_id: &str,

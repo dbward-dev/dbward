@@ -71,6 +71,17 @@ impl RequestRepo for SharedRepo {
             .find(|r| r.idempotency_key.as_deref() == Some(key))
             .cloned())
     }
+    fn list_visible_to_user(
+        &self,
+        _: &str,
+        _: &[String],
+        _: &[String],
+        _: Option<&str>,
+        _: u32,
+        _: u32,
+    ) -> Result<(Vec<Request>, u32), AppError> {
+        Ok((vec![], 0))
+    }
     fn list_pending_for_user(
         &self,
         _: &str,
