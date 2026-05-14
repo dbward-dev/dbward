@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Request, RequestStatus};
+use dbward_domain::policies::workflow::Workflow;
+use dbward_domain::services::workflow_matcher;
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -37,18 +39,23 @@ impl GetRequest {
         );
 
         let is_approver_view = if let Err(authz_err) = scoped_ok {
-            let approver = req.status == RequestStatus::Pending
-                && self
-                    .authorizer
-                    .authorize_scoped(
-                        user,
-                        Permission::RequestApprove,
-                        &req.database,
-                        &req.environment,
-                        &ResourceContext::Global,
-                    )
-                    .is_ok();
-            if !approver {
+            let is_approver = req.status == RequestStatus::Pending
+                && req
+                    .workflow_snapshot_json
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str::<Workflow>(json).ok())
+                    .map(|wf| {
+                        let role_names: Vec<String> =
+                            user.roles.iter().map(|r| r.name.clone()).collect();
+                        workflow_matcher::is_potential_approver(
+                            &wf.steps,
+                            &role_names,
+                            &user.groups,
+                            &user.subject_id,
+                        )
+                    })
+                    .unwrap_or(false);
+            if !is_approver {
                 return Err(AppError::Forbidden(authz_err));
             }
             true
@@ -115,10 +122,7 @@ mod tests {
         ) -> Result<(Vec<Request>, u32), AppError> {
             unimplemented!()
         }
-        fn insert_approval(
-            &self,
-            _: &dbward_domain::entities::Approval,
-        ) -> Result<(), AppError> {
+        fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> {
             unimplemented!()
         }
         fn get_approvals(
@@ -193,11 +197,7 @@ mod tests {
         ) -> Result<bool, AppError> {
             unimplemented!()
         }
-        fn mark_failed(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
+        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
             unimplemented!()
         }
         fn cancel_all_for_user(
@@ -361,5 +361,71 @@ mod tests {
         };
         let err = uc.execute("req-1", &test_user("u2")).unwrap_err();
         assert!(matches!(err, AppError::Forbidden(_)));
+    }
+
+    #[test]
+    fn group_approver_can_view_pending_request() {
+        let workflow_json = r#"{"id":"w1","database":"*","environment":"*","steps":[{"approvers":[{"selector":"group:dba-team","min":1}],"mode":"any"}]}"#;
+        let mut req = test_request("u1", RequestStatus::Pending);
+        req.workflow_snapshot_json = Some(workflow_json.to_string());
+
+        let uc = GetRequest {
+            request_repo: Arc::new(MockRequestRepo {
+                request: Mutex::new(Some(req)),
+            }),
+            authorizer: Arc::new(DenyAuthorizer),
+        };
+
+        let mut approver = test_user("u2");
+        approver.groups = vec!["dba-team".to_string()];
+
+        let out = uc.execute("req-1", &approver).unwrap();
+        assert!(out.is_approver_view);
+        assert_eq!(out.detail, "[redacted - approve to view]");
+    }
+
+    #[test]
+    fn non_approver_forbidden_even_with_workflow() {
+        let workflow_json = r#"{"id":"w1","database":"*","environment":"*","steps":[{"approvers":[{"selector":"group:dba-team","min":1}],"mode":"any"}]}"#;
+        let mut req = test_request("u1", RequestStatus::Pending);
+        req.workflow_snapshot_json = Some(workflow_json.to_string());
+
+        let uc = GetRequest {
+            request_repo: Arc::new(MockRequestRepo {
+                request: Mutex::new(Some(req)),
+            }),
+            authorizer: Arc::new(DenyAuthorizer),
+        };
+
+        let non_approver = test_user("u2"); // no groups
+        let err = uc.execute("req-1", &non_approver).unwrap_err();
+        assert!(matches!(err, AppError::Forbidden(_)));
+    }
+
+    #[test]
+    fn future_step_approver_can_view() {
+        // Step 1: role:dba, Step 2: role:cto
+        let workflow_json = r#"{"id":"w1","database":"*","environment":"*","steps":[{"approvers":[{"selector":"role:dba","min":1}],"mode":"any"},{"approvers":[{"selector":"role:cto","min":1}],"mode":"any"}]}"#;
+        let mut req = test_request("u1", RequestStatus::Pending);
+        req.workflow_snapshot_json = Some(workflow_json.to_string());
+
+        let uc = GetRequest {
+            request_repo: Arc::new(MockRequestRepo {
+                request: Mutex::new(Some(req)),
+            }),
+            authorizer: Arc::new(DenyAuthorizer),
+        };
+
+        // User has cto role (step 2 approver, not step 1)
+        let mut cto_user = test_user("u3");
+        cto_user.roles = vec![dbward_domain::auth::ResolvedRole {
+            name: "cto".to_string(),
+            permissions: std::collections::HashSet::new(),
+            databases: vec![],
+            environments: vec![],
+        }];
+
+        let out = uc.execute("req-1", &cto_user).unwrap();
+        assert!(out.is_approver_view);
     }
 }
