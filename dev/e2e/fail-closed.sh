@@ -12,8 +12,8 @@ echo "=== E2E Fail-Closed Tests ==="
 echo ""
 
 # Create tokens
-ADMIN_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user alice --role admin --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-DEV_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user bob --role developer --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+ADMIN_TOKEN=$(create_token alice admin)
+DEV_TOKEN=$(create_token bob developer)
 
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
 [ -z "$DEV_TOKEN" ] && { echo "Failed to create dev token"; exit 1; }

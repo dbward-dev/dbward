@@ -275,13 +275,40 @@ impl DatabaseDriver for MysqlDriver {
         let conn_id = id;
         let pool = self.pool.clone();
         let deadline = Duration::from_secs(timeout_secs + 5);
+        let is_multi = is_multi_statement(sql);
+        let stmts = split_statements(sql);
 
-        let exec_result = tokio::time::timeout(deadline, async {
-            let result = sqlx::query(sql)
+        let exec_result = tokio::time::timeout(deadline, async move {
+            if !is_multi {
+                // Single statement or parse-failed: execute directly
+                let r = sqlx::query(&stmts[0])
+                    .execute(&mut *conn)
+                    .await
+                    .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                return Ok::<_, DriverError>(r.rows_affected());
+            }
+            // Multi-statement: wrap in transaction for atomicity, sum rows_affected
+            sqlx::query("BEGIN")
                 .execute(&mut *conn)
                 .await
                 .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-            Ok::<_, DriverError>(result.rows_affected())
+            let mut total = 0u64;
+            for stmt in &stmts {
+                let r = match sqlx::query(stmt).execute(&mut *conn).await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        // Rollback on error to avoid leaking open transaction
+                        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                        return Err(DriverError::QueryFailed(e.to_string()));
+                    }
+                };
+                total += r.rows_affected();
+            }
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            Ok(total)
         })
         .await;
 

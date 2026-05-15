@@ -78,10 +78,12 @@ pub async fn create(
         })
         .unwrap_or_default();
 
-    let operation = body["operation"]
-        .as_str()
-        .and_then(|s| s.parse::<Operation>().ok())
-        .unwrap_or(Operation::ExecuteSelect);
+    let operation = match body["operation"].as_str() {
+        None | Some("") => Operation::ExecuteSelect, // unspecified → classify from SQL
+        Some(s) => s
+            .parse::<Operation>()
+            .map_err(|e| map_error(AppError::Validation(e)))?,
+    };
 
     let input = create_request::CreateRequestInput {
         database,

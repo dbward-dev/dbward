@@ -44,11 +44,12 @@ impl std::str::FromStr for Operation {
         match s {
             "execute_select" => Ok(Self::ExecuteSelect),
             "execute_dml" => Ok(Self::ExecuteDml),
+            "execute_query" | "execute" | "query" => Ok(Self::ExecuteSelect),
             "migrate_up" => Ok(Self::MigrateUp),
             "migrate_down" => Ok(Self::MigrateDown),
             "migrate_status" => Ok(Self::MigrateStatus),
             _ => Err(format!(
-                "unknown operation '{s}'. Valid operations: execute_select, execute_dml, migrate_up, migrate_down, migrate_status"
+                "unknown operation '{s}'. Valid operations: execute_select, execute_dml, execute_query, migrate_up, migrate_down, migrate_status"
             )),
         }
     }
