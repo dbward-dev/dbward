@@ -41,11 +41,18 @@ pub struct RequestSummary {
 }
 
 impl RequestSummary {
-    fn from_request(r: &Request) -> Self {
-        let (current_step, total_steps, next_approvers) = if r.status == RequestStatus::Pending {
-            extract_lightweight_progress(r)
+    fn from_request_with_approvers(r: &Request, pending: Option<&(u32, Vec<String>)>) -> Self {
+        let total_steps = if r.status == RequestStatus::Pending {
+            r.workflow_snapshot_json
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<Workflow>(json).ok())
+                .map(|wf| wf.steps.len() as u32)
         } else {
-            (None, None, vec![])
+            None
+        };
+        let (current_step, next_approvers) = match pending {
+            Some((step, selectors)) => (Some(*step), selectors.clone()),
+            None => (None, vec![]),
         };
         Self {
             id: r.id.clone(),
@@ -59,32 +66,6 @@ impl RequestSummary {
             total_steps,
             next_approvers,
         }
-    }
-}
-
-/// Extract lightweight progress from workflow_snapshot_json without approvals query.
-/// Returns (None for current_step since we don't query approvals, total_steps, next_approvers from step[0]).
-fn extract_lightweight_progress(r: &Request) -> (Option<u32>, Option<u32>, Vec<String>) {
-    let wf = r
-        .workflow_snapshot_json
-        .as_deref()
-        .and_then(|json| serde_json::from_str::<Workflow>(json).ok());
-    match wf {
-        Some(wf) => {
-            let total = wf.steps.len() as u32;
-            let approvers = wf
-                .steps
-                .first()
-                .map(|step| {
-                    step.approvers
-                        .iter()
-                        .map(|a| a.selector.to_string())
-                        .collect()
-                })
-                .unwrap_or_default();
-            (None, Some(total), approvers)
-        }
-        None => (None, None, vec![]),
     }
 }
 
@@ -136,7 +117,14 @@ impl ListRequests {
                 limit,
                 offset,
             )?;
-            let items = requests.iter().map(RequestSummary::from_request).collect();
+            let pending_ids: Vec<&str> = requests.iter().map(|r| r.id.as_str()).collect();
+            let pending_map = self
+                .request_reader
+                .get_pending_approvers_for_requests(&pending_ids)?;
+            let items = requests
+                .iter()
+                .map(|r| RequestSummary::from_request_with_approvers(r, pending_map.get(&r.id)))
+                .collect();
             return Ok(ListRequestsOutput {
                 requests: items,
                 total,
@@ -155,7 +143,18 @@ impl ListRequests {
         let is_admin = user.roles.iter().any(|r| r.name == "admin");
 
         if is_admin {
-            let items = requests.iter().map(RequestSummary::from_request).collect();
+            let pending_ids: Vec<&str> = requests
+                .iter()
+                .filter(|r| r.status == RequestStatus::Pending)
+                .map(|r| r.id.as_str())
+                .collect();
+            let pending_map = self
+                .request_reader
+                .get_pending_approvers_for_requests(&pending_ids)?;
+            let items = requests
+                .iter()
+                .map(|r| RequestSummary::from_request_with_approvers(r, pending_map.get(&r.id)))
+                .collect();
             return Ok(ListRequestsOutput {
                 requests: items,
                 total,
@@ -174,16 +173,24 @@ impl ListRequests {
             limit,
             offset,
         )?;
+        let pending_ids: Vec<&str> = visible_requests
+            .iter()
+            .filter(|r| r.status == RequestStatus::Pending)
+            .map(|r| r.id.as_str())
+            .collect();
+        let pending_map = self
+            .request_reader
+            .get_pending_approvers_for_requests(&pending_ids)?;
         let items: Vec<RequestSummary> = if let Some(ref filter_user) = input.user {
             visible_requests
                 .iter()
                 .filter(|r| r.requester == *filter_user)
-                .map(RequestSummary::from_request)
+                .map(|r| RequestSummary::from_request_with_approvers(r, pending_map.get(&r.id)))
                 .collect()
         } else {
             visible_requests
                 .iter()
-                .map(RequestSummary::from_request)
+                .map(|r| RequestSummary::from_request_with_approvers(r, pending_map.get(&r.id)))
                 .collect()
         };
         let total = if input.user.is_some() {
@@ -290,6 +297,12 @@ mod tests {
         }
         fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
+        }
+        fn get_pending_approvers_for_requests(
+            &self,
+            _: &[&str],
+        ) -> Result<std::collections::HashMap<String, (u32, Vec<String>)>, AppError> {
+            Ok(std::collections::HashMap::new())
         }
     }
 

@@ -50,6 +50,10 @@ pub trait RequestReader: Send + Sync {
         limit: u32,
     ) -> Result<Vec<StoredResultEntry>, AppError>;
     fn count_by_status(&self, status: &str) -> Result<u32, AppError>;
+    fn get_pending_approvers_for_requests(
+        &self,
+        request_ids: &[&str],
+    ) -> Result<std::collections::HashMap<String, (u32, Vec<String>)>, AppError>;
 }
 
 // --- RequestWriter ---

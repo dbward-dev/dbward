@@ -168,6 +168,12 @@ impl RequestReader for FakeRequestReader {
     fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
         Ok(0)
     }
+    fn get_pending_approvers_for_requests(
+        &self,
+        _: &[&str],
+    ) -> Result<std::collections::HashMap<String, (u32, Vec<String>)>, AppError> {
+        Ok(std::collections::HashMap::new())
+    }
 }
 
 // --- RequestWriter ---
