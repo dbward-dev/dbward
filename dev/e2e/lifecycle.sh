@@ -12,10 +12,9 @@ echo "=== E2E Lifecycle Tests ==="
 echo ""
 
 # Create tokens
-# Create tokens (production workflow: step1=backend-team, step2=dba-team, distinct actors required)
-ADMIN_BACKEND=$(docker compose exec -T dbward-server dbward server token create --user alice --role admin --groups backend-team --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-ADMIN_DBA=$(docker compose exec -T dbward-server dbward server token create --user carol --role admin --groups dba-team --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
-DEV_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user bob --role developer --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+ADMIN_BACKEND=$(create_token alice admin --groups backend-team)
+ADMIN_DBA=$(create_token carol admin --groups dba-team)
+DEV_TOKEN=$(create_token bob developer)
 
 [ -z "$ADMIN_BACKEND" ] && { echo "Failed to create admin token"; exit 1; }
 [ -z "$ADMIN_DBA" ] && { echo "Failed to create dba token"; exit 1; }
@@ -84,7 +83,7 @@ echo ""
 echo "--- Reject flow ---"
 
 REQ_ID=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"production","database":"app","detail":"DROP TABLE x","reason":"reject test"}' | json_field id)
+  -d '{"operation":"execute_dml","environment":"production","database":"app","detail":"UPDATE users SET active=false WHERE 1=0","reason":"reject test"}' | json_field id)
 RESULT=$(api POST "/api/requests/$REQ_ID/reject" "$ADMIN_BACKEND" -d '{"comment":"too dangerous"}')
 STATUS=$(echo "$RESULT" | json_field status)
 [ "$STATUS" = "rejected" ] && pass "Request rejected" || fail "Reject" "status=$STATUS"
@@ -94,7 +93,7 @@ echo ""
 echo "--- Cancel flow ---"
 
 REQ_ID=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"production","database":"app","detail":"SELECT 1","reason":"cancel test"}' | json_field id)
+  -d '{"operation":"execute_select","environment":"production","database":"app","detail":"SELECT 1","reason":"cancel test"}' | json_field id)
 RESULT=$(api POST "/api/requests/$REQ_ID/cancel" "$DEV_TOKEN" -d '{"reason":"changed my mind"}')
 STATUS=$(echo "$RESULT" | json_field status)
 [ "$STATUS" = "cancelled" ] && pass "Request cancelled" || fail "Cancel" "status=$STATUS"
@@ -103,10 +102,10 @@ STATUS=$(echo "$RESULT" | json_field status)
 echo ""
 echo "--- Break-glass ---"
 
-REQ=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"production","database":"app","detail":"SELECT 1","emergency":true,"reason":"incident #123"}')
+REQ=$(api POST /api/requests "$ADMIN_BACKEND" \
+  -d '{"operation":"execute_select","environment":"production","database":"app","detail":"SELECT 1","emergency":true,"reason":"incident #123"}')
 STATUS=$(echo "$REQ" | json_field status)
-[ "$STATUS" = "break_glass" ] && pass "Break-glass request created" || fail "Break-glass" "status=$STATUS"
+[ "$STATUS" = "dispatched" ] && pass "Break-glass request created" || fail "Break-glass" "status=$STATUS"
 
 # --- 6. Idempotency ---
 echo ""
@@ -114,11 +113,11 @@ echo "--- Idempotency ---"
 
 IDEM_KEY="e2e-test-$(date +%s)"
 REQ1=$(api POST /api/requests "$DEV_TOKEN" \
-  -d "{\"operation\":\"execute_query\",\"environment\":\"development\",\"database\":\"default\",\"detail\":\"SELECT 1\",\"idempotency_key\":\"$IDEM_KEY\"}")
+  -d "{\"operation\":\"execute_select\",\"environment\":\"development\",\"database\":\"app\",\"detail\":\"SELECT 1\",\"idempotency_key\":\"$IDEM_KEY\"}")
 ID1=$(echo "$REQ1" | json_field id)
 
 REQ2=$(api POST /api/requests "$DEV_TOKEN" \
-  -d "{\"operation\":\"execute_query\",\"environment\":\"development\",\"database\":\"default\",\"detail\":\"SELECT 2\",\"idempotency_key\":\"$IDEM_KEY\"}")
+  -d "{\"operation\":\"execute_select\",\"environment\":\"development\",\"database\":\"app\",\"detail\":\"SELECT 2\",\"idempotency_key\":\"$IDEM_KEY\"}")
 ID2=$(echo "$REQ2" | json_field id)
 IDEM=$(echo "$REQ2" | python3 -c "import sys,json; v=json.load(sys.stdin).get('idempotent',''); print('true' if v else 'false')")
 
@@ -133,7 +132,7 @@ echo ""
 echo "--- Unicode ---"
 
 REQ=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT '\''日本語テスト 🎉'\'' AS msg"}')
+  -d '{"operation":"execute_select","environment":"development","database":"app","detail":"SELECT '\''日本語テスト 🎉'\'' AS msg"}')
 REQ_ID=$(echo "$REQ" | json_field id)
 sleep 3
 DETAIL=$(api GET "/api/requests/$REQ_ID" "$DEV_TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin).get('detail',''))")
@@ -146,8 +145,8 @@ fi
 # --- Audit integrity ---
 echo "--- Audit integrity ---"
 VERIFY=$(api GET "/api/audit/verify" "$ADMIN_BACKEND")
-INTACT=$(echo "$VERIFY" | python3 -c "import sys,json; print(str(json.load(sys.stdin).get('chain_intact',False)).lower())")
-COUNT=$(echo "$VERIFY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('verified_events',0))")
+INTACT=$(echo "$VERIFY" | python3 -c "import sys,json; print(str(json.load(sys.stdin).get('valid',False)).lower())")
+COUNT=$(echo "$VERIFY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total_events',0))")
 if [ "$INTACT" = "true" ] && [ "$COUNT" -gt 0 ] 2>/dev/null; then
   pass "Hash chain intact ($COUNT events)"
 else

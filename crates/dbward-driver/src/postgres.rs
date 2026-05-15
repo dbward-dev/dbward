@@ -1,9 +1,10 @@
 use futures::TryStreamExt;
+use sqlx::postgres::{PgTypeInfo, PgTypeKind};
 use sqlx::{Column, Row, TypeInfo, ValueRef};
 
 use crate::{
-    CancelState, DatabaseDriver, DriverError, JsonMapping, MAX_RESULT_BYTES, MAX_RESULT_ROWS,
-    QueryOutput, text_to_json,
+    CancelState, ColumnMapping, DatabaseDriver, DriverError, JsonMapping, MAX_RESULT_BYTES,
+    MAX_RESULT_ROWS, QueryOutput, pg_array::parse_pg_array, text_to_json,
 };
 
 pub struct PostgresDriver {
@@ -15,17 +16,21 @@ impl PostgresDriver {
         url: &str,
         statement_timeout_secs: Option<u64>,
     ) -> Result<Self, DriverError> {
-        let mut opts = sqlx::postgres::PgPoolOptions::new().max_connections(5);
-        if let Some(secs) = statement_timeout_secs {
-            opts = opts.after_connect(move |conn, _meta| {
+        let opts = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(5)
+            .after_connect(move |conn, _meta| {
                 Box::pin(async move {
-                    sqlx::query(&format!("SET statement_timeout = '{secs}s'"))
+                    sqlx::query("SET bytea_output = 'hex'")
                         .execute(&mut *conn)
                         .await?;
+                    if let Some(secs) = statement_timeout_secs {
+                        sqlx::query(&format!("SET statement_timeout = '{secs}s'"))
+                            .execute(&mut *conn)
+                            .await?;
+                    }
                     Ok(())
                 })
             });
-        }
         let pool = opts
             .connect(url)
             .await
@@ -88,6 +93,7 @@ impl DatabaseDriver for PostgresDriver {
             .begin()
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        // Each migration entry is a single statement (splitting is done by Migrator)
         sqlx::query(sql)
             .execute(&mut *tx)
             .await
@@ -223,11 +229,19 @@ impl DatabaseDriver for PostgresDriver {
             return Err(DriverError::Cancelled);
         }
 
-        let result = sqlx::query(sql)
-            .execute(&mut *conn)
+        // Use raw_sql + fetch_many to support multi-statement and sum rows_affected
+        let mut stream = sqlx::raw_sql(sql).fetch_many(&mut *conn);
+        let mut total_affected = 0u64;
+        while let Some(either) = stream
+            .try_next()
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        Ok(result.rows_affected())
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?
+        {
+            if let sqlx::Either::Left(result) = either {
+                total_affected += result.rows_affected();
+            }
+        }
+        Ok(total_affected)
     }
 }
 
@@ -242,7 +256,14 @@ fn pg_row_to_json(row: &sqlx::postgres::PgRow) -> serde_json::Value {
             serde_json::Value::Null
         } else {
             match raw.as_str() {
-                Ok(text) => text_to_json(text, pg_type_mapping(col.type_info().name())),
+                Ok(text) => {
+                    let type_info: &PgTypeInfo = col.type_info();
+                    match pg_column_mapping(type_info) {
+                        ColumnMapping::Scalar(m) => text_to_json(text, m),
+                        ColumnMapping::Array(elem_m) => parse_pg_array(text, elem_m)
+                            .unwrap_or_else(|_| serde_json::Value::String(text.to_owned())),
+                    }
+                }
                 Err(_) => {
                     // Raw binary bytes — hex encode with \x prefix
                     let bytes: &[u8] = raw.as_bytes().unwrap_or(b"");
@@ -255,8 +276,27 @@ fn pg_row_to_json(row: &sqlx::postgres::PgRow) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
-fn pg_type_mapping(type_name: &str) -> JsonMapping {
-    match type_name {
+fn pg_column_mapping(type_info: &PgTypeInfo) -> ColumnMapping {
+    resolve_type(type_info)
+}
+
+fn resolve_type(ti: &PgTypeInfo) -> ColumnMapping {
+    match ti.kind() {
+        PgTypeKind::Array(elem_ti) => ColumnMapping::Array(resolve_scalar(elem_ti)),
+        PgTypeKind::Domain(inner_ti) => resolve_type(inner_ti),
+        _ => ColumnMapping::Scalar(resolve_scalar(ti)),
+    }
+}
+
+fn resolve_scalar(ti: &PgTypeInfo) -> JsonMapping {
+    match ti.kind() {
+        PgTypeKind::Domain(inner) => resolve_scalar(inner),
+        _ => scalar_json_mapping(ti.name()),
+    }
+}
+
+fn scalar_json_mapping(name: &str) -> JsonMapping {
+    match name {
         "INT2" | "INT4" | "INT8" => JsonMapping::Integer,
         "FLOAT4" | "FLOAT8" => JsonMapping::Float,
         "BOOL" => JsonMapping::Bool,

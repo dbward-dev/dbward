@@ -117,6 +117,24 @@ show_server_logs() {
   echo -e "${NC}"
 }
 
+# Create API token via dbward-server CLI (PR#16+ format)
+create_token() {
+  local user=$1 role=$2
+  shift 2
+  local extra_args=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --groups) extra_args="$extra_args --groups $2"; shift 2 ;;
+      --agent) extra_args="$extra_args --agent"; shift ;;
+      *) shift ;;
+    esac
+  done
+  docker compose exec -T dbward-server \
+    dbward-server --data /data/dbward.db token create \
+    --user "$user" --role "$role" $extra_args 2>/dev/null \
+    | grep -o 'dbw_[a-z0-9]*'
+}
+
 # Print summary and exit (disables trap to avoid double-print)
 summary() {
   trap - EXIT

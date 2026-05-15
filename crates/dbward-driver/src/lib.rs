@@ -1,6 +1,7 @@
 pub mod cancel_state;
 pub mod error;
 mod mysql;
+pub(crate) mod pg_array;
 mod postgres;
 
 pub use cancel_state::CancelState;
@@ -39,6 +40,7 @@ pub trait DatabaseDriver: Send + Sync {
     ) -> Result<QueryOutput, DriverError>;
 
     /// Cancellable execute: same guarantees as query_cancellable.
+    /// For multi-statement SQL, returns the **sum** of rows_affected across all statements.
     async fn execute_cancellable(
         &self,
         sql: &str,
@@ -72,6 +74,12 @@ pub(crate) enum JsonMapping {
     Json,
     Binary,
     Text,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ColumnMapping {
+    Scalar(JsonMapping),
+    Array(JsonMapping),
 }
 
 pub(crate) fn text_to_json(text: &str, mapping: JsonMapping) -> serde_json::Value {

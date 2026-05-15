@@ -12,7 +12,7 @@ echo ""
 echo "=== E2E Large Data & Slow Query Tests ==="
 echo ""
 
-DEV_TOKEN=$(docker compose exec -T dbward-server dbward server token create --user loadtest --role developer --data /data/dbward.db 2>/dev/null | grep -o 'dbw_[a-z0-9]*')
+DEV_TOKEN=$(create_token loadtest developer)
 [ -z "$DEV_TOKEN" ] && { echo "Failed to create token"; exit 1; }
 
 # --- 1. Large result set (10,000+ rows) ---
