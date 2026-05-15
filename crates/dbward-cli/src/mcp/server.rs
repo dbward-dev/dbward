@@ -446,9 +446,7 @@ async fn handle_tools_call(
             let op = args["operation"].as_str().unwrap_or("execute_query");
             let limit = args["limit"].as_u64().unwrap_or(5).clamp(1, 20);
             client
-                .get_json(&format!(
-                    "/api/requests?operation={op}&limit={limit}&status=executed"
-                ))
+                .get_json(&format!("/api/requests?limit={limit}&status=executed"))
                 .await
                 .map(|v| {
                     let requests = v["requests"].as_array();
@@ -458,10 +456,11 @@ async fn handle_tools_call(
                             let matches: Vec<&Value> = arr
                                 .iter()
                                 .filter(|r| {
-                                    matches_similarity_terms(
-                                        r["detail"].as_str().unwrap_or(""),
-                                        &sql_terms,
-                                    )
+                                    r["operation"].as_str().unwrap_or("") == op
+                                        && matches_similarity_terms(
+                                            r["detail"].as_str().unwrap_or(""),
+                                            &sql_terms,
+                                        )
                                 })
                                 .take(limit as usize)
                                 .collect();

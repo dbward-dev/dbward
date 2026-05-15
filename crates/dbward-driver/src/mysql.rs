@@ -106,29 +106,49 @@ impl DatabaseDriver for MysqlDriver {
     }
 
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), DriverError> {
-        if version.contains('\'') || version.contains(';') {
-            return Err(DriverError::QueryFailed("invalid migration version".into()));
-        }
-        let batch =
-            format!("{sql}\n;\nINSERT INTO schema_migrations (version) VALUES ('{version}');");
-        sqlx::raw_sql(&batch)
-            .execute(&self.pool)
+        let stmts = split_statements(sql);
+        let mut tx = self
+            .pool
+            .begin()
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        Ok(())
+        for stmt in &stmts {
+            sqlx::query(stmt)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        }
+        sqlx::query("INSERT INTO schema_migrations (version) VALUES (?)")
+            .bind(version)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))
     }
 
     async fn revert_migration(&self, down_sql: &str, version: &str) -> Result<(), DriverError> {
-        if version.contains('\'') || version.contains(';') {
-            return Err(DriverError::QueryFailed("invalid migration version".into()));
-        }
-        let batch =
-            format!("{down_sql}\n;\nDELETE FROM schema_migrations WHERE version = '{version}';");
-        sqlx::raw_sql(&batch)
-            .execute(&self.pool)
+        let stmts = split_statements(down_sql);
+        let mut tx = self
+            .pool
+            .begin()
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        Ok(())
+        for stmt in &stmts {
+            sqlx::query(stmt)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        }
+        sqlx::query("DELETE FROM schema_migrations WHERE version = ?")
+            .bind(version)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))
     }
 
     async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
