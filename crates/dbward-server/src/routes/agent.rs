@@ -248,6 +248,10 @@ pub struct SubmitResultBody {
     pub success: bool,
     pub result_data: Option<String>,
     pub error_message: Option<String>,
+    #[serde(default)]
+    pub rows_affected: Option<u64>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
 }
 
 pub async fn submit_result(
@@ -282,6 +286,8 @@ pub async fn submit_result(
                 success: body.success,
                 result_data,
                 error_message: body.error_message,
+                rows_affected: body.rows_affected,
+                duration_ms: body.duration_ms,
             },
             &user,
             &audit_ctx,

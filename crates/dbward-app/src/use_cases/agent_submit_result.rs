@@ -29,6 +29,8 @@ pub struct AgentSubmitResultInput {
     pub success: bool,
     pub result_data: Option<Vec<u8>>,
     pub error_message: Option<String>,
+    pub rows_affected: Option<u64>,
+    pub duration_ms: Option<u64>,
 }
 
 pub struct AgentSubmitResultOutput {
@@ -234,6 +236,27 @@ impl AgentSubmitResult {
         audit_event.database_name = Some(request.database.to_string());
         audit_event.environment = Some(request.environment.to_string());
         audit_event.operation = Some(request.operation.as_str().to_string());
+
+        // A-3/A-4: Enrich metadata_json with rows_affected and duration_ms
+        // rows_affected is only meaningful for successful executions
+        let effective_rows = if input.success {
+            input.rows_affected
+        } else {
+            None
+        };
+        if effective_rows.is_some() || input.duration_ms.is_some() {
+            let mut meta = serde_json::from_str::<serde_json::Value>(&audit_event.metadata_json)
+                .ok()
+                .filter(|v| v.is_object())
+                .unwrap_or_else(|| serde_json::json!({}));
+            if let Some(rows) = effective_rows {
+                meta["rows_affected"] = rows.into();
+            }
+            if let Some(dur) = input.duration_ms {
+                meta["duration_ms"] = dur.into();
+            }
+            audit_event.metadata_json = meta.to_string();
+        }
         let request_updated = match self.agent_repo.complete_execution(
             &execution.id,
             &execution.request_id,
@@ -265,7 +288,11 @@ impl AgentSubmitResult {
             let summary = ResultSummary {
                 execution_id: execution.id.clone(),
                 success: input.success,
-                rows_affected: None,
+                rows_affected: if input.success {
+                    input.rows_affected
+                } else {
+                    None
+                },
                 truncated: false,
                 error_message: input.error_message.clone(),
                 result_data: if input.success {
@@ -767,6 +794,8 @@ mod tests {
             success: true,
             result_data: None,
             error_message: None,
+            rows_affected: None,
+            duration_ms: None,
         };
         assert!(matches!(
             uc.execute(
@@ -787,6 +816,8 @@ mod tests {
             success: true,
             result_data: None,
             error_message: None,
+            rows_affected: None,
+            duration_ms: None,
         };
         assert!(matches!(
             uc.execute(
@@ -807,6 +838,8 @@ mod tests {
             success: true,
             result_data: Some(b"rows".to_vec()),
             error_message: None,
+            rows_affected: None,
+            duration_ms: None,
         };
         let out = uc
             .execute(
@@ -827,6 +860,8 @@ mod tests {
             success: false,
             result_data: None,
             error_message: Some("timeout".into()),
+            rows_affected: None,
+            duration_ms: None,
         };
         let out = uc
             .execute(
@@ -847,6 +882,8 @@ mod tests {
             success: true,
             result_data: None,
             error_message: None,
+            rows_affected: None,
+            duration_ms: None,
         };
         let out = uc
             .execute(
@@ -868,6 +905,8 @@ mod tests {
             success: true,
             result_data: Some(vec![0u8; 11]),
             error_message: None,
+            rows_affected: None,
+            duration_ms: None,
         };
         assert!(matches!(
             uc.execute(

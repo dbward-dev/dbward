@@ -17,6 +17,7 @@ impl From<ExecutionResult> for ResultBody {
                 rows_affected: None,
                 truncated: Some(truncated),
                 total_rows: None,
+                duration_ms: None,
             },
             ExecutionResult::Execute { rows_affected } => ResultBody {
                 success: true,
@@ -27,6 +28,7 @@ impl From<ExecutionResult> for ResultBody {
                 rows_affected: Some(rows_affected),
                 truncated: None,
                 total_rows: None,
+                duration_ms: None,
             },
             ExecutionResult::Migrate { data } => ResultBody {
                 success: true,
@@ -35,6 +37,7 @@ impl From<ExecutionResult> for ResultBody {
                 rows_affected: None,
                 truncated: None,
                 total_rows: None,
+                duration_ms: None,
             },
         }
     }
@@ -48,6 +51,7 @@ pub(crate) fn error_body(msg: String) -> ResultBody {
         rows_affected: None,
         truncated: None,
         total_rows: None,
+        duration_ms: None,
     }
 }
 
