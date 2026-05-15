@@ -751,6 +751,7 @@ fn complete_execution_success() {
                 "agent-1",
                 Some("exec-ce-ok"),
                 now,
+                &AuditContext::System,
             ),
             None,
             &[],
@@ -827,6 +828,7 @@ fn complete_execution_failure() {
                 "agent-1",
                 Some("exec-ce-fail"),
                 now,
+                &AuditContext::System,
             ),
             None,
             &[],
@@ -902,6 +904,7 @@ fn complete_execution_cancelled_request() {
                 "agent-1",
                 Some("exec-ce-cancel"),
                 now,
+                &AuditContext::System,
             ),
             None,
             &[],
@@ -979,6 +982,7 @@ fn complete_execution_already_completed() {
                 "agent-1",
                 Some("exec-ce-done"),
                 now,
+                &AuditContext::System,
             ),
             None,
             &[],
@@ -1828,6 +1832,7 @@ fn audit_list_with_filter() {
             "alice",
             Some("req-1"),
             Utc::now(),
+            &AuditContext::System,
         ))
         .unwrap();
     logger
@@ -1837,6 +1842,7 @@ fn audit_list_with_filter() {
             "bob",
             Some("req-2"),
             Utc::now(),
+            &AuditContext::System,
         ))
         .unwrap();
 
@@ -1864,7 +1870,14 @@ fn audit_purge_old() {
     let repo = SqliteAuditRepo::new(conn.clone());
 
     logger
-        .record(&AuditEvent::simple("test", "test", "x", None, Utc::now()))
+        .record(&AuditEvent::simple(
+            "test",
+            "test",
+            "x",
+            None,
+            Utc::now(),
+            &AuditContext::System,
+        ))
         .unwrap();
     // Nothing old enough to purge
     assert_eq!(repo.purge_old("2000-01-01T00:00:00Z").unwrap(), 0);

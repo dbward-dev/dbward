@@ -395,6 +395,7 @@ impl EventDispatcher for CompositeEventDispatcher {
             &event.actor_id,
             Some(&event.request_id),
             self.clock.now(),
+            &event.audit_context,
         );
         audit_event.database_name = Some(event.database.as_str().to_string());
         audit_event.environment = Some(event.environment.as_str().to_string());

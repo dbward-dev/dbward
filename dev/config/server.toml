@@ -1,3 +1,7 @@
+
+# Trust Docker internal network for XFF resolution
+trusted_proxies = ["172.16.0.0/12", "127.0.0.1"]
+
 [auth]
 mode = "token"
 
@@ -100,4 +104,5 @@ request_ttl_days = 7
 audit_ttl_days = 30
 result_ttl_days = 1
 approval_ttl_secs = 60
+
 

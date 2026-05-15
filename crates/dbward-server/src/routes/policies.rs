@@ -11,6 +11,7 @@ use dbward_domain::auth::{AuthUser, RoleDefinition};
 use dbward_domain::policies::{DeliveryMode, ExecutionPolicy, WorkflowStep};
 use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
 
+use crate::middleware::trusted_proxies::ClientIp;
 use crate::state::AppState;
 
 use super::map_error;
@@ -46,8 +47,14 @@ fn star() -> String {
 pub async fn create_workflow(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Json(body): Json<CreateWorkflowBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let database = DatabaseName::new(body.database)
         .map_err(|e| map_error(dbward_app::error::AppError::Validation(e.into())))?;
     let environment = Environment::new(body.environment)
@@ -60,7 +67,7 @@ pub async fn create_workflow(
         require_reason: body.require_reason,
     };
     let uc = make_uc(&state);
-    let wf = uc.create_workflow(input, &user).map_err(map_error)?;
+    let wf = uc.create_workflow(input, &user, &ctx).map_err(map_error)?;
     Ok((StatusCode::CREATED, Json(serde_json::json!(wf))))
 }
 
@@ -79,20 +86,34 @@ pub async fn list_workflows(
 pub async fn delete_workflow(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = make_uc(&state);
-    uc.delete_workflow(&id, &user).map_err(map_error)?;
+    uc.delete_workflow(&id, &user, &ctx).map_err(map_error)?;
     Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
 }
 
 pub async fn create_execution_policy(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Json(body): Json<ExecutionPolicy>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = make_uc(&state);
-    let ep = uc.create_execution_policy(body, &user).map_err(map_error)?;
+    let ep = uc
+        .create_execution_policy(body, &user, &ctx)
+        .map_err(map_error)?;
     Ok((StatusCode::CREATED, Json(serde_json::json!(ep))))
 }
 
@@ -121,10 +142,16 @@ pub async fn delete_execution_policy(
 pub async fn create_role(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Json(body): Json<RoleDefinition>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = make_uc(&state);
-    let role = uc.create_role(body, &user).map_err(map_error)?;
+    let role = uc.create_role(body, &user, &ctx).map_err(map_error)?;
     Ok((StatusCode::CREATED, Json(serde_json::json!(role))))
 }
 
@@ -152,8 +179,14 @@ pub async fn delete_role(
 pub(super) async fn create_result_policy(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Json(body): Json<dbward_api_types::policies::CreateResultPolicyRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let database = DatabaseName::new(&body.database)
         .map_err(|e| map_error(dbward_app::error::AppError::Validation(e.to_string())))?;
     let environment = Environment::new(&body.environment)
@@ -187,6 +220,7 @@ pub(super) async fn create_result_policy(
                 access,
             },
             &user,
+            &ctx,
         )
         .map_err(map_error)?;
 
@@ -254,9 +288,15 @@ pub(super) async fn get_result_policy(
 pub(super) async fn update_result_policy(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
     Json(body): Json<dbward_api_types::policies::UpdateResultPolicyRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let delivery_mode =
         body.delivery_mode
             .map(|s| {
@@ -291,6 +331,7 @@ pub(super) async fn update_result_policy(
                 access,
             },
             &user,
+            &ctx,
         )
         .map_err(map_error)?;
 
@@ -312,10 +353,17 @@ pub(super) async fn update_result_policy(
 pub(super) async fn delete_result_policy(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = make_uc(&state);
-    uc.delete_result_policy(&id, &user).map_err(map_error)?;
+    uc.delete_result_policy(&id, &user, &ctx)
+        .map_err(map_error)?;
     Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
 }
 
@@ -324,8 +372,14 @@ pub(super) async fn delete_result_policy(
 pub(super) async fn create_notification_policy(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Json(body): Json<dbward_api_types::policies::CreateNotificationPolicyRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let database = DatabaseName::new(&body.database)
         .map_err(|e| map_error(dbward_app::error::AppError::Validation(e.to_string())))?;
     let environment = Environment::new(&body.environment)
@@ -341,6 +395,7 @@ pub(super) async fn create_notification_policy(
                 events: body.events,
             },
             &user,
+            &ctx,
         )
         .map_err(map_error)?;
 
@@ -399,9 +454,15 @@ pub(super) async fn get_notification_policy(
 pub(super) async fn update_notification_policy(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
     Json(body): Json<dbward_api_types::policies::UpdateNotificationPolicyRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = make_uc(&state);
     let policy = uc
         .update_notification_policy(
@@ -411,6 +472,7 @@ pub(super) async fn update_notification_policy(
                 events: body.events,
             },
             &user,
+            &ctx,
         )
         .map_err(map_error)?;
 
@@ -429,10 +491,16 @@ pub(super) async fn update_notification_policy(
 pub(super) async fn delete_notification_policy(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = make_uc(&state);
-    uc.delete_notification_policy(&id, &user)
+    uc.delete_notification_policy(&id, &user, &ctx)
         .map_err(map_error)?;
     Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
 }

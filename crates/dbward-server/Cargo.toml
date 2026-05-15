@@ -27,6 +27,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+ipnet = "2"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

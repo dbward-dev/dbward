@@ -51,6 +51,7 @@ pub fn create_bootstrap_token(
             expires_at: None,
         },
         &system_user(),
+        &dbward_domain::entities::AuditContext::System,
     )?;
 
     Ok(output.token)
@@ -96,6 +97,7 @@ pub fn create_token_standalone(
             expires_at: None,
         },
         &system_user(),
+        &dbward_domain::entities::AuditContext::System,
     )?;
 
     let token_type = if is_agent { "agent" } else { "user" };
@@ -142,6 +144,7 @@ pub fn revoke_token_standalone(
             token_id: token_id.to_string(),
         },
         &system_user(),
+        &dbward_domain::entities::AuditContext::System,
     )?;
 
     println!("Token revoked: {token_id}");

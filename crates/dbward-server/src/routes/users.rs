@@ -6,6 +6,7 @@ use axum::{
 use dbward_app::use_cases::user_manage::{UserManage, UserSuspendInput};
 use dbward_domain::auth::AuthUser;
 
+use crate::middleware::trusted_proxies::ClientIp;
 use crate::state::AppState;
 
 use super::map_error;
@@ -45,8 +46,14 @@ pub async fn list(
 pub async fn suspend(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = UserManage {
         authorizer: state.authorizer.clone(),
         user_repo: state.user_repo.clone(),
@@ -56,7 +63,7 @@ pub async fn suspend(
         clock: state.clock.clone(),
     };
     let output = uc
-        .suspend(UserSuspendInput { user_id: id }, &user)
+        .suspend(UserSuspendInput { user_id: id }, &user, &ctx)
         .map_err(map_error)?;
 
     Ok((
@@ -72,8 +79,14 @@ pub async fn suspend(
 pub async fn activate(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = UserManage {
         authorizer: state.authorizer.clone(),
         user_repo: state.user_repo.clone(),
@@ -82,6 +95,6 @@ pub async fn activate(
         audit: state.audit_logger.clone(),
         clock: state.clock.clone(),
     };
-    uc.activate(&id, &user).map_err(map_error)?;
+    uc.activate(&id, &user, &ctx).map_err(map_error)?;
     Ok((StatusCode::OK, Json(serde_json::json!({ "id": id }))))
 }

@@ -675,7 +675,7 @@ fn test_state() -> AppState {
 
 #[tokio::test]
 async fn health_returns_200() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -690,7 +690,7 @@ async fn health_returns_200() {
 
 #[tokio::test]
 async fn ready_returns_200() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -705,7 +705,7 @@ async fn ready_returns_200() {
 
 #[tokio::test]
 async fn unauthenticated_request_returns_401() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -720,7 +720,7 @@ async fn unauthenticated_request_returns_401() {
 
 #[tokio::test]
 async fn invalid_token_returns_401() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -736,7 +736,7 @@ async fn invalid_token_returns_401() {
 
 #[tokio::test]
 async fn valid_token_passes_auth_middleware() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -756,7 +756,7 @@ async fn valid_token_passes_auth_middleware() {
 
 #[tokio::test]
 async fn list_requests_returns_empty_array() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -775,7 +775,7 @@ async fn list_requests_returns_empty_array() {
 
 #[tokio::test]
 async fn get_request_not_found_returns_404() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -791,7 +791,7 @@ async fn get_request_not_found_returns_404() {
 
 #[tokio::test]
 async fn list_databases_returns_empty() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -807,7 +807,7 @@ async fn list_databases_returns_empty() {
 
 #[tokio::test]
 async fn list_tokens_returns_empty() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -823,7 +823,7 @@ async fn list_tokens_returns_empty() {
 
 #[tokio::test]
 async fn list_webhooks_returns_empty() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -839,7 +839,7 @@ async fn list_webhooks_returns_empty() {
 
 #[tokio::test]
 async fn list_workflows_returns_empty() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -855,7 +855,7 @@ async fn list_workflows_returns_empty() {
 
 #[tokio::test]
 async fn list_agents_returns_empty() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -871,7 +871,7 @@ async fn list_agents_returns_empty() {
 
 #[tokio::test]
 async fn metrics_endpoint_returns_text() {
-    let app = build_app(test_state());
+    let app = build_app(test_state(), vec![]);
     let resp = app
         .oneshot(
             Request::builder()
@@ -883,4 +883,46 @@ async fn metrics_endpoint_returns_text() {
         .unwrap();
     // Metrics may return 200 or 500 depending on registry init; just verify route exists
     assert_ne!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn xff_resolves_client_ip_when_peer_trusted() {
+    use axum::extract::ConnectInfo;
+    use std::net::SocketAddr;
+
+    let trusted: Vec<ipnet::IpNet> = vec!["10.0.0.0/8".parse().unwrap()];
+    let app = build_app(test_state(), trusted);
+
+    // Simulate trusted peer (10.0.0.1) with XFF header
+    let mut req = Request::builder()
+        .uri("/health")
+        .header("x-forwarded-for", "203.0.113.50, 10.0.0.2")
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo("10.0.0.1:1234".parse::<SocketAddr>().unwrap()));
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn xff_ignored_when_peer_not_trusted() {
+    use axum::extract::ConnectInfo;
+    use std::net::SocketAddr;
+
+    let trusted: Vec<ipnet::IpNet> = vec!["10.0.0.0/8".parse().unwrap()];
+    let app = build_app(test_state(), trusted);
+
+    // Untrusted peer (1.2.3.4) — XFF should be ignored
+    let mut req = Request::builder()
+        .uri("/health")
+        .header("x-forwarded-for", "spoofed.ip")
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo("1.2.3.4:5678".parse::<SocketAddr>().unwrap()));
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 }

@@ -29,8 +29,15 @@ fn auth_error_response(e: AuthError) -> (StatusCode, String) {
     }
 }
 
-fn log_auth_failure(state: &AppState, e: &AuthError) {
+fn log_auth_failure(state: &AppState, e: &AuthError, req: &Request) {
+    use axum::extract::ConnectInfo;
     use dbward_domain::entities::{ActorType, AuditEvent, EventCategory, EventOutcome};
+    use std::net::SocketAddr;
+    let peer_ip = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip().to_string());
+    let client_ip = req.extensions().get::<super::trusted_proxies::ClientIp>();
     let event = AuditEvent {
         id: String::new(),
         event_type: "auth.failure".to_string(),
@@ -41,9 +48,9 @@ fn log_auth_failure(state: &AppState, e: &AuthError) {
         actor_type: ActorType::User,
         resource_type: None,
         resource_id: None,
-        peer_ip: None,
-        client_ip: None,
-        client_ip_source: None,
+        peer_ip,
+        client_ip: client_ip.map(|c| c.ip.to_string()),
+        client_ip_source: client_ip.map(|c| c.source.as_str().to_string()),
         request_id: None,
         operation: None,
         database_name: None,
@@ -89,7 +96,7 @@ pub async fn auth_middleware(
             .verify_oidc_token(token)
             .await
             .map_err(|e| {
-                log_auth_failure(&state, &e);
+                log_auth_failure(&state, &e, &req);
                 auth_error_response(e)
             })?;
 
@@ -117,7 +124,7 @@ pub async fn auth_middleware(
         match state.user_repo.is_suspended(&subject_id) {
             Ok(true) => {
                 let e = AuthError::UserSuspended;
-                log_auth_failure(&state, &e);
+                log_auth_failure(&state, &e, &req);
                 return Err(auth_error_response(AuthError::UserSuspended));
             }
             Err(_) => {
@@ -132,7 +139,7 @@ pub async fn auth_middleware(
             .role_resolver
             .resolve(&subject_id, SubjectType::User, &groups)
             .map_err(|e| {
-                log_auth_failure(&state, &e);
+                log_auth_failure(&state, &e, &req);
                 auth_error_response(e)
             })?;
 
@@ -145,12 +152,35 @@ pub async fn auth_middleware(
                     .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(3600))
             };
             if should_emit {
+                use axum::extract::ConnectInfo;
+                use dbward_domain::entities::{AuditContext, ClientInfo, IpSource};
+                use std::net::SocketAddr;
+                let ctx = match req.extensions().get::<super::trusted_proxies::ClientIp>() {
+                    Some(cip) => {
+                        let peer = req
+                            .extensions()
+                            .get::<ConnectInfo<SocketAddr>>()
+                            .map(|ci| ci.0.ip())
+                            .unwrap_or(cip.ip);
+                        let source = match cip.source {
+                            super::trusted_proxies::ClientIpSource::Peer => IpSource::Direct,
+                            super::trusted_proxies::ClientIpSource::Xff => IpSource::Forwarded,
+                        };
+                        AuditContext::Request(ClientInfo {
+                            peer_ip: peer,
+                            client_ip: cip.ip,
+                            source,
+                        })
+                    }
+                    None => AuditContext::System,
+                };
                 let event = dbward_domain::entities::AuditEvent::simple(
                     "login_success",
                     "auth",
                     &subject_id,
                     None,
                     state.clock.now(),
+                    &ctx,
                 );
                 let _ = state.audit_logger.record(&event);
                 let mut cache = LOGIN_AUDIT_CACHE.lock().unwrap();
@@ -176,7 +206,7 @@ pub async fn auth_middleware(
             .verify_api_token(token)
             .await
             .map_err(|e| {
-                log_auth_failure(&state, &e);
+                log_auth_failure(&state, &e, &req);
                 auth_error_response(e)
             })?;
         // F-3: auto-create user record on first API token auth

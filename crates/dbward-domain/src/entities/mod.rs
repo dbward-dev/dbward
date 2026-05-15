@@ -1,6 +1,7 @@
 mod agent;
 mod approval;
 mod audit_event;
+mod client_info;
 mod database;
 mod execution;
 mod request;
@@ -13,6 +14,7 @@ mod webhook_delivery;
 pub use agent::{Agent, AgentDerivedStatus, AgentStatus, DatabaseCapability};
 pub use approval::{Approval, ApprovalAction};
 pub use audit_event::{ActorType, AuditEvent, EventCategory, EventOutcome};
+pub use client_info::{AuditContext, ClientInfo, IpSource};
 pub use database::Database;
 pub use execution::{Execution, ExecutionStatus};
 pub use request::{Request, RequestStatus};

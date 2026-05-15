@@ -8,6 +8,7 @@ use dbward_app::use_cases::token_manage::{TokenCreateInput, TokenManage, TokenRe
 use dbward_domain::auth::AuthUser;
 use serde::Deserialize;
 
+use crate::middleware::trusted_proxies::ClientIp;
 use crate::state::AppState;
 
 use super::map_error;
@@ -27,8 +28,14 @@ pub struct CreateBody {
 pub async fn create(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Json(body): Json<CreateBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = TokenManage {
         authorizer: state.authorizer.clone(),
         token_repo: state.token_repo.clone(),
@@ -51,6 +58,7 @@ pub async fn create(
                 expires_at: body.expires_at,
             },
             &user,
+            &ctx,
         )
         .map_err(map_error)?;
 
@@ -92,8 +100,14 @@ pub async fn list(
 pub async fn revoke(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = TokenManage {
         authorizer: state.authorizer.clone(),
         token_repo: state.token_repo.clone(),
@@ -106,7 +120,7 @@ pub async fn revoke(
         token_gen: state.token_value_generator.clone(),
     };
     let output = uc
-        .revoke(TokenRevokeInput { token_id: id }, &user)
+        .revoke(TokenRevokeInput { token_id: id }, &user, &ctx)
         .map_err(map_error)?;
 
     Ok((

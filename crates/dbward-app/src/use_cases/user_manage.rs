@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission};
-use dbward_domain::entities::AuditEvent;
+use dbward_domain::entities::{AuditContext, AuditEvent};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -42,6 +42,7 @@ impl UserManage {
         &self,
         input: UserSuspendInput,
         user: &AuthUser,
+        ctx: &AuditContext,
     ) -> Result<UserSuspendOutput, AppError> {
         self.authorizer
             .authorize_global(user, Permission::UserManage)
@@ -70,6 +71,7 @@ impl UserManage {
             &user.subject_id,
             Some(&input.user_id),
             self.clock.now(),
+            ctx,
         ))?;
 
         Ok(UserSuspendOutput {
@@ -79,7 +81,12 @@ impl UserManage {
         })
     }
 
-    pub fn activate(&self, user_id: &str, user: &AuthUser) -> Result<(), AppError> {
+    pub fn activate(
+        &self,
+        user_id: &str,
+        user: &AuthUser,
+        ctx: &AuditContext,
+    ) -> Result<(), AppError> {
         self.authorizer
             .authorize_global(user, Permission::UserManage)
             .map_err(AppError::Forbidden)?;
@@ -97,6 +104,7 @@ impl UserManage {
             &user.subject_id,
             Some(user_id),
             self.clock.now(),
+            ctx,
         ))?;
 
         Ok(())
@@ -109,7 +117,7 @@ mod tests {
     use crate::error::AuthzError;
     use chrono::{DateTime, Utc};
     use dbward_domain::auth::{Permission as P, ResolvedRole, ResourceContext, SubjectType};
-    use dbward_domain::entities::{Approval, AuditEvent, Request, Token, User};
+    use dbward_domain::entities::{Approval, AuditContext, AuditEvent, Request, Token, User};
     use dbward_domain::values::{DatabaseName, Environment};
 
     struct AllowAll;
@@ -427,7 +435,8 @@ mod tests {
                 UserSuspendInput {
                     user_id: "ghost".into()
                 },
-                &admin_user()
+                &admin_user(),
+                &AuditContext::System,
             ),
             Err(AppError::NotFound(_))
         ));
@@ -442,6 +451,7 @@ mod tests {
                     user_id: "u1".into(),
                 },
                 &admin_user(),
+                &AuditContext::System,
             )
             .unwrap();
         assert_eq!(out.revoked_tokens, 2);
@@ -452,7 +462,7 @@ mod tests {
     fn activate_not_found() {
         let uc = make_uc(false, Arc::new(AllowAll));
         assert!(matches!(
-            uc.activate("ghost", &admin_user()),
+            uc.activate("ghost", &admin_user(), &AuditContext::System),
             Err(AppError::NotFound(_))
         ));
     }

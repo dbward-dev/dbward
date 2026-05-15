@@ -736,7 +736,14 @@ fn full_lifecycle_create_approve_dispatch() {
     let approver = make_user("bob", &["dba"]);
 
     // Create
-    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            make_input(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
     assert_eq!(created.status, RequestStatus::Pending);
 
     // Approve
@@ -748,6 +755,7 @@ fn full_lifecycle_create_approve_dispatch() {
                 comment: Some("LGTM".into()),
             },
             &approver,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
     assert_eq!(approved.status, RequestStatus::Approved);
@@ -760,6 +768,7 @@ fn full_lifecycle_create_approve_dispatch() {
                 request_id: created.id.clone(),
             },
             &requester,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
     assert_eq!(dispatched.status, RequestStatus::Dispatched);
@@ -772,7 +781,14 @@ fn multi_step_approval_progresses_correctly() {
     let dba = make_user("bob", &["dba"]);
     let cto = make_user("carol", &["cto"]);
 
-    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            make_input(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
 
     // Step 1: dba approves → still pending
     let step1 = h
@@ -783,6 +799,7 @@ fn multi_step_approval_progresses_correctly() {
                 comment: None,
             },
             &dba,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
     assert_eq!(step1.status, RequestStatus::Pending);
@@ -797,6 +814,7 @@ fn multi_step_approval_progresses_correctly() {
                 comment: None,
             },
             &cto,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
     assert_eq!(step2.status, RequestStatus::Approved);
@@ -810,7 +828,14 @@ fn reject_blocks_further_actions() {
     let requester = make_user("alice", &["developer"]);
     let approver = make_user("bob", &["dba"]);
 
-    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            make_input(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
 
     // Reject
     h.reject_uc()
@@ -820,6 +845,7 @@ fn reject_blocks_further_actions() {
                 comment: None,
             },
             &approver,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
 
@@ -830,6 +856,7 @@ fn reject_blocks_further_actions() {
             comment: None,
         },
         &approver,
+        &dbward_domain::entities::AuditContext::System,
     );
     assert!(matches!(result, Err(AppError::Conflict(_))));
 
@@ -839,6 +866,7 @@ fn reject_blocks_further_actions() {
             request_id: created.id.clone(),
         },
         &requester,
+        &dbward_domain::entities::AuditContext::System,
     );
     assert!(matches!(result, Err(AppError::Conflict(_))));
 }
@@ -849,7 +877,14 @@ fn cancel_blocks_further_actions() {
     let requester = make_user("alice", &["developer"]);
     let approver = make_user("bob", &["dba"]);
 
-    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            make_input(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
 
     // Cancel
     h.cancel_uc()
@@ -859,6 +894,7 @@ fn cancel_blocks_further_actions() {
                 reason: Some("no longer needed".into()),
             },
             &requester,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
 
@@ -869,6 +905,7 @@ fn cancel_blocks_further_actions() {
             comment: None,
         },
         &approver,
+        &dbward_domain::entities::AuditContext::System,
     );
     assert!(matches!(result, Err(AppError::Conflict(_))));
 }
@@ -880,7 +917,11 @@ fn emergency_without_reason_rejected() {
     let mut input = make_input();
     input.emergency = true;
     // No reason provided
-    let result = h.create_uc().execute(input, &requester);
+    let result = h.create_uc().execute(
+        input,
+        &requester,
+        &dbward_domain::entities::AuditContext::System,
+    );
     assert!(matches!(result, Err(AppError::Validation(_))));
 }
 
@@ -893,7 +934,14 @@ fn emergency_request_skips_approval() {
     input.emergency = true;
     input.reason = Some("critical fix".into());
 
-    let created = h.create_uc().execute(input, &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            input,
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
     assert_eq!(created.status, RequestStatus::Dispatched);
     // Already dispatched at creation (ADR-004: break_glass → immediate dispatch)
 }
@@ -920,7 +968,14 @@ fn auto_approved_request_dispatches_directly() {
     let h = TestHarness::new(Some(auto_wf));
     let requester = make_user("alice", &["developer"]);
 
-    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            make_input(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
     assert_eq!(created.status, RequestStatus::Dispatched);
     // Already dispatched at creation (ADR-004: auto_approved → immediate dispatch)
 }
@@ -933,8 +988,22 @@ fn idempotent_create_returns_existing() {
     let mut input = make_input();
     input.idempotency_key = Some("key-123".into());
 
-    let first = h.create_uc().execute(input.clone(), &requester).unwrap();
-    let second = h.create_uc().execute(input, &requester).unwrap();
+    let first = h
+        .create_uc()
+        .execute(
+            input.clone(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
+    let second = h
+        .create_uc()
+        .execute(
+            input,
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
 
     assert_eq!(first.id, second.id);
     assert_eq!(first.status, second.status);
@@ -946,7 +1015,14 @@ fn dispatch_after_approval_ttl_expired_fails() {
     let requester = make_user("alice", &["developer"]);
     let approver = make_user("bob", &["dba"]);
 
-    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            make_input(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
     h.approve_uc()
         .execute(
             ApproveRequestInput {
@@ -954,6 +1030,7 @@ fn dispatch_after_approval_ttl_expired_fails() {
                 comment: None,
             },
             &approver,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
 
@@ -965,6 +1042,7 @@ fn dispatch_after_approval_ttl_expired_fails() {
             request_id: created.id.clone(),
         },
         &requester,
+        &dbward_domain::entities::AuditContext::System,
     );
     assert!(matches!(result, Err(AppError::Gone(_))));
 }
@@ -981,7 +1059,14 @@ fn redispatch_respects_max_executions() {
     let requester = make_user("alice", &["developer"]);
     let approver = make_user("bob", &["dba"]);
 
-    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            make_input(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
     h.approve_uc()
         .execute(
             ApproveRequestInput {
@@ -989,6 +1074,7 @@ fn redispatch_respects_max_executions() {
                 comment: None,
             },
             &approver,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
     h.dispatch_uc()
@@ -997,6 +1083,7 @@ fn redispatch_respects_max_executions() {
                 request_id: created.id.clone(),
             },
             &requester,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
 
@@ -1255,7 +1342,14 @@ fn agent_full_flow_poll_claim_heartbeat() {
     let agent = make_agent_user("agent-1");
 
     // Create + Approve + Dispatch
-    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            make_input(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
     h.approve_uc()
         .execute(
             ApproveRequestInput {
@@ -1263,6 +1357,7 @@ fn agent_full_flow_poll_claim_heartbeat() {
                 comment: None,
             },
             &approver,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
     h.dispatch_uc()
@@ -1271,6 +1366,7 @@ fn agent_full_flow_poll_claim_heartbeat() {
                 request_id: created.id.clone(),
             },
             &requester,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
 
@@ -1327,6 +1423,7 @@ fn agent_full_flow_poll_claim_heartbeat() {
                 }],
             },
             &agent,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
     assert!(!claim_result.execution_token.is_empty());
@@ -1363,7 +1460,14 @@ fn heartbeat_detects_cancelled_request() {
     let approver = make_user("bob", &["dba"]);
     let agent = make_agent_user("agent-1");
 
-    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            make_input(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
     h.approve_uc()
         .execute(
             ApproveRequestInput {
@@ -1371,6 +1475,7 @@ fn heartbeat_detects_cancelled_request() {
                 comment: None,
             },
             &approver,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
     h.dispatch_uc()
@@ -1379,6 +1484,7 @@ fn heartbeat_detects_cancelled_request() {
                 request_id: created.id.clone(),
             },
             &requester,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
 
@@ -1406,6 +1512,7 @@ fn heartbeat_detects_cancelled_request() {
                 }],
             },
             &agent,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
 
@@ -1443,7 +1550,14 @@ fn event_dispatcher_records_full_lifecycle() {
     let approver = make_user("bob", &["dba"]);
 
     // Create → Pending
-    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            make_input(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
     assert_eq!(created.status, RequestStatus::Pending);
 
     // Approve → Approved
@@ -1455,6 +1569,7 @@ fn event_dispatcher_records_full_lifecycle() {
                 comment: None,
             },
             &approver,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
     assert_eq!(approved.status, RequestStatus::Approved);
@@ -1467,6 +1582,7 @@ fn event_dispatcher_records_full_lifecycle() {
                 request_id: created.id.clone(),
             },
             &requester,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
     assert_eq!(dispatched.status, RequestStatus::Dispatched);
@@ -1495,7 +1611,14 @@ fn event_dispatcher_records_break_glass_auto_dispatch() {
     input.emergency = true;
     input.reason = Some("critical fix".into());
 
-    let created = h.create_uc().execute(input, &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            input,
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
     assert_eq!(created.status, RequestStatus::Dispatched);
 
     // break_glass emits 2 events: create(BreakGlass) + dispatch(Dispatched)
@@ -1526,7 +1649,14 @@ fn event_dispatcher_records_auto_approved_two_events() {
     let h = TestHarness::new(Some(auto_wf));
     let requester = make_user("alice", &["developer"]);
 
-    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            make_input(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
     assert_eq!(created.status, RequestStatus::Dispatched);
 
     let events = h.event_dispatcher.events();
@@ -1547,7 +1677,14 @@ fn reject_from_non_pending_returns_conflict() {
     let approver = make_user("bob", &["dba"]);
 
     // Create + Approve → Approved
-    let created = h.create_uc().execute(make_input(), &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            make_input(),
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
     h.approve_uc()
         .execute(
             ApproveRequestInput {
@@ -1555,6 +1692,7 @@ fn reject_from_non_pending_returns_conflict() {
                 comment: None,
             },
             &approver,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
 
@@ -1565,6 +1703,7 @@ fn reject_from_non_pending_returns_conflict() {
             comment: None,
         },
         &approver,
+        &dbward_domain::entities::AuditContext::System,
     );
     assert!(matches!(result, Err(AppError::Conflict(_))));
 }
@@ -1578,7 +1717,11 @@ fn no_workflow_configured_rejects_non_emergency() {
     let requester = make_user("alice", &["developer"]);
     let input = make_input(); // emergency = false
 
-    let result = h.create_uc().execute(input, &requester);
+    let result = h.create_uc().execute(
+        input,
+        &requester,
+        &dbward_domain::entities::AuditContext::System,
+    );
     match result {
         Err(AppError::Validation(msg)) => assert!(
             msg.contains("no workflow configured"),
@@ -1598,7 +1741,14 @@ fn no_workflow_configured_allows_break_glass() {
     input.emergency = true;
     input.reason = Some("incident #999".into());
 
-    let created = h.create_uc().execute(input, &requester).unwrap();
+    let created = h
+        .create_uc()
+        .execute(
+            input,
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
     assert_eq!(created.status, RequestStatus::Dispatched);
 
     let events = h.event_dispatcher.events();
@@ -1822,6 +1972,7 @@ fn token_prefix_is_raw_4_to_12() {
                 expires_at: None,
             },
             &admin,
+            &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
 

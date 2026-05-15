@@ -33,6 +33,7 @@ impl DispatchRequest {
         &self,
         input: DispatchRequestInput,
         user: &AuthUser,
+        ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<DispatchRequestOutput, AppError> {
         // 1. Get request
         let request = self
@@ -68,6 +69,7 @@ impl DispatchRequest {
                 timestamp: now,
                 metadata: EventMetadata::Dispatched,
                 requester_id: request.requester.clone(),
+                audit_context: ctx.clone(),
             },
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;
@@ -558,6 +560,7 @@ mod tests {
                     request_id: "req-001".into(),
                 },
                 &user,
+                &dbward_domain::entities::AuditContext::System,
             )
             .unwrap();
         assert_eq!(out.status, RequestStatus::Dispatched);
@@ -592,7 +595,8 @@ mod tests {
                 DispatchRequestInput {
                     request_id: "req-001".into()
                 },
-                &user
+                &user,
+                &dbward_domain::entities::AuditContext::System,
             ),
             Err(AppError::Conflict(_))
         ));
@@ -627,6 +631,7 @@ mod tests {
                     request_id: "req-001".into(),
                 },
                 &user,
+                &dbward_domain::entities::AuditContext::System,
             )
             .unwrap();
         assert_eq!(out.status, RequestStatus::Dispatched);

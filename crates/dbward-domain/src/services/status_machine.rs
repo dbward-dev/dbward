@@ -73,6 +73,7 @@ pub struct TransitionContext {
     pub timestamp: DateTime<Utc>,
     pub metadata: EventMetadata,
     pub requester_id: String,
+    pub audit_context: crate::entities::AuditContext,
 }
 
 /// Event emitted after a successful state transition.
@@ -89,6 +90,7 @@ pub struct TransitionEvent {
     pub timestamp: DateTime<Utc>,
     pub metadata: EventMetadata,
     pub requester_id: String,
+    pub audit_context: crate::entities::AuditContext,
 }
 
 /// Result of a state transition. Must be committed via .commit().
@@ -142,6 +144,7 @@ pub fn transition(
         timestamp: context.timestamp,
         metadata: context.metadata,
         requester_id: context.requester_id,
+        audit_context: context.audit_context,
     };
 
     Ok(TransitionResult { new_status, event })
@@ -170,6 +173,7 @@ pub fn create_event(new_status: RequestStatus, context: TransitionContext) -> Tr
         timestamp: context.timestamp,
         metadata: context.metadata,
         requester_id: context.requester_id,
+        audit_context: context.audit_context,
     };
     TransitionResult { new_status, event }
 }
