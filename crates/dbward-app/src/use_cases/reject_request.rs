@@ -34,6 +34,7 @@ impl RejectRequest {
         &self,
         input: RejectRequestInput,
         user: &AuthUser,
+        ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<RejectRequestOutput, AppError> {
         // 0. Input validation
         if let Some(ref c) = input.comment {
@@ -149,6 +150,7 @@ impl RejectRequest {
                     comment: input.comment.clone(),
                 },
                 requester_id: request.requester.clone(),
+                audit_context: ctx.clone(),
             },
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;
@@ -467,6 +469,7 @@ mod tests {
                     comment: None,
                 },
                 &user,
+                &dbward_domain::entities::AuditContext::System,
             )
             .unwrap();
         assert_eq!(out.status, RequestStatus::Rejected);
@@ -502,7 +505,8 @@ mod tests {
                     request_id: "req-001".into(),
                     comment: None
                 },
-                &user
+                &user,
+                &dbward_domain::entities::AuditContext::System,
             ),
             Err(AppError::Conflict(_))
         ));

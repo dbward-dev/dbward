@@ -31,6 +31,7 @@ impl CancelRequest {
         &self,
         input: CancelRequestInput,
         user: &AuthUser,
+        ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<CancelRequestOutput, AppError> {
         if let Some(ref r) = input.reason {
             if r.len() > 1024 {
@@ -73,6 +74,7 @@ impl CancelRequest {
                     reason: input.reason.clone(),
                 },
                 requester_id: request.requester.clone(),
+                audit_context: ctx.clone(),
             },
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;
@@ -369,6 +371,7 @@ mod tests {
                     reason: Some("changed mind".into()),
                 },
                 &user,
+                &dbward_domain::entities::AuditContext::System,
             )
             .unwrap();
         assert_eq!(out.status, RequestStatus::Cancelled);
@@ -400,7 +403,8 @@ mod tests {
                     request_id: "req-001".into(),
                     reason: None
                 },
-                &user
+                &user,
+                &dbward_domain::entities::AuditContext::System,
             ),
             Err(AppError::Conflict(_))
         ));
@@ -431,7 +435,8 @@ mod tests {
                     request_id: "req-001".into(),
                     reason: None
                 },
-                &user
+                &user,
+                &dbward_domain::entities::AuditContext::System,
             ),
             Err(AppError::Forbidden(_))
         ));

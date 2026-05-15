@@ -12,6 +12,7 @@ use dbward_app::use_cases::{
 use dbward_domain::auth::{AuthUser, SubjectType};
 use serde::Deserialize;
 
+use crate::middleware::trusted_proxies::ClientIp;
 use crate::state::AppState;
 
 use super::map_error;
@@ -149,6 +150,8 @@ pub async fn poll(
 pub async fn claim(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
@@ -159,6 +162,11 @@ pub async fn claim(
             Json(serde_json::json!({"error": "server_shutting_down"})),
         ));
     }
+
+    let audit_ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
 
     // Fetch agent's registered capabilities
     let agent = state
@@ -191,6 +199,7 @@ pub async fn claim(
                 agent_databases: agent.databases,
             },
             &user,
+            &audit_ctx,
         )
         .map_err(map_error)?;
 
@@ -244,10 +253,16 @@ pub struct SubmitResultBody {
 pub async fn submit_result(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
     Json(body): Json<SubmitResultBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
+    let audit_ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = AgentSubmitResult {
         authorizer: state.authorizer.clone(),
         agent_repo: state.agent_repo.clone(),
@@ -269,6 +284,7 @@ pub async fn submit_result(
                 error_message: body.error_message,
             },
             &user,
+            &audit_ctx,
         )
         .await
         .map_err(map_error)?;

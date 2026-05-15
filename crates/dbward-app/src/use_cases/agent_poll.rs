@@ -82,6 +82,7 @@ impl AgentPoll {
                 &user.subject_id,
                 Some(&user.subject_id),
                 self.clock.now(),
+                &dbward_domain::entities::AuditContext::System,
             ));
         }
 

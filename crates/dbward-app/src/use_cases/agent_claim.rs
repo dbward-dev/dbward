@@ -50,6 +50,7 @@ impl AgentClaim {
         &self,
         input: AgentClaimInput,
         user: &AuthUser,
+        ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<AgentClaimOutput, AppError> {
         // 1. Authorization (global permission)
         self.authorizer
@@ -81,6 +82,7 @@ impl AgentClaim {
                     agent_id: input.agent_id.clone(),
                 },
                 requester_id: request.requester.clone(),
+                audit_context: ctx.clone(),
             },
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;

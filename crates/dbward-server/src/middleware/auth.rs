@@ -152,12 +152,35 @@ pub async fn auth_middleware(
                     .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(3600))
             };
             if should_emit {
+                use axum::extract::ConnectInfo;
+                use dbward_domain::entities::{AuditContext, ClientInfo, IpSource};
+                use std::net::SocketAddr;
+                let ctx = match req.extensions().get::<super::trusted_proxies::ClientIp>() {
+                    Some(cip) => {
+                        let peer = req
+                            .extensions()
+                            .get::<ConnectInfo<SocketAddr>>()
+                            .map(|ci| ci.0.ip())
+                            .unwrap_or(cip.ip);
+                        let source = match cip.source {
+                            super::trusted_proxies::ClientIpSource::Peer => IpSource::Direct,
+                            super::trusted_proxies::ClientIpSource::Xff => IpSource::Forwarded,
+                        };
+                        AuditContext::Request(ClientInfo {
+                            peer_ip: peer,
+                            client_ip: cip.ip,
+                            source,
+                        })
+                    }
+                    None => AuditContext::System,
+                };
                 let event = dbward_domain::entities::AuditEvent::simple(
                     "login_success",
                     "auth",
                     &subject_id,
                     None,
                     state.clock.now(),
+                    &ctx,
                 );
                 let _ = state.audit_logger.record(&event);
                 let mut cache = LOGIN_AUDIT_CACHE.lock().unwrap();

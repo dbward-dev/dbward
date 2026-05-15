@@ -62,6 +62,7 @@ impl TokenManage {
         &self,
         input: TokenCreateInput,
         user: &AuthUser,
+        ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<TokenCreateOutput, AppError> {
         self.authorizer
             .authorize_global(user, Permission::TokenManage)
@@ -152,6 +153,7 @@ impl TokenManage {
                 &user.subject_id,
                 Some(&id),
                 self.clock.now(),
+                ctx,
             ))?;
 
         // Resolve permissions from assigned roles
@@ -190,6 +192,7 @@ impl TokenManage {
         &self,
         input: TokenRevokeInput,
         user: &AuthUser,
+        ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<TokenRevokeOutput, AppError> {
         let token = self
             .token_repo
@@ -218,6 +221,7 @@ impl TokenManage {
                 &user.subject_id,
                 Some(&input.token_id),
                 self.clock.now(),
+                ctx,
             ))?;
 
         Ok(TokenRevokeOutput {
@@ -525,6 +529,7 @@ mod tests {
                 expires_at: None,
             },
             &make_user(),
+            &dbward_domain::entities::AuditContext::System,
         );
         assert!(matches!(result, Err(AppError::Validation(_))));
     }
@@ -550,6 +555,7 @@ mod tests {
                 expires_at: None,
             },
             &make_user(),
+            &dbward_domain::entities::AuditContext::System,
         );
         assert!(result.is_ok());
     }
@@ -567,6 +573,7 @@ mod tests {
                 expires_at: None,
             },
             &make_user(),
+            &dbward_domain::entities::AuditContext::System,
         );
         assert!(matches!(result, Err(AppError::PlanLimit(_))));
     }

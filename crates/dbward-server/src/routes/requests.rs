@@ -13,6 +13,7 @@ use dbward_app::use_cases::{
 use dbward_domain::auth::AuthUser;
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
+use crate::middleware::trusted_proxies::ClientIp;
 use crate::state::AppState;
 
 type ApiResult =
@@ -51,6 +52,8 @@ fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
 pub async fn create(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Json(body): Json<serde_json::Value>,
 ) -> ApiResult {
     if state.draining.load(std::sync::atomic::Ordering::SeqCst) {
@@ -59,6 +62,11 @@ pub async fn create(
             Json(json!({"error": "server_shutting_down", "code": "service_unavailable"})),
         ));
     }
+
+    let audit_ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
 
     let database = body["database"].as_str().unwrap_or_default();
     let environment = body["environment"].as_str().unwrap_or_default();
@@ -113,7 +121,7 @@ pub async fn create(
         default_approval_ttl_secs: state.default_approval_ttl_secs,
     };
 
-    match uc.execute(input, &user) {
+    match uc.execute(input, &user, &audit_ctx) {
         Ok(out) => {
             let status_code = if out.is_existing {
                 StatusCode::OK
@@ -273,9 +281,15 @@ pub async fn get(
 pub async fn approve(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> ApiResult {
+    let audit_ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = approve_request::ApproveRequest {
         authorizer: state.authorizer.clone(),
         request_repo: state.request_repo.clone(),
@@ -289,7 +303,7 @@ pub async fn approve(
         comment: body["comment"].as_str().map(String::from),
     };
 
-    match uc.execute(input, &user) {
+    match uc.execute(input, &user, &audit_ctx) {
         Ok(out) => Ok((
             StatusCode::OK,
             Json(json!({
@@ -308,9 +322,15 @@ pub async fn approve(
 pub async fn reject(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> ApiResult {
+    let audit_ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = reject_request::RejectRequest {
         authorizer: state.authorizer.clone(),
         request_repo: state.request_repo.clone(),
@@ -324,7 +344,7 @@ pub async fn reject(
         comment: body["comment"].as_str().map(String::from),
     };
 
-    match uc.execute(input, &user) {
+    match uc.execute(input, &user, &audit_ctx) {
         Ok(out) => Ok((
             StatusCode::OK,
             Json(json!({
@@ -339,9 +359,15 @@ pub async fn reject(
 pub async fn cancel(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> ApiResult {
+    let audit_ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = cancel_request::CancelRequest {
         authorizer: state.authorizer.clone(),
         request_repo: state.request_repo.clone(),
@@ -354,7 +380,7 @@ pub async fn cancel(
         reason: body["reason"].as_str().map(String::from),
     };
 
-    match uc.execute(input, &user) {
+    match uc.execute(input, &user, &audit_ctx) {
         Ok(out) => Ok((
             StatusCode::OK,
             Json(json!({
@@ -369,8 +395,14 @@ pub async fn cancel(
 pub async fn dispatch(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
 ) -> ApiResult {
+    let audit_ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = dispatch_request::DispatchRequest {
         authorizer: state.authorizer.clone(),
         policy: state.policy_evaluator.clone(),
@@ -383,7 +415,7 @@ pub async fn dispatch(
 
     let input = dispatch_request::DispatchRequestInput { request_id: id };
 
-    match uc.execute(input, &user) {
+    match uc.execute(input, &user, &audit_ctx) {
         Ok(out) => Ok((
             StatusCode::OK,
             Json(json!({

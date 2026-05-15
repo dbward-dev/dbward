@@ -14,6 +14,28 @@ mod tokens;
 mod users;
 mod webhooks;
 
+pub(crate) fn extract_audit_context(
+    client_ip: Option<&crate::middleware::trusted_proxies::ClientIp>,
+    connect_info: Option<&axum::extract::ConnectInfo<std::net::SocketAddr>>,
+) -> dbward_domain::entities::AuditContext {
+    use dbward_domain::entities::{AuditContext, ClientInfo, IpSource};
+    match client_ip {
+        Some(cip) => {
+            let peer = connect_info.map(|ci| ci.0.ip()).unwrap_or(cip.ip);
+            let source = match cip.source {
+                crate::middleware::trusted_proxies::ClientIpSource::Peer => IpSource::Direct,
+                crate::middleware::trusted_proxies::ClientIpSource::Xff => IpSource::Forwarded,
+            };
+            AuditContext::Request(ClientInfo {
+                peer_ip: peer,
+                client_ip: cip.ip,
+                source,
+            })
+        }
+        None => AuditContext::System,
+    }
+}
+
 async fn not_implemented() -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::NOT_IMPLEMENTED,

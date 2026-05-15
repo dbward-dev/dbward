@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission};
-use dbward_domain::entities::{AuditEvent, Webhook};
+use dbward_domain::entities::{AuditContext, AuditEvent, Webhook};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -37,7 +37,12 @@ pub struct WebhookDeleteInput {
 }
 
 impl WebhookManage {
-    pub fn create(&self, input: WebhookCreateInput, user: &AuthUser) -> Result<Webhook, AppError> {
+    pub fn create(
+        &self,
+        input: WebhookCreateInput,
+        user: &AuthUser,
+        ctx: &AuditContext,
+    ) -> Result<Webhook, AppError> {
         self.authorizer
             .authorize_global(user, Permission::WebhookManage)
             .map_err(AppError::Forbidden)?;
@@ -87,6 +92,7 @@ impl WebhookManage {
             &user.subject_id,
             Some(&webhook.id),
             self.clock.now(),
+            ctx,
         ))?;
 
         // Reload dispatcher config
@@ -95,7 +101,12 @@ impl WebhookManage {
         Ok(webhook)
     }
 
-    pub fn update(&self, input: WebhookUpdateInput, user: &AuthUser) -> Result<Webhook, AppError> {
+    pub fn update(
+        &self,
+        input: WebhookUpdateInput,
+        user: &AuthUser,
+        ctx: &AuditContext,
+    ) -> Result<Webhook, AppError> {
         self.authorizer
             .authorize_global(user, Permission::WebhookManage)
             .map_err(AppError::Forbidden)?;
@@ -139,6 +150,7 @@ impl WebhookManage {
             &user.subject_id,
             Some(&webhook.id),
             self.clock.now(),
+            ctx,
         ))?;
 
         // Reload dispatcher config
@@ -163,7 +175,12 @@ impl WebhookManage {
             .ok_or_else(|| AppError::NotFound("webhook not found".into()))
     }
 
-    pub fn delete(&self, input: WebhookDeleteInput, user: &AuthUser) -> Result<(), AppError> {
+    pub fn delete(
+        &self,
+        input: WebhookDeleteInput,
+        user: &AuthUser,
+        ctx: &AuditContext,
+    ) -> Result<(), AppError> {
         self.authorizer
             .authorize_global(user, Permission::WebhookManage)
             .map_err(AppError::Forbidden)?;
@@ -177,6 +194,7 @@ impl WebhookManage {
             &user.subject_id,
             Some(&input.id),
             self.clock.now(),
+            ctx,
         ))?;
 
         // Reload dispatcher config
@@ -325,6 +343,7 @@ mod tests {
                 secret: None,
             },
             &make_user(),
+            &dbward_domain::entities::AuditContext::System,
         );
         assert!(matches!(result, Err(AppError::Validation(_))));
     }
@@ -341,6 +360,7 @@ mod tests {
                 secret: Some(Some("".into())),
             },
             &make_user(),
+            &dbward_domain::entities::AuditContext::System,
         );
         assert!(matches!(result, Err(AppError::Validation(_))));
     }
@@ -356,6 +376,7 @@ mod tests {
                 secret: Some("".into()),
             },
             &make_user(),
+            &dbward_domain::entities::AuditContext::System,
         );
         assert!(matches!(result, Err(AppError::Validation(_))));
     }

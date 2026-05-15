@@ -61,6 +61,7 @@ impl CreateRequest {
         &self,
         input: CreateRequestInput,
         user: &AuthUser,
+        ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<CreateRequestOutput, AppError> {
         if input.detail.len() > 100_000 {
             return Err(AppError::Validation("query too long (max 100KB)".into()));
@@ -270,6 +271,7 @@ impl CreateRequest {
                         emergency: input.emergency,
                     },
                     requester_id: user.subject_id.clone(),
+                    audit_context: ctx.clone(),
                 },
             );
             create_result.commit(&*self.event_dispatcher);
@@ -287,6 +289,7 @@ impl CreateRequest {
                     timestamp: now,
                     metadata: EventMetadata::Dispatched,
                     requester_id: user.subject_id.clone(),
+                    audit_context: ctx.clone(),
                 },
             )
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -311,6 +314,7 @@ impl CreateRequest {
                         emergency: input.emergency,
                     },
                     requester_id: user.subject_id.clone(),
+                    audit_context: ctx.clone(),
                 },
             );
             create_result.commit(&*self.event_dispatcher);
@@ -687,7 +691,13 @@ mod tests {
     #[test]
     fn success_creates_auto_approved_request() {
         let uc = make_uc(Arc::new(AllowAll));
-        let result = uc.execute(make_input(), &make_user()).unwrap();
+        let result = uc
+            .execute(
+                make_input(),
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap();
         assert_eq!(result.id, "test-id-001");
         // Workflow with empty steps → auto-approved → dispatched
         assert_eq!(result.status, RequestStatus::Dispatched);
@@ -696,7 +706,11 @@ mod tests {
     #[test]
     fn denied_by_authorizer() {
         let uc = make_uc(Arc::new(DenyAll));
-        let result = uc.execute(make_input(), &make_user());
+        let result = uc.execute(
+            make_input(),
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        );
         assert!(matches!(result, Err(AppError::Forbidden(_))));
     }
 
@@ -706,7 +720,13 @@ mod tests {
         let mut input = make_input();
         input.operation = Operation::MigrateUp;
         input.detail = "migrations/001_init.sql".into();
-        let result = uc.execute(input, &make_user()).unwrap();
+        let result = uc
+            .execute(
+                input,
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap();
         assert_eq!(result.operation, Operation::MigrateUp);
     }
 
@@ -716,7 +736,13 @@ mod tests {
         let mut input = make_input();
         input.operation = Operation::MigrateDown;
         input.detail = "migrations/001_init.sql".into();
-        let result = uc.execute(input, &make_user()).unwrap();
+        let result = uc
+            .execute(
+                input,
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap();
         assert_eq!(result.operation, Operation::MigrateDown);
     }
 
@@ -726,7 +752,13 @@ mod tests {
         let mut input = make_input();
         input.operation = Operation::ExecuteSelect;
         input.detail = "INSERT INTO t VALUES (1)".into();
-        let result = uc.execute(input, &make_user()).unwrap();
+        let result = uc
+            .execute(
+                input,
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap();
         // SQL classifier overrides: INSERT → ExecuteDml
         assert_eq!(result.operation, Operation::ExecuteDml);
     }

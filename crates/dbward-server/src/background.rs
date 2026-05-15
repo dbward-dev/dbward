@@ -386,6 +386,7 @@ fn emit_audit(state: &AppState, event_type: &str, category: EventCategory, reque
         "system",
         Some(request_id),
         state.clock.now(),
+        &dbward_domain::entities::AuditContext::System,
     );
     event.actor_type = ActorType::System;
     event.request_id = Some(request_id.to_string());
@@ -408,6 +409,7 @@ fn make_audit_event(
         "system",
         Some(request_id),
         state.clock.now(),
+        &dbward_domain::entities::AuditContext::System,
     );
     event.actor_type = ActorType::System;
     event.request_id = Some(request_id.to_string());

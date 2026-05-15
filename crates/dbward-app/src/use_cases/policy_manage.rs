@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, RoleDefinition};
-use dbward_domain::entities::AuditEvent;
+use dbward_domain::entities::{AuditContext, AuditEvent};
 use dbward_domain::policies::{DeliveryMode, ExecutionPolicy, Workflow, WorkflowStep};
 use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
 
@@ -58,6 +58,7 @@ impl PolicyManage {
         &self,
         input: CreateWorkflowInput,
         user: &AuthUser,
+        ctx: &AuditContext,
     ) -> Result<Workflow, AppError> {
         self.authorizer
             .authorize_global(user, Permission::WorkflowManage)
@@ -90,6 +91,7 @@ impl PolicyManage {
             &user.subject_id,
             Some(&wf.id),
             self.clock.now(),
+            ctx,
         ))?;
         Ok(wf)
     }
@@ -101,7 +103,12 @@ impl PolicyManage {
         self.policy_repo.list_workflows()
     }
 
-    pub fn delete_workflow(&self, id: &str, user: &AuthUser) -> Result<(), AppError> {
+    pub fn delete_workflow(
+        &self,
+        id: &str,
+        user: &AuthUser,
+        ctx: &AuditContext,
+    ) -> Result<(), AppError> {
         self.authorizer
             .authorize_global(user, Permission::WorkflowManage)
             .map_err(AppError::Forbidden)?;
@@ -115,6 +122,7 @@ impl PolicyManage {
             &user.subject_id,
             Some(id),
             self.clock.now(),
+            ctx,
         ))?;
         Ok(())
     }
@@ -125,6 +133,7 @@ impl PolicyManage {
         &self,
         ep: ExecutionPolicy,
         user: &AuthUser,
+        ctx: &AuditContext,
     ) -> Result<ExecutionPolicy, AppError> {
         self.authorizer
             .authorize_global(user, Permission::PolicyManage)
@@ -140,6 +149,7 @@ impl PolicyManage {
             &user.subject_id,
             None,
             self.clock.now(),
+            ctx,
         ))?;
         Ok(ep)
     }
@@ -171,6 +181,7 @@ impl PolicyManage {
         &self,
         role: RoleDefinition,
         user: &AuthUser,
+        ctx: &AuditContext,
     ) -> Result<RoleDefinition, AppError> {
         self.authorizer
             .authorize_global(user, Permission::RoleManage)
@@ -189,6 +200,7 @@ impl PolicyManage {
             &user.subject_id,
             Some(&role.name),
             self.clock.now(),
+            ctx,
         ))?;
         Ok(role)
     }
@@ -220,6 +232,7 @@ impl PolicyManage {
         &self,
         input: CreateResultPolicyInput,
         user: &AuthUser,
+        ctx: &AuditContext,
     ) -> Result<dbward_domain::policies::ResultPolicy, AppError> {
         self.authorizer
             .authorize_global(user, Permission::PolicyManage)
@@ -247,6 +260,7 @@ impl PolicyManage {
             &user.subject_id,
             Some(&policy.id),
             self.clock.now(),
+            ctx,
         ))?;
         Ok(policy)
     }
@@ -279,6 +293,7 @@ impl PolicyManage {
         id: &str,
         input: UpdateResultPolicyInput,
         user: &AuthUser,
+        ctx: &AuditContext,
     ) -> Result<dbward_domain::policies::ResultPolicy, AppError> {
         self.authorizer
             .authorize_global(user, Permission::PolicyManage)
@@ -309,11 +324,17 @@ impl PolicyManage {
             &user.subject_id,
             Some(id),
             self.clock.now(),
+            ctx,
         ))?;
         Ok(policy)
     }
 
-    pub fn delete_result_policy(&self, id: &str, user: &AuthUser) -> Result<(), AppError> {
+    pub fn delete_result_policy(
+        &self,
+        id: &str,
+        user: &AuthUser,
+        ctx: &AuditContext,
+    ) -> Result<(), AppError> {
         self.authorizer
             .authorize_global(user, Permission::PolicyManage)
             .map_err(AppError::Forbidden)?;
@@ -327,6 +348,7 @@ impl PolicyManage {
             &user.subject_id,
             Some(id),
             self.clock.now(),
+            ctx,
         ))?;
         Ok(())
     }
@@ -337,6 +359,7 @@ impl PolicyManage {
         &self,
         input: CreateNotificationPolicyInput,
         user: &AuthUser,
+        ctx: &AuditContext,
     ) -> Result<dbward_domain::policies::NotificationPolicy, AppError> {
         self.authorizer
             .authorize_global(user, Permission::PolicyManage)
@@ -363,6 +386,7 @@ impl PolicyManage {
             &user.subject_id,
             Some(&policy.id),
             self.clock.now(),
+            ctx,
         ))?;
         Ok(policy)
     }
@@ -395,6 +419,7 @@ impl PolicyManage {
         id: &str,
         input: UpdateNotificationPolicyInput,
         user: &AuthUser,
+        ctx: &AuditContext,
     ) -> Result<dbward_domain::policies::NotificationPolicy, AppError> {
         self.authorizer
             .authorize_global(user, Permission::PolicyManage)
@@ -424,11 +449,17 @@ impl PolicyManage {
             &user.subject_id,
             Some(id),
             self.clock.now(),
+            ctx,
         ))?;
         Ok(policy)
     }
 
-    pub fn delete_notification_policy(&self, id: &str, user: &AuthUser) -> Result<(), AppError> {
+    pub fn delete_notification_policy(
+        &self,
+        id: &str,
+        user: &AuthUser,
+        ctx: &AuditContext,
+    ) -> Result<(), AppError> {
         self.authorizer
             .authorize_global(user, Permission::PolicyManage)
             .map_err(AppError::Forbidden)?;
@@ -442,6 +473,7 @@ impl PolicyManage {
             &user.subject_id,
             Some(id),
             self.clock.now(),
+            ctx,
         ))?;
         Ok(())
     }
@@ -452,6 +484,7 @@ mod tests {
     use super::*;
     use crate::error::AuthzError;
     use dbward_domain::auth::{Permission as P, ResolvedRole, ResourceContext, SubjectType};
+    use dbward_domain::entities::AuditContext;
     use dbward_domain::values::{DatabaseName, Environment};
     use std::sync::Mutex;
 
@@ -716,7 +749,8 @@ mod tests {
                     steps: vec![],
                     require_reason: false,
                 },
-                &admin_user()
+                &admin_user(),
+                &AuditContext::System,
             ),
             Err(AppError::Forbidden(_))
         ));
@@ -744,7 +778,8 @@ mod tests {
                     steps: vec![],
                     require_reason: false,
                 },
-                &admin_user()
+                &admin_user(),
+                &AuditContext::System,
             ),
             Err(AppError::PlanLimit(_))
         ));
@@ -760,7 +795,7 @@ mod tests {
             environments: vec![],
         };
         assert!(matches!(
-            uc.create_role(role, &admin_user()),
+            uc.create_role(role, &admin_user(), &AuditContext::System),
             Err(AppError::Validation(_))
         ));
     }

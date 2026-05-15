@@ -149,6 +149,7 @@ mod tests {
                 "alice",
                 Some("req-1"),
                 chrono::Utc::now(),
+                &dbward_domain::entities::AuditContext::System,
             );
             ev.detail_raw = Some("SELECT 1".into());
             if let Some(ref actor) = filter.actor_id {

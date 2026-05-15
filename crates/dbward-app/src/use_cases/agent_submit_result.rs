@@ -41,6 +41,7 @@ impl AgentSubmitResult {
         &self,
         input: AgentSubmitResultInput,
         user: &AuthUser,
+        ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<AgentSubmitResultOutput, AppError> {
         // 1. Authorization (global)
         self.authorizer
@@ -101,6 +102,7 @@ impl AgentSubmitResult {
                     execution_id: execution.id.clone(),
                 },
                 requester_id: request.requester.clone(),
+                audit_context: ctx.clone(),
             },
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;
@@ -227,6 +229,7 @@ impl AgentSubmitResult {
             &user.subject_id,
             Some(&execution.id),
             now,
+            &dbward_domain::entities::AuditContext::System,
         );
         audit_event.database_name = Some(request.database.to_string());
         audit_event.environment = Some(request.environment.to_string());
@@ -848,7 +851,12 @@ mod tests {
             error_message: None,
         };
         assert!(matches!(
-            uc.execute(input, &agent_user()).await,
+            uc.execute(
+                input,
+                &agent_user(),
+                &dbward_domain::entities::AuditContext::System
+            )
+            .await,
             Err(AppError::NotFound(_))
         ));
     }
@@ -863,7 +871,12 @@ mod tests {
             error_message: None,
         };
         assert!(matches!(
-            uc.execute(input, &agent_user()).await,
+            uc.execute(
+                input,
+                &agent_user(),
+                &dbward_domain::entities::AuditContext::System
+            )
+            .await,
             Err(AppError::Conflict(_))
         ));
     }
@@ -877,7 +890,14 @@ mod tests {
             result_data: Some(b"rows".to_vec()),
             error_message: None,
         };
-        let out = uc.execute(input, &agent_user()).await.unwrap();
+        let out = uc
+            .execute(
+                input,
+                &agent_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .await
+            .unwrap();
         assert_eq!(out.status, RequestStatus::Executed);
     }
 
@@ -890,7 +910,14 @@ mod tests {
             result_data: None,
             error_message: Some("timeout".into()),
         };
-        let out = uc.execute(input, &agent_user()).await.unwrap();
+        let out = uc
+            .execute(
+                input,
+                &agent_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .await
+            .unwrap();
         assert_eq!(out.status, RequestStatus::Failed);
     }
 
@@ -903,7 +930,14 @@ mod tests {
             result_data: None,
             error_message: None,
         };
-        let out = uc.execute(input, &agent_user()).await.unwrap();
+        let out = uc
+            .execute(
+                input,
+                &agent_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .await
+            .unwrap();
         assert_eq!(out.status, RequestStatus::Cancelled);
     }
 
@@ -918,7 +952,12 @@ mod tests {
             error_message: None,
         };
         assert!(matches!(
-            uc.execute(input, &agent_user()).await,
+            uc.execute(
+                input,
+                &agent_user(),
+                &dbward_domain::entities::AuditContext::System
+            )
+            .await,
             Err(AppError::PayloadTooLarge(_))
         ));
     }

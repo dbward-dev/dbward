@@ -9,6 +9,7 @@ use dbward_app::use_cases::webhook_manage::{
 use dbward_domain::auth::AuthUser;
 use serde::Deserialize;
 
+use crate::middleware::trusted_proxies::ClientIp;
 use crate::state::AppState;
 
 use super::map_error;
@@ -51,8 +52,14 @@ fn make_uc(state: &AppState) -> WebhookManage {
 pub async fn create(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Json(body): Json<CreateBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = make_uc(&state);
     let webhook = uc
         .create(
@@ -63,6 +70,7 @@ pub async fn create(
                 secret: body.secret,
             },
             &user,
+            &ctx,
         )
         .map_err(map_error)?;
 
@@ -94,9 +102,15 @@ pub async fn get(
 pub async fn update(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
     Json(body): Json<UpdateBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = make_uc(&state);
     let webhook = uc
         .update(
@@ -108,6 +122,7 @@ pub async fn update(
                 secret: body.secret,
             },
             &user,
+            &ctx,
         )
         .map_err(map_error)?;
 
@@ -117,10 +132,16 @@ pub async fn update(
 pub async fn delete(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let uc = make_uc(&state);
-    uc.delete(WebhookDeleteInput { id }, &user)
+    uc.delete(WebhookDeleteInput { id }, &user, &ctx)
         .map_err(map_error)?;
     Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
 }

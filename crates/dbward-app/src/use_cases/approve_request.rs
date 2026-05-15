@@ -38,6 +38,7 @@ impl ApproveRequest {
         &self,
         input: ApproveRequestInput,
         user: &AuthUser,
+        ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<ApproveRequestOutput, AppError> {
         // 0. Input validation
         if let Some(ref c) = input.comment {
@@ -208,6 +209,7 @@ impl ApproveRequest {
                     }
                 },
                 requester_id: request.requester.clone(),
+                audit_context: ctx.clone(),
             },
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;
@@ -584,6 +586,7 @@ mod tests {
                     comment: None,
                 },
                 &user,
+                &dbward_domain::entities::AuditContext::System,
             )
             .unwrap();
         assert_eq!(out.status, RequestStatus::Approved);
@@ -607,6 +610,7 @@ mod tests {
                 comment: None,
             },
             &user,
+            &dbward_domain::entities::AuditContext::System,
         );
         assert!(result.is_err());
     }
@@ -626,6 +630,7 @@ mod tests {
                 comment: None,
             },
             &user,
+            &dbward_domain::entities::AuditContext::System,
         );
         assert!(matches!(result, Err(AppError::Conflict(_))));
     }
@@ -646,6 +651,7 @@ mod tests {
                 comment: None,
             },
             &user,
+            &dbward_domain::entities::AuditContext::System,
         );
         assert!(matches!(result, Err(AppError::NotFound(_))));
     }
@@ -665,6 +671,7 @@ mod tests {
                 comment: None,
             },
             &user,
+            &dbward_domain::entities::AuditContext::System,
         );
         assert!(matches!(result, Err(AppError::Gone(_))));
     }
@@ -684,6 +691,7 @@ mod tests {
                 comment: None,
             },
             &user,
+            &dbward_domain::entities::AuditContext::System,
         );
         assert!(result.is_ok());
     }

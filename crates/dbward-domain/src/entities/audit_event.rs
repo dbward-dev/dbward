@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::client_info::AuditContext;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EventCategory {
@@ -80,7 +82,16 @@ impl AuditEvent {
         actor_id: &str,
         resource_id: Option<&str>,
         timestamp: DateTime<Utc>,
+        ctx: &AuditContext,
     ) -> Self {
+        let (peer_ip, client_ip, client_ip_source) = match ctx {
+            AuditContext::Request(info) => (
+                Some(info.peer_ip.to_string()),
+                Some(info.client_ip.to_string()),
+                Some(info.source.as_str().to_string()),
+            ),
+            AuditContext::System => (None, None, None),
+        };
         Self {
             id: String::new(), // filled by infra
             event_type: event_type.to_string(),
@@ -91,9 +102,9 @@ impl AuditEvent {
             actor_type: ActorType::User,
             resource_type: None,
             resource_id: resource_id.map(|s| s.to_string()),
-            peer_ip: None,
-            client_ip: None,
-            client_ip_source: None,
+            peer_ip,
+            client_ip,
+            client_ip_source,
             request_id: None,
             operation: None,
             database_name: None,
