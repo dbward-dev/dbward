@@ -1,6 +1,6 @@
 [package]
 name = "dbward-domain"
-version = "0.1.0"
+version = "0.1.1"
 license.workspace = true
 edition = "2021"
 description = "Domain layer for dbward — entities, policies, value objects, and domain services"

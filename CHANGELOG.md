@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.1.1] — 2026-05-15
+
+Quality, safety, and completeness improvements based on comprehensive scenario testing.
+
+### Bug Fixes
+
+- **Multi-statement execution**: PG `execute_cancellable` now uses `raw_sql` + `fetch_many` for multi-statement support; MySQL uses `BEGIN/COMMIT` with `ROLLBACK` on error
+- **PostgreSQL array types**: Arrays now return as JSON arrays (`[1,2,3]`) instead of text (`"{1,2,3}"`) via recursive descent parser
+- **Invalid operation validation**: Unknown operation values now return 400 with valid values hint (was silent fallback)
+- **share_with prefix validation**: `"bob"` → 400; `"user:bob"` → accepted
+- **Statement::Replace/Do classification**: Explicit match for REPLACE and DO statements
+- **GetRequest approver fallback**: Workflow selector match for approver determination
+- **RetentionConfig default**: `approval_ttl_secs` no longer defaults to 0
+- **migrate up**: Single-file format detection fixed
+- **migrate_status**: No longer falls through to default handler
+- **dbward dev restart**: Config files generated correctly on restart
+
+### Features
+
+- **ResultPolicy / NotificationPolicy**: Full CRUD API with per-DB/environment specificity
+- **Users table**: Auto-create on first authentication
+- **Request visibility scoping**: Developers see only their own requests; admins see all
+- **Claim response**: `lease_expires_at` field added
+- **default_environment**: Read from `client.toml`
+- **Logging config + trusted_proxies**: XFF middleware with configurable trusted proxy CIDRs, client IP recorded in audit events
+- **Token create/revoke subcommands**: `dbward-server token create/revoke` for standalone operation
+
+### Safety
+
+- **Agent job parallelization**: `tokio::spawn` + `InFlightGuard` + `max_concurrent` control
+- **Result storage size limit**: `max_persist_bytes` enforcement
+- **Per-DB/environment result policies**: Specificity-based policy matching with `retention_days`, `delivery_mode`, `access`
+- **ResultChannels backpressure**: Memory-bounded with eviction
+- **Webhook DLQ**: Persist-first delivery, background retry, dead letter after max attempts
+
+### Refactoring
+
+- **Clock trait** + **IdGenerator trait**: Testability improvements
+- **routes.rs split**: Modular route organization
+- **Execution pipeline redesign**: Operation enum, type-safe ExecutionToken, unified ExecutionResult, independent Heartbeat component, Pipeline separation
+- **CLI workflow.rs extraction**: Request lifecycle orchestration separated from commands
+
+### UX
+
+- `--config` promoted to global option
+- Error messages include `--database app` hint
+- `approve/reject/cancel` accept shortened IDs (CLI)
+- Invalid operation errors list valid values
+- Expired request errors show `pending_ttl_secs` hint
+- `migrate up` parse errors improved
+
+### Infrastructure
+
+- Agent healthcheck (file-based probe)
+- Agent `stop_grace_period: 90s`
+- `after_connect`: Always sets `bytea_output = 'hex'` (was conditional)
+- E2E scripts updated to PR#16 `dbward-server token create` format
+
 ## [0.1.0] — 2026-05-13
 
 Initial release. A workflow and approval engine for database operations.
