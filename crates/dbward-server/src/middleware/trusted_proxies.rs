@@ -1,7 +1,7 @@
 use std::net::{IpAddr, SocketAddr};
 
 use axum::{
-    extract::{ConnectInfo, Request, State},
+    extract::{ConnectInfo, Request},
     middleware::Next,
     response::Response,
 };
@@ -48,7 +48,7 @@ pub struct TrustedProxies(pub Vec<IpNet>);
 
 /// Middleware that resolves client IP from XFF header using trusted_proxies.
 pub async fn resolve_client_ip(
-    State(trusted): State<TrustedProxies>,
+    trusted: std::sync::Arc<Vec<IpNet>>,
     mut req: Request,
     next: Next,
 ) -> Response {
@@ -58,7 +58,7 @@ pub async fn resolve_client_ip(
         .map(|ci| ci.0.ip());
 
     let client_ip = match peer_ip {
-        Some(peer) => resolve(peer, &trusted.0, &req),
+        Some(peer) => resolve(peer, &trusted, &req),
         None => {
             tracing::warn!("ConnectInfo not available, client_ip will be None");
             None

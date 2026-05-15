@@ -443,11 +443,12 @@ fn sync_webhooks(
 }
 
 pub fn build_app(state: AppState, trusted: Vec<ipnet::IpNet>) -> Router {
-    let trusted_proxies = middleware::trusted_proxies::TrustedProxies(trusted);
-    routes::build_router(state).layer(axum::middleware::from_fn_with_state(
-        trusted_proxies,
-        middleware::trusted_proxies::resolve_client_ip,
-    ))
+    let trusted_proxies = std::sync::Arc::new(trusted);
+    let tp = trusted_proxies.clone();
+    routes::build_router(state).layer(axum::middleware::from_fn(move |req, next| {
+        let tp = tp.clone();
+        async move { middleware::trusted_proxies::resolve_client_ip(tp, req, next).await }
+    }))
 }
 
 pub async fn start(
