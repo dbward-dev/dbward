@@ -46,11 +46,18 @@ impl JobExecutor {
         info!(request_id = %claim.request_id, op = %claim.operation, "job claimed");
 
         // Stages 2-4 wrapped: any failure submits error result
+        let start = std::time::Instant::now();
         let body: ResultBody = match self.execute_claimed(&claim).await {
-            Ok(r) => r.into(),
+            Ok(r) => {
+                let mut b: ResultBody = r.into();
+                b.duration_ms = Some(start.elapsed().as_millis() as u64);
+                b
+            }
             Err(ref e) => {
                 warn!(request_id = %claim.request_id, "execution failed: {e}");
-                error_body(e.to_string())
+                let mut b = error_body(e.to_string());
+                b.duration_ms = Some(start.elapsed().as_millis() as u64);
+                b
             }
         };
 

@@ -353,6 +353,14 @@ async fn send_with_retry(
     Err(())
 }
 
+/// Parse metadata_json into a guaranteed JSON object.
+fn parse_metadata_object(json_str: &str) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(json_str)
+        .ok()
+        .filter(|v| v.is_object())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
 /// ADR-004: Composite event dispatcher that fans out to subscribers.
 pub struct CompositeEventDispatcher {
     pub audit: Arc<dyn AuditLogger>,
@@ -410,6 +418,36 @@ impl EventDispatcher for CompositeEventDispatcher {
                 }
                 RedactionMode::Full => {}
             }
+        }
+
+        // A-1: Record reject reason in audit event
+        if let EventMetadata::Rejected { ref comment, .. } = event.metadata {
+            audit_event.reason = comment.clone();
+        }
+
+        // A-2: Record approval comment and step info in metadata_json
+        match &event.metadata {
+            EventMetadata::Approved {
+                comment: Some(c), ..
+            } => {
+                let mut meta = parse_metadata_object(&audit_event.metadata_json);
+                meta["approval_comment"] = serde_json::Value::String(c.clone());
+                audit_event.metadata_json = meta.to_string();
+            }
+            EventMetadata::StepApproved {
+                comment,
+                step_index,
+                total_steps,
+            } => {
+                let mut meta = parse_metadata_object(&audit_event.metadata_json);
+                if let Some(c) = comment {
+                    meta["approval_comment"] = serde_json::Value::String(c.clone());
+                }
+                meta["step_number"] = (*step_index + 1).into();
+                meta["total_steps"] = (*total_steps).into();
+                audit_event.metadata_json = meta.to_string();
+            }
+            _ => {}
         }
 
         let _ = self.audit.record(&audit_event);
