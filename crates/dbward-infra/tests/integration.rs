@@ -1601,6 +1601,7 @@ fn execution_policy_crud() {
         retry_on_failure: false,
         statement_timeout_secs: 30,
         max_statement_timeout_secs: 300,
+        max_rows: None,
         created_at: None,
         updated_at: None,
     };

@@ -54,6 +54,8 @@ pub struct ClaimResponse {
     #[serde(default)]
     pub statement_timeout_secs: Option<u64>,
     #[serde(default)]
+    pub max_rows: Option<u32>,
+    #[serde(default)]
     pub lease_expires_at: Option<String>,
 }
 

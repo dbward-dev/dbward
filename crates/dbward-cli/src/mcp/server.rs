@@ -445,42 +445,44 @@ async fn handle_tools_call(
             let sql = args["sql"].as_str().unwrap_or("");
             let op = args["operation"].as_str().unwrap_or("execute_query");
             let limit = args["limit"].as_u64().unwrap_or(5).clamp(1, 20);
-            client.get_json(&format!("/api/audit/events?event_category=execution&event_type=execution_completed&limit={limit}")).await
+            client
+                .get_json(&format!(
+                    "/api/requests?operation={op}&limit={limit}&status=executed"
+                ))
+                .await
                 .map(|v| {
-                    let events = v["audit_events"].as_array();
-                    match events {
+                    let requests = v["requests"].as_array();
+                    match requests {
                         Some(arr) if !arr.is_empty() => {
                             let sql_terms = normalized_similarity_terms(sql);
                             let matches: Vec<&Value> = arr
                                 .iter()
-                                .filter(|e| {
-                                    e["operation"].as_str().unwrap_or(op) == op
-                                        && matches_similarity_terms(
-                                            e["detail_fingerprint"].as_str().unwrap_or(""),
-                                            &sql_terms,
-                                        )
+                                .filter(|r| {
+                                    matches_similarity_terms(
+                                        r["detail"].as_str().unwrap_or(""),
+                                        &sql_terms,
+                                    )
                                 })
                                 .take(limit as usize)
                                 .collect();
                             if matches.is_empty() {
                                 return format!("No similar requests found for: {sql}");
                             }
-                            let mut out = format!(
-                                "Recent {op} executions visible to the current token:\n"
-                            );
-                            for e in matches {
+                            let mut out = format!("Recent similar {op} requests:\n");
+                            for r in matches {
                                 out.push_str(&format!(
-                                    "  {} | request={} | {}\n",
-                                    e["created_at"].as_str().unwrap_or("?"),
-                                    e["request_id"].as_str().unwrap_or("?"),
-                                    e["detail_fingerprint"]
+                                    "  {} | id={} | {}\n",
+                                    r["created_at"].as_str().unwrap_or("?"),
+                                    r["id"].as_str().unwrap_or("?"),
+                                    r["detail"]
                                         .as_str()
-                                        .unwrap_or(e["operation"].as_str().unwrap_or("?"))
+                                        .map(|d| if d.len() > 60 { &d[..60] } else { d })
+                                        .unwrap_or("?"),
                                 ));
                             }
                             out
                         }
-                        _ => format!("No similar requests found for: {sql}")
+                        _ => format!("No similar requests found for: {sql}"),
                     }
                 })
                 .map_err(|e| e.to_string())

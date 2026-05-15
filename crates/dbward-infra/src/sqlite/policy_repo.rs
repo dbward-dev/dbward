@@ -104,8 +104,8 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn create_execution_policy(&self, ep: &ExecutionPolicy) -> Result<(), AppError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs, max_rows)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 ep.id,
                 ep.database.as_str(),
@@ -115,6 +115,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 ep.retry_on_failure,
                 ep.statement_timeout_secs,
                 ep.max_statement_timeout_secs,
+                ep.max_rows.map(|v| v as i64),
             ],
         ).map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(())
@@ -123,7 +124,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn get_execution_policy(&self, id: &str) -> Result<Option<ExecutionPolicy>, AppError> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs
+            "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs, max_rows
              FROM execution_policies WHERE id = ?1",
             params![id],
             row_to_execution_policy,
@@ -136,7 +137,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn list_execution_policies(&self) -> Result<Vec<ExecutionPolicy>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs FROM execution_policies",
+            "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs, max_rows FROM execution_policies",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
         let rows = stmt
             .query_map([], row_to_execution_policy)
@@ -680,7 +681,7 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
         let policies = {
             let conn = self.conn.lock().unwrap();
             let mut stmt = match conn.prepare(
-                "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs FROM execution_policies",
+                "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs, max_rows FROM execution_policies",
             ) {
                 Ok(s) => s,
                 Err(_) => return ExecutionPolicy::default(),
@@ -795,6 +796,7 @@ fn row_to_execution_policy(
     let retry: bool = row.get(5)?;
     let timeout: u32 = row.get(6)?;
     let max_timeout: u32 = row.get(7)?;
+    let max_rows: Option<u32> = row.get::<_, Option<u32>>(8).unwrap_or(None);
 
     Ok((|| {
         let database = DatabaseName::new(db_str).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -809,6 +811,7 @@ fn row_to_execution_policy(
             retry_on_failure: retry,
             statement_timeout_secs: timeout,
             max_statement_timeout_secs: max_timeout,
+            max_rows,
             created_at: None,
             updated_at: None,
         })

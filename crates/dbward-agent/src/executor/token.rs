@@ -102,6 +102,7 @@ mod tests {
             detail: "SELECT 1".into(),
             execution_token: String::new(),
             statement_timeout_secs: None,
+            max_rows: None,
             lease_expires_at: None,
         }
     }

@@ -89,26 +89,26 @@ impl DispatchRequest {
             }
         }
 
-        // 5. Re-execution policy check (only for re-dispatch from terminal states)
+        // 5. Execution count check (applies to all dispatches including initial)
+        let exec_policy = self
+            .policy
+            .get_execution_policy(&request.database, &request.environment);
+        let exec_count = self.request_reader.count_executions(&request.id)?;
+
+        if exec_count >= exec_policy.max_executions {
+            return Err(AppError::Conflict("max executions reached".into()));
+        }
+
+        // 5b. Additional re-dispatch checks (window expiry, retry policy)
         if matches!(
             request.status,
             RequestStatus::Executed | RequestStatus::Failed | RequestStatus::ExecutionLost
         ) {
-            let exec_policy = self
-                .policy
-                .get_execution_policy(&request.database, &request.environment);
-            let exec_count = self.request_reader.count_executions(&request.id)?;
-
-            // Execution window check
             if let Some(resolved_at) = request.resolved_at {
                 let elapsed = (self.clock.now() - resolved_at).num_seconds() as u64;
                 if elapsed > exec_policy.execution_window_secs {
                     return Err(AppError::Gone("execution window expired".into()));
                 }
-            }
-
-            if exec_count >= exec_policy.max_executions {
-                return Err(AppError::Conflict("max executions reached".into()));
             }
 
             if !exec_policy.retry_on_failure && request.status == RequestStatus::Failed {

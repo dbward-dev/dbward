@@ -15,6 +15,8 @@ pub struct ExecutionPolicy {
     pub statement_timeout_secs: u32,
     pub max_statement_timeout_secs: u32,
     #[serde(default)]
+    pub max_rows: Option<u32>,
+    #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
@@ -31,6 +33,7 @@ impl Default for ExecutionPolicy {
             retry_on_failure: false,
             statement_timeout_secs: 30,
             max_statement_timeout_secs: 600,
+            max_rows: None,
             created_at: None,
             updated_at: None,
         }

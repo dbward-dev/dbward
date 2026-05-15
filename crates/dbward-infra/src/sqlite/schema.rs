@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -21,6 +21,10 @@ CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status_retry
     ON webhook_deliveries(status, next_retry_at);
 ";
 
+const MIGRATION_V3: &str = "
+ALTER TABLE execution_policies ADD COLUMN max_rows INTEGER;
+";
+
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
@@ -35,10 +39,14 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
     if current == 0 {
         conn.execute_batch(SCHEMA_SQL)?;
         conn.execute_batch(MIGRATION_V2)?;
+        conn.execute_batch(MIGRATION_V3)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
             conn.execute_batch(MIGRATION_V2)?;
+        }
+        if current < 3 {
+            conn.execute_batch(MIGRATION_V3)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
