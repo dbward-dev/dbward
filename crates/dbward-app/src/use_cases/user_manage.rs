@@ -10,7 +10,7 @@ pub struct UserManage {
     pub authorizer: Arc<dyn Authorizer>,
     pub user_repo: Arc<dyn UserRepo>,
     pub token_repo: Arc<dyn TokenRepo>,
-    pub request_repo: Arc<dyn RequestRepo>,
+    pub request_writer: Arc<dyn RequestWriter>,
     pub audit: Arc<dyn AuditLogger>,
     pub clock: Arc<dyn Clock>,
 }
@@ -62,7 +62,9 @@ impl UserManage {
         let revoked_tokens = self.token_repo.revoke_all_for_user(&input.user_id, now)?;
 
         // Cancel pending/approved/dispatched requests
-        let cancelled_requests = self.request_repo.cancel_all_for_user(&input.user_id, now)?;
+        let cancelled_requests = self
+            .request_writer
+            .cancel_all_for_user(&input.user_id, now)?;
 
         // Audit
         self.audit.record(&AuditEvent::simple(
@@ -117,7 +119,7 @@ mod tests {
     use crate::error::AuthzError;
     use chrono::{DateTime, Utc};
     use dbward_domain::auth::{Permission as P, ResolvedRole, ResourceContext, SubjectType};
-    use dbward_domain::entities::{Approval, AuditContext, AuditEvent, Request, Token, User};
+    use dbward_domain::entities::{AuditContext, AuditEvent, Token, User};
     use dbward_domain::values::{DatabaseName, Environment};
 
     struct AllowAll;
@@ -242,74 +244,27 @@ mod tests {
     }
 
     struct FakeRequestRepo;
-    impl RequestRepo for FakeRequestRepo {
-        fn insert(&self, _: &Request) -> Result<(), AppError> {
+    impl RequestWriter for FakeRequestRepo {
+        fn insert(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> {
             Ok(())
         }
-        fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
-            Ok(None)
-        }
-        fn list(
+        fn create_and_dispatch(
             &self,
-            _: u32,
-            _: u32,
-            _: Option<&str>,
-            _: Option<&str>,
-        ) -> Result<(Vec<Request>, u32), AppError> {
-            Ok((vec![], 0))
-        }
-        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
-            Ok(None)
-        }
-        fn list_visible_to_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: Option<&str>,
-            _: u32,
-            _: u32,
-        ) -> Result<(Vec<Request>, u32), AppError> {
-            Ok((vec![], 0))
-        }
-        fn list_pending_for_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: u32,
-            _: u32,
-        ) -> Result<(Vec<Request>, u32), AppError> {
-            Ok((vec![], 0))
-        }
-        fn insert_approval(&self, _: &Approval) -> Result<(), AppError> {
+            _: &dbward_domain::entities::Request,
+        ) -> Result<(), AppError> {
             Ok(())
         }
-        fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> {
-            Ok(vec![])
-        }
-        fn count_executions(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn approve_and_mark_approved(
+        fn mark_approved(
             &self,
-            _: &Approval,
             _: &str,
-            _: DateTime<Utc>,
+            _: chrono::DateTime<chrono::Utc>,
         ) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn reject_and_record(
+        fn mark_rejected(
             &self,
             _: &str,
-            _: &Approval,
-            _: DateTime<Utc>,
+            _: chrono::DateTime<chrono::Utc>,
         ) -> Result<bool, AppError> {
             Ok(true)
         }
@@ -318,77 +273,43 @@ mod tests {
             _: &str,
             _: &str,
             _: Option<&str>,
-            _: DateTime<Utc>,
+            _: chrono::DateTime<chrono::Utc>,
         ) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn mark_running(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_executed(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_failed(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn cancel_all_for_user(&self, _: &str, _: DateTime<Utc>) -> Result<u32, AppError> {
-            Ok(3)
-        }
-        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_expired_and_record(
+        fn mark_dispatched(
             &self,
             _: &str,
-            _: &AuditEvent,
-            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
         ) -> Result<bool, AppError> {
             Ok(true)
+        }
+        fn mark_running(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_executed(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn cancel_all_for_user(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<u32, AppError> {
+            Ok(3)
         }
         fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
             Ok(true)
-        }
-        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn wal_checkpoint(&self) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn list_results_for_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: u32,
-        ) -> Result<Vec<crate::ports::repos::StoredResultEntry>, AppError> {
-            Ok(vec![])
-        }
-        fn is_pending_approver(
-            &self,
-            _: &str,
-            _: &str,
-            _: &[String],
-            _: &[String],
-        ) -> Result<bool, AppError> {
-            Ok(false)
         }
     }
 
@@ -398,7 +319,7 @@ mod tests {
             subject_type: SubjectType::User,
             roles: vec![ResolvedRole {
                 name: "admin".into(),
-                permissions: [P::UserManage].into_iter().collect(),
+                permissions: [P::All].into_iter().collect(),
                 databases: vec![],
                 environments: vec![],
             }],
@@ -412,7 +333,7 @@ mod tests {
             authorizer: authz,
             user_repo: Arc::new(FakeUserRepo { has_user }),
             token_repo: Arc::new(FakeTokenRepo),
-            request_repo: Arc::new(FakeRequestRepo),
+            request_writer: Arc::new(FakeRequestRepo),
             audit: Arc::new(FakeAudit),
             clock: Arc::new(FakeClock),
         }

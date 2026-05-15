@@ -2,10 +2,10 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use dbward_app::ports::{
-    AgentRepo, AuditLogger, AuditRepo, Authorizer, Clock, DatabaseRegistry, EventDispatcher,
-    IdGenerator, LicenseChecker, Notifier, PolicyEvaluator, PolicyRepo, RequestRepo, ResultChannel,
-    ResultStore, RoleResolver, SsrfValidator, TokenRepo, TokenSigner, TokenVerifier, UserRepo,
-    WebhookRepo,
+    AgentRepo, ApprovalRepo, AuditLogger, AuditRepo, Authorizer, BackgroundTaskRepo, Clock,
+    DatabaseRegistry, EventDispatcher, IdGenerator, LicenseChecker, Notifier, PolicyEvaluator,
+    PolicyRepo, RequestReader, RequestWriter, ResultChannel, ResultStore, RoleResolver,
+    SsrfValidator, TokenRepo, TokenSigner, TokenVerifier, UserRepo, WebhookRepo,
 };
 
 use crate::metrics::Metrics;
@@ -17,7 +17,10 @@ pub struct AppState {
     pub role_resolver: Arc<dyn RoleResolver>,
     pub authorizer: Arc<dyn Authorizer>,
     // Repos
-    pub request_repo: Arc<dyn RequestRepo>,
+    pub request_reader: Arc<dyn RequestReader>,
+    pub request_writer: Arc<dyn RequestWriter>,
+    pub approval_repo: Arc<dyn ApprovalRepo>,
+    pub background_task_repo: Arc<dyn BackgroundTaskRepo>,
     pub agent_repo: Arc<dyn AgentRepo>,
     pub user_repo: Arc<dyn UserRepo>,
     pub token_repo: Arc<dyn TokenRepo>,

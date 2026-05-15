@@ -13,7 +13,8 @@ use crate::ports::*;
 
 pub struct ApproveRequest {
     pub authorizer: Arc<dyn Authorizer>,
-    pub request_repo: Arc<dyn RequestRepo>,
+    pub request_reader: Arc<dyn RequestReader>,
+    pub approval_repo: Arc<dyn ApprovalRepo>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
@@ -51,7 +52,7 @@ impl ApproveRequest {
 
         // 1. Get request
         let request = self
-            .request_repo
+            .request_reader
             .get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
@@ -81,7 +82,7 @@ impl ApproveRequest {
             .ok_or_else(|| AppError::Conflict("request has no approval workflow".into()))?;
 
         // 4. Get existing approvals
-        let approvals = self.request_repo.get_approvals(&request.id)?;
+        let approvals = self.approval_repo.get_approvals(&request.id)?;
 
         // 5. Determine current step
         let current_step_index = workflow_matcher::find_current_step(&workflow.steps, &approvals);
@@ -218,13 +219,13 @@ impl ApproveRequest {
 
         if all_satisfied {
             let ok = self
-                .request_repo
+                .approval_repo
                 .approve_and_mark_approved(&approval, &request.id, now)?;
             if !ok {
                 return Err(AppError::Conflict("concurrent status change".into()));
             }
         } else {
-            self.request_repo.insert_approval(&approval)?;
+            self.approval_repo.insert_approval(&approval)?;
         }
 
         result.commit(&*self.event_dispatcher);
@@ -270,229 +271,12 @@ fn find_matched_selector(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbward_domain::entities::Request;
-    use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
-    struct NoopDispatcher;
-    impl EventDispatcher for NoopDispatcher {
-        fn dispatch(&self, _: TransitionEvent) {}
-    }
-    use chrono::{DateTime, Utc};
+    use crate::test_support::*;
+    use chrono::Utc;
     use dbward_domain::auth::{ResolvedRole, SubjectType};
+    use dbward_domain::entities::Request;
     use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
     use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
-    use std::sync::Mutex;
-
-    struct AllowAll;
-    impl Authorizer for AllowAll {
-        fn authorize_scoped(
-            &self,
-            _: &AuthUser,
-            _: Permission,
-            _: &DatabaseName,
-            _: &Environment,
-            _: &ResourceContext,
-        ) -> Result<(), AuthzError> {
-            Ok(())
-        }
-        fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
-            Ok(())
-        }
-    }
-
-    struct FakeRepo {
-        request: Mutex<Option<Request>>,
-        approvals: Mutex<Vec<Approval>>,
-        marked_approved: Mutex<bool>,
-    }
-
-    impl FakeRepo {
-        fn new(request: Request) -> Self {
-            Self {
-                request: Mutex::new(Some(request)),
-                approvals: Mutex::new(vec![]),
-                marked_approved: Mutex::new(false),
-            }
-        }
-    }
-
-    impl RequestRepo for FakeRepo {
-        fn insert(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
-            Ok(self.request.lock().unwrap().clone())
-        }
-        fn list(
-            &self,
-            _: u32,
-            _: u32,
-            _: Option<&str>,
-            _: Option<&str>,
-        ) -> Result<(Vec<Request>, u32), AppError> {
-            Ok((vec![], 0))
-        }
-        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
-            Ok(None)
-        }
-        fn list_visible_to_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: Option<&str>,
-            _: u32,
-            _: u32,
-        ) -> Result<(Vec<Request>, u32), AppError> {
-            Ok((vec![], 0))
-        }
-        fn list_pending_for_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: u32,
-            _: u32,
-        ) -> Result<(Vec<Request>, u32), AppError> {
-            Ok((vec![], 0))
-        }
-        fn insert_approval(&self, a: &Approval) -> Result<(), AppError> {
-            self.approvals.lock().unwrap().push(a.clone());
-            Ok(())
-        }
-        fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> {
-            Ok(self.approvals.lock().unwrap().clone())
-        }
-        fn count_executions(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            *self.marked_approved.lock().unwrap() = true;
-            Ok(true)
-        }
-        fn approve_and_mark_approved(
-            &self,
-            a: &Approval,
-            _: &str,
-            _: DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            self.approvals.lock().unwrap().push(a.clone());
-            *self.marked_approved.lock().unwrap() = true;
-            Ok(true)
-        }
-        fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn reject_and_record(
-            &self,
-            _: &str,
-            _: &Approval,
-            _: DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_cancelled(
-            &self,
-            _: &str,
-            _: &str,
-            _: Option<&str>,
-            _: DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn mark_running(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_executed(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn cancel_all_for_user(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_expired_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::AuditEvent,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn wal_checkpoint(&self) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn list_results_for_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: u32,
-        ) -> Result<Vec<crate::ports::repos::StoredResultEntry>, AppError> {
-            Ok(vec![])
-        }
-        fn is_pending_approver(
-            &self,
-            _: &str,
-            _: &str,
-            _: &[String],
-            _: &[String],
-        ) -> Result<bool, AppError> {
-            Ok(false)
-        }
-    }
-
-    struct FakeClock;
-    impl Clock for FakeClock {
-        fn now(&self) -> DateTime<Utc> {
-            Utc::now()
-        }
-    }
-    struct FakeIdGen;
-    impl IdGenerator for FakeIdGen {
-        fn generate(&self) -> String {
-            "appr-001".into()
-        }
-    }
 
     fn make_user(id: &str, roles: &[&str]) -> AuthUser {
         AuthUser {
@@ -562,10 +346,11 @@ mod tests {
         }
     }
 
-    fn make_uc(repo: Arc<FakeRepo>) -> ApproveRequest {
+    fn make_uc(reader: Arc<FakeRequestReader>, approval: Arc<FakeApprovalRepo>) -> ApproveRequest {
         ApproveRequest {
             authorizer: Arc::new(AllowAll),
-            request_repo: repo,
+            request_reader: reader,
+            approval_repo: approval,
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),
@@ -575,8 +360,9 @@ mod tests {
     #[test]
     fn approve_single_step_marks_approved() {
         let wf = single_step_workflow();
-        let repo = Arc::new(FakeRepo::new(make_pending_request(&wf)));
-        let uc = make_uc(repo.clone());
+        let reader = Arc::new(FakeRequestReader::with_request(make_pending_request(&wf)));
+        let approval = Arc::new(FakeApprovalRepo::new());
+        let uc = make_uc(reader, approval.clone());
         let user = make_user("bob", &["dba"]);
 
         let out = uc
@@ -594,14 +380,15 @@ mod tests {
         assert_eq!(out.current_step, 1);
         assert_eq!(out.total_steps, 1);
         assert_eq!(out.approved_by, "bob");
-        assert!(*repo.marked_approved.lock().unwrap());
+        assert!(*approval.marked_approved.lock().unwrap());
     }
 
     #[test]
     fn self_approve_blocked() {
         let wf = single_step_workflow();
-        let repo = Arc::new(FakeRepo::new(make_pending_request(&wf)));
-        let uc = make_uc(repo);
+        let reader = Arc::new(FakeRequestReader::with_request(make_pending_request(&wf)));
+        let approval = Arc::new(FakeApprovalRepo::new());
+        let uc = make_uc(reader, approval);
         let user = make_user("alice", &["dba"]); // alice is the requester
 
         let result = uc.execute(
@@ -620,8 +407,9 @@ mod tests {
         let wf = single_step_workflow();
         let mut req = make_pending_request(&wf);
         req.status = RequestStatus::Approved;
-        let repo = Arc::new(FakeRepo::new(req));
-        let uc = make_uc(repo);
+        let reader = Arc::new(FakeRequestReader::with_request(req));
+        let approval = Arc::new(FakeApprovalRepo::new());
+        let uc = make_uc(reader, approval);
         let user = make_user("bob", &["dba"]);
 
         let result = uc.execute(
@@ -637,12 +425,9 @@ mod tests {
 
     #[test]
     fn not_found_returns_error() {
-        let repo = Arc::new(FakeRepo {
-            request: Mutex::new(None),
-            approvals: Mutex::new(vec![]),
-            marked_approved: Mutex::new(false),
-        });
-        let uc = make_uc(repo);
+        let reader = Arc::new(FakeRequestReader::new());
+        let approval = Arc::new(FakeApprovalRepo::new());
+        let uc = make_uc(reader, approval);
         let user = make_user("bob", &["dba"]);
 
         let result = uc.execute(
@@ -661,8 +446,9 @@ mod tests {
         let wf = single_step_workflow();
         let mut req = make_pending_request(&wf);
         req.expires_at = Some(Utc::now() - chrono::Duration::seconds(10));
-        let repo = Arc::new(FakeRepo::new(req));
-        let uc = make_uc(repo);
+        let reader = Arc::new(FakeRequestReader::with_request(req));
+        let approval = Arc::new(FakeApprovalRepo::new());
+        let uc = make_uc(reader, approval);
         let user = make_user("bob", &["dba"]);
 
         let result = uc.execute(
@@ -681,8 +467,9 @@ mod tests {
         let wf = single_step_workflow();
         let mut req = make_pending_request(&wf);
         req.expires_at = Some(Utc::now() + chrono::Duration::hours(1));
-        let repo = Arc::new(FakeRepo::new(req));
-        let uc = make_uc(repo);
+        let reader = Arc::new(FakeRequestReader::with_request(req));
+        let approval = Arc::new(FakeApprovalRepo::new());
+        let uc = make_uc(reader, approval);
         let user = make_user("bob", &["dba"]);
 
         let result = uc.execute(

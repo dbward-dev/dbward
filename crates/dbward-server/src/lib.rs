@@ -240,7 +240,10 @@ pub async fn run_from_args(
         token_verifier,
         role_resolver,
         authorizer,
-        request_repo,
+        request_reader: request_repo.clone(),
+        request_writer: request_repo.clone(),
+        approval_repo: request_repo.clone(),
+        background_task_repo: request_repo.clone(),
         agent_repo,
         user_repo,
         token_repo,
@@ -462,14 +465,14 @@ pub async fn start(
 
     // Startup recovery: warn about in-flight requests
     let dispatched = state
-        .request_repo
+        .request_reader
         .count_by_status("dispatched")
         .unwrap_or_else(|e| {
             tracing::error!(error = %e, "failed to count dispatched requests on startup");
             0
         });
     let running = state
-        .request_repo
+        .request_reader
         .count_by_status("running")
         .unwrap_or_else(|e| {
             tracing::error!(error = %e, "failed to count running requests on startup");

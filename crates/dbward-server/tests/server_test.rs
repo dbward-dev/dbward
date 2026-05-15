@@ -77,10 +77,7 @@ impl Authorizer for StubAuthorizer {
 }
 
 struct StubRequestRepo;
-impl RequestRepo for StubRequestRepo {
-    fn insert(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> {
-        Ok(())
-    }
+impl RequestReader for StubRequestRepo {
     fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Request>, AppError> {
         Ok(None)
     }
@@ -120,35 +117,43 @@ impl RequestRepo for StubRequestRepo {
     ) -> Result<(Vec<dbward_domain::entities::Request>, u32), AppError> {
         Ok((vec![], 0))
     }
-    fn insert_approval(&self, _: &Approval) -> Result<(), AppError> {
-        Ok(())
-    }
-    fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> {
-        Ok(vec![])
+    fn is_pending_approver(
+        &self,
+        _: &str,
+        _: &str,
+        _: &[String],
+        _: &[String],
+    ) -> Result<bool, AppError> {
+        Ok(false)
     }
     fn count_executions(&self, _: &str) -> Result<u32, AppError> {
         Ok(0)
     }
+    fn list_results_for_user(
+        &self,
+        _: &str,
+        _: &[String],
+        _: &[String],
+        _: u32,
+    ) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
+        Ok(vec![])
+    }
+    fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
+        Ok(0)
+    }
+}
+
+impl RequestWriter for StubRequestRepo {
+    fn insert(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn create_and_dispatch(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> {
+        Ok(())
+    }
     fn mark_approved(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
         Ok(true)
     }
-    fn approve_and_mark_approved(
-        &self,
-        _: &Approval,
-        _: &str,
-        _: chrono::DateTime<chrono::Utc>,
-    ) -> Result<bool, AppError> {
-        Ok(true)
-    }
     fn mark_rejected(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
-        Ok(true)
-    }
-    fn reject_and_record(
-        &self,
-        _: &str,
-        _: &Approval,
-        _: chrono::DateTime<chrono::Utc>,
-    ) -> Result<bool, AppError> {
         Ok(true)
     }
     fn mark_cancelled(
@@ -162,9 +167,6 @@ impl RequestRepo for StubRequestRepo {
     }
     fn mark_dispatched(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
         Ok(true)
-    }
-    fn create_and_dispatch(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> {
-        Ok(())
     }
     fn mark_running(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
         Ok(true)
@@ -182,6 +184,37 @@ impl RequestRepo for StubRequestRepo {
     ) -> Result<u32, AppError> {
         Ok(0)
     }
+    fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(true)
+    }
+}
+
+impl ApprovalRepo for StubRequestRepo {
+    fn insert_approval(&self, _: &Approval) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> {
+        Ok(vec![])
+    }
+    fn approve_and_mark_approved(
+        &self,
+        _: &Approval,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn reject_and_record(
+        &self,
+        _: &str,
+        _: &Approval,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError> {
+        Ok(true)
+    }
+}
+
+impl BackgroundTaskRepo for StubRequestRepo {
     fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
         Ok(vec![])
     }
@@ -197,35 +230,11 @@ impl RequestRepo for StubRequestRepo {
     fn mark_expired_and_record(&self, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> {
         Ok(true)
     }
-    fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
-        Ok(true)
-    }
     fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
-        Ok(0)
-    }
-    fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
         Ok(0)
     }
     fn wal_checkpoint(&self) -> Result<(), AppError> {
         Ok(())
-    }
-    fn list_results_for_user(
-        &self,
-        _: &str,
-        _: &[String],
-        _: &[String],
-        _: u32,
-    ) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
-        Ok(vec![])
-    }
-    fn is_pending_approver(
-        &self,
-        _: &str,
-        _: &str,
-        _: &[String],
-        _: &[String],
-    ) -> Result<bool, AppError> {
-        Ok(false)
     }
 }
 
@@ -643,7 +652,10 @@ fn test_state() -> AppState {
         token_verifier: Arc::new(MockTokenVerifier),
         role_resolver: Arc::new(StubRoleResolver),
         authorizer: Arc::new(StubAuthorizer),
-        request_repo: Arc::new(StubRequestRepo),
+        request_reader: Arc::new(StubRequestRepo),
+        request_writer: Arc::new(StubRequestRepo),
+        approval_repo: Arc::new(StubRequestRepo),
+        background_task_repo: Arc::new(StubRequestRepo),
         agent_repo: Arc::new(StubAgentRepo),
         user_repo: Arc::new(StubUserRepo),
         token_repo: Arc::new(StubTokenRepo),

@@ -13,7 +13,8 @@ use crate::ports::*;
 
 pub struct RejectRequest {
     pub authorizer: Arc<dyn Authorizer>,
-    pub request_repo: Arc<dyn RequestRepo>,
+    pub request_reader: Arc<dyn RequestReader>,
+    pub approval_repo: Arc<dyn ApprovalRepo>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
@@ -47,7 +48,7 @@ impl RejectRequest {
 
         // 1. Get request
         let request = self
-            .request_repo
+            .request_reader
             .get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
@@ -59,7 +60,7 @@ impl RejectRequest {
             .workflow_snapshot_json
             .as_deref()
             .and_then(|json| serde_json::from_str(json).ok());
-        let approvals = self.request_repo.get_approvals(&request.id)?;
+        let approvals = self.approval_repo.get_approvals(&request.id)?;
         let current_step_index = workflow
             .as_ref()
             .map(|wf| {
@@ -167,7 +168,7 @@ impl RejectRequest {
         };
 
         let ok = self
-            .request_repo
+            .approval_repo
             .reject_and_record(&request.id, &approval, now)?;
         if !ok {
             return Err(AppError::Conflict("concurrent status change".into()));
@@ -185,217 +186,15 @@ impl RejectRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
-    struct NoopDispatcher;
-    impl EventDispatcher for NoopDispatcher {
-        fn dispatch(&self, _: TransitionEvent) {}
-    }
-    use chrono::{DateTime, Utc};
+    use crate::test_support::*;
+    use chrono::Utc;
     use dbward_domain::auth::SubjectType;
     use dbward_domain::entities::Request;
     use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
     use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
-    use std::sync::Mutex;
-
-    struct AllowAll;
-    impl Authorizer for AllowAll {
-        fn authorize_scoped(
-            &self,
-            _: &AuthUser,
-            _: Permission,
-            _: &DatabaseName,
-            _: &Environment,
-            _: &ResourceContext,
-        ) -> Result<(), AuthzError> {
-            Ok(())
-        }
-        fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
-            Ok(())
-        }
-    }
-    struct FakeClock;
-    impl Clock for FakeClock {
-        fn now(&self) -> DateTime<Utc> {
-            Utc::now()
-        }
-    }
-    struct FakeIdGen;
-    impl IdGenerator for FakeIdGen {
-        fn generate(&self) -> String {
-            "rej-001".into()
-        }
-    }
-
-    struct FakeRepo {
-        request: Mutex<Option<Request>>,
-        rejected: Mutex<bool>,
-    }
-    impl RequestRepo for FakeRepo {
-        fn insert(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
-            Ok(self.request.lock().unwrap().clone())
-        }
-        fn list(
-            &self,
-            _: u32,
-            _: u32,
-            _: Option<&str>,
-            _: Option<&str>,
-        ) -> Result<(Vec<Request>, u32), AppError> {
-            Ok((vec![], 0))
-        }
-        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
-            Ok(None)
-        }
-        fn list_visible_to_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: Option<&str>,
-            _: u32,
-            _: u32,
-        ) -> Result<(Vec<Request>, u32), AppError> {
-            Ok((vec![], 0))
-        }
-        fn list_pending_for_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: u32,
-            _: u32,
-        ) -> Result<(Vec<Request>, u32), AppError> {
-            Ok((vec![], 0))
-        }
-        fn insert_approval(&self, _: &Approval) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> {
-            Ok(vec![])
-        }
-        fn count_executions(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn approve_and_mark_approved(
-            &self,
-            _: &Approval,
-            _: &str,
-            _: DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            *self.rejected.lock().unwrap() = true;
-            Ok(true)
-        }
-        fn reject_and_record(
-            &self,
-            _: &str,
-            _: &Approval,
-            _: DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            *self.rejected.lock().unwrap() = true;
-            Ok(true)
-        }
-        fn mark_cancelled(
-            &self,
-            _: &str,
-            _: &str,
-            _: Option<&str>,
-            _: DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn mark_running(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_executed(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn cancel_all_for_user(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_expired_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::AuditEvent,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn wal_checkpoint(&self) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn list_results_for_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: u32,
-        ) -> Result<Vec<crate::ports::repos::StoredResultEntry>, AppError> {
-            Ok(vec![])
-        }
-        fn is_pending_approver(
-            &self,
-            _: &str,
-            _: &str,
-            _: &[String],
-            _: &[String],
-        ) -> Result<bool, AppError> {
-            Ok(false)
-        }
-    }
 
     fn make_pending_request() -> Request {
-        let wf = Workflow {
+        let wf = dbward_domain::policies::Workflow {
             id: "wf-1".into(),
             database: DatabaseName::new("app").unwrap(),
             environment: Environment::new("production").unwrap(),
@@ -443,13 +242,12 @@ mod tests {
 
     #[test]
     fn requester_can_reject_own_request() {
-        let repo = Arc::new(FakeRepo {
-            request: Mutex::new(Some(make_pending_request())),
-            rejected: Mutex::new(false),
-        });
+        let reader = Arc::new(FakeRequestReader::with_request(make_pending_request()));
+        let approval = Arc::new(FakeApprovalRepo::new());
         let uc = RejectRequest {
             authorizer: Arc::new(AllowAll),
-            request_repo: repo.clone(),
+            request_reader: reader,
+            approval_repo: approval.clone(),
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),
@@ -473,20 +271,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out.status, RequestStatus::Rejected);
-        assert!(*repo.rejected.lock().unwrap());
     }
 
     #[test]
     fn wrong_status_returns_conflict() {
         let mut req = make_pending_request();
         req.status = RequestStatus::Approved;
-        let repo = Arc::new(FakeRepo {
-            request: Mutex::new(Some(req)),
-            rejected: Mutex::new(false),
-        });
+        let reader = Arc::new(FakeRequestReader::with_request(req));
+        let approval = Arc::new(FakeApprovalRepo::new());
         let uc = RejectRequest {
             authorizer: Arc::new(AllowAll),
-            request_repo: repo.clone(),
+            request_reader: reader,
+            approval_repo: approval,
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),

@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission};
-use dbward_domain::entities::Request;
+use dbward_domain::entities::{Request, RequestStatus};
+use dbward_domain::policies::workflow::Workflow;
 
 use crate::error::AppError;
 use crate::ports::*;
 
 pub struct ListRequests {
-    pub request_repo: Arc<dyn RequestRepo>,
+    pub request_reader: Arc<dyn RequestReader>,
     pub authorizer: Arc<dyn Authorizer>,
 }
 
@@ -34,10 +35,18 @@ pub struct RequestSummary {
     pub operation: String,
     pub status: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub current_step: Option<u32>,
+    pub total_steps: Option<u32>,
+    pub next_approvers: Vec<String>,
 }
 
-impl From<&Request> for RequestSummary {
-    fn from(r: &Request) -> Self {
+impl RequestSummary {
+    fn from_request(r: &Request) -> Self {
+        let (current_step, total_steps, next_approvers) = if r.status == RequestStatus::Pending {
+            extract_lightweight_progress(r)
+        } else {
+            (None, None, vec![])
+        };
         Self {
             id: r.id.clone(),
             requester: r.requester.clone(),
@@ -46,7 +55,36 @@ impl From<&Request> for RequestSummary {
             operation: r.operation.as_str().to_string(),
             status: r.status.as_str().to_string(),
             created_at: r.created_at,
+            current_step,
+            total_steps,
+            next_approvers,
         }
+    }
+}
+
+/// Extract lightweight progress from workflow_snapshot_json without approvals query.
+/// Returns (None for current_step since we don't query approvals, total_steps, next_approvers from step[0]).
+fn extract_lightweight_progress(r: &Request) -> (Option<u32>, Option<u32>, Vec<String>) {
+    let wf = r
+        .workflow_snapshot_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Workflow>(json).ok());
+    match wf {
+        Some(wf) => {
+            let total = wf.steps.len() as u32;
+            let approvers = wf
+                .steps
+                .first()
+                .map(|step| {
+                    step.approvers
+                        .iter()
+                        .map(|a| a.selector.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            (None, Some(total), approvers)
+        }
+        None => (None, None, vec![]),
     }
 }
 
@@ -91,14 +129,14 @@ impl ListRequests {
         // you as approver, you need to see the request to act on it.
         if pending_for_me {
             let roles: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
-            let (requests, total) = self.request_repo.list_pending_for_user(
+            let (requests, total) = self.request_reader.list_pending_for_user(
                 &user.subject_id,
                 &user.groups,
                 &roles,
                 limit,
                 offset,
             )?;
-            let items = requests.iter().map(RequestSummary::from).collect();
+            let items = requests.iter().map(RequestSummary::from_request).collect();
             return Ok(ListRequestsOutput {
                 requests: items,
                 total,
@@ -107,7 +145,7 @@ impl ListRequests {
             });
         }
 
-        let (requests, total) = self.request_repo.list(
+        let (requests, total) = self.request_reader.list(
             limit,
             offset,
             input.status.as_deref(),
@@ -117,7 +155,7 @@ impl ListRequests {
         let is_admin = user.roles.iter().any(|r| r.name == "admin");
 
         if is_admin {
-            let items = requests.iter().map(RequestSummary::from).collect();
+            let items = requests.iter().map(RequestSummary::from_request).collect();
             return Ok(ListRequestsOutput {
                 requests: items,
                 total,
@@ -128,7 +166,7 @@ impl ListRequests {
 
         // Non-admin: use SQL-level visibility query for correct pagination
         let roles: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
-        let (visible_requests, visible_total) = self.request_repo.list_visible_to_user(
+        let (visible_requests, visible_total) = self.request_reader.list_visible_to_user(
             &user.subject_id,
             &user.groups,
             &roles,
@@ -140,10 +178,13 @@ impl ListRequests {
             visible_requests
                 .iter()
                 .filter(|r| r.requester == *filter_user)
-                .map(RequestSummary::from)
+                .map(RequestSummary::from_request)
                 .collect()
         } else {
-            visible_requests.iter().map(RequestSummary::from).collect()
+            visible_requests
+                .iter()
+                .map(RequestSummary::from_request)
+                .collect()
         };
         let total = if input.user.is_some() {
             items.len() as u32
@@ -163,76 +204,40 @@ impl ListRequests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::AuthzError;
+    use crate::test_support::*;
     use chrono::Utc;
-    use dbward_domain::auth::{ResolvedRole, ResourceContext, SubjectType};
+    use dbward_domain::auth::{ResolvedRole, SubjectType};
     use dbward_domain::entities::RequestStatus;
     use dbward_domain::values::{DatabaseName, Environment, Operation};
     use std::sync::Mutex;
 
-    struct AllowAll;
-    impl Authorizer for AllowAll {
-        fn authorize_scoped(
-            &self,
-            _: &AuthUser,
-            _: Permission,
-            _: &DatabaseName,
-            _: &Environment,
-            _: &ResourceContext,
-        ) -> Result<(), AuthzError> {
-            Ok(())
-        }
-        fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
-            Ok(())
-        }
-    }
-
-    struct DenyAll;
-    impl Authorizer for DenyAll {
-        fn authorize_scoped(
-            &self,
-            _: &AuthUser,
-            _: Permission,
-            _: &DatabaseName,
-            _: &Environment,
-            _: &ResourceContext,
-        ) -> Result<(), AuthzError> {
-            Err(AuthzError::Forbidden {
-                permission: Permission::RequestView,
-                reason: "denied".into(),
-            })
-        }
-        fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
-            Err(AuthzError::Forbidden {
-                permission: Permission::RequestView,
-                reason: "denied".into(),
-            })
-        }
-    }
-
-    struct FakeRepo {
+    struct FakeListReader {
         requests: Mutex<Vec<Request>>,
     }
-
-    impl FakeRepo {
+    impl FakeListReader {
         fn new(requests: Vec<Request>) -> Self {
             Self {
                 requests: Mutex::new(requests),
             }
         }
     }
-
-    impl RequestRepo for FakeRepo {
+    impl RequestReader for FakeListReader {
+        fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
+            Ok(None)
+        }
         fn list(
             &self,
-            _limit: u32,
-            _offset: u32,
-            _status: Option<&str>,
-            _user: Option<&str>,
+            _: u32,
+            _: u32,
+            _: Option<&str>,
+            _: Option<&str>,
         ) -> Result<(Vec<Request>, u32), AppError> {
             let reqs = self.requests.lock().unwrap().clone();
             let total = reqs.len() as u32;
             Ok((reqs, total))
+        }
+        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
+            Ok(None)
         }
         fn list_visible_to_user(
             &self,
@@ -262,107 +267,17 @@ mod tests {
         ) -> Result<(Vec<Request>, u32), AppError> {
             Ok((vec![], 0))
         }
-        fn insert(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
-            Ok(None)
-        }
-        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
-            Ok(None)
-        }
-        fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_approvals(
+        fn is_pending_approver(
             &self,
             _: &str,
-        ) -> Result<Vec<dbward_domain::entities::Approval>, AppError> {
-            Ok(vec![])
+            _: &str,
+            _: &[String],
+            _: &[String],
+        ) -> Result<bool, AppError> {
+            Ok(false)
         }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
-        }
-        fn mark_approved(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn approve_and_mark_approved(
-            &self,
-            _: &dbward_domain::entities::Approval,
-            _: &str,
-            _: chrono::DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_rejected(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn reject_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::Approval,
-            _: chrono::DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_cancelled(
-            &self,
-            _: &str,
-            _: &str,
-            _: Option<&str>,
-            _: chrono::DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_dispatched(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn mark_running(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_executed(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_failed(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn cancel_all_for_user(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_expired_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::AuditEvent,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn wal_checkpoint(&self) -> Result<(), AppError> {
-            Ok(())
         }
         fn list_results_for_user(
             &self,
@@ -373,14 +288,8 @@ mod tests {
         ) -> Result<Vec<StoredResultEntry>, AppError> {
             Ok(vec![])
         }
-        fn is_pending_approver(
-            &self,
-            _: &str,
-            _: &str,
-            _: &[String],
-            _: &[String],
-        ) -> Result<bool, AppError> {
-            Ok(false)
+        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
         }
     }
 
@@ -439,9 +348,8 @@ mod tests {
             make_request("r1", "alice", RequestStatus::Pending),
             make_request("r2", "bob", RequestStatus::Approved),
         ];
-        let repo = Arc::new(FakeRepo::new(requests));
         let uc = ListRequests {
-            request_repo: repo,
+            request_reader: Arc::new(FakeListReader::new(requests)),
             authorizer: Arc::new(AllowAll),
         };
         let user = make_user("admin-user", &["admin"]);
@@ -468,9 +376,8 @@ mod tests {
             make_request("r2", "bob", RequestStatus::Approved),
             make_request("r3", "alice", RequestStatus::Approved),
         ];
-        let repo = Arc::new(FakeRepo::new(requests));
         let uc = ListRequests {
-            request_repo: repo,
+            request_reader: Arc::new(FakeListReader::new(requests)),
             authorizer: Arc::new(AllowAll),
         };
         let user = make_user("alice", &["developer"]);
@@ -486,37 +393,36 @@ mod tests {
                 &user,
             )
             .unwrap();
-        // alice sees: r1 (own+pending), r3 (own), r1 also approvable
         assert_eq!(out.requests.len(), 2);
         assert_eq!(out.total, 2);
     }
 
     #[test]
     fn forbidden_when_no_permission() {
-        let repo = Arc::new(FakeRepo::new(vec![]));
         let uc = ListRequests {
-            request_repo: repo,
+            request_reader: Arc::new(FakeListReader::new(vec![])),
             authorizer: Arc::new(DenyAll),
         };
         let user = make_user("nobody", &[]);
-        let result = uc.execute(
-            ListRequestsInput {
-                limit: None,
-                offset: None,
-                status: None,
-                user: None,
-                pending_for_me: None,
-            },
-            &user,
-        );
-        assert!(matches!(result, Err(AppError::Forbidden(_))));
+        assert!(matches!(
+            uc.execute(
+                ListRequestsInput {
+                    limit: None,
+                    offset: None,
+                    status: None,
+                    user: None,
+                    pending_for_me: None
+                },
+                &user
+            ),
+            Err(AppError::Forbidden(_))
+        ));
     }
 
     #[test]
     fn limit_capped_at_100() {
-        let repo = Arc::new(FakeRepo::new(vec![]));
         let uc = ListRequests {
-            request_repo: repo,
+            request_reader: Arc::new(FakeListReader::new(vec![])),
             authorizer: Arc::new(AllowAll),
         };
         let user = make_user("alice", &["admin"]);

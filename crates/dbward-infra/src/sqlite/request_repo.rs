@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::params;
 
 use dbward_app::error::AppError;
-use dbward_app::ports::RequestRepo;
+use dbward_app::ports::{ApprovalRepo, BackgroundTaskRepo, RequestReader, RequestWriter};
 use dbward_domain::entities::{Approval, ApprovalAction, AuditEvent, Request, RequestStatus};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
@@ -186,44 +186,7 @@ fn row_to_request(row: &rusqlite::Row<'_>) -> Result<Request, rusqlite::Error> {
     })
 }
 
-impl RequestRepo for SqliteRequestRepo {
-    fn insert(&self, req: &Request) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
-        let db_id = database_id(&req.database, &req.environment);
-        let share_with_json = serde_json::to_string(&req.share_with)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-
-        conn.execute(
-            "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
-            params![
-                req.id,
-                req.requester,
-                req.operation.as_str(),
-                db_id,
-                req.detail,
-                req.status.as_str(),
-                req.emergency as i64,
-                req.reason,
-                req.idempotency_key,
-                req.metadata_json,
-                share_with_json,
-                req.no_store as i64,
-                req.workflow_snapshot_json,
-                req.cancelled_by,
-                req.cancel_reason,
-                req.created_at.to_rfc3339(),
-                req.updated_at.to_rfc3339(),
-                req.resolved_at.map(|t| t.to_rfc3339()),
-                req.expires_at.map(|t| t.to_rfc3339()),
-            ],
-        ).map_err(map_err)?;
-        if req.status == RequestStatus::Pending {
-            populate_pending_approvers(&conn, &req.id, &req.workflow_snapshot_json, 0)?;
-        }
-        Ok(())
-    }
-
+impl RequestReader for SqliteRequestRepo {
     fn get(&self, id: &str) -> Result<Option<Request>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -237,7 +200,6 @@ impl RequestRepo for SqliteRequestRepo {
             None => Ok(None),
         }
     }
-
     fn list(
         &self,
         limit: u32,
@@ -298,7 +260,19 @@ impl RequestRepo for SqliteRequestRepo {
         let items = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
         Ok((items, total))
     }
-
+    fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT * FROM requests WHERE idempotency_key = ?1")
+            .map_err(map_err)?;
+        let mut rows = stmt
+            .query_and_then(params![key], row_to_request)
+            .map_err(map_err)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r.map_err(map_err)?)),
+            None => Ok(None),
+        }
+    }
     fn list_visible_to_user(
         &self,
         user_id: &str,
@@ -376,7 +350,6 @@ impl RequestRepo for SqliteRequestRepo {
         let requests: Vec<Request> = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
         Ok((requests, total))
     }
-
     fn list_pending_for_user(
         &self,
         user_id: &str,
@@ -424,21 +397,303 @@ impl RequestRepo for SqliteRequestRepo {
         let requests: Vec<Request> = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
         Ok((requests, total))
     }
-
-    fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {
+    fn is_pending_approver(
+        &self,
+        request_id: &str,
+        user_id: &str,
+        groups: &[String],
+        roles: &[String],
+    ) -> Result<bool, AppError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT * FROM requests WHERE idempotency_key = ?1")
-            .map_err(map_err)?;
-        let mut rows = stmt
-            .query_and_then(params![key], row_to_request)
-            .map_err(map_err)?;
-        match rows.next() {
-            Some(r) => Ok(Some(r.map_err(map_err)?)),
-            None => Ok(None),
+        let selectors = build_selectors(user_id, groups, roles);
+        let sel_placeholders: String = selectors
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 2)) // ?1 = request_id
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT 1 FROM request_pending_approvers rpa
+             JOIN requests r ON r.id = rpa.request_id
+             WHERE rpa.request_id = ?1 AND r.status = 'pending'
+               AND rpa.selector IN ({sel_placeholders})
+             LIMIT 1"
+        );
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(request_id.to_string())];
+        for s in selectors {
+            params.push(Box::new(s));
         }
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let exists: bool = conn
+            .query_row(&sql, param_refs.as_slice(), |_| Ok(true))
+            .unwrap_or(false);
+        Ok(exists)
     }
+    fn count_executions(&self, request_id: &str) -> Result<u32, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let count: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM executions WHERE request_id = ?1",
+                params![request_id],
+                |row| row.get(0),
+            )
+            .map_err(map_err)?;
+        Ok(count)
+    }
+    fn list_results_for_user(
+        &self,
+        user_id: &str,
+        groups: &[String],
+        roles: &[String],
+        limit: u32,
+    ) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
+        let conn = self.conn.lock().unwrap();
+        // Build dynamic WHERE clause for selector matching
+        let mut conditions = vec![
+            "req.requester = ?1".to_string(),
+            "(ra.selector_type = 'user' AND ra.selector_value = ?1)".to_string(),
+        ];
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(user_id.to_string()), Box::new(limit)];
+        let mut idx = 3; // ?1=user_id, ?2=limit, ?3+
+        for g in groups {
+            conditions.push(format!(
+                "(ra.selector_type = 'group' AND ra.selector_value = ?{idx})"
+            ));
+            params.push(Box::new(g.clone()));
+            idx += 1;
+        }
+        for r in roles {
+            conditions.push(format!(
+                "(ra.selector_type = 'role' AND ra.selector_value = ?{idx})"
+            ));
+            params.push(Box::new(r.clone()));
+            idx += 1;
+        }
+        let where_clause = conditions.join(" OR ");
+        let sql = format!(
+            "SELECT r.request_id, db.name, db.environment, req.operation,
+                    r.stored_at, r.content_length
+             FROM results r
+             JOIN requests req ON req.id = r.request_id
+             JOIN databases db ON db.id = req.database_id
+             LEFT JOIN result_access ra ON ra.result_id = r.id
+             WHERE {where_clause}
+             GROUP BY r.id
+             ORDER BY r.stored_at DESC
+             LIMIT ?2"
+        );
+        let mut stmt = conn.prepare(&sql).map_err(map_err)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
+                Ok(dbward_app::ports::repos::StoredResultEntry {
+                    request_id: row.get(0)?,
+                    database: row.get(1)?,
+                    environment: row.get(2)?,
+                    operation: row.get(3)?,
+                    stored_at: row.get(4)?,
+                    content_length: row.get(5)?,
+                })
+            })
+            .map_err(map_err)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AppError::Internal(e.to_string()))
+    }
+    fn count_by_status(&self, status: &str) -> Result<u32, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let count: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM requests WHERE status = ?1",
+                params![status],
+                |row| row.get(0),
+            )
+            .map_err(map_err)?;
+        Ok(count)
+    }
+}
 
+impl RequestWriter for SqliteRequestRepo {
+    fn insert(&self, req: &Request) -> Result<(), AppError> {
+        let conn = self.conn.lock().unwrap();
+        let db_id = database_id(&req.database, &req.environment);
+        let share_with_json = serde_json::to_string(&req.share_with)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+
+        conn.execute(
+            "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            params![
+                req.id,
+                req.requester,
+                req.operation.as_str(),
+                db_id,
+                req.detail,
+                req.status.as_str(),
+                req.emergency as i64,
+                req.reason,
+                req.idempotency_key,
+                req.metadata_json,
+                share_with_json,
+                req.no_store as i64,
+                req.workflow_snapshot_json,
+                req.cancelled_by,
+                req.cancel_reason,
+                req.created_at.to_rfc3339(),
+                req.updated_at.to_rfc3339(),
+                req.resolved_at.map(|t| t.to_rfc3339()),
+                req.expires_at.map(|t| t.to_rfc3339()),
+            ],
+        ).map_err(map_err)?;
+        if req.status == RequestStatus::Pending {
+            populate_pending_approvers(&conn, &req.id, &req.workflow_snapshot_json, 0)?;
+        }
+        Ok(())
+    }
+    fn create_and_dispatch(&self, req: &Request) -> Result<(), AppError> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction().map_err(map_err)?;
+        let db_id = database_id(&req.database, &req.environment);
+        let share_with_json = serde_json::to_string(&req.share_with)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+
+        tx.execute(
+            "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            params![
+                req.id,
+                req.requester,
+                req.operation.as_str(),
+                db_id,
+                req.detail,
+                req.status.as_str(),
+                req.emergency as i64,
+                req.reason,
+                req.idempotency_key,
+                req.metadata_json,
+                share_with_json,
+                req.no_store as i64,
+                req.workflow_snapshot_json,
+                req.cancelled_by,
+                req.cancel_reason,
+                req.created_at.to_rfc3339(),
+                req.updated_at.to_rfc3339(),
+                req.resolved_at.map(|t| t.to_rfc3339()),
+                req.expires_at.map(|t| t.to_rfc3339()),
+            ],
+        ).map_err(map_err)?;
+
+        tx.execute(
+            "UPDATE requests SET status = 'dispatched', updated_at = ?2 WHERE id = ?1",
+            params![req.id, req.updated_at.to_rfc3339()],
+        )
+        .map_err(map_err)?;
+
+        tx.commit().map_err(map_err)?;
+        Ok(())
+    }
+    fn mark_approved(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn
+            .execute(
+                "UPDATE requests SET status = 'approved', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
+                params![id, now.to_rfc3339()],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    }
+    fn mark_rejected(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn
+            .execute(
+                "UPDATE requests SET status = 'rejected', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
+                params![id, now.to_rfc3339()],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    }
+    fn mark_cancelled(
+        &self,
+        id: &str,
+        actor: &str,
+        reason: Option<&str>,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn
+            .execute(
+                "UPDATE requests SET status = 'cancelled', cancelled_by = ?2, cancel_reason = ?3, updated_at = ?4, resolved_at = ?4
+                 WHERE id = ?1 AND status IN ('pending', 'approved', 'auto_approved', 'break_glass', 'dispatched', 'running', 'execution_lost')",
+                params![id, actor, reason, now.to_rfc3339()],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    }
+    fn mark_dispatched(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn
+            .execute(
+                "UPDATE requests SET status = 'dispatched', updated_at = ?2 WHERE id = ?1 AND status IN ('approved', 'auto_approved', 'break_glass', 'executed', 'failed', 'execution_lost')",
+                params![id, now.to_rfc3339()],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    }
+    fn mark_running(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn
+            .execute(
+                "UPDATE requests SET status = 'running', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
+                params![id, now.to_rfc3339()],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    }
+    fn mark_executed(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn
+            .execute(
+                "UPDATE requests SET status = 'executed', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'running'",
+                params![id, now.to_rfc3339()],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    }
+    fn mark_failed(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn
+            .execute(
+                "UPDATE requests SET status = 'failed', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'running'",
+                params![id, now.to_rfc3339()],
+            )
+            .map_err(map_err)?;
+        Ok(affected > 0)
+    }
+    fn cancel_all_for_user(&self, user_id: &str, now: DateTime<Utc>) -> Result<u32, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn
+            .execute(
+                "UPDATE requests SET status = 'cancelled', updated_at = ?2, resolved_at = ?2
+                 WHERE requester = ?1 AND status IN ('pending', 'approved', 'auto_approved', 'break_glass', 'dispatched', 'running', 'execution_lost')",
+                params![user_id, now.to_rfc3339()],
+            )
+            .map_err(map_err)?;
+        Ok(affected as u32)
+    }
+    fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE requests SET status = 'approved', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
+            params![id, now],
+        ).map_err(map_err)?;
+        Ok(n > 0)
+    }
+}
+
+impl ApprovalRepo for SqliteRequestRepo {
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -472,7 +727,6 @@ impl RequestRepo for SqliteRequestRepo {
         )?;
         Ok(())
     }
-
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
@@ -511,30 +765,6 @@ impl RequestRepo for SqliteRequestRepo {
 
         rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
     }
-
-    fn count_executions(&self, request_id: &str) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let count: u32 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM executions WHERE request_id = ?1",
-                params![request_id],
-                |row| row.get(0),
-            )
-            .map_err(map_err)?;
-        Ok(count)
-    }
-
-    fn mark_approved(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let affected = conn
-            .execute(
-                "UPDATE requests SET status = 'approved', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
-                params![id, now.to_rfc3339()],
-            )
-            .map_err(map_err)?;
-        Ok(affected > 0)
-    }
-
     fn approve_and_mark_approved(
         &self,
         approval: &Approval,
@@ -581,18 +811,6 @@ impl RequestRepo for SqliteRequestRepo {
         tx.commit().map_err(map_err)?;
         Ok(true)
     }
-
-    fn mark_rejected(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let affected = conn
-            .execute(
-                "UPDATE requests SET status = 'rejected', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
-                params![id, now.to_rfc3339()],
-            )
-            .map_err(map_err)?;
-        Ok(affected > 0)
-    }
-
     fn reject_and_record(
         &self,
         request_id: &str,
@@ -633,124 +851,9 @@ impl RequestRepo for SqliteRequestRepo {
         tx.commit().map_err(map_err)?;
         Ok(true)
     }
+}
 
-    fn mark_cancelled(
-        &self,
-        id: &str,
-        actor: &str,
-        reason: Option<&str>,
-        now: DateTime<Utc>,
-    ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let affected = conn
-            .execute(
-                "UPDATE requests SET status = 'cancelled', cancelled_by = ?2, cancel_reason = ?3, updated_at = ?4, resolved_at = ?4
-                 WHERE id = ?1 AND status IN ('pending', 'approved', 'auto_approved', 'break_glass', 'dispatched', 'running', 'execution_lost')",
-                params![id, actor, reason, now.to_rfc3339()],
-            )
-            .map_err(map_err)?;
-        Ok(affected > 0)
-    }
-
-    fn mark_dispatched(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let affected = conn
-            .execute(
-                "UPDATE requests SET status = 'dispatched', updated_at = ?2 WHERE id = ?1 AND status IN ('approved', 'auto_approved', 'break_glass', 'executed', 'failed', 'execution_lost')",
-                params![id, now.to_rfc3339()],
-            )
-            .map_err(map_err)?;
-        Ok(affected > 0)
-    }
-
-    fn create_and_dispatch(&self, req: &Request) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
-        let tx = conn.unchecked_transaction().map_err(map_err)?;
-        let db_id = database_id(&req.database, &req.environment);
-        let share_with_json = serde_json::to_string(&req.share_with)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-
-        tx.execute(
-            "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
-            params![
-                req.id,
-                req.requester,
-                req.operation.as_str(),
-                db_id,
-                req.detail,
-                req.status.as_str(),
-                req.emergency as i64,
-                req.reason,
-                req.idempotency_key,
-                req.metadata_json,
-                share_with_json,
-                req.no_store as i64,
-                req.workflow_snapshot_json,
-                req.cancelled_by,
-                req.cancel_reason,
-                req.created_at.to_rfc3339(),
-                req.updated_at.to_rfc3339(),
-                req.resolved_at.map(|t| t.to_rfc3339()),
-                req.expires_at.map(|t| t.to_rfc3339()),
-            ],
-        ).map_err(map_err)?;
-
-        tx.execute(
-            "UPDATE requests SET status = 'dispatched', updated_at = ?2 WHERE id = ?1",
-            params![req.id, req.updated_at.to_rfc3339()],
-        )
-        .map_err(map_err)?;
-
-        tx.commit().map_err(map_err)?;
-        Ok(())
-    }
-
-    fn mark_running(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let affected = conn
-            .execute(
-                "UPDATE requests SET status = 'running', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
-                params![id, now.to_rfc3339()],
-            )
-            .map_err(map_err)?;
-        Ok(affected > 0)
-    }
-
-    fn mark_executed(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let affected = conn
-            .execute(
-                "UPDATE requests SET status = 'executed', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'running'",
-                params![id, now.to_rfc3339()],
-            )
-            .map_err(map_err)?;
-        Ok(affected > 0)
-    }
-
-    fn mark_failed(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let affected = conn
-            .execute(
-                "UPDATE requests SET status = 'failed', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'running'",
-                params![id, now.to_rfc3339()],
-            )
-            .map_err(map_err)?;
-        Ok(affected > 0)
-    }
-
-    fn cancel_all_for_user(&self, user_id: &str, now: DateTime<Utc>) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let affected = conn
-            .execute(
-                "UPDATE requests SET status = 'cancelled', updated_at = ?2, resolved_at = ?2
-                 WHERE requester = ?1 AND status IN ('pending', 'approved', 'auto_approved', 'break_glass', 'dispatched', 'running', 'execution_lost')",
-                params![user_id, now.to_rfc3339()],
-            )
-            .map_err(map_err)?;
-        Ok(affected as u32)
-    }
-
+impl BackgroundTaskRepo for SqliteRequestRepo {
     fn find_expired_approved(&self, now: &str) -> Result<Vec<String>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -762,7 +865,6 @@ impl RequestRepo for SqliteRequestRepo {
             .map_err(map_err)?;
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
     }
-
     fn find_expired_pending(&self, now: &str) -> Result<Vec<String>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -776,7 +878,6 @@ impl RequestRepo for SqliteRequestRepo {
             .map_err(map_err)?;
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
     }
-
     fn find_dispatched_older_than(&self, cutoff: &str) -> Result<Vec<String>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -787,7 +888,6 @@ impl RequestRepo for SqliteRequestRepo {
             .map_err(map_err)?;
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
     }
-
     fn mark_expired(&self, id: &str, now: &str) -> Result<bool, AppError> {
         let conn = self.conn.lock().unwrap();
         let n = conn.execute(
@@ -796,7 +896,6 @@ impl RequestRepo for SqliteRequestRepo {
         ).map_err(map_err)?;
         Ok(n > 0)
     }
-
     fn mark_expired_and_record(
         &self,
         id: &str,
@@ -863,16 +962,6 @@ impl RequestRepo for SqliteRequestRepo {
         tx.commit().map_err(map_err)?;
         Ok(true)
     }
-
-    fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let n = conn.execute(
-            "UPDATE requests SET status = 'approved', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
-            params![id, now],
-        ).map_err(map_err)?;
-        Ok(n > 0)
-    }
-
     fn purge_old_requests(&self, before: &str) -> Result<u32, AppError> {
         let conn = self.conn.lock().unwrap();
         let n = conn.execute(
@@ -881,121 +970,11 @@ impl RequestRepo for SqliteRequestRepo {
         ).map_err(map_err)?;
         Ok(n as u32)
     }
-
-    fn count_by_status(&self, status: &str) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let count: u32 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM requests WHERE status = ?1",
-                params![status],
-                |row| row.get(0),
-            )
-            .map_err(map_err)?;
-        Ok(count)
-    }
-
     fn wal_checkpoint(&self) -> Result<(), AppError> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
             .map_err(map_err)?;
         Ok(())
-    }
-
-    fn list_results_for_user(
-        &self,
-        user_id: &str,
-        groups: &[String],
-        roles: &[String],
-        limit: u32,
-    ) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
-        let conn = self.conn.lock().unwrap();
-        // Build dynamic WHERE clause for selector matching
-        let mut conditions = vec![
-            "req.requester = ?1".to_string(),
-            "(ra.selector_type = 'user' AND ra.selector_value = ?1)".to_string(),
-        ];
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-            vec![Box::new(user_id.to_string()), Box::new(limit)];
-        let mut idx = 3; // ?1=user_id, ?2=limit, ?3+
-        for g in groups {
-            conditions.push(format!(
-                "(ra.selector_type = 'group' AND ra.selector_value = ?{idx})"
-            ));
-            params.push(Box::new(g.clone()));
-            idx += 1;
-        }
-        for r in roles {
-            conditions.push(format!(
-                "(ra.selector_type = 'role' AND ra.selector_value = ?{idx})"
-            ));
-            params.push(Box::new(r.clone()));
-            idx += 1;
-        }
-        let where_clause = conditions.join(" OR ");
-        let sql = format!(
-            "SELECT r.request_id, db.name, db.environment, req.operation,
-                    r.stored_at, r.content_length
-             FROM results r
-             JOIN requests req ON req.id = r.request_id
-             JOIN databases db ON db.id = req.database_id
-             LEFT JOIN result_access ra ON ra.result_id = r.id
-             WHERE {where_clause}
-             GROUP BY r.id
-             ORDER BY r.stored_at DESC
-             LIMIT ?2"
-        );
-        let mut stmt = conn.prepare(&sql).map_err(map_err)?;
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params.iter().map(|p| p.as_ref()).collect();
-        let rows = stmt
-            .query_map(param_refs.as_slice(), |row| {
-                Ok(dbward_app::ports::repos::StoredResultEntry {
-                    request_id: row.get(0)?,
-                    database: row.get(1)?,
-                    environment: row.get(2)?,
-                    operation: row.get(3)?,
-                    stored_at: row.get(4)?,
-                    content_length: row.get(5)?,
-                })
-            })
-            .map_err(map_err)?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| AppError::Internal(e.to_string()))
-    }
-
-    fn is_pending_approver(
-        &self,
-        request_id: &str,
-        user_id: &str,
-        groups: &[String],
-        roles: &[String],
-    ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let selectors = build_selectors(user_id, groups, roles);
-        let sel_placeholders: String = selectors
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("?{}", i + 2)) // ?1 = request_id
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "SELECT 1 FROM request_pending_approvers rpa
-             JOIN requests r ON r.id = rpa.request_id
-             WHERE rpa.request_id = ?1 AND r.status = 'pending'
-               AND rpa.selector IN ({sel_placeholders})
-             LIMIT 1"
-        );
-        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
-            vec![Box::new(request_id.to_string())];
-        for s in selectors {
-            params.push(Box::new(s));
-        }
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params.iter().map(|p| p.as_ref()).collect();
-        let exists: bool = conn
-            .query_row(&sql, param_refs.as_slice(), |_| Ok(true))
-            .unwrap_or(false);
-        Ok(exists)
     }
 }
 

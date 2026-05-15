@@ -2,12 +2,15 @@ use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Request, RequestStatus};
+use dbward_domain::policies::workflow::Workflow;
+use dbward_domain::services::approval_progress::{build_progress, ApprovalProgress};
 
 use crate::error::AppError;
 use crate::ports::*;
 
 pub struct GetRequest {
-    pub request_repo: Arc<dyn RequestRepo>,
+    pub request_reader: Arc<dyn RequestReader>,
+    pub approval_repo: Arc<dyn ApprovalRepo>,
     pub authorizer: Arc<dyn Authorizer>,
 }
 
@@ -16,16 +19,16 @@ pub struct GetRequestOutput {
     pub request: Request,
     pub detail: String,
     pub is_approver_view: bool,
+    pub approval_progress: Option<ApprovalProgress>,
 }
 
 impl GetRequest {
     pub fn execute(&self, request_id: &str, user: &AuthUser) -> Result<GetRequestOutput, AppError> {
         let req = self
-            .request_repo
+            .request_reader
             .get(request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
-        // Authorize BEFORE any waiting
         let scoped_ok = self.authorizer.authorize_scoped(
             user,
             Permission::RequestView,
@@ -39,7 +42,7 @@ impl GetRequest {
         let is_approver_view = if let Err(authz_err) = scoped_ok {
             let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
             let is_approver = req.status == RequestStatus::Pending
-                && self.request_repo.is_pending_approver(
+                && self.request_reader.is_pending_approver(
                     &req.id,
                     &user.subject_id,
                     &user.groups,
@@ -59,17 +62,30 @@ impl GetRequest {
             req.detail.clone()
         };
 
+        // Build approval progress from workflow snapshot + approvals
+        let approval_progress = req
+            .workflow_snapshot_json
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<Workflow>(json).ok())
+            .and_then(|wf| {
+                self.approval_repo
+                    .get_approvals(&req.id)
+                    .ok()
+                    .map(|approvals| build_progress(&wf.steps, &approvals))
+            });
+
         Ok(GetRequestOutput {
             request: req,
             detail,
             is_approver_view,
+            approval_progress,
         })
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::FakeApprovalRepo;
     use dbward_domain::auth::{AuthUser, SubjectType};
     use dbward_domain::entities::Request;
     use dbward_domain::values::{DatabaseName, Environment, Operation};
@@ -77,19 +93,13 @@ mod tests {
 
     use crate::error::AuthzError;
 
-    // --- Minimal test doubles ---
-
-    struct MockRequestRepo {
+    struct MockReader {
         request: Mutex<Option<Request>>,
         is_approver: bool,
     }
-
-    impl RequestRepo for MockRequestRepo {
-        fn get(&self, _id: &str) -> Result<Option<Request>, AppError> {
+    impl RequestReader for MockReader {
+        fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
             Ok(self.request.lock().unwrap().clone())
-        }
-        fn insert(&self, _: &Request) -> Result<(), AppError> {
-            unimplemented!()
         }
         fn list(
             &self,
@@ -98,10 +108,10 @@ mod tests {
             _: Option<&str>,
             _: Option<&str>,
         ) -> Result<(Vec<Request>, u32), AppError> {
-            unimplemented!()
+            Ok((vec![], 0))
         }
         fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
-            unimplemented!()
+            Ok(None)
         }
         fn list_visible_to_user(
             &self,
@@ -122,133 +132,7 @@ mod tests {
             _: u32,
             _: u32,
         ) -> Result<(Vec<Request>, u32), AppError> {
-            unimplemented!()
-        }
-        fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> {
-            unimplemented!()
-        }
-        fn get_approvals(
-            &self,
-            _: &str,
-        ) -> Result<Vec<dbward_domain::entities::Approval>, AppError> {
-            unimplemented!()
-        }
-        fn count_executions(&self, _: &str) -> Result<u32, AppError> {
-            unimplemented!()
-        }
-        fn mark_approved(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            unimplemented!()
-        }
-        fn approve_and_mark_approved(
-            &self,
-            _: &dbward_domain::entities::Approval,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            unimplemented!()
-        }
-        fn mark_rejected(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            unimplemented!()
-        }
-        fn reject_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::Approval,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            unimplemented!()
-        }
-        fn mark_cancelled(
-            &self,
-            _: &str,
-            _: &str,
-            _: Option<&str>,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            unimplemented!()
-        }
-        fn mark_dispatched(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            unimplemented!()
-        }
-        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
-            unimplemented!()
-        }
-        fn mark_running(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            unimplemented!()
-        }
-        fn mark_executed(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            unimplemented!()
-        }
-        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
-            unimplemented!()
-        }
-        fn cancel_all_for_user(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<u32, AppError> {
-            unimplemented!()
-        }
-        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
-            unimplemented!()
-        }
-        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> {
-            unimplemented!()
-        }
-        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> {
-            unimplemented!()
-        }
-        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            unimplemented!()
-        }
-        fn mark_expired_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::AuditEvent,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            unimplemented!()
-        }
-        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            unimplemented!()
-        }
-        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
-            unimplemented!()
-        }
-        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
-            unimplemented!()
-        }
-        fn wal_checkpoint(&self) -> Result<(), AppError> {
-            unimplemented!()
-        }
-        fn list_results_for_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: u32,
-        ) -> Result<Vec<StoredResultEntry>, AppError> {
-            unimplemented!()
+            Ok((vec![], 0))
         }
         fn is_pending_approver(
             &self,
@@ -258,6 +142,21 @@ mod tests {
             _: &[String],
         ) -> Result<bool, AppError> {
             Ok(self.is_approver)
+        }
+        fn count_executions(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn list_results_for_user(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+            _: u32,
+        ) -> Result<Vec<StoredResultEntry>, AppError> {
+            Ok(vec![])
+        }
+        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
         }
     }
 
@@ -279,7 +178,6 @@ mod tests {
             Ok(())
         }
     }
-
     impl Authorizer for DenyAuthorizer {
         fn authorize_scoped(
             &self,
@@ -340,23 +238,27 @@ mod tests {
     #[test]
     fn not_found() {
         let uc = GetRequest {
-            request_repo: Arc::new(MockRequestRepo {
+            request_reader: Arc::new(MockReader {
                 request: Mutex::new(None),
                 is_approver: false,
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             authorizer: Arc::new(AllowAuthorizer),
         };
-        let err = uc.execute("req-1", &test_user("u1")).unwrap_err();
-        assert!(matches!(err, AppError::NotFound(_)));
+        assert!(matches!(
+            uc.execute("req-1", &test_user("u1")).unwrap_err(),
+            AppError::NotFound(_)
+        ));
     }
 
     #[test]
     fn owner_sees_full_detail() {
         let uc = GetRequest {
-            request_repo: Arc::new(MockRequestRepo {
+            request_reader: Arc::new(MockReader {
                 request: Mutex::new(Some(test_request("u1", RequestStatus::Pending))),
                 is_approver: false,
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             authorizer: Arc::new(AllowAuthorizer),
         };
         let out = uc.execute("req-1", &test_user("u1")).unwrap();
@@ -367,23 +269,27 @@ mod tests {
     #[test]
     fn forbidden_when_no_permission() {
         let uc = GetRequest {
-            request_repo: Arc::new(MockRequestRepo {
+            request_reader: Arc::new(MockReader {
                 request: Mutex::new(Some(test_request("u1", RequestStatus::Pending))),
                 is_approver: false,
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             authorizer: Arc::new(DenyAuthorizer),
         };
-        let err = uc.execute("req-1", &test_user("u2")).unwrap_err();
-        assert!(matches!(err, AppError::Forbidden(_)));
+        assert!(matches!(
+            uc.execute("req-1", &test_user("u2")).unwrap_err(),
+            AppError::Forbidden(_)
+        ));
     }
 
     #[test]
     fn current_step_approver_can_view_pending_request() {
         let uc = GetRequest {
-            request_repo: Arc::new(MockRequestRepo {
+            request_reader: Arc::new(MockReader {
                 request: Mutex::new(Some(test_request("u1", RequestStatus::Pending))),
                 is_approver: true,
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             authorizer: Arc::new(DenyAuthorizer),
         };
         let out = uc.execute("req-1", &test_user("u2")).unwrap();
@@ -394,26 +300,32 @@ mod tests {
     #[test]
     fn non_approver_forbidden() {
         let uc = GetRequest {
-            request_repo: Arc::new(MockRequestRepo {
+            request_reader: Arc::new(MockReader {
                 request: Mutex::new(Some(test_request("u1", RequestStatus::Pending))),
                 is_approver: false,
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             authorizer: Arc::new(DenyAuthorizer),
         };
-        let err = uc.execute("req-1", &test_user("u2")).unwrap_err();
-        assert!(matches!(err, AppError::Forbidden(_)));
+        assert!(matches!(
+            uc.execute("req-1", &test_user("u2")).unwrap_err(),
+            AppError::Forbidden(_)
+        ));
     }
 
     #[test]
     fn approver_cannot_view_non_pending_request() {
         let uc = GetRequest {
-            request_repo: Arc::new(MockRequestRepo {
+            request_reader: Arc::new(MockReader {
                 request: Mutex::new(Some(test_request("u1", RequestStatus::Approved))),
                 is_approver: true,
             }),
+            approval_repo: Arc::new(FakeApprovalRepo::new()),
             authorizer: Arc::new(DenyAuthorizer),
         };
-        let err = uc.execute("req-1", &test_user("u2")).unwrap_err();
-        assert!(matches!(err, AppError::Forbidden(_)));
+        assert!(matches!(
+            uc.execute("req-1", &test_user("u2")).unwrap_err(),
+            AppError::Forbidden(_)
+        ));
     }
 }

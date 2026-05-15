@@ -32,7 +32,7 @@ pub async fn list(
         authorizer: state.authorizer.clone(),
         user_repo: state.user_repo.clone(),
         token_repo: state.token_repo.clone(),
-        request_repo: state.request_repo.clone(),
+        request_writer: state.request_writer.clone(),
         audit: state.audit_logger.clone(),
         clock: state.clock.clone(),
     };
@@ -58,7 +58,7 @@ pub async fn suspend(
         authorizer: state.authorizer.clone(),
         user_repo: state.user_repo.clone(),
         token_repo: state.token_repo.clone(),
-        request_repo: state.request_repo.clone(),
+        request_writer: state.request_writer.clone(),
         audit: state.audit_logger.clone(),
         clock: state.clock.clone(),
     };
@@ -91,7 +91,7 @@ pub async fn activate(
         authorizer: state.authorizer.clone(),
         user_repo: state.user_repo.clone(),
         token_repo: state.token_repo.clone(),
-        request_repo: state.request_repo.clone(),
+        request_writer: state.request_writer.clone(),
         audit: state.audit_logger.clone(),
         clock: state.clock.clone(),
     };

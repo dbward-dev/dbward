@@ -9,7 +9,7 @@ use crate::ports::*;
 pub struct AgentHeartbeat {
     pub authorizer: Arc<dyn Authorizer>,
     pub agent_repo: Arc<dyn AgentRepo>,
-    pub request_repo: Arc<dyn RequestRepo>,
+    pub request_reader: Arc<dyn RequestReader>,
     pub policy: Arc<dyn PolicyEvaluator>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
@@ -62,7 +62,7 @@ impl AgentHeartbeat {
         }
 
         // 5. Extend lease using execution policy
-        let request = self.request_repo.get(&execution.request_id)?;
+        let request = self.request_reader.get(&execution.request_id)?;
         let req = request.as_ref();
         let exec_policy = req
             .map(|r| {

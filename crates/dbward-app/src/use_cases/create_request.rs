@@ -16,7 +16,8 @@ use crate::ports::*;
 pub struct CreateRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub policy: Arc<dyn PolicyEvaluator>,
-    pub request_repo: Arc<dyn RequestRepo>,
+    pub request_reader: Arc<dyn RequestReader>,
+    pub request_writer: Arc<dyn RequestWriter>,
     pub db_registry: Arc<dyn DatabaseRegistry>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
@@ -136,7 +137,7 @@ impl CreateRequest {
 
         // 3. Idempotency
         if let Some(key) = &input.idempotency_key {
-            if let Some(existing) = self.request_repo.find_by_idempotency_key(key)? {
+            if let Some(existing) = self.request_reader.find_by_idempotency_key(key)? {
                 return Ok(CreateRequestOutput {
                     id: existing.id,
                     status: existing.status,
@@ -253,7 +254,7 @@ impl CreateRequest {
             status,
             RequestStatus::AutoApproved | RequestStatus::BreakGlass
         ) {
-            self.request_repo.create_and_dispatch(&request)?;
+            self.request_writer.create_and_dispatch(&request)?;
 
             // Emit creation event
             let create_result = status_machine::create_event(
@@ -297,7 +298,7 @@ impl CreateRequest {
             dispatch_result.commit(&*self.event_dispatcher);
             s
         } else {
-            self.request_repo.insert(&request)?;
+            self.request_writer.insert(&request)?;
 
             let create_result = status_machine::create_event(
                 status,
@@ -348,306 +349,16 @@ impl CreateRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::*;
     use dbward_domain::auth::{ResolvedRole, SubjectType};
-
-    struct AllowAll;
-    impl Authorizer for AllowAll {
-        fn authorize_scoped(
-            &self,
-            _: &AuthUser,
-            _: Permission,
-            _: &DatabaseName,
-            _: &Environment,
-            _: &ResourceContext,
-        ) -> Result<(), crate::error::AuthzError> {
-            Ok(())
-        }
-        fn authorize_global(
-            &self,
-            _: &AuthUser,
-            _: Permission,
-        ) -> Result<(), crate::error::AuthzError> {
-            Ok(())
-        }
-    }
-
-    struct DenyAll;
-    impl Authorizer for DenyAll {
-        fn authorize_scoped(
-            &self,
-            _: &AuthUser,
-            p: Permission,
-            _: &DatabaseName,
-            _: &Environment,
-            _: &ResourceContext,
-        ) -> Result<(), crate::error::AuthzError> {
-            Err(crate::error::AuthzError::Forbidden {
-                permission: p,
-                reason: "denied".into(),
-            })
-        }
-        fn authorize_global(
-            &self,
-            _: &AuthUser,
-            p: Permission,
-        ) -> Result<(), crate::error::AuthzError> {
-            Err(crate::error::AuthzError::Forbidden {
-                permission: p,
-                reason: "denied".into(),
-            })
-        }
-    }
-
-    struct FakePolicy;
-    impl PolicyEvaluator for FakePolicy {
-        fn evaluate_workflow(
-            &self,
-            _: &DatabaseName,
-            _: &Environment,
-            _: Operation,
-        ) -> Result<Option<dbward_domain::policies::Workflow>, AppError> {
-            Ok(Some(dbward_domain::policies::Workflow {
-                id: "test-wf".into(),
-                database: DatabaseName::wildcard(),
-                environment: Environment::wildcard(),
-                operations: vec![],
-                steps: vec![],
-                skip_approval_for: vec![],
-                require_reason: false,
-                allow_self_approve: false,
-                allow_same_approver_across_steps: false,
-                pending_ttl_secs: None,
-                statement_timeout_secs: None,
-                approval_ttl_secs: None,
-                created_at: None,
-                updated_at: None,
-            }))
-        }
-        fn get_execution_policy(
-            &self,
-            _: &DatabaseName,
-            _: &Environment,
-        ) -> dbward_domain::policies::ExecutionPolicy {
-            Default::default()
-        }
-    }
-
-    struct FakeRequestRepo;
-    impl RequestRepo for FakeRequestRepo {
-        fn insert(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
-            Ok(None)
-        }
-        fn list(
-            &self,
-            _: u32,
-            _: u32,
-            _: Option<&str>,
-            _: Option<&str>,
-        ) -> Result<(Vec<Request>, u32), AppError> {
-            Ok((vec![], 0))
-        }
-        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
-            Ok(None)
-        }
-        fn list_visible_to_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: Option<&str>,
-            _: u32,
-            _: u32,
-        ) -> Result<(Vec<Request>, u32), AppError> {
-            Ok((vec![], 0))
-        }
-        fn list_pending_for_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: u32,
-            _: u32,
-        ) -> Result<(Vec<Request>, u32), AppError> {
-            Ok((vec![], 0))
-        }
-        fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_approvals(
-            &self,
-            _: &str,
-        ) -> Result<Vec<dbward_domain::entities::Approval>, AppError> {
-            Ok(vec![])
-        }
-        fn count_executions(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn mark_approved(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn approve_and_mark_approved(
-            &self,
-            _: &dbward_domain::entities::Approval,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_rejected(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn reject_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::Approval,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_cancelled(
-            &self,
-            _: &str,
-            _: &str,
-            _: Option<&str>,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_dispatched(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn mark_running(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_executed(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn cancel_all_for_user(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_expired_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::AuditEvent,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn wal_checkpoint(&self) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn list_results_for_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: u32,
-        ) -> Result<Vec<crate::ports::repos::StoredResultEntry>, AppError> {
-            Ok(vec![])
-        }
-        fn is_pending_approver(
-            &self,
-            _: &str,
-            _: &str,
-            _: &[String],
-            _: &[String],
-        ) -> Result<bool, AppError> {
-            Ok(false)
-        }
-    }
-
-    struct FakeDbRegistry;
-    impl DatabaseRegistry for FakeDbRegistry {
-        fn register(&self, _: &DatabaseName, _: &Environment) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
-            Ok(vec![])
-        }
-    }
-
-    struct NoopDispatcher;
-    impl EventDispatcher for NoopDispatcher {
-        fn dispatch(&self, _: dbward_domain::services::status_machine::TransitionEvent) {}
-    }
-
-    struct FakeClock;
-    impl Clock for FakeClock {
-        fn now(&self) -> chrono::DateTime<chrono::Utc> {
-            chrono::Utc::now()
-        }
-    }
-
-    struct FakeIdGen;
-    impl IdGenerator for FakeIdGen {
-        fn generate(&self) -> String {
-            "test-id-001".into()
-        }
-    }
 
     fn make_uc(authorizer: Arc<dyn Authorizer>) -> CreateRequest {
         CreateRequest {
             authorizer,
-            policy: Arc::new(FakePolicy),
-            request_repo: Arc::new(FakeRequestRepo),
-            db_registry: Arc::new(FakeDbRegistry),
+            policy: Arc::new(FakePolicyEvaluator),
+            request_reader: Arc::new(FakeRequestReader::new()),
+            request_writer: Arc::new(FakeRequestWriter::new()),
+            db_registry: Arc::new(FakeDatabaseRegistry),
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),

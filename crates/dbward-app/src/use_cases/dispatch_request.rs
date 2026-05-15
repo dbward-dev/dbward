@@ -12,7 +12,8 @@ use crate::ports::*;
 pub struct DispatchRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub policy: Arc<dyn PolicyEvaluator>,
-    pub request_repo: Arc<dyn RequestRepo>,
+    pub request_reader: Arc<dyn RequestReader>,
+    pub request_writer: Arc<dyn RequestWriter>,
     pub result_channel: Arc<dyn ResultChannel>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub policy_repo: Arc<dyn PolicyRepo>,
@@ -37,7 +38,7 @@ impl DispatchRequest {
     ) -> Result<DispatchRequestOutput, AppError> {
         // 1. Get request
         let request = self
-            .request_repo
+            .request_reader
             .get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
@@ -96,7 +97,7 @@ impl DispatchRequest {
             let exec_policy = self
                 .policy
                 .get_execution_policy(&request.database, &request.environment);
-            let exec_count = self.request_repo.count_executions(&request.id)?;
+            let exec_count = self.request_reader.count_executions(&request.id)?;
 
             // Execution window check
             if let Some(resolved_at) = request.resolved_at {
@@ -116,7 +117,7 @@ impl DispatchRequest {
         }
 
         // 6. Mark dispatched
-        let ok = self.request_repo.mark_dispatched(&request.id, now)?;
+        let ok = self.request_writer.mark_dispatched(&request.id, now)?;
         if !ok {
             return Err(AppError::Conflict("concurrent status change".into()));
         }
@@ -146,41 +147,13 @@ impl DispatchRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
-    struct NoopDispatcher;
-    impl EventDispatcher for NoopDispatcher {
-        fn dispatch(&self, _: TransitionEvent) {}
-    }
-    use crate::error::AuthzError;
+    use crate::test_support::*;
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
     use dbward_domain::auth::SubjectType;
     use dbward_domain::entities::Request;
     use dbward_domain::values::{DatabaseName, Environment, Operation};
     use std::sync::Mutex;
-
-    struct AllowAll;
-    impl Authorizer for AllowAll {
-        fn authorize_scoped(
-            &self,
-            _: &AuthUser,
-            _: Permission,
-            _: &DatabaseName,
-            _: &Environment,
-            _: &ResourceContext,
-        ) -> Result<(), AuthzError> {
-            Ok(())
-        }
-        fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
-            Ok(())
-        }
-    }
-    struct FakeClock;
-    impl Clock for FakeClock {
-        fn now(&self) -> DateTime<Utc> {
-            Utc::now()
-        }
-    }
 
     struct FakePolicy;
     impl PolicyEvaluator for FakePolicy {
@@ -263,7 +236,6 @@ mod tests {
         ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
             Ok(None)
         }
-
         fn create_result_policy(
             &self,
             _: &dbward_domain::policies::ResultPolicy,
@@ -336,14 +308,10 @@ mod tests {
         }
     }
 
-    struct FakeRepo {
+    struct FakeDispatchReader {
         request: Mutex<Option<Request>>,
-        dispatched: Mutex<bool>,
     }
-    impl RequestRepo for FakeRepo {
-        fn insert(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
-        }
+    impl RequestReader for FakeDispatchReader {
         fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
             Ok(self.request.lock().unwrap().clone())
         }
@@ -380,38 +348,46 @@ mod tests {
         ) -> Result<(Vec<Request>, u32), AppError> {
             Ok((vec![], 0))
         }
-        fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_approvals(
+        fn is_pending_approver(
             &self,
             _: &str,
-        ) -> Result<Vec<dbward_domain::entities::Approval>, AppError> {
-            Ok(vec![])
+            _: &str,
+            _: &[String],
+            _: &[String],
+        ) -> Result<bool, AppError> {
+            Ok(false)
         }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
         }
+        fn list_results_for_user(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+            _: u32,
+        ) -> Result<Vec<StoredResultEntry>, AppError> {
+            Ok(vec![])
+        }
+        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+    }
+
+    struct FakeDispatchWriter {
+        dispatched: Mutex<bool>,
+    }
+    impl RequestWriter for FakeDispatchWriter {
+        fn insert(&self, _: &Request) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
+            Ok(())
+        }
         fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn approve_and_mark_approved(
-            &self,
-            _: &dbward_domain::entities::Approval,
-            _: &str,
-            _: DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
         fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn reject_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::Approval,
-            _: DateTime<Utc>,
-        ) -> Result<bool, AppError> {
             Ok(true)
         }
         fn mark_cancelled(
@@ -427,82 +403,20 @@ mod tests {
             *self.dispatched.lock().unwrap() = true;
             Ok(true)
         }
-        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn mark_running(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
+        fn mark_running(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn mark_executed(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<bool, AppError> {
+        fn mark_executed(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+        fn mark_failed(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn cancel_all_for_user(
-            &self,
-            _: &str,
-            _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<u32, AppError> {
+        fn cancel_all_for_user(&self, _: &str, _: DateTime<Utc>) -> Result<u32, AppError> {
             Ok(0)
-        }
-        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_expired_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::AuditEvent,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            Ok(true)
         }
         fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
             Ok(true)
-        }
-        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn wal_checkpoint(&self) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn list_results_for_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: u32,
-        ) -> Result<Vec<crate::ports::repos::StoredResultEntry>, AppError> {
-            Ok(vec![])
-        }
-        fn is_pending_approver(
-            &self,
-            _: &str,
-            _: &str,
-            _: &[String],
-            _: &[String],
-        ) -> Result<bool, AppError> {
-            Ok(false)
         }
     }
 
@@ -531,21 +445,31 @@ mod tests {
         }
     }
 
-    #[test]
-    fn dispatch_approved_succeeds() {
-        let repo = Arc::new(FakeRepo {
-            request: Mutex::new(Some(make_request(RequestStatus::Approved))),
-            dispatched: Mutex::new(false),
-        });
-        let uc = DispatchRequest {
+    fn make_uc(
+        reader: Arc<FakeDispatchReader>,
+        writer: Arc<FakeDispatchWriter>,
+    ) -> DispatchRequest {
+        DispatchRequest {
             authorizer: Arc::new(AllowAll),
             policy: Arc::new(FakePolicy),
-            request_repo: repo.clone(),
+            request_reader: reader,
+            request_writer: writer,
             result_channel: Arc::new(FakeResultChannel),
             event_dispatcher: Arc::new(NoopDispatcher),
             policy_repo: Arc::new(FakePolicyRepo),
             clock: Arc::new(FakeClock),
-        };
+        }
+    }
+
+    #[test]
+    fn dispatch_approved_succeeds() {
+        let reader = Arc::new(FakeDispatchReader {
+            request: Mutex::new(Some(make_request(RequestStatus::Approved))),
+        });
+        let writer = Arc::new(FakeDispatchWriter {
+            dispatched: Mutex::new(false),
+        });
+        let uc = make_uc(reader, writer.clone());
         let user = AuthUser {
             subject_id: "alice".into(),
             subject_type: SubjectType::User,
@@ -564,24 +488,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out.status, RequestStatus::Dispatched);
-        assert!(*repo.dispatched.lock().unwrap());
+        assert!(*writer.dispatched.lock().unwrap());
     }
 
     #[test]
     fn dispatch_pending_fails() {
-        let repo = Arc::new(FakeRepo {
+        let reader = Arc::new(FakeDispatchReader {
             request: Mutex::new(Some(make_request(RequestStatus::Pending))),
+        });
+        let writer = Arc::new(FakeDispatchWriter {
             dispatched: Mutex::new(false),
         });
-        let uc = DispatchRequest {
-            authorizer: Arc::new(AllowAll),
-            policy: Arc::new(FakePolicy),
-            request_repo: repo.clone(),
-            result_channel: Arc::new(FakeResultChannel),
-            event_dispatcher: Arc::new(NoopDispatcher),
-            policy_repo: Arc::new(FakePolicyRepo),
-            clock: Arc::new(FakeClock),
-        };
+        let uc = make_uc(reader, writer);
         let user = AuthUser {
             subject_id: "alice".into(),
             subject_type: SubjectType::User,
@@ -596,7 +514,7 @@ mod tests {
                     request_id: "req-001".into()
                 },
                 &user,
-                &dbward_domain::entities::AuditContext::System,
+                &dbward_domain::entities::AuditContext::System
             ),
             Err(AppError::Conflict(_))
         ));
@@ -604,19 +522,13 @@ mod tests {
 
     #[test]
     fn dispatch_break_glass_succeeds() {
-        let repo = Arc::new(FakeRepo {
+        let reader = Arc::new(FakeDispatchReader {
             request: Mutex::new(Some(make_request(RequestStatus::BreakGlass))),
+        });
+        let writer = Arc::new(FakeDispatchWriter {
             dispatched: Mutex::new(false),
         });
-        let uc = DispatchRequest {
-            authorizer: Arc::new(AllowAll),
-            policy: Arc::new(FakePolicy),
-            request_repo: repo.clone(),
-            result_channel: Arc::new(FakeResultChannel),
-            event_dispatcher: Arc::new(NoopDispatcher),
-            policy_repo: Arc::new(FakePolicyRepo),
-            clock: Arc::new(FakeClock),
-        };
+        let uc = make_uc(reader, writer);
         let user = AuthUser {
             subject_id: "alice".into(),
             subject_type: SubjectType::User,

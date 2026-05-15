@@ -259,7 +259,7 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
     }
 
     // Approval progress
-    if let Some(progress) = body.get("approval_progress") {
+    if let Some(progress) = body.get("approval_progress").filter(|v| !v.is_null()) {
         let current = progress["current_step"].as_u64().unwrap_or(0);
         let total = progress["total_steps"].as_u64().unwrap_or(0);
         println!();
@@ -275,15 +275,12 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
                     .map(|arr| {
                         arr.iter()
                             .filter_map(|a| {
-                                let target = a["group"]
-                                    .as_str()
-                                    .map(|g| format!("group:{g}"))
-                                    .or_else(|| a["role"].as_str().map(|r| format!("role:{r}")))?;
+                                let target = a["selector"].as_str()?;
                                 let min = a["min"].as_u64().unwrap_or(1);
                                 Some(if min > 1 {
                                     format!("{target} x{min}")
                                 } else {
-                                    target
+                                    target.to_string()
                                 })
                             })
                             .collect()

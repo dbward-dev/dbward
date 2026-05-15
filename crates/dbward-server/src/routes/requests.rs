@@ -113,7 +113,8 @@ pub async fn create(
     let uc = create_request::CreateRequest {
         authorizer: state.authorizer.clone(),
         policy: state.policy_evaluator.clone(),
-        request_repo: state.request_repo.clone(),
+        request_reader: state.request_reader.clone(),
+        request_writer: state.request_writer.clone(),
         db_registry: state.database_registry.clone(),
         event_dispatcher: state.event_dispatcher.clone(),
         clock: state.clock.clone(),
@@ -151,7 +152,7 @@ pub async fn list(
     axum::extract::Query(params): axum::extract::Query<ListParams>,
 ) -> ApiResult {
     let uc = list_requests::ListRequests {
-        request_repo: state.request_repo.clone(),
+        request_reader: state.request_reader.clone(),
         authorizer: state.authorizer.clone(),
     };
     let output = uc
@@ -171,7 +172,7 @@ pub async fn list(
         .requests
         .iter()
         .map(|r| {
-            json!({
+            let mut obj = json!({
                 "id": r.id,
                 "requester": r.requester,
                 "database": r.database,
@@ -179,7 +180,17 @@ pub async fn list(
                 "operation": r.operation,
                 "status": r.status,
                 "created_at": r.created_at,
-            })
+            });
+            if let Some(cs) = r.current_step {
+                obj["current_step"] = json!(cs);
+            }
+            if let Some(ts) = r.total_steps {
+                obj["total_steps"] = json!(ts);
+            }
+            if !r.next_approvers.is_empty() {
+                obj["next_approvers"] = json!(r.next_approvers);
+            }
+            obj
         })
         .collect();
     Ok((
@@ -211,7 +222,8 @@ pub async fn get(
     axum::extract::Query(query): axum::extract::Query<GetRequestQuery>,
 ) -> ApiResult {
     let uc = get_request::GetRequest {
-        request_repo: state.request_repo.clone(),
+        request_reader: state.request_reader.clone(),
+        approval_repo: state.approval_repo.clone(),
         authorizer: state.authorizer.clone(),
     };
 
@@ -240,7 +252,7 @@ pub async fn get(
                 if tokio::time::Instant::now() >= deadline {
                     break;
                 }
-                match state.request_repo.get(&id) {
+                match state.request_reader.get(&id) {
                     Ok(Some(r)) if r.status != original_status => {
                         break;
                     }
@@ -274,6 +286,7 @@ pub async fn get(
             "created_at": output.request.created_at,
             "updated_at": output.request.updated_at,
             "expires_at": output.request.expires_at,
+            "approval_progress": output.approval_progress,
         })),
     ))
 }
@@ -292,7 +305,8 @@ pub async fn approve(
     );
     let uc = approve_request::ApproveRequest {
         authorizer: state.authorizer.clone(),
-        request_repo: state.request_repo.clone(),
+        request_reader: state.request_reader.clone(),
+        approval_repo: state.approval_repo.clone(),
         event_dispatcher: state.event_dispatcher.clone(),
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
@@ -333,7 +347,8 @@ pub async fn reject(
     );
     let uc = reject_request::RejectRequest {
         authorizer: state.authorizer.clone(),
-        request_repo: state.request_repo.clone(),
+        request_reader: state.request_reader.clone(),
+        approval_repo: state.approval_repo.clone(),
         event_dispatcher: state.event_dispatcher.clone(),
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
@@ -370,7 +385,8 @@ pub async fn cancel(
     );
     let uc = cancel_request::CancelRequest {
         authorizer: state.authorizer.clone(),
-        request_repo: state.request_repo.clone(),
+        request_reader: state.request_reader.clone(),
+        request_writer: state.request_writer.clone(),
         event_dispatcher: state.event_dispatcher.clone(),
         clock: state.clock.clone(),
     };
@@ -406,7 +422,8 @@ pub async fn dispatch(
     let uc = dispatch_request::DispatchRequest {
         authorizer: state.authorizer.clone(),
         policy: state.policy_evaluator.clone(),
-        request_repo: state.request_repo.clone(),
+        request_reader: state.request_reader.clone(),
+        request_writer: state.request_writer.clone(),
         result_channel: state.result_channel.clone(),
         event_dispatcher: state.event_dispatcher.clone(),
         policy_repo: state.policy_repo.clone(),
@@ -434,7 +451,7 @@ pub async fn stream_result(
 ) -> ApiResult {
     let uc = stream_result::StreamResult {
         authorizer: state.authorizer.clone(),
-        request_repo: state.request_repo.clone(),
+        request_reader: state.request_reader.clone(),
         result_channel: state.result_channel.clone(),
         policy_repo: state.policy_repo.clone(),
     };
@@ -470,7 +487,7 @@ pub async fn get_result(
 ) -> ApiResult {
     let uc = get_result::GetResult {
         authorizer: state.authorizer.clone(),
-        request_repo: state.request_repo.clone(),
+        request_reader: state.request_reader.clone(),
         agent_repo: state.agent_repo.clone(),
         result_store: state.result_store.clone(),
         policy_repo: state.policy_repo.clone(),
@@ -495,7 +512,7 @@ pub async fn list_results(
     Extension(user): Extension<AuthUser>,
 ) -> ApiResult {
     let results = state
-        .request_repo
+        .request_reader
         .list_results_for_user(
             &user.subject_id,
             &user.groups,

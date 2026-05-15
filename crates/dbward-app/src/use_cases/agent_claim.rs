@@ -16,7 +16,7 @@ use crate::ports::*;
 
 pub struct AgentClaim {
     pub authorizer: Arc<dyn Authorizer>,
-    pub request_repo: Arc<dyn RequestRepo>,
+    pub request_reader: Arc<dyn RequestReader>,
     pub agent_repo: Arc<dyn AgentRepo>,
     pub policy: Arc<dyn PolicyEvaluator>,
     pub token_signer: Arc<dyn TokenSigner>,
@@ -59,7 +59,7 @@ impl AgentClaim {
 
         // 2. Get request
         let request = self
-            .request_repo
+            .request_reader
             .get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
