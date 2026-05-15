@@ -181,7 +181,7 @@ pub async fn claim(
 
     let uc = AgentClaim {
         authorizer: state.authorizer.clone(),
-        request_repo: state.request_repo.clone(),
+        request_reader: state.request_reader.clone(),
         agent_repo: state.agent_repo.clone(),
         policy: state.policy_evaluator.clone(),
         token_signer: state.token_signer.clone(),
@@ -228,7 +228,7 @@ pub async fn heartbeat(
     let uc = AgentHeartbeat {
         authorizer: state.authorizer.clone(),
         agent_repo: state.agent_repo.clone(),
-        request_repo: state.request_repo.clone(),
+        request_reader: state.request_reader.clone(),
         policy: state.policy_evaluator.clone(),
         event_dispatcher: state.event_dispatcher.clone(),
         clock: state.clock.clone(),
@@ -266,7 +266,7 @@ pub async fn submit_result(
     let uc = AgentSubmitResult {
         authorizer: state.authorizer.clone(),
         agent_repo: state.agent_repo.clone(),
-        request_repo: state.request_repo.clone(),
+        request_reader: state.request_reader.clone(),
         result_store: state.result_store.clone(),
         result_channel: state.result_channel.clone(),
         event_dispatcher: state.event_dispatcher.clone(),

@@ -37,11 +37,7 @@ impl SharedRepo {
     }
 }
 
-impl RequestRepo for SharedRepo {
-    fn insert(&self, req: &Request) -> Result<(), AppError> {
-        self.requests.lock().unwrap().push(req.clone());
-        Ok(())
-    }
+impl RequestReader for SharedRepo {
     fn get(&self, id: &str) -> Result<Option<Request>, AppError> {
         Ok(self
             .requests
@@ -92,22 +88,49 @@ impl RequestRepo for SharedRepo {
     ) -> Result<(Vec<Request>, u32), AppError> {
         Ok((vec![], 0))
     }
-    fn insert_approval(&self, a: &Approval) -> Result<(), AppError> {
-        self.approvals.lock().unwrap().push(a.clone());
-        Ok(())
-    }
-    fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError> {
-        Ok(self
-            .approvals
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|a| a.request_id == request_id)
-            .cloned()
-            .collect())
+    fn is_pending_approver(
+        &self,
+        _: &str,
+        _: &str,
+        _: &[String],
+        _: &[String],
+    ) -> Result<bool, AppError> {
+        Ok(false)
     }
     fn count_executions(&self, _: &str) -> Result<u32, AppError> {
         Ok(0)
+    }
+    fn list_results_for_user(
+        &self,
+        _: &str,
+        _: &[String],
+        _: &[String],
+        _: u32,
+    ) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
+        Ok(vec![])
+    }
+    fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
+        Ok(0)
+    }
+    fn get_pending_approvers_for_requests(
+        &self,
+        _: &[&str],
+    ) -> Result<std::collections::HashMap<String, (u32, Vec<String>)>, AppError> {
+        Ok(std::collections::HashMap::new())
+    }
+}
+
+impl RequestWriter for SharedRepo {
+    fn insert(&self, req: &Request) -> Result<(), AppError> {
+        self.requests.lock().unwrap().push(req.clone());
+        Ok(())
+    }
+    fn create_and_dispatch(&self, req: &Request) -> Result<(), AppError> {
+        let mut reqs = self.requests.lock().unwrap();
+        let mut r = req.clone();
+        r.status = RequestStatus::Dispatched;
+        reqs.push(r);
+        Ok(())
     }
     fn mark_approved(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let mut reqs = self.requests.lock().unwrap();
@@ -120,15 +143,6 @@ impl RequestRepo for SharedRepo {
             Ok(false)
         }
     }
-    fn approve_and_mark_approved(
-        &self,
-        approval: &Approval,
-        request_id: &str,
-        now: DateTime<Utc>,
-    ) -> Result<bool, AppError> {
-        self.approvals.lock().unwrap().push(approval.clone());
-        self.mark_approved(request_id, now)
-    }
     fn mark_rejected(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let mut reqs = self.requests.lock().unwrap();
         if let Some(r) = reqs.iter_mut().find(|r| r.id == id) {
@@ -138,15 +152,6 @@ impl RequestRepo for SharedRepo {
         } else {
             Ok(false)
         }
-    }
-    fn reject_and_record(
-        &self,
-        request_id: &str,
-        approval: &Approval,
-        now: DateTime<Utc>,
-    ) -> Result<bool, AppError> {
-        self.approvals.lock().unwrap().push(approval.clone());
-        self.mark_rejected(request_id, now)
     }
     fn mark_cancelled(
         &self,
@@ -175,13 +180,6 @@ impl RequestRepo for SharedRepo {
         } else {
             Ok(false)
         }
-    }
-    fn create_and_dispatch(&self, req: &Request) -> Result<(), AppError> {
-        let mut reqs = self.requests.lock().unwrap();
-        let mut r = req.clone();
-        r.status = RequestStatus::Dispatched;
-        reqs.push(r);
-        Ok(())
     }
     fn mark_running(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let mut reqs = self.requests.lock().unwrap();
@@ -216,6 +214,62 @@ impl RequestRepo for SharedRepo {
     fn cancel_all_for_user(&self, _: &str, _: DateTime<Utc>) -> Result<u32, AppError> {
         Ok(0)
     }
+    fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(true)
+    }
+}
+
+impl ApprovalRepo for SharedRepo {
+    fn insert_approval(&self, a: &Approval) -> Result<(), AppError> {
+        self.approvals.lock().unwrap().push(a.clone());
+        Ok(())
+    }
+    fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError> {
+        Ok(self
+            .approvals
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|a| a.request_id == request_id)
+            .cloned()
+            .collect())
+    }
+    fn approve_and_mark_approved(
+        &self,
+        approval: &Approval,
+        request_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
+        self.approvals.lock().unwrap().push(approval.clone());
+        let mut reqs = self.requests.lock().unwrap();
+        if let Some(r) = reqs.iter_mut().find(|r| r.id == request_id) {
+            r.status = RequestStatus::Approved;
+            r.resolved_at = Some(now);
+            r.updated_at = now;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+    fn reject_and_record(
+        &self,
+        request_id: &str,
+        approval: &Approval,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
+        self.approvals.lock().unwrap().push(approval.clone());
+        let mut reqs = self.requests.lock().unwrap();
+        if let Some(r) = reqs.iter_mut().find(|r| r.id == request_id) {
+            r.status = RequestStatus::Rejected;
+            r.updated_at = now;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+impl BackgroundTaskRepo for SharedRepo {
     fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
         Ok(vec![])
     }
@@ -231,35 +285,11 @@ impl RequestRepo for SharedRepo {
     fn mark_expired_and_record(&self, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> {
         Ok(true)
     }
-    fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
-        Ok(true)
-    }
     fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
-        Ok(0)
-    }
-    fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
         Ok(0)
     }
     fn wal_checkpoint(&self) -> Result<(), AppError> {
         Ok(())
-    }
-    fn list_results_for_user(
-        &self,
-        _: &str,
-        _: &[String],
-        _: &[String],
-        _: u32,
-    ) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
-        Ok(vec![])
-    }
-    fn is_pending_approver(
-        &self,
-        _: &str,
-        _: &str,
-        _: &[String],
-        _: &[String],
-    ) -> Result<bool, AppError> {
-        Ok(false)
     }
 }
 
@@ -676,7 +706,8 @@ impl TestHarness {
         CreateRequest {
             authorizer: self.authorizer.clone(),
             policy: self.policy.clone(),
-            request_repo: self.repo.clone(),
+            request_reader: self.repo.clone(),
+            request_writer: self.repo.clone(),
             db_registry: self.db_registry.clone(),
             event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
@@ -688,7 +719,8 @@ impl TestHarness {
     fn approve_uc(&self) -> ApproveRequest {
         ApproveRequest {
             authorizer: self.authorizer.clone(),
-            request_repo: self.repo.clone(),
+            request_reader: self.repo.clone(),
+            approval_repo: self.repo.clone(),
             event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
             id_gen: self.id_gen.clone(),
@@ -698,7 +730,8 @@ impl TestHarness {
     fn reject_uc(&self) -> RejectRequest {
         RejectRequest {
             authorizer: self.authorizer.clone(),
-            request_repo: self.repo.clone(),
+            request_reader: self.repo.clone(),
+            approval_repo: self.repo.clone(),
             event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
             id_gen: self.id_gen.clone(),
@@ -708,7 +741,8 @@ impl TestHarness {
     fn cancel_uc(&self) -> CancelRequest {
         CancelRequest {
             authorizer: self.authorizer.clone(),
-            request_repo: self.repo.clone(),
+            request_reader: self.repo.clone(),
+            request_writer: self.repo.clone(),
             event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
         }
@@ -718,7 +752,8 @@ impl TestHarness {
         DispatchRequest {
             authorizer: self.authorizer.clone(),
             policy: self.policy.clone(),
-            request_repo: self.repo.clone(),
+            request_reader: self.repo.clone(),
+            request_writer: self.repo.clone(),
             result_channel: self.result_channel.clone(),
             event_dispatcher: self.event_dispatcher.clone(),
             policy_repo: Arc::new(FakePolicyRepoForDispatch),
@@ -1402,7 +1437,7 @@ fn agent_full_flow_poll_claim_heartbeat() {
     // Claim
     let claim_uc = AgentClaim {
         authorizer: h.authorizer.clone(),
-        request_repo: h.repo.clone(),
+        request_reader: h.repo.clone(),
         policy: h.policy.clone(),
         agent_repo: agent_repo.clone(),
         token_signer: Arc::new(FakeTokenSigner),
@@ -1437,7 +1472,7 @@ fn agent_full_flow_poll_claim_heartbeat() {
     let hb_uc = AgentHeartbeat {
         authorizer: h.authorizer.clone(),
         agent_repo: agent_repo.clone(),
-        request_repo: h.repo.clone(),
+        request_reader: h.repo.clone(),
         policy: h.policy.clone(),
         event_dispatcher: h.event_dispatcher.clone(),
         clock: h.clock.clone(),
@@ -1491,7 +1526,7 @@ fn heartbeat_detects_cancelled_request() {
     let agent_repo = Arc::new(SharedAgentRepo::new(h.repo.clone()));
     let claim_uc = AgentClaim {
         authorizer: h.authorizer.clone(),
-        request_repo: h.repo.clone(),
+        request_reader: h.repo.clone(),
         policy: h.policy.clone(),
         agent_repo: agent_repo.clone(),
         token_signer: Arc::new(FakeTokenSigner),
@@ -1527,7 +1562,7 @@ fn heartbeat_detects_cancelled_request() {
     let hb_uc = AgentHeartbeat {
         authorizer: h.authorizer.clone(),
         agent_repo: agent_repo.clone(),
-        request_repo: h.repo.clone(),
+        request_reader: h.repo.clone(),
         policy: h.policy.clone(),
         event_dispatcher: h.event_dispatcher.clone(),
         clock: h.clock.clone(),

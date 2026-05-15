@@ -21,7 +21,7 @@ pub async fn metrics(
 
     let body = crate::metrics::render(
         &state.metrics,
-        state.request_repo.as_ref(),
+        state.request_reader.as_ref(),
         state.agent_repo.as_ref(),
     );
 

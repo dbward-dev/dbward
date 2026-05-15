@@ -141,13 +141,13 @@ pub(crate) async fn run_ttl_expiry_once(state: &AppState) -> TickResult {
     let now_str = state.clock.now().to_rfc3339();
 
     // Approval TTL
-    match state.request_repo.find_expired_approved(&now_str) {
+    match state.background_task_repo.find_expired_approved(&now_str) {
         Ok(ids) => {
             for id in ids {
                 let audit =
                     make_audit_event("request_expired", EventCategory::Approval, &id, state);
                 match state
-                    .request_repo
+                    .background_task_repo
                     .mark_expired_and_record(&id, &audit, &now_str)
                 {
                     Ok(true) => {
@@ -169,13 +169,13 @@ pub(crate) async fn run_ttl_expiry_once(state: &AppState) -> TickResult {
     }
 
     // Pending TTL
-    match state.request_repo.find_expired_pending(&now_str) {
+    match state.background_task_repo.find_expired_pending(&now_str) {
         Ok(ids) => {
             for id in ids {
                 let audit =
                     make_audit_event("request_expired", EventCategory::Approval, &id, state);
                 match state
-                    .request_repo
+                    .background_task_repo
                     .mark_expired_and_record(&id, &audit, &now_str)
                 {
                     Ok(true) => {
@@ -222,7 +222,10 @@ pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
     let cutoff = (now - Duration::seconds(DISPATCH_TIMEOUT_SECS)).to_rfc3339();
     let now_str = now.to_rfc3339();
 
-    let ids = match state.request_repo.find_dispatched_older_than(&cutoff) {
+    let ids = match state
+        .background_task_repo
+        .find_dispatched_older_than(&cutoff)
+    {
         Ok(v) => v,
         Err(e) => {
             error!(task = "dispatch_timeout", error = %e, "db query failed");
@@ -233,7 +236,7 @@ pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
 
     for id in ids {
         match state
-            .request_repo
+            .request_writer
             .mark_approved_from_dispatched(&id, &now_str)
         {
             Ok(true) => {
@@ -309,7 +312,10 @@ pub(crate) async fn run_record_purge_once(
     }
 
     // Old requests
-    match state.request_repo.purge_old_requests(&request_cutoff) {
+    match state
+        .background_task_repo
+        .purge_old_requests(&request_cutoff)
+    {
         Ok(n) => {
             if n > 0 {
                 result.processed += n;
@@ -370,7 +376,7 @@ async fn wal_checkpoint_loop(state: AppState, shutdown: CancellationToken) {
 }
 
 pub(crate) fn run_wal_checkpoint_once(state: &AppState) {
-    if let Err(e) = state.request_repo.wal_checkpoint() {
+    if let Err(e) = state.background_task_repo.wal_checkpoint() {
         error!(task = "wal_checkpoint", error = %e, "WAL checkpoint failed");
     } else {
         info!(task = "wal_checkpoint", "checkpoint completed");
@@ -415,7 +421,7 @@ fn make_audit_event(
     event.request_id = Some(request_id.to_string());
     event.outcome = EventOutcome::Success;
     event.event_category = category;
-    match state.request_repo.get(request_id) {
+    match state.request_reader.get(request_id) {
         Ok(Some(req)) => {
             event.database_name = Some(req.database.to_string());
             event.environment = Some(req.environment.to_string());

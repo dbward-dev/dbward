@@ -5,10 +5,9 @@ use dbward_domain::values::{DatabaseName, Environment, ResultSummary};
 
 use crate::error::AppError;
 
-// --- RequestRepo ---
+// --- RequestReader ---
 
-pub trait RequestRepo: Send + Sync {
-    fn insert(&self, req: &Request) -> Result<(), AppError>;
+pub trait RequestReader: Send + Sync {
     fn get(&self, id: &str) -> Result<Option<Request>, AppError>;
     fn list(
         &self,
@@ -18,17 +17,6 @@ pub trait RequestRepo: Send + Sync {
         user: Option<&str>,
     ) -> Result<(Vec<Request>, u32), AppError>;
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError>;
-    /// List pending requests approvable by user (via denormalized pending_approvers table).
-    fn list_pending_for_user(
-        &self,
-        user_id: &str,
-        groups: &[String],
-        roles: &[String],
-        limit: u32,
-        offset: u32,
-    ) -> Result<(Vec<Request>, u32), AppError>;
-    /// List requests visible to a non-admin user: own requests OR pending requests
-    /// where the user is a designated approver. Returns correct total for pagination.
     fn list_visible_to_user(
         &self,
         user_id: &str,
@@ -38,29 +26,45 @@ pub trait RequestRepo: Send + Sync {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<Request>, u32), AppError>;
-    fn insert_approval(&self, approval: &Approval) -> Result<(), AppError>;
-    fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError>;
+    fn list_pending_for_user(
+        &self,
+        user_id: &str,
+        groups: &[String],
+        roles: &[String],
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<Request>, u32), AppError>;
+    fn is_pending_approver(
+        &self,
+        request_id: &str,
+        user_id: &str,
+        groups: &[String],
+        roles: &[String],
+    ) -> Result<bool, AppError>;
     fn count_executions(&self, request_id: &str) -> Result<u32, AppError>;
+    fn list_results_for_user(
+        &self,
+        user_id: &str,
+        groups: &[String],
+        roles: &[String],
+        limit: u32,
+    ) -> Result<Vec<StoredResultEntry>, AppError>;
+    fn count_by_status(&self, status: &str) -> Result<u32, AppError>;
+    fn get_pending_approvers_for_requests(
+        &self,
+        request_ids: &[&str],
+    ) -> Result<std::collections::HashMap<String, (u32, Vec<String>)>, AppError>;
+}
 
-    /// Returns false if the request was not in an expected source state (optimistic lock).
+// --- RequestWriter ---
+
+pub trait RequestWriter: Send + Sync {
+    fn insert(&self, req: &Request) -> Result<(), AppError>;
+    fn create_and_dispatch(&self, request: &Request) -> Result<(), AppError>;
     fn mark_approved(&self, id: &str, now: chrono::DateTime<chrono::Utc>)
         -> Result<bool, AppError>;
-    /// Atomically inserts approval and marks request as approved in one transaction.
-    fn approve_and_mark_approved(
-        &self,
-        approval: &Approval,
-        request_id: &str,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<bool, AppError>;
     fn mark_rejected(&self, id: &str, now: chrono::DateTime<chrono::Utc>)
         -> Result<bool, AppError>;
-    /// Atomically inserts rejection approval and marks request as rejected in one transaction.
-    fn reject_and_record(
-        &self,
-        request_id: &str,
-        approval: &Approval,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<bool, AppError>;
     fn mark_cancelled(
         &self,
         id: &str,
@@ -73,8 +77,6 @@ pub trait RequestRepo: Send + Sync {
         id: &str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError>;
-    /// Atomically inserts a request and marks it as dispatched in one transaction.
-    fn create_and_dispatch(&self, request: &Request) -> Result<(), AppError>;
     fn mark_running(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_executed(&self, id: &str, now: chrono::DateTime<chrono::Utc>)
         -> Result<bool, AppError>;
@@ -84,39 +86,43 @@ pub trait RequestRepo: Send + Sync {
         user_id: &str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<u32, AppError>;
+    fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError>;
+}
 
-    // Background task methods
+// --- ApprovalRepo ---
+
+pub trait ApprovalRepo: Send + Sync {
+    fn insert_approval(&self, approval: &Approval) -> Result<(), AppError>;
+    fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError>;
+    fn approve_and_mark_approved(
+        &self,
+        approval: &Approval,
+        request_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError>;
+    fn reject_and_record(
+        &self,
+        request_id: &str,
+        approval: &Approval,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError>;
+}
+
+// --- BackgroundTaskRepo ---
+
+pub trait BackgroundTaskRepo: Send + Sync {
     fn find_expired_approved(&self, now: &str) -> Result<Vec<String>, AppError>;
     fn find_expired_pending(&self, now: &str) -> Result<Vec<String>, AppError>;
     fn find_dispatched_older_than(&self, cutoff: &str) -> Result<Vec<String>, AppError>;
     fn mark_expired(&self, id: &str, now: &str) -> Result<bool, AppError>;
-    /// Atomically marks request expired and records audit event in one transaction.
     fn mark_expired_and_record(
         &self,
         id: &str,
         audit_event: &AuditEvent,
         now: &str,
     ) -> Result<bool, AppError>;
-    fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError>;
     fn purge_old_requests(&self, before: &str) -> Result<u32, AppError>;
-    fn count_by_status(&self, status: &str) -> Result<u32, AppError>;
     fn wal_checkpoint(&self) -> Result<(), AppError>;
-    /// List stored results accessible by a user (requester or share_with).
-    fn list_results_for_user(
-        &self,
-        user_id: &str,
-        groups: &[String],
-        roles: &[String],
-        limit: u32,
-    ) -> Result<Vec<StoredResultEntry>, AppError>;
-    /// Check if a user is a pending approver for a specific request (current step only).
-    fn is_pending_approver(
-        &self,
-        request_id: &str,
-        user_id: &str,
-        groups: &[String],
-        roles: &[String],
-    ) -> Result<bool, AppError>;
 }
 
 // --- AgentRepo ---

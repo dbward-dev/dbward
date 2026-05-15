@@ -8,7 +8,7 @@ use crate::ports::*;
 
 pub struct GetResult {
     pub authorizer: Arc<dyn Authorizer>,
-    pub request_repo: Arc<dyn RequestRepo>,
+    pub request_reader: Arc<dyn RequestReader>,
     pub agent_repo: Arc<dyn AgentRepo>,
     pub result_store: Arc<dyn ResultStore>,
     pub policy_repo: Arc<dyn PolicyRepo>,
@@ -30,7 +30,7 @@ impl GetResult {
         user: &AuthUser,
     ) -> Result<GetResultOutput, AppError> {
         let request = self
-            .request_repo
+            .request_reader
             .get(&input.request_id)?
             .ok_or_else(|| AppError::NotFound("request not found".into()))?;
 
@@ -185,12 +185,9 @@ mod tests {
     struct FakeRequestRepo {
         request: Mutex<Option<Request>>,
     }
-    impl RequestRepo for FakeRequestRepo {
-        fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
+    impl RequestReader for FakeRequestRepo {
+        fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Request>, AppError> {
             Ok(self.request.lock().unwrap().clone())
-        }
-        fn insert(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
         }
         fn list(
             &self,
@@ -198,10 +195,13 @@ mod tests {
             _: u32,
             _: Option<&str>,
             _: Option<&str>,
-        ) -> Result<(Vec<Request>, u32), AppError> {
+        ) -> Result<(Vec<dbward_domain::entities::Request>, u32), AppError> {
             Ok((vec![], 0))
         }
-        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
+        fn find_by_idempotency_key(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::entities::Request>, AppError> {
             Ok(None)
         }
         fn list_visible_to_user(
@@ -212,7 +212,7 @@ mod tests {
             _: Option<&str>,
             _: u32,
             _: u32,
-        ) -> Result<(Vec<Request>, u32), AppError> {
+        ) -> Result<(Vec<dbward_domain::entities::Request>, u32), AppError> {
             Ok((vec![], 0))
         }
         fn list_pending_for_user(
@@ -222,107 +222,8 @@ mod tests {
             _: &[String],
             _: u32,
             _: u32,
-        ) -> Result<(Vec<Request>, u32), AppError> {
+        ) -> Result<(Vec<dbward_domain::entities::Request>, u32), AppError> {
             Ok((vec![], 0))
-        }
-        fn insert_approval(&self, _: &Approval) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_approvals(&self, _: &str) -> Result<Vec<Approval>, AppError> {
-            Ok(vec![])
-        }
-        fn count_executions(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn approve_and_mark_approved(
-            &self,
-            _: &Approval,
-            _: &str,
-            _: DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_rejected(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn reject_and_record(
-            &self,
-            _: &str,
-            _: &Approval,
-            _: DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_cancelled(
-            &self,
-            _: &str,
-            _: &str,
-            _: Option<&str>,
-            _: DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_dispatched(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn mark_running(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_executed(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_failed(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn cancel_all_for_user(&self, _: &str, _: DateTime<Utc>) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn find_expired_approved(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_expired_pending(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn find_dispatched_older_than(&self, _: &str) -> Result<Vec<String>, AppError> {
-            Ok(vec![])
-        }
-        fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_expired_and_record(
-            &self,
-            _: &str,
-            _: &AuditEvent,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn wal_checkpoint(&self) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn list_results_for_user(
-            &self,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: u32,
-        ) -> Result<Vec<crate::ports::repos::StoredResultEntry>, AppError> {
-            Ok(vec![])
         }
         fn is_pending_approver(
             &self,
@@ -333,90 +234,26 @@ mod tests {
         ) -> Result<bool, AppError> {
             Ok(false)
         }
-    }
-
-    struct FakeAgentRepo {
-        execution: Mutex<Option<Execution>>,
-    }
-    impl AgentRepo for FakeAgentRepo {
-        fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> {
-            Ok(self.execution.lock().unwrap().iter().cloned().collect())
+        fn count_executions(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
         }
-        fn upsert(&self, _: &Agent) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get(&self, _: &str) -> Result<Option<Agent>, AppError> {
-            Ok(None)
-        }
-        fn list(&self) -> Result<Vec<Agent>, AppError> {
+        fn list_results_for_user(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+            _: u32,
+        ) -> Result<Vec<crate::ports::repos::StoredResultEntry>, AppError> {
             Ok(vec![])
         }
-        fn create_execution(&self, _: &Execution) -> Result<(), AppError> {
-            Ok(())
+        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
         }
-        fn get_execution(&self, _: &str) -> Result<Option<Execution>, AppError> {
-            Ok(None)
-        }
-        fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn extend_lease(&self, _: &str, _: DateTime<Utc>) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn find_dispatched_jobs(
+        fn get_pending_approvers_for_requests(
             &self,
-            _: &[(DatabaseName, Environment)],
-        ) -> Result<Vec<Request>, AppError> {
-            Ok(vec![])
-        }
-        fn has_running_migration(
-            &self,
-            _: &DatabaseName,
-            _: &Environment,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            Ok(false)
-        }
-        fn claim_and_mark_running(
-            &self,
-            _: &Execution,
-            _: &str,
-            _: DateTime<Utc>,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn complete_execution(
-            &self,
-            _: &str,
-            _: &str,
-            _: bool,
-            _: DateTime<Utc>,
-            _: &AuditEvent,
-            _: Option<&ExecutionResult>,
-            _: &[ResultAccess],
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
-            Ok(vec![])
-        }
-        fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_execution_lost_and_record(
-            &self,
-            _: &str,
-            _: &str,
-            _: &AuditEvent,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
-            Ok(vec![])
-        }
-        fn delete_result(&self, _: &str) -> Result<(), AppError> {
-            Ok(())
+            _: &[&str],
+        ) -> Result<std::collections::HashMap<String, (u32, Vec<String>)>, AppError> {
+            Ok(std::collections::HashMap::new())
         }
     }
 
@@ -561,6 +398,91 @@ mod tests {
     struct FakeClock {
         now: DateTime<Utc>,
     }
+
+    struct FakeAgentRepo {
+        execution: Mutex<Option<Execution>>,
+    }
+    impl AgentRepo for FakeAgentRepo {
+        fn upsert(&self, _: &Agent) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get(&self, _: &str) -> Result<Option<Agent>, AppError> {
+            Ok(None)
+        }
+        fn list(&self) -> Result<Vec<Agent>, AppError> {
+            Ok(vec![])
+        }
+        fn create_execution(&self, _: &Execution) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_execution(&self, _: &str) -> Result<Option<Execution>, AppError> {
+            Ok(self.execution.lock().unwrap().clone())
+        }
+        fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn extend_lease(&self, _: &str, _: DateTime<Utc>) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn find_dispatched_jobs(
+            &self,
+            _: &[(DatabaseName, Environment)],
+        ) -> Result<Vec<Request>, AppError> {
+            Ok(vec![])
+        }
+        fn has_running_migration(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> {
+            Ok(self.execution.lock().unwrap().iter().cloned().collect())
+        }
+        fn claim_and_mark_running(
+            &self,
+            _: &Execution,
+            _: &str,
+            _: DateTime<Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn complete_execution(
+            &self,
+            _: &str,
+            _: &str,
+            _: bool,
+            _: DateTime<Utc>,
+            _: &AuditEvent,
+            _: Option<&ExecutionResult>,
+            _: &[ResultAccess],
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+            Ok(vec![])
+        }
+        fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_execution_lost_and_record(
+            &self,
+            _: &str,
+            _: &str,
+            _: &AuditEvent,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_result(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
     impl Clock for FakeClock {
         fn now(&self) -> DateTime<Utc> {
             self.now
@@ -628,7 +550,7 @@ mod tests {
 
         let uc = GetResult {
             authorizer: Arc::new(FakeAuthorizer),
-            request_repo: Arc::new(FakeRequestRepo {
+            request_reader: Arc::new(FakeRequestRepo {
                 request: Mutex::new(Some(make_request())),
             }),
             agent_repo: Arc::new(FakeAgentRepo {
@@ -672,7 +594,7 @@ mod tests {
         // bob is not the requester and not in share_with, but policy grants role:dba
         let uc = GetResult {
             authorizer: Arc::new(FakeAuthorizer),
-            request_repo: Arc::new(FakeRequestRepo {
+            request_reader: Arc::new(FakeRequestRepo {
                 request: Mutex::new(Some(make_request())),
             }),
             agent_repo: Arc::new(FakeAgentRepo {
@@ -716,7 +638,7 @@ mod tests {
 
         let uc = GetResult {
             authorizer: Arc::new(FakeAuthorizer),
-            request_repo: Arc::new(FakeRequestRepo {
+            request_reader: Arc::new(FakeRequestRepo {
                 request: Mutex::new(Some(make_request())),
             }),
             agent_repo: Arc::new(FakeAgentRepo {

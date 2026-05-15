@@ -465,15 +465,12 @@ pub(crate) fn format_approval_progress(
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|a| {
-                            let target = a["group"]
-                                .as_str()
-                                .map(|g| format!("group:{g}"))
-                                .or_else(|| a["role"].as_str().map(|r| format!("role:{r}")))?;
+                            let target = a["selector"].as_str()?;
                             let min = a["min"].as_u64().unwrap_or(1);
                             Some(if min > 1 {
                                 format!("{target} x{min}")
                             } else {
-                                target
+                                target.to_string()
                             })
                         })
                         .collect::<Vec<_>>()
@@ -630,7 +627,7 @@ mod tests {
                     "index": 0,
                     "mode": "all",
                     "satisfied": false,
-                    "approvers_required": [{"role": "admin", "min": 1}]
+                    "approvers_required": [{"selector": "role:admin", "min": 1}]
                 }]
             }),
         );

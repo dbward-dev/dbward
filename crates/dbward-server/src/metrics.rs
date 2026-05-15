@@ -2,7 +2,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use dbward_app::ports::{AgentRepo, RequestRepo};
+use dbward_app::ports::{AgentRepo, RequestReader};
 
 /// Prometheus-compatible metrics registry.
 pub struct Metrics {
@@ -52,7 +52,7 @@ impl Metrics {
 /// Render all metrics in Prometheus text exposition format.
 pub fn render(
     metrics: &Metrics,
-    request_repo: &dyn RequestRepo,
+    request_repo: &dyn RequestReader,
     agent_repo: &dyn AgentRepo,
 ) -> String {
     let mut out = String::with_capacity(4096);
