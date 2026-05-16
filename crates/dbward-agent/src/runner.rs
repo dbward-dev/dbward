@@ -416,8 +416,13 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                 if pool_failure_counts.get(&key).copied().unwrap_or(0) < 2 {
                     continue;
                 }
-                match dbward_driver::connect(&entry.url, None).await {
-                    Ok(new_driver) => {
+                match tokio::time::timeout(
+                    Duration::from_secs(5),
+                    dbward_driver::connect(&entry.url, None),
+                )
+                .await
+                {
+                    Ok(Ok(new_driver)) => {
                         // Swap pool
                         if let Some(lock) = pools.get(&key) {
                             *lock.write().await = new_driver;
@@ -430,17 +435,19 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                             "database reconnected"
                         );
                     }
-                    Err(e) => {
-                        if matches!(e, dbward_driver::DriverError::AuthenticationFailed(_)) {
-                            error!(
-                                phase = "degraded",
-                                database = db_name,
-                                environment = env_name,
-                                %e,
-                                "authentication failed during reconnect, exiting"
-                            );
-                            return Err(AgentError::Driver(e));
-                        }
+                    Ok(Err(e))
+                        if matches!(e, dbward_driver::DriverError::AuthenticationFailed(_)) =>
+                    {
+                        error!(
+                            phase = "degraded",
+                            database = db_name,
+                            environment = env_name,
+                            %e,
+                            "authentication failed during reconnect, exiting"
+                        );
+                        return Err(AgentError::Driver(e));
+                    }
+                    _ => {
                         all_healthy = false;
                     }
                 }
