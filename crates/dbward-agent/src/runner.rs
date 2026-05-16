@@ -5,13 +5,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use dbward_api_types::agent::{ActiveJob, AgentStatusReport, PollRequest};
-use dbward_driver::DatabaseDriver;
 use tracing::{error, info, warn};
 
 use crate::AgentError;
 use crate::client::AgentClient;
 use crate::config::{AgentConfig, DatabaseEntry};
-use crate::executor::JobExecutor;
+use crate::executor::{JobExecutor, PoolMap};
 use crate::probes::ProbeGuard;
 
 /// Tracks in-flight jobs for observability. Single lock for consistent snapshots.
@@ -73,14 +72,11 @@ fn is_hard_error(err: &AgentError) -> bool {
         }
         AgentError::Config(_) => true,
         AgentError::TokenVerification(_) => true,
-        AgentError::Driver(driver_err) => {
-            let msg = driver_err.to_string().to_lowercase();
-            msg.contains("unsupported")
-                || msg.contains("invalid")
-                || msg.contains("authentication failed")
-                || msg.contains("password authentication")
-                || msg.contains("access denied")
-        }
+        AgentError::Driver(driver_err) => matches!(
+            driver_err,
+            dbward_driver::DriverError::UnsupportedScheme(_)
+                | dbward_driver::DriverError::AuthenticationFailed(_)
+        ),
         _ => false,
     }
 }
@@ -232,7 +228,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     };
 
     // --- Startup Phase: connect databases ---
-    let mut pools: HashMap<(String, String), Arc<dyn DatabaseDriver>> = HashMap::new();
+    let mut pools: PoolMap = HashMap::new();
     let mut db_entries: HashMap<(String, String), DatabaseEntry> = HashMap::new();
     for (db_name, envs) in &config.databases {
         for (env_name, entry) in envs {
@@ -280,7 +276,10 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                     }
                 }
             };
-            pools.insert((db_name.clone(), env_name.clone()), driver);
+            pools.insert(
+                (db_name.clone(), env_name.clone()),
+                Arc::new(tokio::sync::RwLock::new(driver)),
+            );
             db_entries.insert((db_name.clone(), env_name.clone()), entry.clone());
         }
     }
@@ -359,16 +358,112 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     let mut consecutive_failures: u32 = 0;
     let mut is_ready = true;
 
+    // Health channel for degraded mode
+    let (health_tx, mut health_rx) =
+        tokio::sync::mpsc::unbounded_channel::<crate::executor::PoolHealthEvent>();
+    let mut pool_failure_counts: HashMap<(String, String), u32> = HashMap::new();
+    let mut degraded = false;
+
     let executor = Arc::new(JobExecutor {
         client: client.clone(),
         public_key,
-        pools,
-        db_entries,
+        pools: pools.clone(),
+        db_entries: db_entries.clone(),
         statement_timeout_secs: statement_timeout,
+        health_tx,
     });
 
     // Poll loop
     loop {
+        // Drain health events from executor
+        while let Ok(event) = health_rx.try_recv() {
+            use crate::executor::PoolHealthEvent;
+            match event {
+                PoolHealthEvent::ConnectivityError {
+                    database,
+                    environment,
+                } => {
+                    let key = (database.clone(), environment.clone());
+                    let count = pool_failure_counts.entry(key).or_insert(0);
+                    *count += 1;
+                    if *count >= 2 && !degraded {
+                        degraded = true;
+                        is_ready = false;
+                        probes.remove_readiness();
+                        warn!(
+                            phase = "degraded",
+                            database,
+                            environment,
+                            "entering degraded mode: database connectivity lost"
+                        );
+                    }
+                }
+                PoolHealthEvent::Success {
+                    database,
+                    environment,
+                } => {
+                    let key = (database, environment);
+                    pool_failure_counts.remove(&key);
+                }
+            }
+        }
+
+        // Degraded: attempt reconnect probe
+        if degraded {
+            let mut all_healthy = true;
+            for ((db_name, env_name), entry) in db_entries.iter() {
+                let key = (db_name.clone(), env_name.clone());
+                if pool_failure_counts.get(&key).copied().unwrap_or(0) < 2 {
+                    continue;
+                }
+                match dbward_driver::connect(&entry.url, None).await {
+                    Ok(new_driver) => {
+                        // Swap pool
+                        if let Some(lock) = pools.get(&key) {
+                            *lock.write().await = new_driver;
+                        }
+                        pool_failure_counts.remove(&key);
+                        info!(
+                            phase = "degraded",
+                            database = db_name,
+                            environment = env_name,
+                            "database reconnected"
+                        );
+                    }
+                    Err(e) => {
+                        if matches!(e, dbward_driver::DriverError::AuthenticationFailed(_)) {
+                            error!(
+                                phase = "degraded",
+                                database = db_name,
+                                environment = env_name,
+                                %e,
+                                "authentication failed during reconnect, exiting"
+                            );
+                            return Err(AgentError::Driver(e));
+                        }
+                        all_healthy = false;
+                    }
+                }
+            }
+            if all_healthy || pool_failure_counts.values().all(|c| *c < 2) {
+                degraded = false;
+                // Only restore readiness if poll is also healthy
+                if consecutive_failures == 0 {
+                    is_ready = true;
+                    probes.restore_readiness();
+                    info!(
+                        phase = "ready",
+                        "all databases recovered, readiness restored"
+                    );
+                } else {
+                    info!(
+                        phase = "degraded",
+                        "databases recovered, waiting for server poll to stabilize"
+                    );
+                }
+            }
+        }
+
         if draining.load(Ordering::Acquire) {
             // Send final drain status before exiting poll loop
             let (current_in_flight, active_jobs) = tracker.snapshot();
@@ -394,8 +489,8 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         }
 
         let (current_in_flight, active_jobs) = tracker.snapshot();
-        // When not ready (poll failures), request no new jobs
-        let available = if is_ready {
+        // When not ready (poll failures or degraded), request no new jobs
+        let available = if is_ready && !degraded {
             max_concurrent.saturating_sub(current_in_flight)
         } else {
             0
@@ -557,6 +652,12 @@ mod tests {
         }));
         assert!(is_hard_error(&AgentError::Config("bad".into())));
         assert!(is_hard_error(&AgentError::TokenVerification("bad".into())));
+        assert!(is_hard_error(&AgentError::Driver(
+            dbward_driver::DriverError::UnsupportedScheme("sqlite://".into())
+        )));
+        assert!(is_hard_error(&AgentError::Driver(
+            dbward_driver::DriverError::AuthenticationFailed("password failed".into())
+        )));
 
         // Transient
         assert!(!is_hard_error(&AgentError::ServerError {
@@ -571,5 +672,8 @@ mod tests {
             status: 429,
             body: "rate limited".into()
         }));
+        assert!(!is_hard_error(&AgentError::Driver(
+            dbward_driver::DriverError::ConnectionFailed("connection refused".into())
+        )));
     }
 }

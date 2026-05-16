@@ -31,12 +31,19 @@ impl PostgresDriver {
                     Ok(())
                 })
             });
-        let pool = opts
-            .connect(url)
-            .await
-            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let pool = opts.connect(url).await.map_err(classify_connect_error)?;
         Ok(Self { pool })
     }
+}
+
+fn classify_connect_error(e: sqlx::Error) -> DriverError {
+    if let sqlx::Error::Database(ref db_err) = e
+        && let Some(code) = db_err.code()
+        && (code == "28P01" || code == "28000")
+    {
+        return DriverError::AuthenticationFailed(e.to_string());
+    }
+    DriverError::ConnectionFailed(e.to_string())
 }
 
 #[async_trait::async_trait]
