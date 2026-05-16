@@ -136,6 +136,9 @@ impl LicenseChecker for TestLicense {
     fn max_tokens(&self) -> u32 {
         10
     }
+    fn max_databases(&self) -> u32 {
+        u32::MAX
+    }
     fn max_workflows(&self) -> u32 {
         5
     }
@@ -145,10 +148,7 @@ impl LicenseChecker for TestLicense {
     fn max_roles(&self) -> u32 {
         8
     }
-    fn max_agents(&self) -> u32 {
-        3
-    }
-    fn is_pro(&self) -> bool {
+    fn is_enterprise(&self) -> bool {
         false
     }
 }

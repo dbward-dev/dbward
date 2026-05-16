@@ -532,6 +532,9 @@ impl LicenseChecker for FakeLicenseChecker {
     fn max_tokens(&self) -> u32 {
         10
     }
+    fn max_databases(&self) -> u32 {
+        u32::MAX
+    }
     fn max_workflows(&self) -> u32 {
         5
     }
@@ -541,10 +544,7 @@ impl LicenseChecker for FakeLicenseChecker {
     fn max_roles(&self) -> u32 {
         8
     }
-    fn max_agents(&self) -> u32 {
-        3
-    }
-    fn is_pro(&self) -> bool {
+    fn is_enterprise(&self) -> bool {
         false
     }
 }
@@ -672,7 +672,6 @@ struct TestHarness {
     db_registry: Arc<dyn DatabaseRegistry>,
     result_channel: Arc<dyn ResultChannel>,
     audit_logger: Arc<dyn AuditLogger>,
-    license_checker: Arc<dyn LicenseChecker>,
 }
 
 impl TestHarness {
@@ -690,7 +689,6 @@ impl TestHarness {
             db_registry: Arc::new(FakeDbRegistry),
             result_channel: Arc::new(FakeResultChannel),
             audit_logger: Arc::new(FakeAuditLogger),
-            license_checker: Arc::new(FakeLicenseChecker),
         }
     }
 
@@ -1413,7 +1411,6 @@ fn agent_full_flow_poll_claim_heartbeat() {
         authorizer: h.authorizer.clone(),
         agent_repo: agent_repo.clone(),
         audit_logger: h.audit_logger.clone(),
-        license_checker: h.license_checker.clone(),
         clock: h.clock.clone(),
     };
     let poll_result = poll_uc

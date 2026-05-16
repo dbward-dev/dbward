@@ -54,6 +54,8 @@ services:
       - 0.0.0.0:3000
       - --config
       - /config/dbward-server.toml
+      - --license-file
+      - /secrets/license.key
       - --dev-bootstrap
     logging:
       driver: json-file
@@ -64,6 +66,7 @@ services:
     volumes:
       - server-data:/data
       - ./config/${DBWARD_SERVER_CONFIG:-server.toml}:/config/dbward-server.toml:ro
+      - ./secrets/license.key:/secrets/license.key:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/health >/dev/null"]
       start_period: 10s

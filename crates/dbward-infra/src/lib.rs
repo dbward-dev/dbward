@@ -6,6 +6,7 @@ pub mod webhook;
 mod clock;
 mod id_generator;
 mod license_checker;
+pub mod license_key;
 mod result_channel;
 mod token_signer;
 

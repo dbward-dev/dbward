@@ -21,6 +21,14 @@ struct Cli {
     /// Dev bootstrap mode: output tokens as JSON to stdout then start
     #[arg(long, hide = true)]
     dev_bootstrap: bool,
+
+    /// License key (Pro/Enterprise)
+    #[arg(long, env = "DBWARD_LICENSE_KEY")]
+    license_key: Option<String>,
+
+    /// Path to license key file
+    #[arg(long, env = "DBWARD_LICENSE_FILE")]
+    license_file: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -71,8 +79,15 @@ async fn main() {
             }
         },
         None => {
-            dbward_server::run_from_args(&cli.listen, &cli.data, &cli.config, cli.dev_bootstrap)
-                .await
+            dbward_server::run_from_args(
+                &cli.listen,
+                &cli.data,
+                &cli.config,
+                cli.dev_bootstrap,
+                cli.license_key.as_deref(),
+                cli.license_file.as_deref(),
+            )
+            .await
         }
     };
 

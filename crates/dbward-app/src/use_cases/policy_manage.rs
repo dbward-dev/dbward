@@ -138,10 +138,6 @@ impl PolicyManage {
         self.authorizer
             .authorize_global(user, Permission::PolicyManage)
             .map_err(AppError::Forbidden)?;
-        let count = self.policy_repo.list_execution_policies()?.len() as u32;
-        if count >= 3 {
-            return Err(AppError::PlanLimit("execution policy limit reached".into()));
-        }
         self.policy_repo.create_execution_policy(&ep)?;
         self.audit.record(&AuditEvent::simple(
             "policy_created",
@@ -532,8 +528,8 @@ mod tests {
         fn max_workflows(&self) -> u32 {
             5
         }
-        fn max_agents(&self) -> u32 {
-            3
+        fn max_databases(&self) -> u32 {
+            u32::MAX
         }
         fn max_webhooks(&self) -> u32 {
             3
@@ -544,7 +540,7 @@ mod tests {
         fn max_roles(&self) -> u32 {
             8
         }
-        fn is_pro(&self) -> bool {
+        fn is_enterprise(&self) -> bool {
             false
         }
     }
