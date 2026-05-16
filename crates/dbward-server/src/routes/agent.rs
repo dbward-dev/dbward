@@ -33,6 +33,8 @@ pub struct PollBody {
     pub limit: Option<u32>,
     #[serde(default)]
     pub status: Option<dbward_api_types::agent::AgentStatusReport>,
+    #[serde(default)]
+    pub agent_version: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -139,18 +141,39 @@ pub async fn poll(
         )
         .map_err(map_error)?;
 
+    let min_agent_version = env!("CARGO_PKG_VERSION");
+    let upgrade_required = body
+        .agent_version
+        .as_deref()
+        .is_some_and(|av| !av.is_empty() && version_lt(av, min_agent_version));
+
+    let jobs: Vec<serde_json::Value> = if upgrade_required {
+        vec![]
+    } else {
+        output
+            .jobs
+            .iter()
+            .map(|j| {
+                serde_json::json!({
+                    "id": j.id,
+                    "created_by": j.created_by,
+                    "operation": j.operation,
+                    "environment": j.environment,
+                    "database": j.database,
+                    "detail": j.detail,
+                })
+            })
+            .collect()
+    };
+
     Ok((
         StatusCode::OK,
-        Json(
-            serde_json::json!({ "jobs": output.jobs.iter().map(|j| serde_json::json!({
-        "id": j.id,
-        "created_by": j.created_by,
-        "operation": j.operation,
-        "environment": j.environment,
-        "database": j.database,
-        "detail": j.detail,
-    })).collect::<Vec<_>>() }),
-        ),
+        Json(serde_json::json!({
+            "jobs": jobs,
+            "server_version": env!("CARGO_PKG_VERSION"),
+            "min_agent_version": min_agent_version,
+            "upgrade_required": upgrade_required,
+        })),
     ))
 }
 
@@ -374,4 +397,24 @@ pub async fn list_agents(
         StatusCode::OK,
         Json(serde_json::json!({ "agents": enriched })),
     ))
+}
+
+fn version_lt(a: &str, b: &str) -> bool {
+    let parse = |s: &str| -> Vec<u32> { s.split('.').filter_map(|p| p.parse().ok()).collect() };
+    parse(a) < parse(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_lt;
+
+    #[test]
+    fn version_comparison() {
+        assert!(version_lt("0.1.2", "0.1.3"));
+        assert!(version_lt("0.1.9", "0.1.10"));
+        assert!(!version_lt("0.1.10", "0.1.9"));
+        assert!(!version_lt("0.1.2", "0.1.2"));
+        assert!(version_lt("0.1.0", "0.2.0"));
+        assert!(!version_lt("0.2.0", "0.1.99"));
+    }
 }

@@ -70,9 +70,10 @@ fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
 
 async fn version_header(response: axum::response::Response) -> axum::response::Response {
     let mut response = response;
-    response
-        .headers_mut()
-        .insert("x-dbward-version", "0.1.0".parse().unwrap());
+    response.headers_mut().insert(
+        "x-dbward-version",
+        env!("CARGO_PKG_VERSION").parse().unwrap(),
+    );
     response
 }
 

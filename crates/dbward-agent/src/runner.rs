@@ -315,6 +315,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                 uptime_secs: 0,
                 active_jobs: vec![],
             }),
+            agent_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
         loop {
             if draining.load(Ordering::Acquire) {
@@ -489,6 +490,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                     uptime_secs: start_time.elapsed().as_secs(),
                     active_jobs,
                 }),
+                agent_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             };
             let _ = client.poll(&drain_req).await;
             probes.remove_readiness();
@@ -518,11 +520,25 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                 uptime_secs: start_time.elapsed().as_secs(),
                 active_jobs,
             }),
+            agent_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
 
         match client.poll(&req).await {
             Ok(resp) => {
-                if !is_ready {
+                if resp.upgrade_required {
+                    let min = resp.min_agent_version.as_deref().unwrap_or("unknown");
+                    warn!("Server requires agent upgrade (min_version: {min})");
+                    if is_ready {
+                        probes.remove_readiness();
+                        is_ready = false;
+                    }
+                } else if let Some(ref sv) = resp.server_version {
+                    let av = env!("CARGO_PKG_VERSION");
+                    if sv != av {
+                        info!("Server version: {sv}, agent version: {av}");
+                    }
+                }
+                if !is_ready && !resp.upgrade_required {
                     info!(
                         phase = "ready",
                         consecutive_failures, "poll recovered, readiness restored"
@@ -596,6 +612,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
             uptime_secs: start_time.elapsed().as_secs(),
             active_jobs: vec![],
         }),
+        agent_version: Some(env!("CARGO_PKG_VERSION").to_string()),
     };
     let _ = client.poll(&final_req).await;
 

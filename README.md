@@ -594,9 +594,18 @@ caddy reverse-proxy --from dbward.internal.example.com --to localhost:13000
 ### Upgrade
 
 ```bash
-git pull && docker compose up -d --build
-# SQLite migrations run automatically on server start
+# Docker (recommended)
+docker compose pull && docker compose up -d
+
+# CLI
+dbward self-update
+
+# Check current version
+curl http://localhost:3000/health
+# {"status":"ok","version":"0.1.2","min_agent_version":"0.1.2"}
 ```
+
+SQLite migrations run automatically on server start. See [Upgrading Guide](docs/deployment/upgrading.md) for details.
 
 ## Development
 

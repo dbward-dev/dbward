@@ -8,6 +8,11 @@ metadata:
     app.kubernetes.io/component: agent
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: dbward-agent
@@ -26,7 +31,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: agent
-          image: ghcr.io/dbward-dev/dbward:latest
+          image: ghcr.io/dbward-dev/dbward:latest  # Pin to v0.1.x in production
           command: ["dbward-agent"]
           args:
             - --config

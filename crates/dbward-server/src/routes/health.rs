@@ -9,8 +9,12 @@ use dbward_domain::auth::{AuthUser, SubjectType};
 
 use crate::state::AppState;
 
-pub async fn health() -> StatusCode {
-    StatusCode::OK
+pub async fn health() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "min_agent_version": env!("CARGO_PKG_VERSION")
+    }))
 }
 
 pub async fn ready(State(state): State<AppState>) -> StatusCode {

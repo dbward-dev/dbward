@@ -15,7 +15,23 @@ docker compose pull
 docker compose up -d
 ```
 
-The server automatically migrates the SQLite database on startup. A backup is created before any schema migration (`dbward.db.bak.v{N}`).
+The server container stops gracefully (drains active requests), restarts with the new image, and applies any pending SQLite schema migrations. The agent waits for the server healthcheck before starting, ensuring correct update order automatically.
+
+**Image registry:** `ghcr.io/dbward-dev/dbward`
+
+**Tag options:**
+- `v0.1.2` — pinned to a specific release (recommended for production)
+- `0.1` — tracks the latest patch within a minor version
+- `latest` — latest release (for development)
+
+```yaml
+# compose.yml example
+services:
+  dbward-server:
+    image: ghcr.io/dbward-dev/dbward:0.1
+    entrypoint: ["dbward-server"]
+    # ...
+```
 
 ## Binary
 
@@ -32,14 +48,14 @@ systemctl restart dbward-agent
 
 ## Checking for updates
 
-The server periodically checks GitHub Releases for new versions (when `update_check = true` in server config). The result is visible in:
+Check the running server version and minimum supported agent version:
 
 ```bash
 curl http://localhost:3000/health
-# {"status":"ok","version":"0.1.0","api_version":1,"schema_version":7,"update_available":"0.1.2"}
+# {"status":"ok","version":"0.1.2","min_agent_version":"0.1.2"}
 ```
 
-The CLI also displays a notification when a newer version is available.
+The CLI displays a warning when the server version differs from the CLI version.
 
 ## SQLite backup
 
@@ -58,10 +74,12 @@ cp dbward.db.bak.v7 dbward.db
 
 ## Version compatibility
 
-- Minor versions (0.1.x) maintain API compatibility
-- Feature versions (0.x.0) may introduce breaking changes (documented in CHANGELOG)
+- All components within the same minor version (0.1.x) are compatible
+- The server rejects poll requests from agents with a version older than `min_agent_version`
+- The CLI shows a one-time warning when the server's minor version differs
 - SQLite schema changes are always forward-compatible (columns are added, never removed)
 - Existing config files continue to work (new fields always have defaults)
+- Downgrade is not supported for SQLite schema; use Litestream PITR or file backup
 
 ## Rollback
 
