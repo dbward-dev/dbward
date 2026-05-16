@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dbward.fullname" . }}-server
+  labels:
+    app.kubernetes.io/name: {{ include "dbward.fullname" . }}-server
+    app.kubernetes.io/component: server
+    {{- include "dbward.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.server.replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "dbward.fullname" . }}-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "dbward.fullname" . }}-server
+        app.kubernetes.io/component: server
+        app.kubernetes.io/part-of: dbward
+    spec:
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ include "dbward.fullname" . }}-server
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: server
+          image: {{ include "dbward.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["dbward-server"]
+          args:
+            - --data
+            - /data/dbward.db
+            - --listen
+            - 0.0.0.0:{{ .Values.server.port }}
+            - --config
+            - /config/server.toml
+          ports:
+            - containerPort: {{ .Values.server.port }}
+              name: http
+              protocol: TCP
+          env:
+            - name: RUST_LOG
+              value: info
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: data
+          {{- if .Values.server.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "dbward.fullname" . }}-server-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: config
+          configMap:
+            name: {{ include "dbward.fullname" . }}-server-config
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+      terminationGracePeriodSeconds: {{ .Values.server.terminationGracePeriodSeconds }}

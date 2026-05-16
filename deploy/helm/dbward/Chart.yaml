@@ -1,0 +1,14 @@
+apiVersion: v2
+name: dbward
+description: DB operations workflow + approval engine
+type: application
+version: 0.1.0
+appVersion: "0.1.2"
+keywords:
+  - database
+  - workflow
+  - approval
+  - migration
+home: https://github.com/dbward-dev/dbward
+sources:
+  - https://github.com/dbward-dev/dbward

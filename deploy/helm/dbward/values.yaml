@@ -1,0 +1,70 @@
+image:
+  repository: ghcr.io/dbward-dev/dbward
+  tag: ""  # defaults to Chart.appVersion
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+server:
+  replicas: 1
+  port: 3000
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 50m
+    limits:
+      memory: 256Mi
+      cpu: 500m
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+  config: |
+    [auth]
+    mode = "token"
+
+    [[databases]]
+    name = "app"
+    environments = ["production"]
+
+    [result_storage]
+    backend = "local"
+    root_dir = "/data/results"
+  terminationGracePeriodSeconds: 30
+
+agent:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      memory: 32Mi
+      cpu: 25m
+    limits:
+      memory: 128Mi
+      cpu: 250m
+  config: |
+    agent_id = "prod-agent"
+    poll_interval_ms = 1000
+    max_concurrent_tasks = 4
+
+    [server]
+    url = "http://dbward-server:3000"
+    agent_token = "${DBWARD_AGENT_TOKEN}"
+
+    [databases.app.production]
+    url = "${DATABASE_URL}"
+  terminationGracePeriodSeconds: 90
+
+secrets:
+  create: true
+  agentToken: ""
+  databaseUrl: ""
+
+networkPolicy:
+  enabled: true
+
+serviceAccount:
+  create: true
