@@ -103,6 +103,9 @@ pub enum Command {
         /// Do not persist result to server storage
         #[arg(long = "no-store")]
         no_store: bool,
+        /// Result display format
+        #[arg(long, value_enum, default_value = "table")]
+        result_format: crate::display::ResultFormat,
     },
     /// Search audit log
     Audit {
@@ -324,6 +327,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             ref idempotency_key,
             ref share_with,
             no_store,
+            result_format,
         } => {
             execute::run_execute(
                 &sc,
@@ -340,6 +344,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                 idempotency_key.as_deref(),
                 share_with,
                 no_store,
+                result_format,
             )
             .await
         }

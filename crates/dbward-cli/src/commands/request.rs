@@ -45,9 +45,15 @@ pub enum RequestAction {
         output: Option<PathBuf>,
         #[arg(long)]
         no_save: bool,
+        /// Result display format
+        #[arg(long, value_enum, default_value = "table")]
+        result_format: ResultFormat,
     },
     Result {
         id: String,
+        /// Result display format
+        #[arg(long, value_enum, default_value = "table")]
+        result_format: ResultFormat,
     },
 }
 
@@ -94,8 +100,21 @@ pub async fn run_request(
             id,
             output,
             no_save,
-        } => run_resume(sc, json_output, &id, output.as_deref(), no_save).await,
-        RequestAction::Result { id } => run_result(sc, json_output, &id).await,
+            result_format,
+        } => {
+            run_resume(
+                sc,
+                json_output,
+                &id,
+                output.as_deref(),
+                no_save,
+                result_format,
+            )
+            .await
+        }
+        RequestAction::Result { id, result_format } => {
+            run_result(sc, json_output, &id, result_format).await
+        }
     }
 }
 
@@ -256,6 +275,7 @@ async fn run_resume(
     id: &str,
     output: Option<&std::path::Path>,
     no_save: bool,
+    result_format: ResultFormat,
 ) -> Result<(), CliError> {
     // DML re-dispatch warning
     let req = sc.get_request(id).await?;
@@ -328,19 +348,24 @@ async fn run_resume(
     if json_output {
         println!("{}", serde_json::to_string_pretty(&resp)?);
     } else {
-        print_execution_result(&resp);
+        print_execution_result_formatted(&resp, result_format);
     }
     save_result(id, &resp, output, no_save);
     Ok(())
 }
 
-async fn run_result(sc: &ServerClient, json_output: bool, id: &str) -> Result<(), CliError> {
+async fn run_result(
+    sc: &ServerClient,
+    json_output: bool,
+    id: &str,
+    result_format: ResultFormat,
+) -> Result<(), CliError> {
     match load_result(id) {
         Ok(resp) => {
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {
-                print_execution_result(&resp);
+                print_execution_result_formatted(&resp, result_format);
             }
         }
         Err(_) => {
@@ -348,8 +373,12 @@ async fn run_result(sc: &ServerClient, json_output: bool, id: &str) -> Result<()
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {
-                let wrapped = serde_json::json!({"success": true, "result": resp});
-                print_execution_result(&wrapped);
+                let wrapped = if resp.get("success").is_some() {
+                    resp
+                } else {
+                    serde_json::json!({"success": true, "result": resp})
+                };
+                print_execution_result_formatted(&wrapped, result_format);
             }
         }
     }
