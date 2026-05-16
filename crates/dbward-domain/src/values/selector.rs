@@ -28,9 +28,11 @@ impl Selector {
         if s == "requester" {
             return Ok(Self::Requester);
         }
-        let (prefix, value) = s
-            .split_once(':')
-            .ok_or_else(|| SelectorParseError(format!("missing ':' in '{s}'")))?;
+        let (prefix, value) = s.split_once(':').ok_or_else(|| {
+            SelectorParseError(format!(
+                "missing ':' in '{s}'. Expected format: user:<name>, group:<name>, or role:<name>"
+            ))
+        })?;
         if value.is_empty() {
             return Err(SelectorParseError(format!("empty value in '{s}'")));
         }
