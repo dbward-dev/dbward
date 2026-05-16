@@ -317,7 +317,11 @@ async fn run_resume(
     let resp = tokio::select! {
         r = workflow::wait_and_resolve(sc, id, true) => r?,
         _ = tokio::signal::ctrl_c() => {
-            eprintln!("\nRequest will continue server-side. Run `dbward result get {id}` to fetch the result.");
+            eprintln!("\nRequest is still running. To check later:");
+            eprintln!("  dbward request show {id}");
+            eprintln!("  dbward request resume {id}");
+            eprintln!("\nTo cancel (if not yet executing):");
+            eprintln!("  dbward request cancel {id}");
             return Ok(());
         }
     };

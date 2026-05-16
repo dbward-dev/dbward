@@ -11,7 +11,7 @@ mod user;
 mod webhook;
 mod webhook_delivery;
 
-pub use agent::{Agent, AgentDerivedStatus, AgentStatus, DatabaseCapability};
+pub use agent::{ActiveJobEntry, Agent, AgentDerivedStatus, AgentStatus, DatabaseCapability};
 pub use approval::{Approval, ApprovalAction};
 pub use audit_event::{ActorType, AuditEvent, EventCategory, EventOutcome};
 pub use client_info::{AuditContext, ClientInfo, IpSource};

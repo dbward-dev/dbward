@@ -1,9 +1,10 @@
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
-use dbward_api_types::agent::{AgentStatusReport, PollRequest};
+use dbward_api_types::agent::{ActiveJob, AgentStatusReport, PollRequest};
 use dbward_driver::DatabaseDriver;
 use tracing::{error, info, warn};
 
@@ -13,22 +14,53 @@ use crate::config::{AgentConfig, DatabaseEntry};
 use crate::executor::JobExecutor;
 use crate::probes::ProbeGuard;
 
-struct InFlightGuard {
-    counter: Arc<AtomicU32>,
+/// Tracks in-flight jobs for observability. Single lock for consistent snapshots.
+struct JobTracker {
+    jobs: std::sync::Mutex<BTreeMap<String, (String, Instant)>>,
 }
 
-impl InFlightGuard {
-    fn acquire(counter: &Arc<AtomicU32>) -> Self {
-        counter.fetch_add(1, Ordering::Relaxed);
+impl JobTracker {
+    fn new() -> Self {
         Self {
-            counter: counter.clone(),
+            jobs: std::sync::Mutex::new(BTreeMap::new()),
         }
+    }
+
+    fn insert(&self, request_id: String, operation: String) {
+        self.jobs
+            .lock()
+            .unwrap()
+            .insert(request_id, (operation, Instant::now()));
+    }
+
+    fn remove(&self, request_id: &str) {
+        self.jobs.lock().unwrap().remove(request_id);
+    }
+
+    fn snapshot(&self) -> (u32, Vec<ActiveJob>) {
+        let jobs = self.jobs.lock().unwrap();
+        let in_flight = jobs.len() as u32;
+        let active_jobs = jobs
+            .iter()
+            .map(|(id, (op, start))| ActiveJob {
+                request_id: id.clone(),
+                operation: op.clone(),
+                elapsed_secs: start.elapsed().as_secs(),
+            })
+            .collect();
+        (in_flight, active_jobs)
     }
 }
 
-impl Drop for InFlightGuard {
+/// Guard that removes a job from the tracker on drop.
+struct JobGuard {
+    tracker: Arc<JobTracker>,
+    request_id: String,
+}
+
+impl Drop for JobGuard {
     fn drop(&mut self) {
-        self.counter.fetch_sub(1, Ordering::Relaxed);
+        self.tracker.remove(&self.request_id);
     }
 }
 
@@ -82,7 +114,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         .into_iter()
         .collect();
 
-    // Initial poll to validate token
+    // Initial poll to validate token (send status from the start)
     let init_req = PollRequest {
         agent_id: None,
         capabilities: dbward_api_types::agent::PollCapabilities {
@@ -91,7 +123,13 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
             operations: operations.clone(),
         },
         limit: 0,
-        status: None,
+        status: Some(AgentStatusReport {
+            in_flight: 0,
+            max_concurrent,
+            draining: false,
+            uptime_secs: 0,
+            active_jobs: vec![],
+        }),
     };
     client.poll(&init_req).await?;
     info!("initial poll successful, token valid");
@@ -114,8 +152,8 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         draining_signal.store(true, Ordering::Release);
     });
 
-    let in_flight = Arc::new(AtomicU32::new(0));
-    let start_time = std::time::Instant::now();
+    let tracker = Arc::new(JobTracker::new());
+    let start_time = Instant::now();
     let mut consecutive_failures: u32 = 0;
 
     let executor = Arc::new(JobExecutor {
@@ -129,57 +167,78 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     // Poll loop
     loop {
         if draining.load(Ordering::Acquire) {
-            // Medium Fix 1: remove readiness immediately on drain
-            probes.remove_readiness();
-            break;
-        }
-
-        let current_in_flight = in_flight.load(Ordering::Relaxed);
-        let available = max_concurrent.saturating_sub(current_in_flight);
-
-        if available > 0 {
-            let req = PollRequest {
+            // Send final drain status before exiting poll loop
+            let (current_in_flight, active_jobs) = tracker.snapshot();
+            let drain_req = PollRequest {
                 agent_id: None,
                 capabilities: dbward_api_types::agent::PollCapabilities {
                     databases: databases.clone(),
                     environments: environments.clone(),
                     operations: operations.clone(),
                 },
-                limit: available,
+                limit: 0,
                 status: Some(AgentStatusReport {
                     in_flight: current_in_flight,
                     max_concurrent,
-                    draining: false,
+                    draining: true,
                     uptime_secs: start_time.elapsed().as_secs(),
-                    active_jobs: vec![],
+                    active_jobs,
                 }),
             };
+            let _ = client.poll(&drain_req).await;
+            probes.remove_readiness();
+            break;
+        }
 
-            match client.poll(&req).await {
-                Ok(resp) => {
-                    if consecutive_failures >= 6 {
-                        // High Fix 3: restore readiness after recovery
-                        probes.restore_readiness();
-                    }
-                    consecutive_failures = 0;
-                    for job in resp.jobs {
-                        let guard = InFlightGuard::acquire(&in_flight);
-                        let exec = executor.clone();
-                        let drain_flag = draining.clone();
-                        tokio::spawn(async move {
-                            let _guard = guard;
-                            if let Err(e) = exec.execute_job(job, drain_flag).await {
-                                error!("job execution failed: {e}");
-                            }
-                        });
-                    }
+        let (current_in_flight, active_jobs) = tracker.snapshot();
+        let available = max_concurrent.saturating_sub(current_in_flight);
+
+        let req = PollRequest {
+            agent_id: None,
+            capabilities: dbward_api_types::agent::PollCapabilities {
+                databases: databases.clone(),
+                environments: environments.clone(),
+                operations: operations.clone(),
+            },
+            limit: available,
+            status: Some(AgentStatusReport {
+                in_flight: current_in_flight,
+                max_concurrent,
+                draining: draining.load(Ordering::Relaxed),
+                uptime_secs: start_time.elapsed().as_secs(),
+                active_jobs,
+            }),
+        };
+
+        match client.poll(&req).await {
+            Ok(resp) => {
+                if consecutive_failures >= 6 {
+                    probes.restore_readiness();
                 }
-                Err(e) => {
-                    consecutive_failures += 1;
-                    warn!(consecutive_failures, "poll failed: {e}");
-                    if consecutive_failures >= 6 {
-                        probes.remove_readiness();
-                    }
+                consecutive_failures = 0;
+                for job in resp.jobs {
+                    let request_id = job.id.clone();
+                    let operation = job.operation.clone();
+                    tracker.insert(request_id.clone(), operation);
+                    let guard = JobGuard {
+                        tracker: tracker.clone(),
+                        request_id,
+                    };
+                    let exec = executor.clone();
+                    let drain_flag = draining.clone();
+                    tokio::spawn(async move {
+                        let _guard = guard;
+                        if let Err(e) = exec.execute_job(job, drain_flag).await {
+                            error!("job execution failed: {e}");
+                        }
+                    });
+                }
+            }
+            Err(e) => {
+                consecutive_failures += 1;
+                warn!(consecutive_failures, "poll failed: {e}");
+                if consecutive_failures >= 6 {
+                    probes.remove_readiness();
                 }
             }
         }
@@ -190,7 +249,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     // Drain phase
     info!("draining, waiting for in-flight jobs");
     let drain_deadline = tokio::time::Instant::now() + drain_timeout;
-    while in_flight.load(Ordering::Relaxed) > 0 {
+    while tracker.snapshot().0 > 0 {
         if tokio::time::Instant::now() >= drain_deadline {
             error!("drain timeout exceeded");
             drop(probes);
@@ -198,6 +257,25 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+
+    // Final poll to clear stale state on server
+    let final_req = PollRequest {
+        agent_id: None,
+        capabilities: dbward_api_types::agent::PollCapabilities {
+            databases: databases.clone(),
+            environments: environments.clone(),
+            operations: operations.clone(),
+        },
+        limit: 0,
+        status: Some(AgentStatusReport {
+            in_flight: 0,
+            max_concurrent,
+            draining: true,
+            uptime_secs: start_time.elapsed().as_secs(),
+            active_jobs: vec![],
+        }),
+    };
+    let _ = client.poll(&final_req).await;
 
     drop(probes);
     info!("agent shutdown complete");
@@ -209,17 +287,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn in_flight_guard() {
-        let counter = Arc::new(AtomicU32::new(0));
+    fn job_tracker_insert_remove() {
+        let tracker = JobTracker::new();
+        tracker.insert("req-1".into(), "execute_query".into());
+        tracker.insert("req-2".into(), "migrate_up".into());
+
+        let (count, jobs) = tracker.snapshot();
+        assert_eq!(count, 2);
+        assert_eq!(jobs[0].request_id, "req-1");
+        assert_eq!(jobs[1].request_id, "req-2");
+
+        tracker.remove("req-1");
+        let (count, jobs) = tracker.snapshot();
+        assert_eq!(count, 1);
+        assert_eq!(jobs[0].request_id, "req-2");
+    }
+
+    #[test]
+    fn job_guard_removes_on_drop() {
+        let tracker = Arc::new(JobTracker::new());
+        tracker.insert("req-1".into(), "execute_query".into());
         {
-            let _g1 = InFlightGuard::acquire(&counter);
-            assert_eq!(counter.load(Ordering::Relaxed), 1);
-            {
-                let _g2 = InFlightGuard::acquire(&counter);
-                assert_eq!(counter.load(Ordering::Relaxed), 2);
-            }
-            assert_eq!(counter.load(Ordering::Relaxed), 1);
+            let _guard = JobGuard {
+                tracker: tracker.clone(),
+                request_id: "req-1".into(),
+            };
+            assert_eq!(tracker.snapshot().0, 1);
         }
-        assert_eq!(counter.load(Ordering::Relaxed), 0);
+        assert_eq!(tracker.snapshot().0, 0);
     }
 }

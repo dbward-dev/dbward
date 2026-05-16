@@ -32,7 +32,7 @@ pub struct PollBody {
     pub capabilities: PollBodyCapabilities,
     pub limit: Option<u32>,
     #[serde(default)]
-    pub status: Option<PollBodyStatus>,
+    pub status: Option<dbward_api_types::agent::AgentStatusReport>,
 }
 
 #[derive(Deserialize)]
@@ -42,18 +42,6 @@ pub struct PollBodyCapabilities {
     pub environments: Vec<String>,
     #[serde(default)]
     pub operations: Vec<dbward_domain::values::Operation>,
-}
-
-#[derive(Deserialize)]
-pub struct PollBodyStatus {
-    #[serde(default)]
-    pub in_flight: u32,
-    #[serde(default = "default_max_concurrent")]
-    pub max_concurrent: u32,
-}
-
-fn default_max_concurrent() -> u32 {
-    4
 }
 
 pub async fn poll(
@@ -107,9 +95,26 @@ pub async fn poll(
         })
         .collect();
 
-    let (in_flight, max_concurrent) = match body.status {
-        Some(ref s) => (s.in_flight, s.max_concurrent),
-        None => (0, 4),
+    let (in_flight, max_concurrent, uptime_secs, draining, active_jobs) = match body.status {
+        Some(ref s) => {
+            let jobs = s
+                .active_jobs
+                .iter()
+                .map(|j| dbward_domain::entities::ActiveJobEntry {
+                    request_id: j.request_id.clone(),
+                    operation: j.operation.clone(),
+                    elapsed_secs: j.elapsed_secs,
+                })
+                .collect();
+            (
+                s.in_flight,
+                s.max_concurrent,
+                s.uptime_secs,
+                s.draining,
+                jobs,
+            )
+        }
+        None => (0, 4, 0, false, vec![]),
     };
 
     let uc = AgentPoll {
@@ -127,6 +132,9 @@ pub async fn poll(
                 limit: body.limit,
                 in_flight,
                 max_concurrent,
+                draining,
+                uptime_secs,
+                active_jobs,
             },
             &user,
         )
@@ -317,9 +325,54 @@ pub async fn list_agents(
         .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
 
     let agents = state.agent_repo.list().map_err(map_error)?;
+    let now = chrono::Utc::now();
+
+    let enriched: Vec<serde_json::Value> = agents
+        .iter()
+        .map(|a| {
+            let derived = a.derived_status(now);
+            let is_draining = a.status == dbward_domain::entities::AgentStatus::Draining;
+            // Display status: offline > draining > saturated > healthy
+            let display_status = if derived == dbward_domain::entities::AgentDerivedStatus::Offline
+            {
+                "offline"
+            } else if is_draining {
+                "draining"
+            } else if derived == dbward_domain::entities::AgentDerivedStatus::Saturated {
+                "saturated"
+            } else {
+                "healthy"
+            };
+            let last_poll_ago_secs = a
+                .last_seen
+                .map(|ls| now.signed_duration_since(ls).num_seconds().max(0))
+                .unwrap_or(9999);
+            // Offline agents: clear stale active_jobs
+            let active_jobs = if display_status == "offline" {
+                &[][..]
+            } else {
+                &a.active_jobs[..]
+            };
+            let uptime = if display_status == "offline" {
+                0
+            } else {
+                a.uptime_secs
+            };
+            serde_json::json!({
+                "id": a.id,
+                "status": display_status,
+                "last_poll_ago_secs": last_poll_ago_secs,
+                "in_flight": a.in_flight,
+                "max_concurrent": a.max_concurrent,
+                "uptime_secs": uptime,
+                "active_jobs": active_jobs,
+                "capabilities": { "databases": a.databases },
+            })
+        })
+        .collect();
 
     Ok((
         StatusCode::OK,
-        Json(serde_json::json!({ "agents": agents })),
+        Json(serde_json::json!({ "agents": enriched })),
     ))
 }

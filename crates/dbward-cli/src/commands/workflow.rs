@@ -102,7 +102,7 @@ pub async fn resolve_terminal_result(
 /// Returns a guard that aborts the task on drop.
 fn spawn_progress_reporter(sc: ServerClient, request_id: String) -> AbortOnDrop {
     AbortOnDrop(tokio::spawn(async move {
-        let mut last_status = String::new();
+        let mut last_key = String::new();
         let start = std::time::Instant::now();
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
@@ -116,10 +116,27 @@ fn spawn_progress_reporter(sc: ServerClient, request_id: String) -> AbortOnDrop 
                 _ => continue,
             };
             let status = req["status"].as_str().unwrap_or("").to_string();
+            let queue_hint = req["queue_hint"].as_str().unwrap_or("").to_string();
+            let key = format!("{status}:{queue_hint}");
             let elapsed = start.elapsed().as_secs();
-            if status != last_status {
+            if key != last_key {
                 match status.as_str() {
-                    "dispatched" => eprintln!("  → queued (waiting for agent)  [{}s]", elapsed),
+                    "dispatched" => match queue_hint.as_str() {
+                        "no_agents" => eprintln!(
+                            "  → queued — no agents online. Contact your admin  [{}s]",
+                            elapsed
+                        ),
+                        "agents_saturated" => {
+                            eprintln!("  → queued — all agents at capacity  [{}s]", elapsed)
+                        }
+                        "agents_draining" => {
+                            eprintln!(
+                                "  → queued — all agents draining (shutting down)  [{}s]",
+                                elapsed
+                            )
+                        }
+                        _ => eprintln!("  → queued (waiting for agent)  [{}s]", elapsed),
+                    },
                     "executing" | "running" => {
                         let agent = req["claimed_by"].as_str().unwrap_or("agent");
                         eprintln!("  → executing by {}  [{}s]", agent, elapsed);
@@ -134,7 +151,7 @@ fn spawn_progress_reporter(sc: ServerClient, request_id: String) -> AbortOnDrop 
                     }
                     _ => {}
                 }
-                last_status = status;
+                last_key = key;
             }
         }
     }))

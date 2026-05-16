@@ -280,6 +280,7 @@ pub async fn get(
             "operation": output.request.operation.as_str(),
             "detail": output.detail,
             "status": output.request.status.as_str(),
+            "queue_hint": compute_queue_hint(&output.request, &state),
             "emergency": output.request.emergency,
             "reason": output.request.reason,
             "share_with": output.request.share_with,
@@ -539,4 +540,60 @@ pub async fn list_results(
         })
         .collect();
     Ok((StatusCode::OK, Json(json!({ "results": items }))))
+}
+
+/// Compute queue_hint for a dispatched request by checking eligible agents.
+fn compute_queue_hint(
+    request: &dbward_domain::entities::Request,
+    state: &AppState,
+) -> Option<&'static str> {
+    use dbward_domain::entities::{AgentDerivedStatus, AgentStatus, RequestStatus};
+
+    if request.status != RequestStatus::Dispatched {
+        return None;
+    }
+
+    let agents = match state.agent_repo.list() {
+        Ok(a) => a,
+        Err(_) => return None,
+    };
+
+    let now = state.clock.now();
+
+    // Filter to agents whose capabilities include this request's db/env
+    let eligible: Vec<_> = agents
+        .iter()
+        .filter(|a| {
+            a.databases.iter().any(|cap| {
+                cap.database == request.database && cap.environment == request.environment
+            })
+        })
+        .collect();
+
+    if eligible.is_empty() {
+        return Some("no_agents");
+    }
+
+    // Offline takes priority — agent is truly gone
+    let all_offline = eligible
+        .iter()
+        .all(|a| a.derived_status(now) == AgentDerivedStatus::Offline);
+    if all_offline {
+        return Some("no_agents");
+    }
+
+    // Draining — agent is alive but refusing new work
+    let all_draining = eligible.iter().all(|a| a.status == AgentStatus::Draining);
+    if all_draining {
+        return Some("agents_draining");
+    }
+
+    let all_saturated = eligible
+        .iter()
+        .all(|a| a.derived_status(now) == AgentDerivedStatus::Saturated);
+    if all_saturated {
+        return Some("agents_saturated");
+    }
+
+    None
 }
