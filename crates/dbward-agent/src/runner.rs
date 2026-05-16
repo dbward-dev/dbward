@@ -193,55 +193,52 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         let (current_in_flight, active_jobs) = tracker.snapshot();
         let available = max_concurrent.saturating_sub(current_in_flight);
 
-        if available > 0 {
-            let req = PollRequest {
-                agent_id: None,
-                capabilities: dbward_api_types::agent::PollCapabilities {
-                    databases: databases.clone(),
-                    environments: environments.clone(),
-                    operations: operations.clone(),
-                },
-                limit: available,
-                status: Some(AgentStatusReport {
-                    in_flight: current_in_flight,
-                    max_concurrent,
-                    draining: draining.load(Ordering::Relaxed),
-                    uptime_secs: start_time.elapsed().as_secs(),
-                    active_jobs,
-                }),
-            };
+        let req = PollRequest {
+            agent_id: None,
+            capabilities: dbward_api_types::agent::PollCapabilities {
+                databases: databases.clone(),
+                environments: environments.clone(),
+                operations: operations.clone(),
+            },
+            limit: available,
+            status: Some(AgentStatusReport {
+                in_flight: current_in_flight,
+                max_concurrent,
+                draining: draining.load(Ordering::Relaxed),
+                uptime_secs: start_time.elapsed().as_secs(),
+                active_jobs,
+            }),
+        };
 
-            match client.poll(&req).await {
-                Ok(resp) => {
-                    if consecutive_failures >= 6 {
-                        // High Fix 3: restore readiness after recovery
-                        probes.restore_readiness();
-                    }
-                    consecutive_failures = 0;
-                    for job in resp.jobs {
-                        let request_id = job.id.clone();
-                        let operation = job.operation.clone();
-                        tracker.insert(request_id.clone(), operation);
-                        let guard = JobGuard {
-                            tracker: tracker.clone(),
-                            request_id,
-                        };
-                        let exec = executor.clone();
-                        let drain_flag = draining.clone();
-                        tokio::spawn(async move {
-                            let _guard = guard;
-                            if let Err(e) = exec.execute_job(job, drain_flag).await {
-                                error!("job execution failed: {e}");
-                            }
-                        });
-                    }
+        match client.poll(&req).await {
+            Ok(resp) => {
+                if consecutive_failures >= 6 {
+                    probes.restore_readiness();
                 }
-                Err(e) => {
-                    consecutive_failures += 1;
-                    warn!(consecutive_failures, "poll failed: {e}");
-                    if consecutive_failures >= 6 {
-                        probes.remove_readiness();
-                    }
+                consecutive_failures = 0;
+                for job in resp.jobs {
+                    let request_id = job.id.clone();
+                    let operation = job.operation.clone();
+                    tracker.insert(request_id.clone(), operation);
+                    let guard = JobGuard {
+                        tracker: tracker.clone(),
+                        request_id,
+                    };
+                    let exec = executor.clone();
+                    let drain_flag = draining.clone();
+                    tokio::spawn(async move {
+                        let _guard = guard;
+                        if let Err(e) = exec.execute_job(job, drain_flag).await {
+                            error!("job execution failed: {e}");
+                        }
+                    });
+                }
+            }
+            Err(e) => {
+                consecutive_failures += 1;
+                warn!(consecutive_failures, "poll failed: {e}");
+                if consecutive_failures >= 6 {
+                    probes.remove_readiness();
                 }
             }
         }
