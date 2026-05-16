@@ -16,7 +16,7 @@ dbward-app = { path = "../dbward-app" }
 dbward-api-types = { path = "../dbward-api-types" }
 dbward-domain = { path = "../dbward-domain" }
 dbward-infra = { path = "../dbward-infra" }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 axum = "0.8"
 chrono.workspace = true
 tokio.workspace = true

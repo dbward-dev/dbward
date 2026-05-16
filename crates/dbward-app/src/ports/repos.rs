@@ -366,12 +366,12 @@ pub trait PolicyRepo: Send + Sync {
 // --- LicenseChecker ---
 
 pub trait LicenseChecker: Send + Sync {
-    fn max_tokens(&self) -> u32;
+    fn max_databases(&self) -> u32;
     fn max_workflows(&self) -> u32;
     fn max_webhooks(&self) -> u32;
+    fn max_tokens(&self) -> u32;
     fn max_roles(&self) -> u32;
-    fn max_agents(&self) -> u32;
-    fn is_pro(&self) -> bool;
+    fn is_enterprise(&self) -> bool;
 }
 
 // --- ResultChannel (UC-6 long-poll) ---

@@ -11,7 +11,6 @@ pub struct AgentPoll {
     pub authorizer: Arc<dyn Authorizer>,
     pub agent_repo: Arc<dyn AgentRepo>,
     pub audit_logger: Arc<dyn AuditLogger>,
-    pub license_checker: Arc<dyn LicenseChecker>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -53,14 +52,6 @@ impl AgentPoll {
         // 2. Check if this is a new agent registration
         let existing = self.agent_repo.get(&user.subject_id)?;
         let is_new = existing.is_none();
-
-        // 2b. Free tier agent limit
-        if is_new {
-            let agents = self.agent_repo.list()?;
-            if agents.len() as u32 >= self.license_checker.max_agents() {
-                return Err(AppError::PlanLimit("agent limit reached".into()));
-            }
-        }
 
         // 3. Upsert agent (register/update last_seen + status)
         let now = self.clock.now();

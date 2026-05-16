@@ -12,37 +12,22 @@ impl LicenseCheckerImpl {
 }
 
 impl LicenseChecker for LicenseCheckerImpl {
-    fn max_tokens(&self) -> u32 {
-        self.license
-            .limits()
-            .map_or(u32::MAX, |l| l.max_tokens as u32)
+    fn max_databases(&self) -> u32 {
+        self.license.limits().map_or(u32::MAX, |l| l.max_databases)
     }
-
     fn max_workflows(&self) -> u32 {
-        self.license
-            .limits()
-            .map_or(u32::MAX, |l| l.max_workflows as u32)
+        self.license.limits().map_or(u32::MAX, |l| l.max_workflows)
     }
-
     fn max_webhooks(&self) -> u32 {
-        self.license
-            .limits()
-            .map_or(u32::MAX, |l| l.max_webhooks as u32)
+        self.license.limits().map_or(u32::MAX, |l| l.max_webhooks)
     }
-
+    fn max_tokens(&self) -> u32 {
+        self.license.limits().map_or(u32::MAX, |l| l.max_tokens)
+    }
     fn max_roles(&self) -> u32 {
-        self.license
-            .limits()
-            .map_or(u32::MAX, |l| l.max_roles as u32)
+        self.license.limits().map_or(u32::MAX, |l| l.max_roles)
     }
-
-    fn max_agents(&self) -> u32 {
-        self.license
-            .limits()
-            .map_or(u32::MAX, |l| l.max_agents as u32)
-    }
-
-    fn is_pro(&self) -> bool {
-        self.license.is_pro()
+    fn is_enterprise(&self) -> bool {
+        self.license.is_enterprise()
     }
 }

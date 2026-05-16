@@ -26,6 +26,8 @@ pub async fn run_from_args(
     data: &str,
     config_path: &str,
     dev_bootstrap: bool,
+    license_key: Option<&str>,
+    license_file: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Load config (logging depends on it, so errors go to stderr)
     let cfg = match config::ServerConfig::load(std::path::Path::new(config_path)) {
@@ -229,7 +231,7 @@ pub async fn run_from_args(
     let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> =
         Arc::new(dbward_infra::webhook::SsrfGuard);
     let license_checker: Arc<dyn dbward_app::ports::LicenseChecker> = Arc::new(
-        dbward_infra::LicenseCheckerImpl::new(dbward_domain::license::License::default()),
+        dbward_infra::LicenseCheckerImpl::new(resolve_license(license_key, license_file)),
     );
     let token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator> =
         Arc::new(dbward_infra::SecureTokenGenerator);
@@ -331,6 +333,27 @@ fn register_databases(
     state: &AppState,
     databases: &[config::DatabaseDef],
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Count unique database names (not db×env combinations)
+    let existing_pairs = state.database_registry.list()?;
+    let existing_db_names: std::collections::HashSet<&str> =
+        existing_pairs.iter().map(|(db, _)| db.as_str()).collect();
+    let mut new_db_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+    for db in databases {
+        if !existing_db_names.contains(db.name.as_str()) {
+            new_db_names.insert(&db.name);
+        }
+    }
+
+    let total = existing_db_names.len() as u32 + new_db_names.len() as u32;
+    if total > state.license_checker.max_databases() {
+        return Err(format!(
+            "database limit reached (max {})",
+            state.license_checker.max_databases()
+        )
+        .into());
+    }
+
     for db in databases {
         for env in &db.environments {
             let db_name = DatabaseName::new(&db.name).map_err(|e| format!("database name: {e}"))?;
@@ -521,6 +544,51 @@ pub async fn start(
     bg_set.abort_all();
     tracing::info!("server stopped");
     Ok(())
+}
+
+fn resolve_license(key: Option<&str>, file: Option<&str>) -> dbward_domain::license::License {
+    let raw = match (key, file) {
+        (Some(k), _) => Some(k.to_string()),
+        (None, Some(path)) => match std::fs::read_to_string(path) {
+            Ok(content) => Some(content),
+            Err(e) => {
+                eprintln!("fatal: failed to read license file '{}': {}", path, e);
+                std::process::exit(1);
+            }
+        },
+        (None, None) => None,
+    };
+
+    let Some(raw) = raw else {
+        tracing::info!(plan = "free", "License: no key provided, using Free plan");
+        return dbward_domain::license::License::default();
+    };
+
+    match dbward_infra::license_key::verify_license_key(&raw) {
+        Ok(license) => {
+            if license.is_expired_at(chrono::Utc::now()) {
+                tracing::warn!(
+                    plan = ?license.plan,
+                    issued_to = ?license.issued_to,
+                    expires_at = ?license.expires_at,
+                    "License expired, falling back to Free plan"
+                );
+                dbward_domain::license::License::default()
+            } else {
+                tracing::info!(
+                    plan = ?license.plan,
+                    issued_to = ?license.issued_to,
+                    expires_at = ?license.expires_at,
+                    "License loaded"
+                );
+                license
+            }
+        }
+        Err(e) => {
+            eprintln!("fatal: license key verification failed: {e}");
+            std::process::exit(1);
+        }
+    }
 }
 
 async fn wait_for_signal() {

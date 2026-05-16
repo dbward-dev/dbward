@@ -121,7 +121,6 @@ pub async fn poll(
         authorizer: state.authorizer.clone(),
         agent_repo: state.agent_repo.clone(),
         audit_logger: state.audit_logger.clone(),
-        license_checker: state.license_checker.clone(),
         clock: state.clock.clone(),
     };
     let output = uc
