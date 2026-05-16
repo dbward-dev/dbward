@@ -32,11 +32,12 @@ impl Operation {
         detail: &str,
         timeout_secs: u64,
         cancel: &CancelState,
+        max_rows: Option<usize>,
     ) -> Result<ExecutionResult, AgentError> {
         match self {
             Self::ExecuteSelect => {
                 let output = driver
-                    .query_cancellable(detail, timeout_secs, cancel)
+                    .query_cancellable(detail, timeout_secs, cancel, max_rows)
                     .await?;
                 let data = serde_json::to_string(&serde_json::json!({
                     "rows": output.rows,

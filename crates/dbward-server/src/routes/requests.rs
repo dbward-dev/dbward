@@ -178,6 +178,7 @@ pub async fn list(
                 "database": r.database,
                 "environment": r.environment,
                 "operation": r.operation,
+                "detail": r.detail,
                 "status": r.status,
                 "created_at": r.created_at,
             });

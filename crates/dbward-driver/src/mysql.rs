@@ -106,15 +106,18 @@ impl DatabaseDriver for MysqlDriver {
     }
 
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), DriverError> {
+        let stmts = split_statements(sql);
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        sqlx::query(sql)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        for stmt in &stmts {
+            sqlx::query(stmt)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        }
         sqlx::query("INSERT INTO schema_migrations (version) VALUES (?)")
             .bind(version)
             .execute(&mut *tx)
@@ -126,15 +129,18 @@ impl DatabaseDriver for MysqlDriver {
     }
 
     async fn revert_migration(&self, down_sql: &str, version: &str) -> Result<(), DriverError> {
+        let stmts = split_statements(down_sql);
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        sqlx::query(down_sql)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        for stmt in &stmts {
+            sqlx::query(stmt)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        }
         sqlx::query("DELETE FROM schema_migrations WHERE version = ?")
             .bind(version)
             .execute(&mut *tx)
@@ -169,6 +175,7 @@ impl DatabaseDriver for MysqlDriver {
         sql: &str,
         timeout_secs: u64,
         cancel: &CancelState,
+        max_rows: Option<usize>,
     ) -> Result<QueryOutput, DriverError> {
         let mut conn = self
             .pool
@@ -201,6 +208,7 @@ impl DatabaseDriver for MysqlDriver {
             let mut total_bytes: usize = 0;
             let mut truncated = false;
             let mut truncation_reason = None;
+            let effective_max_rows = max_rows.unwrap_or(MAX_RESULT_ROWS).min(MAX_RESULT_ROWS);
 
             while let Some(row) = stream
                 .try_next()
@@ -209,9 +217,9 @@ impl DatabaseDriver for MysqlDriver {
             {
                 let json = mysql_row_to_json(&row);
                 total_bytes += json.to_string().len();
-                if rows.len() >= MAX_RESULT_ROWS {
+                if rows.len() >= effective_max_rows {
                     truncated = true;
-                    truncation_reason = Some(format!("max rows ({MAX_RESULT_ROWS})"));
+                    truncation_reason = Some(format!("max rows ({effective_max_rows})"));
                     break;
                 }
                 if total_bytes >= MAX_RESULT_BYTES {

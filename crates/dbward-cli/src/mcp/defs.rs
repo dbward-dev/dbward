@@ -429,9 +429,16 @@ pub(crate) fn normalize_preview_sql(sql: &str) -> Result<String, String> {
 }
 
 pub(crate) fn normalized_similarity_terms(sql: &str) -> Vec<String> {
+    const SQL_KEYWORDS: &[&str] = &[
+        "select", "from", "where", "insert", "update", "delete", "set", "into", "values", "join",
+        "inner", "left", "right", "outer", "and", "not", "null", "order", "group", "having",
+        "limit", "offset", "create", "alter", "drop", "table", "index", "begin", "commit",
+        "rollback",
+    ];
     sql.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .filter(|term| term.len() >= 3)
         .map(|term| term.to_ascii_lowercase())
+        .filter(|term| !SQL_KEYWORDS.contains(&term.as_str()))
         .collect()
 }
 
@@ -440,7 +447,12 @@ pub(crate) fn matches_similarity_terms(candidate: &str, terms: &[String]) -> boo
         return true;
     }
     let haystack = candidate.to_ascii_lowercase();
-    terms.iter().all(|term| haystack.contains(term))
+    let matched = terms
+        .iter()
+        .filter(|term| haystack.contains(term.as_str()))
+        .count();
+    // At least 50% of structural terms must match
+    matched * 2 >= terms.len()
 }
 
 pub(crate) fn format_approval_progress(

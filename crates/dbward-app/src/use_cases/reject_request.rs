@@ -86,22 +86,31 @@ impl RejectRequest {
                 .map(|a| a.actor_id.clone())
                 .collect();
 
-            self.authorizer
-                .authorize_scoped(
-                    user,
-                    Permission::RequestApprove,
-                    &request.database,
-                    &request.environment,
-                    &ResourceContext::ApprovalStep {
-                        requester_id: request.requester.clone(),
-                        step_index: current_step_index,
-                        approvers: step.approvers.clone(),
-                        allow_self_approve: true, // rejection always allowed for approvers
-                        allow_same_approver_across_steps: true,
-                        previous_approver_ids,
-                    },
-                )
-                .map_err(AppError::Forbidden)?;
+            // ADR-002: approver designation = permission grant (same bypass as approve_request)
+            let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
+            let is_designated_approver = step.approvers.iter().any(|ag| {
+                ag.selector
+                    .matches(&role_names, &user.groups, &user.subject_id, false)
+            });
+
+            if !is_designated_approver {
+                self.authorizer
+                    .authorize_scoped(
+                        user,
+                        Permission::RequestApprove,
+                        &request.database,
+                        &request.environment,
+                        &ResourceContext::ApprovalStep {
+                            requester_id: request.requester.clone(),
+                            step_index: current_step_index,
+                            approvers: step.approvers.clone(),
+                            allow_self_approve: true,
+                            allow_same_approver_across_steps: true,
+                            previous_approver_ids,
+                        },
+                    )
+                    .map_err(AppError::Forbidden)?;
+            }
         }
 
         // 4. Determine matched_selector for the rejection record

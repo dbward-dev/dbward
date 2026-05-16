@@ -115,6 +115,7 @@ impl JobExecutor {
         let timeout_secs = claim
             .statement_timeout_secs
             .unwrap_or(self.statement_timeout_secs);
+        let max_rows = claim.max_rows.map(|v| v as usize);
         let is_migration = claim.operation.starts_with("migrate");
 
         let cancel_state = CancelState::new();
@@ -130,7 +131,7 @@ impl JobExecutor {
 
         let result = tokio::select! {
             biased;
-            result = operation.execute(driver, &claim.detail, timeout_secs, &cancel_state) => result,
+            result = operation.execute(driver, &claim.detail, timeout_secs, &cancel_state, max_rows) => result,
             _ = cancel_state.wait_for_kill() => {
                 Err(AgentError::Driver(DriverError::Cancelled))
             }

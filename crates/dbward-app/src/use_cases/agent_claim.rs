@@ -42,6 +42,7 @@ pub struct AgentClaimOutput {
     pub environment: String,
     pub detail: String,
     pub statement_timeout_secs: u32,
+    pub max_rows: Option<u32>,
     pub lease_expires_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -212,6 +213,7 @@ impl AgentClaim {
             environment: request.environment.as_str().to_string(),
             detail: request.detail,
             statement_timeout_secs: exec_policy.statement_timeout_secs,
+            max_rows: exec_policy.max_rows,
             lease_expires_at,
         })
     }

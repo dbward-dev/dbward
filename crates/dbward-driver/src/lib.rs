@@ -37,6 +37,7 @@ pub trait DatabaseDriver: Send + Sync {
         sql: &str,
         timeout_secs: u64,
         cancel: &CancelState,
+        max_rows: Option<usize>,
     ) -> Result<QueryOutput, DriverError>;
 
     /// Cancellable execute: same guarantees as query_cancellable.

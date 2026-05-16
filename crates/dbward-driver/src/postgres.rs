@@ -88,44 +88,31 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), DriverError> {
-        let mut tx = self
-            .pool
-            .begin()
+        // Version comes from migration filename; reject unsafe characters defensively
+        if version.contains('\'') || version.contains(';') {
+            return Err(DriverError::QueryFailed("invalid migration version".into()));
+        }
+        // Combine migration SQL + version record in a single raw_sql batch for atomicity
+        let batch =
+            format!("{sql}\n;\nINSERT INTO schema_migrations (version) VALUES ('{version}');");
+        sqlx::raw_sql(&batch)
+            .execute(&self.pool)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        // Each migration entry is a single statement (splitting is done by Migrator)
-        sqlx::query(sql)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        sqlx::query("INSERT INTO schema_migrations (version) VALUES ($1)")
-            .bind(version)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        tx.commit()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))
+        Ok(())
     }
 
     async fn revert_migration(&self, down_sql: &str, version: &str) -> Result<(), DriverError> {
-        let mut tx = self
-            .pool
-            .begin()
+        if version.contains('\'') || version.contains(';') {
+            return Err(DriverError::QueryFailed("invalid migration version".into()));
+        }
+        let batch =
+            format!("{down_sql}\n;\nDELETE FROM schema_migrations WHERE version = '{version}';");
+        sqlx::raw_sql(&batch)
+            .execute(&self.pool)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        sqlx::query(down_sql)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        sqlx::query("DELETE FROM schema_migrations WHERE version = $1")
-            .bind(version)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        tx.commit()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))
+        Ok(())
     }
 
     async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
@@ -150,6 +137,7 @@ impl DatabaseDriver for PostgresDriver {
         sql: &str,
         timeout_secs: u64,
         cancel: &CancelState,
+        max_rows: Option<usize>,
     ) -> Result<QueryOutput, DriverError> {
         let mut conn = self
             .pool
@@ -176,6 +164,7 @@ impl DatabaseDriver for PostgresDriver {
         let mut total_bytes: usize = 0;
         let mut truncated = false;
         let mut truncation_reason = None;
+        let effective_max_rows = max_rows.unwrap_or(MAX_RESULT_ROWS).min(MAX_RESULT_ROWS);
 
         while let Some(row) = stream
             .try_next()
@@ -184,9 +173,9 @@ impl DatabaseDriver for PostgresDriver {
         {
             let json = pg_row_to_json(&row);
             total_bytes += json.to_string().len();
-            if rows.len() >= MAX_RESULT_ROWS {
+            if rows.len() >= effective_max_rows {
                 truncated = true;
-                truncation_reason = Some(format!("max rows ({MAX_RESULT_ROWS})"));
+                truncation_reason = Some(format!("max rows ({effective_max_rows})"));
                 break;
             }
             if total_bytes >= MAX_RESULT_BYTES {
