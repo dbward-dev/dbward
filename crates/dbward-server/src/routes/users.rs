@@ -12,13 +12,24 @@ use crate::state::AppState;
 use super::map_error;
 
 pub async fn me(Extension(user): Extension<AuthUser>) -> (StatusCode, Json<serde_json::Value>) {
-    let role_names: Vec<&str> = user.roles.iter().map(|r| r.name.as_str()).collect();
+    let roles: Vec<serde_json::Value> = user
+        .roles
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "name": r.name,
+                "permissions": r.permissions.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+                "databases": r.databases.iter().map(|d| d.as_str()).collect::<Vec<_>>(),
+                "environments": r.environments.iter().map(|e| e.as_str()).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
     (
         StatusCode::OK,
         Json(serde_json::json!({
             "subject_id": user.subject_id,
             "subject_type": user.subject_type,
-            "roles": role_names,
+            "roles": roles,
             "groups": user.groups,
         })),
     )
