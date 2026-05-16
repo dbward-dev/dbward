@@ -14,6 +14,9 @@ pub struct AgentConfig {
     // TODO(v0.2): send to server during poll so lease = max(policy, agent_requested)
     pub lease_duration_secs: Option<u64>,
     pub operations: Option<Vec<String>>,
+    pub startup_retry_initial_ms: Option<u64>,
+    pub startup_retry_max_ms: Option<u64>,
+    pub startup_max_wait_secs: Option<u64>,
     pub server: ServerConfig,
     pub databases: HashMap<String, HashMap<String, DatabaseEntry>>,
 }
@@ -96,6 +99,18 @@ impl AgentConfig {
                 "migrate_status".into(),
             ]
         })
+    }
+
+    pub fn startup_retry_initial_ms(&self) -> u64 {
+        self.startup_retry_initial_ms.unwrap_or(1000)
+    }
+
+    pub fn startup_retry_max_ms(&self) -> u64 {
+        self.startup_retry_max_ms.unwrap_or(15000)
+    }
+
+    pub fn startup_max_wait_secs(&self) -> u64 {
+        self.startup_max_wait_secs.unwrap_or(0)
     }
 }
 

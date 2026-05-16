@@ -8,15 +8,21 @@ pub struct ProbeGuard {
 }
 
 impl ProbeGuard {
-    pub fn create(liveness: &str, readiness: &str) -> io::Result<Self> {
+    /// Create liveness probe only. Call `set_ready()` once startup completes.
+    pub fn create_liveness(liveness: &str, readiness: &str) -> io::Result<Self> {
         let liveness_path = PathBuf::from(liveness);
         let readiness_path = PathBuf::from(readiness);
         fs::write(&liveness_path, "")?;
-        fs::write(&readiness_path, "")?;
         Ok(Self {
             liveness_path,
             readiness_path,
         })
+    }
+
+    pub fn set_ready(&self) {
+        if let Err(e) = fs::write(&self.readiness_path, "") {
+            tracing::warn!(path = %self.readiness_path.display(), %e, "failed to create readiness probe");
+        }
     }
 
     pub fn remove_readiness(&self) {
@@ -24,7 +30,9 @@ impl ProbeGuard {
     }
 
     pub fn restore_readiness(&self) {
-        let _ = fs::write(&self.readiness_path, "");
+        if let Err(e) = fs::write(&self.readiness_path, "") {
+            tracing::warn!(path = %self.readiness_path.display(), %e, "failed to restore readiness probe");
+        }
     }
 }
 
@@ -41,18 +49,21 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn probe_guard_lifecycle() {
-        let live = "/tmp/dbward-test-alive";
-        let ready = "/tmp/dbward-test-ready";
+    fn probe_guard_liveness_only() {
+        let live = "/tmp/dbward-test-f1-alive";
+        let ready = "/tmp/dbward-test-f1-ready";
         {
-            let guard = ProbeGuard::create(live, ready).unwrap();
+            let guard = ProbeGuard::create_liveness(live, ready).unwrap();
             assert!(Path::new(live).exists());
+            assert!(!Path::new(ready).exists());
+            guard.set_ready();
             assert!(Path::new(ready).exists());
             guard.remove_readiness();
             assert!(!Path::new(ready).exists());
-            assert!(Path::new(live).exists());
+            guard.restore_readiness();
+            assert!(Path::new(ready).exists());
         }
-        // Drop removes liveness
         assert!(!Path::new(live).exists());
+        assert!(!Path::new(ready).exists());
     }
 }

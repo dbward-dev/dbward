@@ -23,12 +23,28 @@ use heartbeat::HeartbeatTask;
 use result::error_body;
 use token::ExecutionToken;
 
+pub type PoolMap = HashMap<(String, String), Arc<tokio::sync::RwLock<Arc<dyn DatabaseDriver>>>>;
+
 pub struct JobExecutor {
     pub client: Arc<AgentClient>,
     pub public_key: VerifyingKey,
-    pub pools: Arc<HashMap<(String, String), Arc<dyn DatabaseDriver>>>,
+    pub pools: Arc<PoolMap>,
     pub db_entries: Arc<HashMap<(String, String), DatabaseEntry>>,
     pub statement_timeout_secs: u64,
+    pub health_tx: tokio::sync::mpsc::UnboundedSender<PoolHealthEvent>,
+}
+
+/// Signals pool health from executor to runner.
+#[derive(Debug)]
+pub enum PoolHealthEvent {
+    ConnectivityError {
+        database: String,
+        environment: String,
+    },
+    Success {
+        database: String,
+        environment: String,
+    },
 }
 
 impl JobExecutor {
@@ -75,11 +91,34 @@ impl JobExecutor {
         token.verify(claim, &self.public_key)?;
 
         // Stage 3: Resolve
-        let driver = self.resolve_driver(claim)?;
+        let driver = self.resolve_driver(claim).await?;
         let operation = Operation::resolve(&claim.operation);
 
         // Stage 4: Execute with heartbeat
-        self.execute_with_heartbeat(claim, driver, &operation).await
+        let result = self
+            .execute_with_heartbeat(claim, &driver, &operation)
+            .await;
+
+        // Report health
+        let pool_key_db = claim.database.clone();
+        let pool_key_env = claim.environment.clone();
+        match &result {
+            Ok(_) => {
+                let _ = self.health_tx.send(PoolHealthEvent::Success {
+                    database: pool_key_db,
+                    environment: pool_key_env,
+                });
+            }
+            Err(AgentError::Driver(e)) if e.is_connectivity_error() => {
+                let _ = self.health_tx.send(PoolHealthEvent::ConnectivityError {
+                    database: pool_key_db,
+                    environment: pool_key_env,
+                });
+            }
+            _ => {}
+        }
+
+        result
     }
 
     async fn claim_job(&self, job_id: &str) -> Result<ClaimResponse, AgentError> {
@@ -93,17 +132,19 @@ impl JobExecutor {
         }
     }
 
-    fn resolve_driver(
+    async fn resolve_driver(
         &self,
         claim: &ClaimResponse,
-    ) -> Result<&Arc<dyn DatabaseDriver>, AgentError> {
+    ) -> Result<Arc<dyn DatabaseDriver>, AgentError> {
         let pool_key = (claim.database.clone(), claim.environment.clone());
-        self.pools.get(&pool_key).ok_or_else(|| {
+        let lock = self.pools.get(&pool_key).ok_or_else(|| {
             AgentError::Config(format!(
                 "no pool for database={} environment={}",
                 claim.database, claim.environment
             ))
-        })
+        })?;
+        let driver = lock.read().await.clone();
+        Ok(driver)
     }
 
     async fn execute_with_heartbeat(

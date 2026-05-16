@@ -172,14 +172,37 @@ docker run -d \
   dbward agent --config /etc/dbward/dbward-agent.toml
 ```
 
-## Startup validation
+## Startup and resilience
 
 On startup, the agent:
-1. Validates the config file
-2. Tests connectivity to each configured database
-3. Registers with the server (first poll)
+1. Creates a **liveness probe** immediately (`/tmp/dbward-agent-alive`)
+2. Retries connecting to the server (fetch public key + initial poll)
+3. Retries connecting to each configured database
+4. Once all prerequisites pass, creates a **readiness probe** (`/tmp/dbward-agent-ready`)
 
-If database connectivity fails, the agent exits with an error. Fix the connection and restart.
+If the server or database is temporarily unavailable, the agent retries with exponential backoff (1s → 2s → 4s → 8s → 15s cap) instead of exiting. This prevents CrashLoopBackOff in Kubernetes when services start simultaneously.
+
+**Hard errors** cause immediate exit (no retry):
+- Authentication failures (wrong token, wrong DB password)
+- Invalid configuration (unsupported URL scheme, 4xx from server)
+
+**Transient errors** are retried:
+- Connection refused, timeouts, DNS failures, 5xx responses
+
+### Runtime resilience
+
+During normal operation:
+- If the server becomes unreachable, the agent stops accepting new jobs (readiness removed) but stays alive and retries
+- If a database connection is lost during job execution, the agent enters **degraded mode**: stops accepting jobs, attempts reconnection every poll interval, and resumes when connectivity is restored
+- SIGTERM/SIGINT triggers graceful shutdown at any phase (including during startup retries)
+
+### Configuration
+
+```toml
+startup_retry_initial_ms = 1000   # Initial retry delay (default: 1000)
+startup_retry_max_ms = 15000      # Max retry delay cap (default: 15000)
+startup_max_wait_secs = 0         # 0 = retry forever (default), >0 = exit after N seconds
+```
 
 ## Graceful shutdown
 

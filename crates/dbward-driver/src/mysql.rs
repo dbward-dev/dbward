@@ -31,9 +31,19 @@ impl MysqlDriver {
         let pool = opts
             .connect(url)
             .await
-            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+            .map_err(classify_mysql_connect_error)?;
         Ok(Self { pool })
     }
+}
+
+fn classify_mysql_connect_error(e: sqlx::Error) -> DriverError {
+    if let sqlx::Error::Database(ref db_err) = e
+        && let Some(code) = db_err.code()
+        && code == "1045"
+    {
+        return DriverError::AuthenticationFailed(e.to_string());
+    }
+    DriverError::ConnectionFailed(e.to_string())
 }
 
 #[async_trait::async_trait]
