@@ -23,6 +23,7 @@ pub async fn run_execute(
     idempotency_key: Option<&str>,
     share_with: &[String],
     no_store: bool,
+    result_format: ResultFormat,
 ) -> Result<(), CliError> {
     if emergency && reason.is_none() {
         return Err(CliError::Config("--emergency requires --reason".into()));
@@ -68,7 +69,7 @@ pub async fn run_execute(
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                print_execution_result(&result);
+                print_execution_result_formatted(&result, result_format);
             }
             save_result(&request_id, &result, output, no_save);
         }

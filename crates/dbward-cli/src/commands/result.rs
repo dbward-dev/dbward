@@ -1,12 +1,18 @@
 use clap::Subcommand;
 
+use crate::display::{ResultFormat, print_execution_result_formatted};
 use crate::error::CliError;
 use crate::server_client::ServerClient;
 
 #[derive(Subcommand)]
 pub enum ResultAction {
     List,
-    Get { id: String },
+    Get {
+        id: String,
+        /// Result display format
+        #[arg(long, value_enum, default_value = "table")]
+        result_format: ResultFormat,
+    },
 }
 
 pub async fn run_result(
@@ -42,9 +48,21 @@ pub async fn run_result(
             }
             Ok(())
         }
-        ResultAction::Get { ref id } => {
+        ResultAction::Get {
+            ref id,
+            result_format,
+        } => {
             let body = sc.get_result_content(id).await?;
-            println!("{}", serde_json::to_string_pretty(&body)?);
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&body)?);
+            } else {
+                let resp = if body.get("success").is_some() {
+                    body
+                } else {
+                    serde_json::json!({"success": true, "result": body})
+                };
+                print_execution_result_formatted(&resp, result_format);
+            }
             Ok(())
         }
     }

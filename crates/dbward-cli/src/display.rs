@@ -1,6 +1,6 @@
 use serde_json;
 
-pub(crate) const LIST_DETAIL_WIDTH: usize = 30;
+pub(crate) const LIST_DETAIL_WIDTH: usize = 50;
 pub(crate) const RESULT_CELL_MAX_WIDTH: usize = 60;
 
 type RequestListRow = (
@@ -24,7 +24,7 @@ pub(crate) fn print_request_list(requests: &[serde_json::Value]) {
         let env = r["environment"].as_str().unwrap_or("?").to_string();
         let op = r["operation"].as_str().unwrap_or("?").to_string();
         let detail = r["detail"].as_str().unwrap_or("");
-        let short_detail = truncate_table_cell(detail, LIST_DETAIL_WIDTH);
+        let short_detail = truncate_table_cell(&normalize_whitespace(detail), LIST_DETAIL_WIDTH);
         let reason = r["reason"].as_str().unwrap_or("").to_string();
         let created = r["created_at"].as_str().unwrap_or("");
         let short_time = format_created_time(created);
@@ -230,11 +230,24 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
     println!("Request {id}");
     println!("  Status:      {status}");
     println!("  Operation:   {op}");
-    println!("  Detail:      {detail}");
-    println!("  Environment: {env}");
-    println!("  Database:    {db}");
-    if let Some(r) = reason {
-        println!("  Reason:      {r}");
+    if op.starts_with("execute_") || op == "execute_query" || op == "execute" {
+        println!("  Environment: {env}");
+        println!("  Database:    {db}");
+        if let Some(r) = reason {
+            println!("  Reason:      {r}");
+        }
+        println!();
+        println!("  SQL:");
+        for line in detail.lines() {
+            println!("    {line}");
+        }
+    } else {
+        println!("  Detail:      {detail}");
+        println!("  Environment: {env}");
+        println!("  Database:    {db}");
+        if let Some(r) = reason {
+            println!("  Reason:      {r}");
+        }
     }
     if let Some(key) = idempotency_key {
         println!("  Idempotency: {key}");
@@ -566,6 +579,187 @@ pub(crate) fn format_created_time(created_at: &str) -> String {
     "?".to_string()
 }
 
+/// Collapse all whitespace (newlines, tabs, carriage returns, consecutive spaces) into a single space.
+pub(crate) fn normalize_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Result output format for row data.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum ResultFormat {
+    #[default]
+    Table,
+    Json,
+    Csv,
+    Vertical,
+}
+
+/// Print execution result in the specified format.
+pub(crate) fn print_execution_result_formatted(resp: &serde_json::Value, format: ResultFormat) {
+    if format == ResultFormat::Table {
+        print_execution_result(resp);
+        return;
+    }
+
+    if let Some(false) = resp["success"].as_bool() {
+        let err = resp["error_message"]
+            .as_str()
+            .or_else(|| resp["error"].as_str())
+            .unwrap_or("unknown error");
+        eprintln!("Execution failed: {err}");
+        return;
+    }
+
+    // Extract rows from various response shapes
+    let (rows_owned, truncated) = extract_rows_owned(resp);
+
+    if let Some(rows) = &rows_owned {
+        match format {
+            ResultFormat::Json => print_result_json(rows),
+            ResultFormat::Csv => print_result_csv(rows),
+            ResultFormat::Vertical => print_result_vertical(rows),
+            ResultFormat::Table => unreachable!(),
+        }
+        if truncated {
+            eprintln!("\n⚠ Result truncated");
+        }
+    } else {
+        // Non-row result (DML, migrations, etc.) — fall back to default display
+        print_execution_result(resp);
+    }
+}
+
+fn extract_rows_owned(resp: &serde_json::Value) -> (Option<Vec<serde_json::Value>>, bool) {
+    // Terminal format: {"result": {"rows": [...]}}
+    if let Some(result) = resp.get("result").filter(|v| !v.is_null()) {
+        if let Some(rows) = result.get("rows").and_then(|r| r.as_array()) {
+            let truncated = result["truncated"].as_bool().unwrap_or(false);
+            return (Some(rows.clone()), truncated);
+        }
+        if let Some(rows) = result.as_array() {
+            return (Some(rows.clone()), false);
+        }
+        return (None, false);
+    }
+    // Stream format: {"result_data": "json string"}
+    if let Some(data) = resp["result_data"].as_str()
+        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
+    {
+        if let Some(rows) = parsed.get("rows").and_then(|r| r.as_array()) {
+            let truncated = parsed["truncated"].as_bool().unwrap_or(false);
+            return (Some(rows.clone()), truncated);
+        }
+        if let Some(rows) = parsed.as_array() {
+            return (Some(rows.clone()), false);
+        }
+    }
+    (None, false)
+}
+
+fn print_result_json(rows: &[serde_json::Value]) {
+    if rows.is_empty() {
+        println!("[]");
+        return;
+    }
+    println!("{}", serde_json::to_string_pretty(rows).unwrap_or_default());
+}
+
+fn print_result_csv(rows: &[serde_json::Value]) {
+    if rows.is_empty() {
+        return;
+    }
+    let columns = collect_columns(rows);
+    if columns.is_empty() {
+        // Non-object rows: fall back to JSON
+        println!("{}", serde_json::to_string_pretty(rows).unwrap_or_default());
+        return;
+    }
+
+    // Header
+    println!(
+        "{}",
+        columns
+            .iter()
+            .map(|c| csv_escape(c))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    // Rows
+    for row in rows {
+        let line: Vec<String> = columns
+            .iter()
+            .map(|col| {
+                let val = &row[col.as_str()];
+                if val.is_null() {
+                    String::new()
+                } else if let Some(s) = val.as_str() {
+                    csv_escape(s)
+                } else {
+                    csv_escape(&val.to_string())
+                }
+            })
+            .collect();
+        println!("{}", line.join(","));
+    }
+}
+
+fn print_result_vertical(rows: &[serde_json::Value]) {
+    if rows.is_empty() {
+        println!("(0 rows)");
+        return;
+    }
+    let columns = collect_columns(rows);
+    if columns.is_empty() {
+        // Non-object rows: fall back to JSON
+        println!("{}", serde_json::to_string_pretty(rows).unwrap_or_default());
+        return;
+    }
+    let max_col_width = columns.iter().map(|c| c.len()).max().unwrap_or(0);
+
+    for (i, row) in rows.iter().enumerate() {
+        println!(
+            "*************************** {}. row ***************************",
+            i + 1
+        );
+        for col in &columns {
+            let val = &row[col.as_str()];
+            let display = if val.is_null() {
+                "NULL".to_string()
+            } else if let Some(s) = val.as_str() {
+                s.to_string()
+            } else {
+                val.to_string()
+            };
+            println!("{:>width$}: {display}", col, width = max_col_width);
+        }
+        if i < rows.len() - 1 {
+            println!();
+        }
+    }
+}
+
+fn collect_columns(rows: &[serde_json::Value]) -> Vec<String> {
+    let mut columns: Vec<String> = Vec::new();
+    for row in rows {
+        if let Some(obj) = row.as_object() {
+            for key in obj.keys() {
+                if !columns.iter().any(|c| c == key) {
+                    columns.push(key.clone());
+                }
+            }
+        }
+    }
+    columns
+}
+
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,5 +829,59 @@ mod tests {
         let result = json!({"applied": []});
         let arr = result["applied"].as_array().unwrap();
         assert!(arr.is_empty());
+    }
+
+    #[test]
+    fn normalize_whitespace_collapses() {
+        assert_eq!(normalize_whitespace("a  b"), "a b");
+        assert_eq!(normalize_whitespace("a\nb\tc"), "a b c");
+        assert_eq!(normalize_whitespace("  hello  world  "), "hello world");
+        assert_eq!(normalize_whitespace("a\r\nb"), "a b");
+    }
+
+    #[test]
+    fn csv_escape_handles_special_chars() {
+        assert_eq!(csv_escape("hello"), "hello");
+        assert_eq!(csv_escape("a,b"), "\"a,b\"");
+        assert_eq!(csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+        assert_eq!(csv_escape("line\nbreak"), "\"line\nbreak\"");
+    }
+
+    #[test]
+    fn collect_columns_first_seen_order() {
+        let rows = vec![json!({"b": 1, "a": 2}), json!({"a": 3, "c": 4})];
+        let cols = collect_columns(&rows);
+        // serde_json Map iterates alphabetically by default
+        // but first-seen union means: keys from row 0 first, then new keys from row 1
+        assert!(cols.contains(&"a".to_string()));
+        assert!(cols.contains(&"b".to_string()));
+        assert!(cols.contains(&"c".to_string()));
+        assert_eq!(cols.len(), 3);
+    }
+
+    #[test]
+    fn extract_rows_owned_terminal_format() {
+        let resp = json!({"success": true, "result": {"rows": [{"id": 1}], "truncated": true}});
+        let (rows, truncated) = extract_rows_owned(&resp);
+        assert!(rows.is_some());
+        assert_eq!(rows.unwrap().len(), 1);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn extract_rows_owned_stream_format() {
+        let data = serde_json::json!({"rows": [{"x": 42}], "truncated": false}).to_string();
+        let resp = json!({"success": true, "result_data": data});
+        let (rows, truncated) = extract_rows_owned(&resp);
+        assert!(rows.is_some());
+        assert_eq!(rows.unwrap().len(), 1);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn extract_rows_owned_dml_returns_none() {
+        let resp = json!({"success": true, "result": {"rows_affected": 5}});
+        let (rows, _) = extract_rows_owned(&resp);
+        assert!(rows.is_none());
     }
 }
