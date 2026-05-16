@@ -574,16 +574,24 @@ fn compute_queue_hint(
         return Some("no_agents");
     }
 
+    // Offline takes priority — agent is truly gone
+    let all_offline = eligible
+        .iter()
+        .all(|a| a.derived_status(now) == AgentDerivedStatus::Offline);
+    if all_offline {
+        return Some("no_agents");
+    }
+
+    // Draining — agent is alive but refusing new work
     let all_draining = eligible.iter().all(|a| a.status == AgentStatus::Draining);
     if all_draining {
         return Some("agents_draining");
     }
 
-    let all_saturated_or_offline = eligible.iter().all(|a| {
-        let ds = a.derived_status(now);
-        ds == AgentDerivedStatus::Saturated || ds == AgentDerivedStatus::Offline
-    });
-    if all_saturated_or_offline {
+    let all_saturated = eligible
+        .iter()
+        .all(|a| a.derived_status(now) == AgentDerivedStatus::Saturated);
+    if all_saturated {
         return Some("agents_saturated");
     }
 
