@@ -25,6 +25,14 @@ pub struct DatabaseCapability {
     pub environment: Environment,
 }
 
+/// A job currently being executed by an agent (stored as snapshot).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActiveJobEntry {
+    pub request_id: String,
+    pub operation: String,
+    pub elapsed_secs: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent {
     pub id: String,
@@ -33,6 +41,8 @@ pub struct Agent {
     pub status: AgentStatus,
     pub max_concurrent: u32,
     pub in_flight: u32,
+    pub uptime_secs: u64,
+    pub active_jobs: Vec<ActiveJobEntry>,
     pub lease_duration_secs: Option<u64>,
     pub last_seen: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -68,6 +78,8 @@ mod tests {
             status,
             max_concurrent: 2,
             in_flight,
+            uptime_secs: 0,
+            active_jobs: vec![],
             last_seen: last_seen_secs_ago.map(|s| now - Duration::seconds(s)),
             created_at: now,
             lease_duration_secs: None,

@@ -1427,6 +1427,9 @@ fn agent_full_flow_poll_claim_heartbeat() {
                 limit: None,
                 in_flight: 0,
                 max_concurrent: 1,
+                draining: false,
+                uptime_secs: 0,
+                active_jobs: vec![],
             },
             &agent,
         )

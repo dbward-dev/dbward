@@ -503,6 +503,8 @@ fn execution_tracking_cross_repo() {
         status: AgentStatus::Active,
         max_concurrent: 2,
         in_flight: 0,
+        uptime_secs: 0,
+        active_jobs: vec![],
         last_seen: Some(Utc::now()),
         created_at: Utc::now(),
     };
@@ -1905,6 +1907,8 @@ fn agent_get_and_list() {
         status: AgentStatus::Active,
         max_concurrent: 2,
         in_flight: 0,
+        uptime_secs: 0,
+        active_jobs: vec![],
         last_seen: Some(Utc::now()),
         created_at: Utc::now(),
     };

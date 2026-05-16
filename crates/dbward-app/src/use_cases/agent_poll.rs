@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission};
-use dbward_domain::entities::{Agent, AgentStatus, AuditEvent, DatabaseCapability};
+use dbward_domain::entities::{ActiveJobEntry, Agent, AgentStatus, AuditEvent, DatabaseCapability};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::error::AppError;
@@ -21,6 +21,9 @@ pub struct AgentPollInput {
     pub limit: Option<u32>,
     pub in_flight: u32,
     pub max_concurrent: u32,
+    pub draining: bool,
+    pub uptime_secs: u64,
+    pub active_jobs: Vec<ActiveJobEntry>,
 }
 
 pub struct AgentPollOutput {
@@ -65,9 +68,15 @@ impl AgentPoll {
             id: user.subject_id.clone(),
             token_id: user.token_id.clone().unwrap_or_default(),
             databases: input.capabilities.clone(),
-            status: AgentStatus::Active,
+            status: if input.draining {
+                AgentStatus::Draining
+            } else {
+                AgentStatus::Active
+            },
             max_concurrent: input.max_concurrent,
             in_flight: input.in_flight,
+            uptime_secs: input.uptime_secs,
+            active_jobs: input.active_jobs,
             last_seen: Some(now),
             created_at: now,
             lease_duration_secs: None,

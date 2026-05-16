@@ -23,21 +23,25 @@ impl AgentRepo for SqliteAgentRepo {
         let conn = self.conn.lock().unwrap();
         let databases_json = serde_json::to_string(&agent.databases)
             .map_err(|e| AppError::Internal(e.to_string()))?;
+        let active_jobs_json = serde_json::to_string(&agent.active_jobs)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         let status = agent_status_str(agent.status);
         let last_seen = agent.last_seen.map(|t| t.to_rfc3339());
         let created_at = agent.created_at.to_rfc3339();
 
         conn.execute(
-            "INSERT INTO agents (id, token_id, databases_json, status, max_concurrent, in_flight, last_seen_at, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO agents (id, token_id, databases_json, status, max_concurrent, in_flight, uptime_secs, active_jobs_json, last_seen_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(id) DO UPDATE SET
                token_id = excluded.token_id,
                databases_json = excluded.databases_json,
                status = excluded.status,
                max_concurrent = excluded.max_concurrent,
                in_flight = excluded.in_flight,
+               uptime_secs = excluded.uptime_secs,
+               active_jobs_json = excluded.active_jobs_json,
                last_seen_at = excluded.last_seen_at",
-            params![agent.id, agent.token_id, databases_json, status, agent.max_concurrent, agent.in_flight, last_seen, created_at],
+            params![agent.id, agent.token_id, databases_json, status, agent.max_concurrent, agent.in_flight, agent.uptime_secs as i64, active_jobs_json, last_seen, created_at],
         ).map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(())
     }
@@ -45,7 +49,7 @@ impl AgentRepo for SqliteAgentRepo {
     fn get(&self, agent_id: &str) -> Result<Option<Agent>, AppError> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, token_id, databases_json, status, max_concurrent, in_flight, last_seen_at, created_at FROM agents WHERE id = ?1",
+            "SELECT id, token_id, databases_json, status, max_concurrent, in_flight, uptime_secs, active_jobs_json, last_seen_at, created_at FROM agents WHERE id = ?1",
             params![agent_id],
             |row| {
                 Ok(AgentRow {
@@ -55,8 +59,10 @@ impl AgentRepo for SqliteAgentRepo {
                     status: row.get(3)?,
                     max_concurrent: row.get(4)?,
                     in_flight: row.get(5)?,
-                    last_seen_at: row.get::<_, Option<String>>(6)?,
-                    created_at: row.get(7)?,
+                    uptime_secs: row.get(6)?,
+                    active_jobs_json: row.get(7)?,
+                    last_seen_at: row.get::<_, Option<String>>(8)?,
+                    created_at: row.get(9)?,
                 })
             },
         )
@@ -69,7 +75,7 @@ impl AgentRepo for SqliteAgentRepo {
     fn list(&self) -> Result<Vec<Agent>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, token_id, databases_json, status, max_concurrent, in_flight, last_seen_at, created_at FROM agents ORDER BY last_seen_at DESC",
+            "SELECT id, token_id, databases_json, status, max_concurrent, in_flight, uptime_secs, active_jobs_json, last_seen_at, created_at FROM agents ORDER BY last_seen_at DESC",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
         let rows = stmt
             .query_map([], |row| {
@@ -80,8 +86,10 @@ impl AgentRepo for SqliteAgentRepo {
                     status: row.get(3)?,
                     max_concurrent: row.get(4)?,
                     in_flight: row.get(5)?,
-                    last_seen_at: row.get::<_, Option<String>>(6)?,
-                    created_at: row.get(7)?,
+                    uptime_secs: row.get(6)?,
+                    active_jobs_json: row.get(7)?,
+                    last_seen_at: row.get::<_, Option<String>>(8)?,
+                    created_at: row.get(9)?,
                 })
             })
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -635,6 +643,8 @@ struct AgentRow {
     status: String,
     max_concurrent: u32,
     in_flight: u32,
+    uptime_secs: i64,
+    active_jobs_json: String,
     last_seen_at: Option<String>,
     created_at: String,
 }
@@ -642,6 +652,8 @@ struct AgentRow {
 fn row_to_agent(r: AgentRow) -> Result<Agent, AppError> {
     let databases: Vec<DatabaseCapability> =
         serde_json::from_str(&r.databases_json).map_err(|e| AppError::Internal(e.to_string()))?;
+    let active_jobs: Vec<ActiveJobEntry> =
+        serde_json::from_str(&r.active_jobs_json).unwrap_or_default();
     Ok(Agent {
         id: r.id,
         token_id: r.token_id,
@@ -649,6 +661,8 @@ fn row_to_agent(r: AgentRow) -> Result<Agent, AppError> {
         status: parse_agent_status(&r.status)?,
         max_concurrent: r.max_concurrent,
         in_flight: r.in_flight,
+        uptime_secs: r.uptime_secs as u64,
+        active_jobs,
         last_seen: parse_dt_opt(r.last_seen_at)?,
         created_at: parse_dt(&r.created_at)?,
         lease_duration_secs: None,
