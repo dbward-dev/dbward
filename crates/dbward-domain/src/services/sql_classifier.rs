@@ -291,7 +291,8 @@ fn classify_statement(stmt: &Statement) -> InternalClass {
         | Statement::Drop { .. }
         | Statement::Grant(_)
         | Statement::Revoke(_) => InternalClass::Rejected(
-            "DDL statements (CREATE, ALTER, DROP, GRANT, REVOKE) are not allowed; use migrations"
+            "DDL statements (CREATE, ALTER, DROP, GRANT, REVOKE) are not allowed. \
+             Use 'dbward migrate create <name>' to generate a migration file, then 'dbward migrate up'."
                 .into(),
         ),
 
