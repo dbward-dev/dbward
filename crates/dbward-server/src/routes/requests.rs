@@ -486,7 +486,7 @@ pub async fn get_result(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
-) -> ApiResult {
+) -> Result<axum::http::Response<axum::body::Body>, (StatusCode, Json<serde_json::Value>)> {
     let uc = get_result::GetResult {
         authorizer: state.authorizer.clone(),
         request_reader: state.request_reader.clone(),
@@ -500,10 +500,14 @@ pub async fn get_result(
 
     match uc.execute(input, &user).await {
         Ok(out) => {
-            // Return stored data as JSON directly
-            let json_value: serde_json::Value = serde_json::from_slice(&out.data)
-                .unwrap_or_else(|_| json!({"raw": crate::util::base64_encode(&out.data)}));
-            Ok((StatusCode::OK, Json(json_value)))
+            let mut builder =
+                axum::http::Response::builder().header("content-type", "application/octet-stream");
+            if let Some(len) = out.stream.content_length {
+                builder = builder.header("content-length", len);
+            }
+            Ok(builder
+                .body(axum::body::Body::from_stream(out.stream.stream))
+                .unwrap())
         }
         Err(e) => Err(map_error(e)),
     }

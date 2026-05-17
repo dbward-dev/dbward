@@ -20,7 +20,7 @@ pub struct GetResultInput {
 }
 
 pub struct GetResultOutput {
-    pub data: Vec<u8>,
+    pub stream: ResultStream,
 }
 
 impl GetResult {
@@ -125,13 +125,16 @@ impl GetResult {
         }
 
         let key = format!("results/{}/{}", input.request_id, execution.id);
-        let data = self
+        let stream = self
             .result_store
-            .get(&key)
+            .get_stream(&key)
             .await
-            .map_err(|_| AppError::NotFound("result not found in storage".into()))?;
+            .map_err(|e| match &e {
+                AppError::NotFound(_) => e,
+                _ => AppError::Internal(format!("failed to read result from storage: {e}")),
+            })?;
 
-        Ok(GetResultOutput { data })
+        Ok(GetResultOutput { stream })
     }
 }
 
@@ -262,14 +265,39 @@ mod tests {
     }
     #[async_trait]
     impl ResultStore for FakeResultStore {
-        async fn put(&self, _: &str, _: &[u8]) -> Result<(), AppError> {
+        async fn put(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: crate::ports::PutOptions,
+        ) -> Result<(), AppError> {
             Ok(())
         }
-        async fn get(&self, _: &str) -> Result<Vec<u8>, AppError> {
-            Ok(self.data.lock().unwrap().clone())
+        async fn get_stream(&self, _: &str) -> Result<crate::ports::ResultStream, AppError> {
+            let data = self.data.lock().unwrap().clone();
+            let len = data.len() as u64;
+            let chunk = bytes::Bytes::from(data);
+            let stream: futures_core::stream::BoxStream<'static, Result<bytes::Bytes, AppError>> =
+                Box::pin(OnceStream(Some(Ok(chunk))));
+            Ok(crate::ports::ResultStream {
+                content_length: Some(len),
+                stream,
+            })
         }
         async fn delete(&self, _: &str) -> Result<(), AppError> {
             Ok(())
+        }
+    }
+
+    /// Minimal single-item stream for tests.
+    struct OnceStream(Option<Result<bytes::Bytes, AppError>>);
+    impl futures_core::Stream for OnceStream {
+        type Item = Result<bytes::Bytes, AppError>;
+        fn poll_next(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            std::task::Poll::Ready(self.0.take())
         }
     }
 

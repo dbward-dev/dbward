@@ -467,7 +467,19 @@ impl ServerClient {
             .send()
             .await
             .map_err(|e| CliError::Server(format!("get result: {e}")))?;
-        self.parse_response(resp, "get result content").await
+        check_version_header(&resp);
+        let status = resp.status();
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| CliError::Server(format!("get result content: {e}")))?;
+        if !status.is_success() {
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            return Err(ServerError::from_response(status.as_u16(), text)
+                .into_cli_error("get result content"));
+        }
+        serde_json::from_slice(&bytes)
+            .map_err(|e| CliError::Server(format!("get result content: invalid JSON: {e}")))
     }
 
     pub async fn list_results(&self) -> Result<Value, CliError> {

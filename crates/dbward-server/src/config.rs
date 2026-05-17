@@ -156,6 +156,12 @@ pub struct ResultStorageConfig {
     pub bucket: Option<String>,
     pub region: Option<String>,
     pub endpoint: Option<String>,
+    pub access_key_id: Option<String>,
+    pub secret_access_key: Option<String>,
+    #[serde(default)]
+    pub path_style: bool,
+    #[serde(default)]
+    pub prefix: Option<String>,
     #[serde(default = "default_max_persist_bytes")]
     pub max_persist_bytes: usize,
 }

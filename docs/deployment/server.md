@@ -94,6 +94,39 @@ region = "us-east-1"
 # endpoint = "http://minio:9000"  # For S3-compatible storage
 ```
 
+#### S3 configuration options
+
+| Field | Description | Default |
+|---|---|---|
+| `bucket` | S3 bucket name | `dbward` |
+| `region` | AWS region | `us-east-1` |
+| `endpoint` | Custom endpoint (MinIO, LocalStack) | — |
+| `access_key_id` | AWS access key (falls back to env/instance role) | — |
+| `secret_access_key` | AWS secret key | — |
+| `path_style` | Use path-style URLs (required for MinIO) | `false` |
+| `prefix` | Key prefix for all objects (e.g. `prod/`) | — |
+
+#### S3 Lifecycle Policy (recommended)
+
+Configure an S3 Lifecycle Rule as a safety net for expired results.
+dbward tags each stored result with `dbward-expires` containing the RFC 3339 expiry timestamp.
+The background job deletes expired results, but a lifecycle rule provides defense-in-depth:
+
+```json
+{
+  "Rules": [
+    {
+      "ID": "dbward-result-expiry",
+      "Filter": { "Prefix": "results/" },
+      "Status": "Enabled",
+      "Expiration": { "Days": 91 }
+    }
+  ]
+}
+```
+
+Set `Expiration.Days` to `retention_days + 1` (default retention is 30 days for Free, configurable via result policies for Pro).
+
 ### Webhooks
 
 ```toml

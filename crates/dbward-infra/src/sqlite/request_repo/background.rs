@@ -122,10 +122,4 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
         ).map_err(map_err)?;
         Ok(n as u32)
     }
-    fn wal_checkpoint(&self) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
-            .map_err(map_err)?;
-        Ok(())
-    }
 }

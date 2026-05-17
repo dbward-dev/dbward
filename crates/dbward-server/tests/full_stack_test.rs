@@ -75,14 +75,28 @@ impl RoleResolver for TestRoleResolver {
 struct TestResultStore;
 #[async_trait]
 impl ResultStore for TestResultStore {
-    async fn put(&self, _: &str, _: &[u8]) -> Result<(), AppError> {
+    async fn put(&self, _: &str, _: &[u8], _: PutOptions) -> Result<(), AppError> {
         Ok(())
     }
-    async fn get(&self, _: &str) -> Result<Vec<u8>, AppError> {
-        Ok(vec![])
+    async fn get_stream(&self, _: &str) -> Result<ResultStream, AppError> {
+        Ok(ResultStream {
+            content_length: Some(0),
+            stream: Box::pin(EmptyResultStream),
+        })
     }
     async fn delete(&self, _: &str) -> Result<(), AppError> {
         Ok(())
+    }
+}
+
+struct EmptyResultStream;
+impl futures_core::Stream for EmptyResultStream {
+    type Item = Result<bytes::Bytes, AppError>;
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        std::task::Poll::Ready(None)
     }
 }
 
@@ -230,6 +244,7 @@ fn real_state() -> AppState {
         auth_mode: "token".into(),
         default_approval_ttl_secs: Some(3600),
         max_persist_bytes: 10 * 1024 * 1024,
+        storage_backend: "local".into(),
     }
 }
 

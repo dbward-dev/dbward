@@ -657,8 +657,10 @@ name = "dbward-app"
 version = "0.1.1"
 dependencies = [
  "async-trait",
+ "bytes",
  "chrono",
  "dbward-domain",
+ "futures-core",
  "hex",
  "serde_json",
  "sha2",
@@ -703,6 +705,7 @@ dependencies = [
  "dbward-app",
  "dbward-domain",
  "ed25519-dalek",
+ "futures-util",
  "hex",
  "hmac",
  "jsonwebtoken",
@@ -745,12 +748,14 @@ version = "0.1.1"
 dependencies = [
  "async-trait",
  "axum",
+ "bytes",
  "chrono",
  "clap",
  "dbward-api-types",
  "dbward-app",
  "dbward-domain",
  "dbward-infra",
+ "futures-core",
  "http-body-util",
  "hyper",
  "ipnet",

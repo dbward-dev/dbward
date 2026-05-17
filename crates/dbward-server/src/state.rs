@@ -50,6 +50,7 @@ pub struct AppState {
     pub default_approval_ttl_secs: Option<u64>,
     pub max_persist_bytes: usize,
     pub auth_mode: String,
+    pub storage_backend: String,
     // Shutdown
     pub draining: Arc<AtomicBool>,
 }

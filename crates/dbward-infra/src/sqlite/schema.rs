@@ -33,12 +33,29 @@ ALTER TABLE agents ADD COLUMN active_jobs_json TEXT NOT NULL DEFAULT '[]';
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
-        "PRAGMA journal_mode = WAL;
-         PRAGMA busy_timeout = 5000;
-         PRAGMA synchronous = NORMAL;
-         PRAGMA wal_autocheckpoint = 0;
+        "PRAGMA locking_mode = NORMAL;
+         PRAGMA synchronous = FULL;
+         PRAGMA busy_timeout = 10000;
          PRAGMA foreign_keys = ON;",
     )?;
+
+    // journal_mode must be verified — if the DB was previously WAL and another
+    // process holds it open, the mode change silently fails.
+    // Skip for in-memory databases (they only support "memory" journal mode).
+    let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
+    if mode != "memory" && mode != "persist" {
+        conn.execute_batch("PRAGMA journal_mode = PERSIST;")?;
+        let actual: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
+        if actual != "persist" {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
+                Some(format!(
+                    "failed to set journal_mode=persist (got '{actual}'). \
+                     Another process may hold the database open in WAL mode."
+                )),
+            ));
+        }
+    }
 
     let current: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     if current == 0 {

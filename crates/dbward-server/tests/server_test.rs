@@ -250,9 +250,6 @@ impl BackgroundTaskRepo for StubRequestRepo {
     fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
         Ok(0)
     }
-    fn wal_checkpoint(&self) -> Result<(), AppError> {
-        Ok(())
-    }
 }
 
 struct StubAgentRepo;
@@ -571,14 +568,28 @@ impl PolicyEvaluator for StubPolicyEvaluator {
 struct StubResultStore;
 #[async_trait]
 impl ResultStore for StubResultStore {
-    async fn put(&self, _: &str, _: &[u8]) -> Result<(), AppError> {
+    async fn put(&self, _: &str, _: &[u8], _: PutOptions) -> Result<(), AppError> {
         Ok(())
     }
-    async fn get(&self, _: &str) -> Result<Vec<u8>, AppError> {
-        Ok(vec![])
+    async fn get_stream(&self, _: &str) -> Result<ResultStream, AppError> {
+        Ok(ResultStream {
+            content_length: Some(0),
+            stream: Box::pin(EmptyResultStream),
+        })
     }
     async fn delete(&self, _: &str) -> Result<(), AppError> {
         Ok(())
+    }
+}
+
+struct EmptyResultStream;
+impl futures_core::Stream for EmptyResultStream {
+    type Item = Result<bytes::Bytes, AppError>;
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        std::task::Poll::Ready(None)
     }
 }
 
@@ -699,6 +710,7 @@ fn test_state() -> AppState {
         default_approval_ttl_secs: Some(3600),
         max_persist_bytes: 10 * 1024 * 1024,
         auth_mode: "both".to_string(),
+        storage_backend: "local".into(),
     }
 }
 
