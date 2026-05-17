@@ -31,7 +31,7 @@ SERVER_URL="${SERVER_URL:-http://localhost:13000}"
 LAST_RESPONSE_BODY=""
 
 # Ensure summary is printed even on set -e failure
-trap 'echo ""; echo "=== Results: $PASS passed, $FAIL failed (interrupted) ==="; [ $FAIL -gt 0 ] && show_server_logs 20' EXIT
+trap 'cleanup_tokens; echo ""; echo "=== Results: $PASS passed, $FAIL failed (interrupted) ==="; [ $FAIL -gt 0 ] && show_server_logs 20' EXIT
 
 # API call helper — stores response body for failure reporting
 api() {
@@ -118,6 +118,8 @@ show_server_logs() {
 }
 
 # Create API token via dbward-server CLI (PR#16+ format)
+# Tracks created tokens for cleanup via temp file
+CREATED_TOKENS_FILE=$(mktemp)
 create_token() {
   local user=$1 role=$2
   shift 2
@@ -129,15 +131,36 @@ create_token() {
       *) shift ;;
     esac
   done
-  docker compose exec -T dbward-server \
+  local output
+  output=$(docker compose exec -T dbward-server \
     dbward-server --data /data/dbward.db token create \
-    --user "$user" --role "$role" $extra_args 2>/dev/null \
-    | grep -o 'dbw_[a-z0-9]*'
+    --user "$user" --role "$role" $extra_args 2>&1)
+  local token
+  token=$(echo "$output" | grep -o 'dbw_[a-z0-9]*')
+  if [ -n "$token" ]; then
+    # Extract token ID from output for cleanup
+    local token_id
+    token_id=$(echo "$output" | sed -n 's/.*ID: \([a-f0-9-]*\).*/\1/p' | head -1)
+    [ -n "$token_id" ] && echo "$token_id" >> "$CREATED_TOKENS_FILE"
+  fi
+  echo "$token"
+}
+
+# Revoke all tokens created during this test run
+cleanup_tokens() {
+  if [ -z "${CREATED_TOKENS_FILE:-}" ] || [ ! -s "$CREATED_TOKENS_FILE" ]; then return; fi
+  while IFS= read -r token_id; do
+    docker compose exec -T dbward-server \
+      dbward-server --data /data/dbward.db token revoke \
+      --id "$token_id" 2>/dev/null || true
+  done < "$CREATED_TOKENS_FILE"
+  rm -f "$CREATED_TOKENS_FILE"
 }
 
 # Print summary and exit (disables trap to avoid double-print)
 summary() {
   trap - EXIT
+  cleanup_tokens
   echo ""
   echo "=== Results: $PASS passed, $FAIL failed ==="
   if [ $FAIL -gt 0 ]; then

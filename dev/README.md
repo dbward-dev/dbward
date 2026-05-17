@@ -9,6 +9,9 @@
 ## Quick Start
 
 ```bash
+# Generate dev secrets (one-time setup)
+./dev/scripts/dev-setup.sh
+
 # Start all services (server + agent + postgres + webhook-receiver)
 docker compose -f dev/compose.yml -f dev/compose.override.yml up -d --build
 
