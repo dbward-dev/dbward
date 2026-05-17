@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dbward-server-config
+  namespace: dbward
+data:
+  server.toml: |
+    [auth]
+    mode = "token"
+
+    [[databases]]
+    name = "app"
+    environments = ["production"]
+
+    [[workflows]]
+    database = "*"
+    environment = "production"
+    require_reason = true
+
+    [[workflows.steps]]
+    type = "approval"
+
+    [[workflows.steps.approvers]]
+    role = "admin"
+    min = 1
+
+    [result_storage]
+    backend = "local"
+    root_dir = "/data/results"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dbward-agent-config
+  namespace: dbward
+data:
+  agent.toml: |
+    agent_id = "prod-agent"
+    poll_interval_ms = 1000
+    max_concurrent_tasks = 4
+
+    [server]
+    url = "http://dbward-server:3000"
+    agent_token = "${DBWARD_AGENT_TOKEN}"
+
+    [databases.app.production]
+    url = "${DATABASE_URL}"

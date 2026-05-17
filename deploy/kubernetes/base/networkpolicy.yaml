@@ -1,0 +1,99 @@
+# Default deny all ingress and egress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: dbward
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow DNS resolution for all pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: dbward
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Server: allow inbound from agent + external (Ingress/LB)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: server-ingress
+  namespace: dbward
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dbward-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: dbward-agent
+      ports:
+        - port: 3000
+    - from:
+        - namespaceSelector: {}  # Allow from Ingress controller namespace
+      ports:
+        - port: 3000
+---
+# Server: allow egress to webhooks, S3, OIDC providers
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: server-egress
+  namespace: dbward
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dbward-server
+  policyTypes:
+    - Egress
+  egress:
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+---
+# Agent: allow egress to server + database
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-egress
+  namespace: dbward
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dbward-agent
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: dbward-server
+      ports:
+        - port: 3000
+    - to: []  # Database (external)
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 3306

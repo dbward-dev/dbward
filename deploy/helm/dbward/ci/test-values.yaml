@@ -1,0 +1,23 @@
+image:
+  tag: "0.1.2"
+
+secrets:
+  agentToken: "dbw_test_token"
+  databaseUrl: "postgres://test:test@localhost:5432/test"
+
+server:
+  config: |
+    [auth]
+    mode = "token"
+    [[databases]]
+    name = "app"
+    environments = ["production"]
+
+agent:
+  config: |
+    agent_id = "test-agent"
+    [server]
+    url = "http://dbward-server:3000"
+    agent_token = "${DBWARD_AGENT_TOKEN}"
+    [databases.app.production]
+    url = "${DATABASE_URL}"

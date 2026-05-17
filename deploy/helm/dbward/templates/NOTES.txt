@@ -1,0 +1,17 @@
+dbward has been deployed.
+
+Server: {{ include "dbward.fullname" . }}-server
+  Port: {{ .Values.server.port }}
+  Access: kubectl port-forward svc/{{ include "dbward.fullname" . }}-server {{ .Values.server.port }}:{{ .Values.server.port }}
+
+{{- if .Values.agent.enabled }}
+Agent: {{ include "dbward.fullname" . }}-agent ({{ .Values.agent.replicas }} replica(s))
+{{- end }}
+
+Next steps:
+  1. Create an admin token:
+     kubectl exec deploy/{{ include "dbward.fullname" . }}-server -- \
+       dbward-server --data /data/dbward.db token create --user admin --role admin
+
+  2. Configure your CLI:
+     dbward init --server http://localhost:{{ .Values.server.port }} --token <TOKEN>

@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dbward.fullname" . }}-server-config
+  labels:
+    {{- include "dbward.labels" . | nindent 4 }}
+data:
+  server.toml: |
+    {{- .Values.server.config | nindent 4 }}
+---
+{{- if .Values.agent.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dbward.fullname" . }}-agent-config
+  labels:
+    {{- include "dbward.labels" . | nindent 4 }}
+data:
+  agent.toml: |
+    {{- .Values.agent.config | nindent 4 }}
+{{- end }}
