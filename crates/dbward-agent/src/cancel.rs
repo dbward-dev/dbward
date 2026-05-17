@@ -59,6 +59,9 @@ impl CancelToken {
             return false;
         };
 
+        // Ok(_) → always notify: if the cancel SQL was delivered successfully,
+        // wake the executor for fail-fast. The biased select! ensures that a
+        // query result arriving first takes priority over the kill notification.
         match driver.cancel_query(&pid).await {
             Ok(_) => true,
             Err(e) => {

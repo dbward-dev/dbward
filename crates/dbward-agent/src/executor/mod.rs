@@ -163,7 +163,10 @@ impl JobExecutor {
             .statement_timeout_secs
             .unwrap_or(self.statement_timeout_secs);
         let max_rows = claim.max_rows.map(|v| v as usize);
-        let is_migration = claim.operation.starts_with("migrate");
+        let is_migration = matches!(
+            operation,
+            Operation::MigrateUp | Operation::MigrateDown | Operation::MigrateStatus
+        );
 
         let cancel_state = CancelState::new();
         let cancel_token = CancelToken::new(Some(driver.clone()), is_migration, cancel_state.clone());
