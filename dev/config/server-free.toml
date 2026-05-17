@@ -1,0 +1,17 @@
+trusted_proxies = ["172.16.0.0/12", "127.0.0.1"]
+
+[auth]
+mode = "token"
+
+[[databases]]
+name = "app"
+environments = ["development"]
+
+[[workflows]]
+database = "*"
+environment = "development"
+steps = []
+
+[result_storage]
+backend = "local"
+root_dir = "/data/results"
