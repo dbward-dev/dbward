@@ -16,7 +16,6 @@ use tracing::{debug, error, info, warn};
 use crate::AgentError;
 use crate::cancel::CancelToken;
 use crate::client::AgentClient;
-use crate::config::DatabaseEntry;
 
 use handlers::Operation;
 use heartbeat::HeartbeatTask;
@@ -29,7 +28,6 @@ pub struct JobExecutor {
     pub client: Arc<AgentClient>,
     pub public_key: VerifyingKey,
     pub pools: Arc<PoolMap>,
-    pub db_entries: Arc<HashMap<(String, String), DatabaseEntry>>,
     pub statement_timeout_secs: u64,
     pub health_tx: tokio::sync::mpsc::UnboundedSender<PoolHealthEvent>,
 }
@@ -160,9 +158,7 @@ impl JobExecutor {
         let is_migration = claim.operation.starts_with("migrate");
 
         let cancel_state = CancelState::new();
-        let pool_key = (claim.database.clone(), claim.environment.clone());
-        let db_url = self.db_entries.get(&pool_key).map(|e| e.url.clone());
-        let cancel_token = CancelToken::new(db_url, is_migration, cancel_state.clone());
+        let cancel_token = CancelToken::new(Some(driver.clone()), is_migration, cancel_state.clone());
 
         let _heartbeat = HeartbeatTask::spawn(
             self.client.clone(),

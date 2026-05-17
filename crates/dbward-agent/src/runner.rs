@@ -370,7 +370,6 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         client: client.clone(),
         public_key,
         pools: pools.clone(),
-        db_entries: db_entries.clone(),
         statement_timeout_secs: statement_timeout,
         health_tx,
     });

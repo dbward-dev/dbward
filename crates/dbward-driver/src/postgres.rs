@@ -9,6 +9,7 @@ use crate::{
 
 pub struct PostgresDriver {
     pool: sqlx::PgPool,
+    url: String,
 }
 
 impl PostgresDriver {
@@ -32,7 +33,7 @@ impl PostgresDriver {
                 })
             });
         let pool = opts.connect(url).await.map_err(classify_connect_error)?;
-        Ok(Self { pool })
+        Ok(Self { pool, url: url.to_owned() })
     }
 }
 
@@ -238,6 +239,24 @@ impl DatabaseDriver for PostgresDriver {
             }
         }
         Ok(total_affected)
+    }
+
+    async fn cancel_query(&self, connection_id: &str) -> Result<bool, DriverError> {
+        let pid: i32 = connection_id
+            .parse()
+            .map_err(|_| DriverError::QueryFailed(format!("invalid PG pid: {connection_id}")))?;
+        let cancel_pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&self.url)
+            .await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let cancelled: bool =
+            sqlx::query_scalar(&format!("SELECT pg_cancel_backend({pid})"))
+                .fetch_one(&cancel_pool)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        cancel_pool.close().await;
+        Ok(cancelled)
     }
 }
 
