@@ -145,7 +145,10 @@ mod tests {
 
     impl FakeAgentRepo {
         fn new() -> Self {
-            Self { existing: None, jobs: vec![] }
+            Self {
+                existing: None,
+                jobs: vec![],
+            }
         }
         fn with_existing(mut self) -> Self {
             self.existing = Some(Agent {
@@ -170,31 +173,99 @@ mod tests {
     }
 
     impl AgentRepo for FakeAgentRepo {
-        fn upsert(&self, _: &Agent) -> Result<(), AppError> { Ok(()) }
-        fn get(&self, _: &str) -> Result<Option<Agent>, AppError> { Ok(self.existing.clone()) }
-        fn list(&self) -> Result<Vec<Agent>, AppError> { Ok(vec![]) }
-        fn create_execution(&self, _: &Execution) -> Result<(), AppError> { Ok(()) }
-        fn get_execution(&self, _: &str) -> Result<Option<Execution>, AppError> { Ok(None) }
-        fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> { Ok(()) }
-        fn extend_lease(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<(), AppError> { Ok(()) }
-        fn find_dispatched_jobs(&self, _: &[(DatabaseName, Environment)]) -> Result<Vec<Request>, AppError> { Ok(self.jobs.clone()) }
-        fn has_running_migration(&self, _: &DatabaseName, _: &Environment, _: &str) -> Result<bool, AppError> { Ok(false) }
-        fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> { Ok(vec![]) }
-        fn claim_and_mark_running(&self, _: &Execution, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn complete_execution(&self, _: &str, _: &str, _: bool, _: chrono::DateTime<chrono::Utc>, _: &AuditEvent, _: Option<&ExecutionResult>, _: &[ResultAccess]) -> Result<bool, AppError> { Ok(true) }
-        fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
-        fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn mark_execution_lost_and_record(&self, _: &str, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
-        fn delete_result(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+        fn upsert(&self, _: &Agent) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get(&self, _: &str) -> Result<Option<Agent>, AppError> {
+            Ok(self.existing.clone())
+        }
+        fn list(&self) -> Result<Vec<Agent>, AppError> {
+            Ok(vec![])
+        }
+        fn create_execution(&self, _: &Execution) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_execution(&self, _: &str) -> Result<Option<Execution>, AppError> {
+            Ok(None)
+        }
+        fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn extend_lease(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn find_dispatched_jobs(
+            &self,
+            _: &[(DatabaseName, Environment)],
+        ) -> Result<Vec<Request>, AppError> {
+            Ok(self.jobs.clone())
+        }
+        fn has_running_migration(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> {
+            Ok(vec![])
+        }
+        fn claim_and_mark_running(
+            &self,
+            _: &Execution,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn complete_execution(
+            &self,
+            _: &str,
+            _: &str,
+            _: bool,
+            _: chrono::DateTime<chrono::Utc>,
+            _: &AuditEvent,
+            _: Option<&ExecutionResult>,
+            _: &[ResultAccess],
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+            Ok(vec![])
+        }
+        fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_execution_lost_and_record(
+            &self,
+            _: &str,
+            _: &str,
+            _: &AuditEvent,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_result(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     struct FakeAuditLogger {
         called: Mutex<bool>,
     }
     impl FakeAuditLogger {
-        fn new() -> Self { Self { called: Mutex::new(false) } }
-        fn was_called(&self) -> bool { *self.called.lock().unwrap() }
+        fn new() -> Self {
+            Self {
+                called: Mutex::new(false),
+            }
+        }
+        fn was_called(&self) -> bool {
+            *self.called.lock().unwrap()
+        }
     }
     impl AuditLogger for FakeAuditLogger {
         fn record(&self, _: &AuditEvent) -> Result<(), AppError> {
@@ -298,9 +369,18 @@ mod tests {
 
     #[test]
     fn draining_sets_status_but_returns_jobs() {
-        let jobs = vec![make_request_with("r1", Operation::ExecuteSelect, "app", "production")];
+        let jobs = vec![make_request_with(
+            "r1",
+            Operation::ExecuteSelect,
+            "app",
+            "production",
+        )];
         let repo = FakeAgentRepo::new().with_existing().with_jobs(jobs);
-        let uc = build_uc(Arc::new(AllowAll), Arc::new(repo), Arc::new(NoopAuditLogger));
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(repo),
+            Arc::new(NoopAuditLogger),
+        );
 
         let mut input = make_input();
         input.draining = true;
@@ -316,7 +396,11 @@ mod tests {
             make_request_with("r2", Operation::ExecuteDml, "app", "production"),
         ];
         let repo = FakeAgentRepo::new().with_existing().with_jobs(jobs);
-        let uc = build_uc(Arc::new(AllowAll), Arc::new(repo), Arc::new(NoopAuditLogger));
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(repo),
+            Arc::new(NoopAuditLogger),
+        );
 
         let mut input = make_input();
         input.operations = vec![Operation::ExecuteSelect];
@@ -329,10 +413,21 @@ mod tests {
     #[test]
     fn limit_caps_at_20() {
         let jobs: Vec<Request> = (0..25)
-            .map(|i| make_request_with(&format!("r{i}"), Operation::ExecuteSelect, "app", "production"))
+            .map(|i| {
+                make_request_with(
+                    &format!("r{i}"),
+                    Operation::ExecuteSelect,
+                    "app",
+                    "production",
+                )
+            })
             .collect();
         let repo = FakeAgentRepo::new().with_existing().with_jobs(jobs);
-        let uc = build_uc(Arc::new(AllowAll), Arc::new(repo), Arc::new(NoopAuditLogger));
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(repo),
+            Arc::new(NoopAuditLogger),
+        );
 
         let mut input = make_input();
         input.limit = Some(50);
@@ -345,11 +440,20 @@ mod tests {
     fn capability_matching_filters_jobs() {
         // find_dispatched_jobs is called with capability pairs from input,
         // so the repo only returns jobs matching those pairs.
-        let matching_jobs = vec![
-            make_request_with("r1", Operation::ExecuteSelect, "app", "production"),
-        ];
-        let repo = FakeAgentRepo::new().with_existing().with_jobs(matching_jobs);
-        let uc = build_uc(Arc::new(AllowAll), Arc::new(repo), Arc::new(NoopAuditLogger));
+        let matching_jobs = vec![make_request_with(
+            "r1",
+            Operation::ExecuteSelect,
+            "app",
+            "production",
+        )];
+        let repo = FakeAgentRepo::new()
+            .with_existing()
+            .with_jobs(matching_jobs);
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(repo),
+            Arc::new(NoopAuditLogger),
+        );
 
         let output = uc.execute(make_input(), &make_user()).unwrap();
         assert_eq!(output.jobs.len(), 1);

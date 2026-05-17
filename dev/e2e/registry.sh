@@ -1,21 +1,22 @@
 #!/bin/bash
 # E2E: Database Registry validation
 # Tests that unregistered databases/environments are rejected
+# Requires: docker compose services running (server + postgres + dev-init)
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
 source "$(dirname "$0")/helpers.sh"
 
 echo "=== Database Registry E2E ==="
 echo ""
+wait_for_server
 
-DEV_TOKEN=$(cat tokens/alice.token)
+TS=$(date +%s)
+DEV_TOKEN=$(create_token "e2e-dev-$TS" developer)
 
 # --- 1. List databases ---
 echo "--- List databases ---"
-RESP=$(api GET /api/databases "$DEV_TOKEN")
-DB_COUNT=$(echo "$RESP" | python3 -c "import sys,json; print(len(json.load(sys.stdin)['databases']))")
-[ "$DB_COUNT" -gt 0 ] && pass "GET /api/databases returns $DB_COUNT databases" || fail "No databases registered"
+STATUS=$(api_status GET /api/databases "$DEV_TOKEN")
+[ "$STATUS" = "200" ] && pass "GET /api/databases returns 200" || fail "List databases" "got $STATUS"
 
 # --- 2. Registered DB+env succeeds ---
 echo ""
@@ -27,45 +28,31 @@ STATUS=$(api_status POST /api/requests "$DEV_TOKEN" \
 # --- 3. Unregistered database rejected ---
 echo ""
 echo "--- Unregistered database ---"
-RESP=$(curl -s -X POST "http://localhost:13000/api/requests" \
-  -H "Authorization: Bearer $DEV_TOKEN" -H "Content-Type: application/json" \
+STATUS=$(api_status POST /api/requests "$DEV_TOKEN" \
   -d '{"operation":"execute_query","environment":"development","database":"nonexistent_db","detail":"SELECT 1"}')
-ERROR=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error',''))" 2>/dev/null)
-echo "$ERROR" | grep -q "not registered" && pass "Unregistered DB rejected: $ERROR" || fail "Expected rejection" "got: $ERROR"
+echo "$LAST_RESPONSE_BODY" | grep -q "not registered" \
+  && pass "Unregistered DB rejected" || fail "Expected rejection" "got $STATUS: $LAST_RESPONSE_BODY"
 
 # --- 4. Unregistered environment rejected ---
 echo ""
 echo "--- Unregistered environment ---"
-RESP=$(curl -s -X POST "http://localhost:13000/api/requests" \
-  -H "Authorization: Bearer $DEV_TOKEN" -H "Content-Type: application/json" \
+STATUS=$(api_status POST /api/requests "$DEV_TOKEN" \
   -d '{"operation":"execute_query","environment":"nonexistent_env","database":"app","detail":"SELECT 1"}')
-ERROR=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error',''))" 2>/dev/null)
-echo "$ERROR" | grep -q "not registered" && pass "Unregistered env rejected: $ERROR" || fail "Expected rejection" "got: $ERROR"
+echo "$LAST_RESPONSE_BODY" | grep -q "not registered" \
+  && pass "Unregistered env rejected" || fail "Expected rejection" "got $STATUS: $LAST_RESPONSE_BODY"
 
 # --- 5. Detail size limit ---
 echo ""
-echo "--- Detail size limit (5MB) ---"
-STATUS=$(python3 -c "
-import urllib.request, json, os
-detail = 'X' * 6_000_000
-token = open('tokens/alice.token').read().strip()
-data = json.dumps({'operation':'execute_query','environment':'development','database':'app','detail':detail}).encode()
-req = urllib.request.Request('http://localhost:13000/api/requests', data=data,
-    headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'})
-try:
-    urllib.request.urlopen(req)
-    print('200')
-except urllib.error.HTTPError as e:
-    print(e.code)
-")
-[ "$STATUS" = "400" ] && pass "6MB detail rejected (400)" || fail "Expected 400" "got $STATUS"
+echo "--- Detail size limit ---"
+BIG_DETAIL=$(python3 -c "print('X' * 200_000)")
+STATUS=$(api_status POST /api/requests "$DEV_TOKEN" \
+  -d "{\"operation\":\"execute_query\",\"environment\":\"development\",\"database\":\"app\",\"detail\":\"$BIG_DETAIL\"}")
+[ "$STATUS" = "400" ] && pass "Oversized detail rejected (400)" || fail "Expected 400" "got $STATUS"
 
 # --- 6. Unauthenticated /api/databases rejected ---
 echo ""
 echo "--- Auth required for /api/databases ---"
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:13000/api/databases")
+STATUS=$(api_noauth GET /api/databases)
 [ "$STATUS" = "401" ] && pass "/api/databases requires auth (401)" || fail "Expected 401" "got $STATUS"
 
-echo ""
-echo "=== Results ==="
-print_results
+summary

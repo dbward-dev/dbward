@@ -716,7 +716,11 @@ mod tests {
         };
 
         let err = uc
-            .execute(exec_input(), &make_user(), &dbward_domain::entities::AuditContext::System)
+            .execute(
+                exec_input(),
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
             .unwrap_err();
         assert!(matches!(err, AppError::Gone(_)));
     }
@@ -750,7 +754,11 @@ mod tests {
         };
 
         let err = uc
-            .execute(exec_input(), &make_user(), &dbward_domain::entities::AuditContext::System)
+            .execute(
+                exec_input(),
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
             .unwrap_err();
         assert!(matches!(err, AppError::Conflict(_)));
     }
@@ -792,7 +800,11 @@ mod tests {
         };
 
         let err = uc
-            .execute(exec_input(), &make_user(), &dbward_domain::entities::AuditContext::System)
+            .execute(
+                exec_input(),
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
             .unwrap_err();
         assert!(matches!(err, AppError::Gone(_)));
     }
@@ -831,7 +843,11 @@ mod tests {
         };
 
         let err = uc
-            .execute(exec_input(), &make_user(), &dbward_domain::entities::AuditContext::System)
+            .execute(
+                exec_input(),
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
             .unwrap_err();
         assert!(matches!(err, AppError::Conflict(_)));
     }

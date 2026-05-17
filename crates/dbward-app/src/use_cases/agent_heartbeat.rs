@@ -116,28 +116,86 @@ mod tests {
     }
 
     impl AgentRepo for FakeAgentRepo {
-        fn upsert(&self, _: &Agent) -> Result<(), AppError> { Ok(()) }
-        fn get(&self, _: &str) -> Result<Option<Agent>, AppError> { Ok(None) }
-        fn list(&self) -> Result<Vec<Agent>, AppError> { Ok(vec![]) }
-        fn create_execution(&self, _: &Execution) -> Result<(), AppError> { Ok(()) }
+        fn upsert(&self, _: &Agent) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get(&self, _: &str) -> Result<Option<Agent>, AppError> {
+            Ok(None)
+        }
+        fn list(&self) -> Result<Vec<Agent>, AppError> {
+            Ok(vec![])
+        }
+        fn create_execution(&self, _: &Execution) -> Result<(), AppError> {
+            Ok(())
+        }
         fn get_execution(&self, _: &str) -> Result<Option<Execution>, AppError> {
             Ok(self.execution.lock().unwrap().clone())
         }
-        fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> { Ok(()) }
+        fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> {
+            Ok(())
+        }
         fn extend_lease(&self, id: &str, expiry: DateTime<Utc>) -> Result<(), AppError> {
             self.extended.lock().unwrap().push((id.to_string(), expiry));
             Ok(())
         }
-        fn find_dispatched_jobs(&self, _: &[(DatabaseName, Environment)]) -> Result<Vec<Request>, AppError> { Ok(vec![]) }
-        fn has_running_migration(&self, _: &DatabaseName, _: &Environment, _: &str) -> Result<bool, AppError> { Ok(false) }
-        fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> { Ok(vec![]) }
-        fn claim_and_mark_running(&self, _: &Execution, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> { Ok(true) }
-        fn complete_execution(&self, _: &str, _: &str, _: bool, _: DateTime<Utc>, _: &AuditEvent, _: Option<&ExecutionResult>, _: &[ResultAccess]) -> Result<bool, AppError> { Ok(true) }
-        fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
-        fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn mark_execution_lost_and_record(&self, _: &str, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
-        fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
-        fn delete_result(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+        fn find_dispatched_jobs(
+            &self,
+            _: &[(DatabaseName, Environment)],
+        ) -> Result<Vec<Request>, AppError> {
+            Ok(vec![])
+        }
+        fn has_running_migration(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> {
+            Ok(vec![])
+        }
+        fn claim_and_mark_running(
+            &self,
+            _: &Execution,
+            _: &str,
+            _: DateTime<Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn complete_execution(
+            &self,
+            _: &str,
+            _: &str,
+            _: bool,
+            _: DateTime<Utc>,
+            _: &AuditEvent,
+            _: Option<&ExecutionResult>,
+            _: &[ResultAccess],
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+            Ok(vec![])
+        }
+        fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_execution_lost_and_record(
+            &self,
+            _: &str,
+            _: &str,
+            _: &AuditEvent,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_result(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     /// Allows global but denies scoped authorization.
@@ -232,10 +290,17 @@ mod tests {
     fn authz_denied_returns_forbidden() {
         let uc = build_uc(
             Arc::new(DenyAll),
-            Arc::new(FakeAgentRepo::with_execution(Some(make_execution(ExecutionStatus::Claimed)))),
+            Arc::new(FakeAgentRepo::with_execution(Some(make_execution(
+                ExecutionStatus::Claimed,
+            )))),
             Arc::new(FakeRequestReader::new()),
         );
-        let result = uc.execute(AgentHeartbeatInput { execution_id: "exec-001".into() }, &make_user());
+        let result = uc.execute(
+            AgentHeartbeatInput {
+                execution_id: "exec-001".into(),
+            },
+            &make_user(),
+        );
         assert!(matches!(result, Err(AppError::Forbidden(_))));
     }
 
@@ -246,7 +311,12 @@ mod tests {
             Arc::new(FakeAgentRepo::with_execution(None)),
             Arc::new(FakeRequestReader::new()),
         );
-        let result = uc.execute(AgentHeartbeatInput { execution_id: "exec-999".into() }, &make_user());
+        let result = uc.execute(
+            AgentHeartbeatInput {
+                execution_id: "exec-999".into(),
+            },
+            &make_user(),
+        );
         assert!(matches!(result, Err(AppError::NotFound(_))));
     }
 
@@ -254,10 +324,17 @@ mod tests {
     fn wrong_agent_id_returns_forbidden() {
         let uc = build_uc(
             Arc::new(AllowGlobalDenyScoped),
-            Arc::new(FakeAgentRepo::with_execution(Some(make_execution(ExecutionStatus::Claimed)))),
+            Arc::new(FakeAgentRepo::with_execution(Some(make_execution(
+                ExecutionStatus::Claimed,
+            )))),
             Arc::new(FakeRequestReader::new()),
         );
-        let result = uc.execute(AgentHeartbeatInput { execution_id: "exec-001".into() }, &make_user());
+        let result = uc.execute(
+            AgentHeartbeatInput {
+                execution_id: "exec-001".into(),
+            },
+            &make_user(),
+        );
         assert!(matches!(result, Err(AppError::Forbidden(_))));
     }
 
@@ -265,19 +342,37 @@ mod tests {
     fn non_claimed_status_returns_conflict() {
         let uc = build_uc(
             Arc::new(AllowAll),
-            Arc::new(FakeAgentRepo::with_execution(Some(make_execution(ExecutionStatus::Completed)))),
+            Arc::new(FakeAgentRepo::with_execution(Some(make_execution(
+                ExecutionStatus::Completed,
+            )))),
             Arc::new(FakeRequestReader::new()),
         );
-        let result = uc.execute(AgentHeartbeatInput { execution_id: "exec-001".into() }, &make_user());
+        let result = uc.execute(
+            AgentHeartbeatInput {
+                execution_id: "exec-001".into(),
+            },
+            &make_user(),
+        );
         assert!(matches!(result, Err(AppError::Conflict(_))));
     }
 
     #[test]
     fn extends_lease_and_not_cancelled() {
-        let repo = Arc::new(FakeAgentRepo::with_execution(Some(make_execution(ExecutionStatus::Claimed))));
-        let reader = Arc::new(FakeRequestReader::with_request(make_request(RequestStatus::Running)));
+        let repo = Arc::new(FakeAgentRepo::with_execution(Some(make_execution(
+            ExecutionStatus::Claimed,
+        ))));
+        let reader = Arc::new(FakeRequestReader::with_request(make_request(
+            RequestStatus::Running,
+        )));
         let uc = build_uc(Arc::new(AllowAll), repo.clone(), reader);
-        let output = uc.execute(AgentHeartbeatInput { execution_id: "exec-001".into() }, &make_user()).unwrap();
+        let output = uc
+            .execute(
+                AgentHeartbeatInput {
+                    execution_id: "exec-001".into(),
+                },
+                &make_user(),
+            )
+            .unwrap();
         assert!(!output.cancelled);
         let extended = repo.extended.lock().unwrap();
         assert_eq!(extended.len(), 1);
@@ -286,19 +381,39 @@ mod tests {
 
     #[test]
     fn detects_cancelled_request() {
-        let repo = Arc::new(FakeAgentRepo::with_execution(Some(make_execution(ExecutionStatus::Claimed))));
-        let reader = Arc::new(FakeRequestReader::with_request(make_request(RequestStatus::Cancelled)));
+        let repo = Arc::new(FakeAgentRepo::with_execution(Some(make_execution(
+            ExecutionStatus::Claimed,
+        ))));
+        let reader = Arc::new(FakeRequestReader::with_request(make_request(
+            RequestStatus::Cancelled,
+        )));
         let uc = build_uc(Arc::new(AllowAll), repo, reader);
-        let output = uc.execute(AgentHeartbeatInput { execution_id: "exec-001".into() }, &make_user()).unwrap();
+        let output = uc
+            .execute(
+                AgentHeartbeatInput {
+                    execution_id: "exec-001".into(),
+                },
+                &make_user(),
+            )
+            .unwrap();
         assert!(output.cancelled);
     }
 
     #[test]
     fn request_not_found_defaults_to_not_cancelled() {
-        let repo = Arc::new(FakeAgentRepo::with_execution(Some(make_execution(ExecutionStatus::Claimed))));
+        let repo = Arc::new(FakeAgentRepo::with_execution(Some(make_execution(
+            ExecutionStatus::Claimed,
+        ))));
         let reader = Arc::new(FakeRequestReader::new()); // returns None
         let uc = build_uc(Arc::new(AllowAll), repo, reader);
-        let output = uc.execute(AgentHeartbeatInput { execution_id: "exec-001".into() }, &make_user()).unwrap();
+        let output = uc
+            .execute(
+                AgentHeartbeatInput {
+                    execution_id: "exec-001".into(),
+                },
+                &make_user(),
+            )
+            .unwrap();
         assert!(!output.cancelled);
     }
 }

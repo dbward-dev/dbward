@@ -175,9 +175,7 @@ mod tests {
     use crate::ports::{PolicyRepo, WebhookRepo};
     use crate::test_support::{FixedClock, FixedIdGen};
     use dbward_domain::entities::Webhook;
-    use dbward_domain::policies::{
-        ExecutionPolicy, NotificationPolicy, ResultPolicy, Workflow,
-    };
+    use dbward_domain::policies::{ExecutionPolicy, NotificationPolicy, ResultPolicy, Workflow};
     use dbward_domain::values::{DatabaseName, Environment};
 
     // --- Minimal fakes ---
@@ -236,10 +234,7 @@ mod tests {
         fn create_notification_policy(&self, _: &NotificationPolicy) -> Result<(), AppError> {
             Ok(())
         }
-        fn get_notification_policy(
-            &self,
-            _: &str,
-        ) -> Result<Option<NotificationPolicy>, AppError> {
+        fn get_notification_policy(&self, _: &str) -> Result<Option<NotificationPolicy>, AppError> {
             Ok(None)
         }
         fn list_notification_policies(&self) -> Result<Vec<NotificationPolicy>, AppError> {

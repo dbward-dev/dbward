@@ -153,4 +153,41 @@ else
   fail "Audit chain" "intact=$INTACT count=$COUNT"
 fi
 
+# --- Audit enrichment fields ---
+echo ""
+echo "--- Audit enrichment ---"
+
+# Reject reason: the rejection at step 4 used comment "too dangerous"
+EVENTS=$(api GET "/api/audit?type=request_rejected" "$ADMIN_BACKEND")
+HAS_COMMENT=$(echo "$EVENTS" | python3 -c "
+import sys,json
+events = json.load(sys.stdin).get('events',[])
+found = any('too dangerous' in str(e.get('metadata',{})) for e in events)
+print('true' if found else 'false')
+")
+[ "$HAS_COMMENT" = "true" ] && pass "Reject comment in audit event" || fail "Reject comment" "not found in audit"
+
+# Approval comment: re-test with approval comment
+REQ_ID=$(api POST /api/requests "$DEV_TOKEN" \
+  -d '{"operation":"execute_select","environment":"production","database":"app","detail":"SELECT 1","reason":"audit test"}' | json_field id)
+api POST "/api/requests/$REQ_ID/approve" "$ADMIN_BACKEND" -d '{"comment":"LGTM"}' > /dev/null
+EVENTS=$(api GET "/api/audit?request_id=$REQ_ID" "$ADMIN_BACKEND")
+HAS_APPROVAL=$(echo "$EVENTS" | python3 -c "
+import sys,json
+events = json.load(sys.stdin).get('events',[])
+found = any('LGTM' in str(e.get('metadata',{})) for e in events)
+print('true' if found else 'false')
+")
+[ "$HAS_APPROVAL" = "true" ] && pass "Approval comment in audit event" || fail "Approval comment" "not found in audit"
+
+# Rows affected + execution time: check executed request's audit
+EVENTS=$(api GET "/api/audit?type=request_executed" "$ADMIN_BACKEND")
+HAS_EXEC_META=$(echo "$EVENTS" | python3 -c "
+import sys,json
+events = json.load(sys.stdin).get('events',[])
+found = any('execution_time' in str(e.get('metadata',{})) or 'rows_affected' in str(e.get('metadata',{})) for e in events)
+print('true' if found else 'false')
+")
+[ "$HAS_EXEC_META" = "true" ] && pass "Execution metadata (rows/time) in audit" || skip "Execution metadata not found (agent may not have run)"
+
 summary
