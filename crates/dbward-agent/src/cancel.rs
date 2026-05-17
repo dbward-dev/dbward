@@ -75,6 +75,58 @@ impl CancelToken {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dbward_driver::{DatabaseDriver, DriverError, QueryOutput};
+
+    struct MockCancelDriver {
+        should_succeed: bool,
+        return_value: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl DatabaseDriver for MockCancelDriver {
+        async fn query(&self, _: &str) -> Result<QueryOutput, DriverError> {
+            unimplemented!()
+        }
+        async fn execute(&self, _: &str) -> Result<u64, DriverError> {
+            unimplemented!()
+        }
+        async fn apply_migration(&self, _: &str, _: &str) -> Result<(), DriverError> {
+            unimplemented!()
+        }
+        async fn revert_migration(&self, _: &str, _: &str) -> Result<(), DriverError> {
+            unimplemented!()
+        }
+        async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
+            unimplemented!()
+        }
+        async fn applied_versions(&self) -> Result<Vec<String>, DriverError> {
+            unimplemented!()
+        }
+        async fn query_cancellable(
+            &self,
+            _: &str,
+            _: u64,
+            _: &CancelState,
+            _: Option<usize>,
+        ) -> Result<QueryOutput, DriverError> {
+            unimplemented!()
+        }
+        async fn execute_cancellable(
+            &self,
+            _: &str,
+            _: u64,
+            _: &CancelState,
+        ) -> Result<u64, DriverError> {
+            unimplemented!()
+        }
+        async fn cancel_query(&self, _: &str) -> Result<bool, DriverError> {
+            if self.should_succeed {
+                Ok(self.return_value)
+            } else {
+                Err(DriverError::ConnectionFailed("refused".into()))
+            }
+        }
+    }
 
     #[test]
     fn cancel_token_basic() {
@@ -96,8 +148,44 @@ mod tests {
     #[tokio::test]
     async fn no_kill_without_connection_id() {
         let state = CancelState::new();
-        // No driver needed — connection_id check comes first
         let token = CancelToken::new(None, false, state);
+        assert!(!token.kill_query().await);
+    }
+
+    #[tokio::test]
+    async fn kill_query_ok_true_returns_true() {
+        let driver = Arc::new(MockCancelDriver {
+            should_succeed: true,
+            return_value: true,
+        });
+        let state = CancelState::new();
+        state.set_connection_id("42".into());
+        let token = CancelToken::new(Some(driver), false, state);
+        assert!(token.kill_query().await);
+    }
+
+    #[tokio::test]
+    async fn kill_query_ok_false_still_returns_true() {
+        // Ok(_) → always notify (fail-fast)
+        let driver = Arc::new(MockCancelDriver {
+            should_succeed: true,
+            return_value: false,
+        });
+        let state = CancelState::new();
+        state.set_connection_id("42".into());
+        let token = CancelToken::new(Some(driver), false, state);
+        assert!(token.kill_query().await);
+    }
+
+    #[tokio::test]
+    async fn kill_query_err_returns_false() {
+        let driver = Arc::new(MockCancelDriver {
+            should_succeed: false,
+            return_value: false,
+        });
+        let state = CancelState::new();
+        state.set_connection_id("42".into());
+        let token = CancelToken::new(Some(driver), false, state);
         assert!(!token.kill_query().await);
     }
 }

@@ -32,3 +32,4 @@ hostname = "0.4"
 
 [dev-dependencies]
 rand = "0.8"
+async-trait = "0.1"
