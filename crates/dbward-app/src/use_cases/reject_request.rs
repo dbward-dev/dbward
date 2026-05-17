@@ -258,8 +258,8 @@ mod tests {
             request_reader: reader,
             approval_repo: approval.clone(),
             event_dispatcher: Arc::new(NoopDispatcher),
-            clock: Arc::new(FakeClock),
-            id_gen: Arc::new(FakeIdGen),
+            clock: Arc::new(FixedClock::now_utc()),
+            id_gen: Arc::new(FixedIdGen::new()),
         };
         let user = AuthUser {
             subject_id: "alice".into(),
@@ -293,8 +293,8 @@ mod tests {
             request_reader: reader,
             approval_repo: approval,
             event_dispatcher: Arc::new(NoopDispatcher),
-            clock: Arc::new(FakeClock),
-            id_gen: Arc::new(FakeIdGen),
+            clock: Arc::new(FixedClock::now_utc()),
+            id_gen: Arc::new(FixedIdGen::new()),
         };
         let user = AuthUser {
             subject_id: "alice".into(),
