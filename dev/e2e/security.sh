@@ -16,7 +16,7 @@ echo ""
 ADMIN_TOKEN=$(create_token e2e-admin admin)
 DEV_TOKEN=$(create_token e2e-dev developer)
 READONLY_TOKEN=$(create_token e2e-readonly readonly)
-AGENT_TOKEN=$(create_token agent1 admin --agent)
+AGENT_TOKEN=$(create_token agent1 agent-default --agent)
 
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
 [ -z "$DEV_TOKEN" ] && { echo "Failed to create dev token"; exit 1; }
@@ -30,8 +30,8 @@ STATUS=$(api_noauth GET /api/requests)
 STATUS=$(api_noauth POST /api/requests -d '{}')
 [ "$STATUS" = "401" ] && pass "POST /api/requests without auth → 401" || fail "No auth POST" "got $STATUS"
 
-STATUS=$(api_noauth GET /api/audit)
-[ "$STATUS" = "401" ] && pass "GET /api/audit without auth → 401" || fail "No auth audit" "got $STATUS"
+STATUS=$(api_noauth GET /api/audit/events)
+[ "$STATUS" = "401" ] && pass "GET /api/audit/events without auth → 401" || fail "No auth audit" "got $STATUS"
 
 STATUS=$(api_noauth GET /api/workflows)
 [ "$STATUS" = "401" ] && pass "GET /api/workflows without auth → 401" || fail "No auth workflows" "got $STATUS"
@@ -60,7 +60,7 @@ if [ -n "$ADMIN_TOKEN" ]; then
   [ "$STATUS" = "200" ] && pass "Admin can list workflows" || fail "Admin workflows" "got $STATUS"
 
   # Admin cannot use agent endpoints
-  STATUS=$(api_status POST /api/agent/poll "$ADMIN_TOKEN" -d '{}')
+  STATUS=$(api_status POST /api/agent/poll "$ADMIN_TOKEN" -d '{"capabilities":{"databases":["app"],"environments":["development"]}}')
   [ "$STATUS" = "403" ] && pass "Admin (user) cannot poll agent endpoint" || fail "Admin agent poll" "got $STATUS"
 fi
 
@@ -83,17 +83,17 @@ if [ -n "${READONLY_TOKEN:-}" ]; then
   [ "$STATUS" = "403" ] && pass "Readonly cannot create DML request" || fail "Readonly create DML" "got $STATUS"
 
   # Readonly can read own audit
-  STATUS=$(api_status GET "/api/audit?user=e2e-readonly" "$READONLY_TOKEN")
+  STATUS=$(api_status GET "/api/audit/events?user=e2e-readonly" "$READONLY_TOKEN")
   [ "$STATUS" = "200" ] && pass "Readonly can read own audit" || fail "Readonly audit" "got $STATUS"
 fi
 
 if [ -n "${AGENT_TOKEN:-}" ]; then
   # Agent can poll
-  STATUS=$(api_status POST /api/agent/poll "$AGENT_TOKEN" -d '{"databases":["*"],"environments":["*"],"operations":["*"]}')
+  STATUS=$(api_status POST /api/agent/poll "$AGENT_TOKEN" -d '{"capabilities":{"databases":["app"],"environments":["development"]}}')
   [ "$STATUS" = "200" ] && pass "Agent can poll" || fail "Agent poll" "got $STATUS"
 
   # Agent cannot create request
-  STATUS=$(api_status POST /api/requests "$AGENT_TOKEN" -d '{"operation":"execute_query","environment":"development","detail":"SELECT 1"}')
+  STATUS=$(api_status POST /api/requests "$AGENT_TOKEN" -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1"}')
   [ "$STATUS" = "403" ] && pass "Agent cannot create request" || fail "Agent create" "got $STATUS"
 
   # Agent cannot list requests
@@ -101,7 +101,7 @@ if [ -n "${AGENT_TOKEN:-}" ]; then
   [ "$STATUS" = "403" ] && pass "Agent cannot list requests" || fail "Agent list" "got $STATUS"
 
   # Agent cannot read audit
-  STATUS=$(api_status GET /api/audit "$AGENT_TOKEN")
+  STATUS=$(api_status GET /api/audit/events "$AGENT_TOKEN")
   [ "$STATUS" = "403" ] && pass "Agent cannot read audit" || fail "Agent audit" "got $STATUS"
 fi
 
