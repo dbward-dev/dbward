@@ -1,0 +1,6 @@
+# Parameters files (may contain secrets)
+*.parameters.json
+parameters.json
+
+# Packaged templates
+packaged-*.yaml
