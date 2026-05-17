@@ -5,7 +5,9 @@
 # Usage: ./dev/e2e/license.sh
 
 set -euo pipefail
-source "$(dirname "$0")/helpers.sh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/helpers.sh"
 
 echo "=== License / Pro Plan E2E ==="
 echo ""

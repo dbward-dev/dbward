@@ -4,7 +4,9 @@
 # Requires: docker compose services running (server + postgres + dev-init)
 
 set -euo pipefail
-source "$(dirname "$0")/helpers.sh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/helpers.sh"
 
 TS=$(date +%s)
 

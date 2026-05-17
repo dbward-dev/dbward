@@ -9,8 +9,8 @@
 ## Quick Start
 
 ```bash
-# Start all services (server + agent + postgres + keycloak)
-docker compose -f dev/compose.yml up -d --build
+# Start all services (server + agent + postgres + webhook-receiver)
+docker compose -f dev/compose.yml -f dev/compose.override.yml up -d --build
 
 # Run E2E tests
 ./dev/e2e/lifecycle.sh
