@@ -1,0 +1,489 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "dbward ECS deployment — server + agent on Fargate with EBS"
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC to deploy into
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets for Fargate tasks (private recommended)
+  AllowedIngressCidr:
+    Type: String
+    Default: "10.0.0.0/8"
+    Description: CIDR allowed to access server port 3000
+
+  ImageRepository:
+    Type: String
+    Default: ghcr.io/dbward-dev/dbward
+  ImageTag:
+    Type: String
+    Default: latest
+    Description: Change this and update-stack to upgrade
+
+  ServerDataVolumeSizeGiB:
+    Type: Number
+    Default: 10
+
+  AgentDesiredCount:
+    Type: Number
+    Default: 1
+
+  AgentTokenSecretArn:
+    Type: String
+    Default: ""
+    Description: Secrets Manager ARN for agent token
+  DatabaseUrlSecretArn:
+    Type: String
+    Description: Secrets Manager ARN for database URL
+
+  ServerConfigToml:
+    Type: String
+    Default: |
+      [auth]
+      mode = "token"
+      [[databases]]
+      name = "app"
+      environments = ["production"]
+      [result_storage]
+      backend = "local"
+      root_dir = "/data/results"
+
+  AgentConfigToml:
+    Type: String
+    Default: |
+      agent_id = "ecs-agent"
+      poll_interval_ms = 1000
+      max_concurrent_tasks = 4
+      [server]
+      url = "http://server.STACK_NAME.local:3000"
+      agent_token = "${DBWARD_AGENT_TOKEN}"
+      [databases.app.production]
+      url = "${DATABASE_URL}"
+    Description: "agent.toml content. Replace STACK_NAME with your stack name in server.url"
+
+  EnableAlb:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+  AlbSubnetIds:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: Public subnets for ALB (if EnableAlb=true)
+
+  DatabasePort:
+    Type: Number
+    Default: 5432
+    Description: Database port (5432 for PostgreSQL, 3306 for MySQL)
+
+  EcrRepositoryName:
+    Type: String
+    Default: ""
+    Description: ECR repository name (leave empty if using public registry)
+
+Conditions:
+  CreateAlb: !Equals [!Ref EnableAlb, "true"]
+  HasAgentToken: !Not [!Equals [!Ref AgentTokenSecretArn, ""]]
+  UseEcr: !Not [!Equals [!Ref EcrRepositoryName, ""]]
+
+Resources:
+  # --- Cluster ---
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${AWS::StackName}"
+
+  # --- Service Discovery ---
+  DnsNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Sub "${AWS::StackName}.local"
+      Vpc: !Ref VpcId
+
+  ServerDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: server
+      NamespaceId: !Ref DnsNamespace
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+
+  # --- Log Groups ---
+  ServerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AWS::StackName}/server"
+      RetentionInDays: 14
+
+  AgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AWS::StackName}/agent"
+      RetentionInDays: 14
+
+  # --- Security Groups ---
+  ServerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: dbward server
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: !Ref AllowedIngressCidr
+
+  AgentSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: dbward agent (egress only)
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          DestinationSecurityGroupId: !Ref ServerSG
+        - IpProtocol: tcp
+          FromPort: !Ref DatabasePort
+          ToPort: !Ref DatabasePort
+          CidrIp: "0.0.0.0/0"
+          Description: Database egress
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+          Description: HTTPS (ECR pull, etc)
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: "0.0.0.0/0"
+          Description: DNS
+
+  ServerIngressFromAgent:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ServerSG
+      IpProtocol: tcp
+      FromPort: 3000
+      ToPort: 3000
+      SourceSecurityGroupId: !Ref AgentSG
+
+  # --- IAM ---
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-execution"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: execution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "${ServerLogGroup.Arn}:*"
+                  - !Sub "${AgentLogGroup.Arn}:*"
+              - Sid: Secrets
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DatabaseUrlSecretArn
+                  - !If [HasAgentToken, !Ref AgentTokenSecretArn, !Ref "AWS::NoValue"]
+
+  EcrPolicy:
+    Type: AWS::IAM::Policy
+    Condition: UseEcr
+    Properties:
+      PolicyName: ecr-pull
+      Roles: [!Ref ExecutionRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: ecr:GetAuthorizationToken
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+            Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrRepositoryName}"
+
+  ServerTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-server-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ecs-exec
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: "*"
+
+  EbsInfrastructureRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-ebs-infra"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRolePolicyForVolumes
+
+  AgentTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-agent-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+
+  # --- Server Task Definition (Fargate + EBS) ---
+  ServerTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "${AWS::StackName}-server"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "512"
+      Memory: "1024"
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt ServerTaskRole.Arn
+      Volumes:
+        - Name: data
+          ConfiguredAtLaunch: true
+      ContainerDefinitions:
+        - Name: server
+          Image: !Sub "${ImageRepository}:${ImageTag}"
+          Essential: true
+          User: "0:0"
+          EntryPoint: ["/bin/sh", "-c"]
+          Command:
+            - Fn::Sub:
+                - |
+                  cat > /tmp/server.toml << 'TOMLEOF'
+                  ${ConfigContent}
+                  TOMLEOF
+                  chown -R 10001:10001 /data
+                  exec dbward-server --data /data/dbward.db --listen 0.0.0.0:3000 --config /tmp/server.toml
+                - ConfigContent: !Ref ServerConfigToml
+          PortMappings:
+            - ContainerPort: 3000
+          MountPoints:
+            - SourceVolume: data
+              ContainerPath: /data
+          Environment:
+            - {Name: RUST_LOG, Value: info}
+          HealthCheck:
+            Command: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
+            Interval: 10
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 15
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ServerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: server
+          LinuxParameters:
+            InitProcessEnabled: true
+
+  # --- Server Service ---
+  ServerService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - EbsInfrastructureRole
+    Properties:
+      Cluster: !Ref Cluster
+      ServiceName: server
+      TaskDefinition: !Ref ServerTaskDef
+      DesiredCount: 1
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups: [!Ref ServerSG]
+          AssignPublicIp: ENABLED
+      ServiceRegistries:
+        - RegistryArn: !GetAtt ServerDiscovery.Arn
+      VolumeConfigurations:
+        - Name: data
+          ManagedEBSVolume:
+            RoleArn: !GetAtt EbsInfrastructureRole.Arn
+            SizeInGiB: !Ref ServerDataVolumeSizeGiB
+            VolumeType: gp3
+            FilesystemType: ext4
+      LoadBalancers: !If
+        - CreateAlb
+        - - ContainerName: server
+            ContainerPort: 3000
+            TargetGroupArn: !Ref AlbTargetGroup
+        - !Ref "AWS::NoValue"
+
+  # --- Agent Task Definition ---
+  AgentTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasAgentToken
+    Properties:
+      Family: !Sub "${AWS::StackName}-agent"
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      Cpu: "256"
+      Memory: "512"
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt AgentTaskRole.Arn
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Sub "${ImageRepository}:${ImageTag}"
+          Essential: true
+          EntryPoint: ["/bin/sh", "-c"]
+          Command:
+            - Fn::Sub:
+                - |
+                  cat > /tmp/agent.toml << 'TOMLEOF'
+                  ${ConfigContent}
+                  TOMLEOF
+                  exec dbward-agent --config /tmp/agent.toml
+                - ConfigContent: !Ref AgentConfigToml
+          Secrets:
+            - Name: DBWARD_AGENT_TOKEN
+              ValueFrom: !Ref AgentTokenSecretArn
+            - Name: DATABASE_URL
+              ValueFrom: !Ref DatabaseUrlSecretArn
+          Environment:
+            - {Name: RUST_LOG, Value: info}
+          HealthCheck:
+            Command: ["CMD-SHELL", "test -f /tmp/dbward-agent-ready"]
+            Interval: 10
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+          StopTimeout: 90
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref AgentLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: agent
+          LinuxParameters:
+            InitProcessEnabled: true
+
+  # --- Agent Service ---
+  AgentService:
+    Type: AWS::ECS::Service
+    Condition: HasAgentToken
+    DependsOn: ServerService
+    Properties:
+      Cluster: !Ref Cluster
+      ServiceName: agent
+      TaskDefinition: !Ref AgentTaskDef
+      DesiredCount: !Ref AgentDesiredCount
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups: [!Ref AgentSG]
+          AssignPublicIp: ENABLED
+
+  # --- Optional ALB ---
+  AlbSG:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateAlb
+    Properties:
+      GroupDescription: dbward ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref AllowedIngressCidr
+
+  AlbToServerIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: CreateAlb
+    Properties:
+      GroupId: !Ref ServerSG
+      IpProtocol: tcp
+      FromPort: 3000
+      ToPort: 3000
+      SourceSecurityGroupId: !Ref AlbSG
+
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Condition: CreateAlb
+    Properties:
+      Name: !Sub "${AWS::StackName}-alb"
+      Scheme: internet-facing
+      Subnets: !Ref AlbSubnetIds
+      SecurityGroups: [!Ref AlbSG]
+
+  AlbTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: CreateAlb
+    Properties:
+      Port: 3000
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      TargetType: ip
+      HealthCheckPath: /ready
+
+  AlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: CreateAlb
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AlbTargetGroup
+
+Outputs:
+  ClusterName:
+    Value: !Ref Cluster
+  ServerEndpoint:
+    Value: !If
+      - CreateAlb
+      - !Sub "http://${Alb.DNSName}"
+      - !Sub "http://server.${AWS::StackName}.local:3000"
+  UpgradeCommand:
+    Value: !Sub |
+      aws cloudformation deploy --stack-name ${AWS::StackName} --template-file template.yaml --parameter-overrides ImageTag=NEW_TAG --capabilities CAPABILITY_NAMED_IAM
