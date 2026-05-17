@@ -144,7 +144,7 @@ mod tests {
             request_reader: reader,
             request_writer: writer.clone(),
             event_dispatcher: Arc::new(NoopDispatcher),
-            clock: Arc::new(FakeClock),
+            clock: Arc::new(FixedClock::now_utc()),
         };
         let user = AuthUser {
             subject_id: "alice".into(),
@@ -178,7 +178,7 @@ mod tests {
             request_reader: reader,
             request_writer: writer,
             event_dispatcher: Arc::new(NoopDispatcher),
-            clock: Arc::new(FakeClock),
+            clock: Arc::new(FixedClock::now_utc()),
         };
         let user = AuthUser {
             subject_id: "alice".into(),
@@ -211,7 +211,7 @@ mod tests {
             request_reader: reader,
             request_writer: writer,
             event_dispatcher: Arc::new(NoopDispatcher),
-            clock: Arc::new(FakeClock),
+            clock: Arc::new(FixedClock::now_utc()),
         };
         let user = AuthUser {
             subject_id: "bob".into(),

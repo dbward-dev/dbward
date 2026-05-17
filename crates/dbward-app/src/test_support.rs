@@ -58,17 +58,29 @@ impl Authorizer for DenyAll {
 
 // --- Clock / IdGenerator ---
 
-pub struct FakeClock;
-impl Clock for FakeClock {
+pub struct FixedClock(pub DateTime<Utc>);
+impl FixedClock {
+    pub fn now_utc() -> Self {
+        Self(Utc::now())
+    }
+}
+impl Clock for FixedClock {
     fn now(&self) -> DateTime<Utc> {
-        Utc::now()
+        self.0
     }
 }
 
-pub struct FakeIdGen;
-impl IdGenerator for FakeIdGen {
+pub struct FixedIdGen(pub Mutex<u32>);
+impl FixedIdGen {
+    pub fn new() -> Self {
+        Self(Mutex::new(0))
+    }
+}
+impl IdGenerator for FixedIdGen {
     fn generate(&self) -> String {
-        "test-id-001".into()
+        let mut n = self.0.lock().unwrap();
+        *n += 1;
+        format!("test-id-{n:03}")
     }
 }
 
@@ -77,6 +89,15 @@ impl IdGenerator for FakeIdGen {
 pub struct NoopDispatcher;
 impl EventDispatcher for NoopDispatcher {
     fn dispatch(&self, _: TransitionEvent) {}
+}
+
+// --- AuditLogger ---
+
+pub struct NoopAuditLogger;
+impl crate::ports::AuditLogger for NoopAuditLogger {
+    fn record(&self, _: &AuditEvent) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 // --- RequestReader ---

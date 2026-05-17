@@ -24,6 +24,7 @@ pub struct DispatchRequestInput {
     pub request_id: String,
 }
 
+#[derive(Debug)]
 pub struct DispatchRequestOutput {
     pub id: String,
     pub status: RequestStatus,
@@ -463,7 +464,7 @@ mod tests {
             result_channel: Arc::new(FakeResultChannel),
             event_dispatcher: Arc::new(NoopDispatcher),
             policy_repo: Arc::new(FakePolicyRepo),
-            clock: Arc::new(FakeClock),
+            clock: Arc::new(FixedClock::now_utc()),
         }
     }
 
@@ -553,5 +554,285 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out.status, RequestStatus::Dispatched);
+    }
+
+    // --- Configurable fakes for boundary tests ---
+
+    struct ConfigurableReader {
+        request: Mutex<Option<Request>>,
+        exec_count: u32,
+    }
+    impl RequestReader for ConfigurableReader {
+        fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
+            Ok(self.request.lock().unwrap().clone())
+        }
+        fn list(
+            &self,
+            _: u32,
+            _: u32,
+            _: Option<&str>,
+            _: Option<&str>,
+        ) -> Result<(Vec<Request>, u32), AppError> {
+            Ok((vec![], 0))
+        }
+        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
+            Ok(None)
+        }
+        fn list_visible_to_user(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+            _: Option<&str>,
+            _: u32,
+            _: u32,
+        ) -> Result<(Vec<Request>, u32), AppError> {
+            Ok((vec![], 0))
+        }
+        fn list_pending_for_user(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+            _: u32,
+            _: u32,
+        ) -> Result<(Vec<Request>, u32), AppError> {
+            Ok((vec![], 0))
+        }
+        fn is_pending_approver(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[String],
+            _: &[String],
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn count_executions(&self, _: &str) -> Result<u32, AppError> {
+            Ok(self.exec_count)
+        }
+        fn list_results_for_user(
+            &self,
+            _: &str,
+            _: &[String],
+            _: &[String],
+            _: u32,
+        ) -> Result<Vec<StoredResultEntry>, AppError> {
+            Ok(vec![])
+        }
+        fn count_by_status(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn get_pending_approvers_for_requests(
+            &self,
+            _: &[&str],
+        ) -> Result<std::collections::HashMap<String, (u32, Vec<String>)>, AppError> {
+            Ok(std::collections::HashMap::new())
+        }
+    }
+
+    struct ConfigurablePolicy {
+        exec_policy: dbward_domain::policies::ExecutionPolicy,
+    }
+    impl PolicyEvaluator for ConfigurablePolicy {
+        fn evaluate_workflow(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+            _: Operation,
+        ) -> Result<Option<dbward_domain::policies::Workflow>, AppError> {
+            Ok(None)
+        }
+        fn get_execution_policy(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+        ) -> dbward_domain::policies::ExecutionPolicy {
+            self.exec_policy.clone()
+        }
+    }
+
+    fn make_user() -> AuthUser {
+        AuthUser {
+            subject_id: "alice".into(),
+            subject_type: SubjectType::User,
+            roles: vec![],
+            groups: vec![],
+            token_id: None,
+        }
+    }
+
+    fn exec_input() -> DispatchRequestInput {
+        DispatchRequestInput {
+            request_id: "req-001".into(),
+        }
+    }
+
+    #[test]
+    fn approval_ttl_exactly_expired_returns_gone() {
+        use chrono::Duration;
+
+        let now = Utc::now();
+        let resolved_at = now - Duration::seconds(61);
+
+        let wf = dbward_domain::policies::Workflow {
+            id: "wf-1".into(),
+            database: DatabaseName::wildcard(),
+            environment: Environment::wildcard(),
+            operations: vec![],
+            steps: vec![],
+            skip_approval_for: vec![],
+            require_reason: false,
+            allow_self_approve: false,
+            allow_same_approver_across_steps: false,
+            pending_ttl_secs: None,
+            statement_timeout_secs: None,
+            approval_ttl_secs: Some(60),
+            created_at: None,
+            updated_at: None,
+        };
+
+        let mut req = make_request(RequestStatus::Approved);
+        req.resolved_at = Some(resolved_at);
+        req.workflow_snapshot_json = Some(serde_json::to_string(&wf).unwrap());
+
+        let reader = Arc::new(ConfigurableReader {
+            request: Mutex::new(Some(req)),
+            exec_count: 0,
+        });
+        let writer = Arc::new(FakeDispatchWriter {
+            dispatched: Mutex::new(false),
+        });
+
+        let uc = DispatchRequest {
+            authorizer: Arc::new(AllowAll),
+            policy: Arc::new(FakePolicy),
+            request_reader: reader,
+            request_writer: writer,
+            result_channel: Arc::new(FakeResultChannel),
+            event_dispatcher: Arc::new(NoopDispatcher),
+            policy_repo: Arc::new(FakePolicyRepo),
+            clock: Arc::new(FixedClock(now)),
+        };
+
+        let err = uc
+            .execute(exec_input(), &make_user(), &dbward_domain::entities::AuditContext::System)
+            .unwrap_err();
+        assert!(matches!(err, AppError::Gone(_)));
+    }
+
+    #[test]
+    fn max_executions_boundary_returns_conflict() {
+        let reader = Arc::new(ConfigurableReader {
+            request: Mutex::new(Some(make_request(RequestStatus::Approved))),
+            exec_count: 3,
+        });
+        let writer = Arc::new(FakeDispatchWriter {
+            dispatched: Mutex::new(false),
+        });
+
+        let policy = Arc::new(ConfigurablePolicy {
+            exec_policy: dbward_domain::policies::ExecutionPolicy {
+                max_executions: 3,
+                ..Default::default()
+            },
+        });
+
+        let uc = DispatchRequest {
+            authorizer: Arc::new(AllowAll),
+            policy,
+            request_reader: reader,
+            request_writer: writer,
+            result_channel: Arc::new(FakeResultChannel),
+            event_dispatcher: Arc::new(NoopDispatcher),
+            policy_repo: Arc::new(FakePolicyRepo),
+            clock: Arc::new(FixedClock::now_utc()),
+        };
+
+        let err = uc
+            .execute(exec_input(), &make_user(), &dbward_domain::entities::AuditContext::System)
+            .unwrap_err();
+        assert!(matches!(err, AppError::Conflict(_)));
+    }
+
+    #[test]
+    fn execution_window_expired_returns_gone() {
+        use chrono::Duration;
+
+        let now = Utc::now();
+        let resolved_at = now - Duration::seconds(3601);
+
+        let mut req = make_request(RequestStatus::Executed);
+        req.resolved_at = Some(resolved_at);
+
+        let reader = Arc::new(ConfigurableReader {
+            request: Mutex::new(Some(req)),
+            exec_count: 0,
+        });
+        let writer = Arc::new(FakeDispatchWriter {
+            dispatched: Mutex::new(false),
+        });
+
+        let policy = Arc::new(ConfigurablePolicy {
+            exec_policy: dbward_domain::policies::ExecutionPolicy {
+                execution_window_secs: 3600,
+                ..Default::default()
+            },
+        });
+
+        let uc = DispatchRequest {
+            authorizer: Arc::new(AllowAll),
+            policy,
+            request_reader: reader,
+            request_writer: writer,
+            result_channel: Arc::new(FakeResultChannel),
+            event_dispatcher: Arc::new(NoopDispatcher),
+            policy_repo: Arc::new(FakePolicyRepo),
+            clock: Arc::new(FixedClock(now)),
+        };
+
+        let err = uc
+            .execute(exec_input(), &make_user(), &dbward_domain::entities::AuditContext::System)
+            .unwrap_err();
+        assert!(matches!(err, AppError::Gone(_)));
+    }
+
+    #[test]
+    fn retry_on_failure_disabled_returns_conflict() {
+        let mut req = make_request(RequestStatus::Failed);
+        req.resolved_at = Some(Utc::now());
+
+        let reader = Arc::new(ConfigurableReader {
+            request: Mutex::new(Some(req)),
+            exec_count: 0,
+        });
+        let writer = Arc::new(FakeDispatchWriter {
+            dispatched: Mutex::new(false),
+        });
+
+        let policy = Arc::new(ConfigurablePolicy {
+            exec_policy: dbward_domain::policies::ExecutionPolicy {
+                retry_on_failure: false,
+                // Large window so window check passes
+                execution_window_secs: 86400,
+                ..Default::default()
+            },
+        });
+
+        let uc = DispatchRequest {
+            authorizer: Arc::new(AllowAll),
+            policy,
+            request_reader: reader,
+            request_writer: writer,
+            result_channel: Arc::new(FakeResultChannel),
+            event_dispatcher: Arc::new(NoopDispatcher),
+            policy_repo: Arc::new(FakePolicyRepo),
+            clock: Arc::new(FixedClock::now_utc()),
+        };
+
+        let err = uc
+            .execute(exec_input(), &make_user(), &dbward_domain::entities::AuditContext::System)
+            .unwrap_err();
+        assert!(matches!(err, AppError::Conflict(_)));
     }
 }

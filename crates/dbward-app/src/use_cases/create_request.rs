@@ -48,6 +48,7 @@ pub enum RequestChannel {
     Mcp,
 }
 
+#[derive(Debug)]
 pub struct CreateRequestOutput {
     pub id: String,
     pub status: RequestStatus,
@@ -360,8 +361,8 @@ mod tests {
             request_writer: Arc::new(FakeRequestWriter::new()),
             db_registry: Arc::new(FakeDatabaseRegistry),
             event_dispatcher: Arc::new(NoopDispatcher),
-            clock: Arc::new(FakeClock),
-            id_gen: Arc::new(FakeIdGen),
+            clock: Arc::new(FixedClock::now_utc()),
+            id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
         }
     }
@@ -472,5 +473,170 @@ mod tests {
             .unwrap();
         // SQL classifier overrides: INSERT → ExecuteDml
         assert_eq!(result.operation, Operation::ExecuteDml);
+    }
+
+    // --- Error path tests ---
+
+    struct FakeDatabaseRegistryNotFound;
+    impl DatabaseRegistry for FakeDatabaseRegistryNotFound {
+        fn register(&self, _: &DatabaseName, _: &Environment) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+            Ok(vec![])
+        }
+    }
+
+    struct RequireReasonPolicyEvaluator;
+    impl PolicyEvaluator for RequireReasonPolicyEvaluator {
+        fn evaluate_workflow(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+            _: Operation,
+        ) -> Result<Option<dbward_domain::policies::Workflow>, AppError> {
+            Ok(Some(dbward_domain::policies::Workflow {
+                id: "test-wf".into(),
+                database: DatabaseName::wildcard(),
+                environment: Environment::wildcard(),
+                operations: vec![],
+                steps: vec![],
+                skip_approval_for: vec![],
+                require_reason: true,
+                allow_self_approve: false,
+                allow_same_approver_across_steps: false,
+                pending_ttl_secs: None,
+                statement_timeout_secs: None,
+                approval_ttl_secs: None,
+                created_at: None,
+                updated_at: None,
+            }))
+        }
+        fn get_execution_policy(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+        ) -> dbward_domain::policies::ExecutionPolicy {
+            Default::default()
+        }
+    }
+
+    #[test]
+    fn detail_too_long_returns_validation() {
+        let uc = make_uc(Arc::new(AllowAll));
+        let mut input = make_input();
+        input.detail = "x".repeat(100_001);
+        let err = uc
+            .execute(
+                input,
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap_err();
+        assert!(matches!(err, AppError::Validation(ref m) if m.contains("query too long")));
+    }
+
+    #[test]
+    fn reason_too_long_returns_validation() {
+        let uc = make_uc(Arc::new(AllowAll));
+        let mut input = make_input();
+        input.reason = Some("r".repeat(1025));
+        let err = uc
+            .execute(
+                input,
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap_err();
+        assert!(matches!(err, AppError::Validation(ref m) if m.contains("reason too long")));
+    }
+
+    #[test]
+    fn ddl_rejected_returns_validation() {
+        let uc = make_uc(Arc::new(AllowAll));
+        let mut input = make_input();
+        input.detail = "CREATE TABLE foo (id INT)".into();
+        let err = uc
+            .execute(
+                input,
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn unregistered_db_returns_validation() {
+        let uc = CreateRequest {
+            authorizer: Arc::new(AllowAll),
+            policy: Arc::new(FakePolicyEvaluator),
+            request_reader: Arc::new(FakeRequestReader::new()),
+            request_writer: Arc::new(FakeRequestWriter::new()),
+            db_registry: Arc::new(FakeDatabaseRegistryNotFound),
+            event_dispatcher: Arc::new(NoopDispatcher),
+            clock: Arc::new(FixedClock::now_utc()),
+            id_gen: Arc::new(FixedIdGen::new()),
+            default_approval_ttl_secs: None,
+        };
+        let err = uc
+            .execute(
+                make_input(),
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(ref m) if m.contains("database not registered"))
+        );
+    }
+
+    #[test]
+    fn require_reason_enforced() {
+        let uc = CreateRequest {
+            authorizer: Arc::new(AllowAll),
+            policy: Arc::new(RequireReasonPolicyEvaluator),
+            request_reader: Arc::new(FakeRequestReader::new()),
+            request_writer: Arc::new(FakeRequestWriter::new()),
+            db_registry: Arc::new(FakeDatabaseRegistry),
+            event_dispatcher: Arc::new(NoopDispatcher),
+            clock: Arc::new(FixedClock::now_utc()),
+            id_gen: Arc::new(FixedIdGen::new()),
+            default_approval_ttl_secs: None,
+        };
+        let mut input = make_input();
+        input.reason = None;
+        let err = uc
+            .execute(
+                input,
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(ref m) if m.contains("reason is required by workflow policy"))
+        );
+    }
+
+    #[test]
+    fn mcp_emergency_rejected() {
+        let uc = make_uc(Arc::new(AllowAll));
+        let mut input = make_input();
+        input.channel = RequestChannel::Mcp;
+        input.emergency = true;
+        input.reason = Some("incident".into());
+        let err = uc
+            .execute(
+                input,
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(ref m) if m.contains("emergency requests are not allowed via MCP"))
+        );
     }
 }

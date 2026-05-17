@@ -107,7 +107,7 @@ impl AgentClaim {
             // here we verify the request operation is supported by the agent's declared scope
             let op_supported = match request.operation {
                 Operation::MigrateUp | Operation::MigrateDown => {
-                    // Migration requires explicit database capability (not wildcard)
+                    // Migration checks database capability (wildcard permitted)
                     input
                         .agent_databases
                         .iter()
@@ -224,4 +224,289 @@ fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use chrono::Utc;
+
+    use dbward_domain::auth::{AuthUser, ResolvedRole, SubjectType};
+    use dbward_domain::entities::*;
+    use dbward_domain::values::{DatabaseName, Environment, Operation};
+
+    use crate::error::{AppError, AuthError};
+    use crate::ports::*;
+    use crate::test_support::*;
+
+    use super::*;
+
+    // --- Local fakes ---
+
+    struct FakeRequestReader(Option<Request>);
+    impl RequestReader for FakeRequestReader {
+        fn get(&self, _: &str) -> Result<Option<Request>, AppError> {
+            Ok(self.0.clone())
+        }
+        fn list(&self, _: u32, _: u32, _: Option<&str>, _: Option<&str>) -> Result<(Vec<Request>, u32), AppError> { Ok((vec![], 0)) }
+        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> { Ok(None) }
+        fn list_visible_to_user(&self, _: &str, _: &[String], _: &[String], _: Option<&str>, _: u32, _: u32) -> Result<(Vec<Request>, u32), AppError> { Ok((vec![], 0)) }
+        fn list_pending_for_user(&self, _: &str, _: &[String], _: &[String], _: u32, _: u32) -> Result<(Vec<Request>, u32), AppError> { Ok((vec![], 0)) }
+        fn is_pending_approver(&self, _: &str, _: &str, _: &[String], _: &[String]) -> Result<bool, AppError> { Ok(false) }
+        fn count_executions(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+        fn list_results_for_user(&self, _: &str, _: &[String], _: &[String], _: u32) -> Result<Vec<StoredResultEntry>, AppError> { Ok(vec![]) }
+        fn count_by_status(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+        fn get_pending_approvers_for_requests(&self, _: &[&str]) -> Result<std::collections::HashMap<String, (u32, Vec<String>)>, AppError> { Ok(std::collections::HashMap::new()) }
+    }
+
+    struct FakeAgentRepo {
+        has_running: bool,
+        claim_result: bool,
+    }
+    impl FakeAgentRepo {
+        fn new() -> Self { Self { has_running: false, claim_result: true } }
+    }
+    impl AgentRepo for FakeAgentRepo {
+        fn upsert(&self, _: &Agent) -> Result<(), AppError> { Ok(()) }
+        fn get(&self, _: &str) -> Result<Option<Agent>, AppError> {
+            Ok(Some(Agent {
+                id: "agent-1".into(),
+                token_id: "t1".into(),
+                databases: vec![],
+                status: AgentStatus::Active,
+                max_concurrent: 4,
+                in_flight: 0,
+                uptime_secs: 100,
+                active_jobs: vec![],
+                lease_duration_secs: None,
+                last_seen: Some(Utc::now()),
+                created_at: Utc::now(),
+            }))
+        }
+        fn list(&self) -> Result<Vec<Agent>, AppError> { Ok(vec![]) }
+        fn create_execution(&self, _: &Execution) -> Result<(), AppError> { Ok(()) }
+        fn get_execution(&self, _: &str) -> Result<Option<Execution>, AppError> { Ok(None) }
+        fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> { Ok(()) }
+        fn extend_lease(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<(), AppError> { Ok(()) }
+        fn find_dispatched_jobs(&self, _: &[(DatabaseName, Environment)]) -> Result<Vec<Request>, AppError> { Ok(vec![]) }
+        fn has_running_migration(&self, _: &DatabaseName, _: &Environment, _: &str) -> Result<bool, AppError> {
+            Ok(self.has_running)
+        }
+        fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> { Ok(vec![]) }
+        fn claim_and_mark_running(&self, _: &Execution, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(self.claim_result)
+        }
+        fn complete_execution(&self, _: &str, _: &str, _: bool, _: chrono::DateTime<chrono::Utc>, _: &AuditEvent, _: Option<&ExecutionResult>, _: &[ResultAccess]) -> Result<bool, AppError> { Ok(true) }
+        fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
+        fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn mark_execution_lost_and_record(&self, _: &str, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> { Ok(vec![]) }
+        fn delete_result(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+    }
+
+    struct FakeTokenSigner;
+    impl TokenSigner for FakeTokenSigner {
+        fn sign(&self, _: &ExecutionTokenClaims) -> String { "fake-token".into() }
+        fn public_key_hex(&self) -> String { "deadbeef".into() }
+    }
+
+    struct FakeUserRepo;
+    impl UserRepo for FakeUserRepo {
+        fn get(&self, _: &str) -> Result<Option<User>, AppError> { Ok(None) }
+        fn upsert(&self, _: &User) -> Result<(), AppError> { Ok(()) }
+        fn list(&self) -> Result<Vec<User>, AppError> { Ok(vec![]) }
+        fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn activate(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> { Ok(true) }
+        fn is_suspended(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+        fn ensure_exists(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+    }
+
+    struct FakeRoleResolver;
+    impl RoleResolver for FakeRoleResolver {
+        fn resolve(&self, _: &str, _: SubjectType, _: &[String]) -> Result<Vec<ResolvedRole>, AuthError> {
+            Ok(vec![ResolvedRole {
+                name: "admin".into(),
+                permissions: std::collections::HashSet::new(),
+                databases: vec![],
+                environments: vec![],
+            }])
+        }
+    }
+
+    fn make_user() -> AuthUser {
+        AuthUser {
+            subject_id: "agent-1".into(),
+            subject_type: SubjectType::Agent,
+            roles: vec![],
+            groups: vec![],
+            token_id: None,
+        }
+    }
+
+    fn make_request(status: RequestStatus) -> Request {
+        let now = Utc::now();
+        Request {
+            id: "req-001".into(),
+            requester: "alice".into(),
+            database: DatabaseName::new("app").unwrap(),
+            environment: Environment::new("production").unwrap(),
+            operation: Operation::ExecuteSelect,
+            detail: "SELECT 1".into(),
+            status,
+            emergency: false,
+            reason: None,
+            idempotency_key: None,
+            metadata_json: "{}".into(),
+            share_with: vec![],
+            no_store: false,
+            workflow_snapshot_json: None,
+            cancel_reason: None,
+            cancelled_by: None,
+            created_at: now,
+            updated_at: now,
+            resolved_at: None,
+            expires_at: None,
+        }
+    }
+
+    fn make_input(databases: Vec<DatabaseCapability>) -> AgentClaimInput {
+        AgentClaimInput {
+            request_id: "req-001".into(),
+            agent_id: "agent-1".into(),
+            agent_databases: databases,
+        }
+    }
+
+    fn default_caps() -> Vec<DatabaseCapability> {
+        vec![DatabaseCapability {
+            database: DatabaseName::new("app").unwrap(),
+            environment: Environment::new("production").unwrap(),
+        }]
+    }
+
+    fn build_uc(
+        authorizer: Arc<dyn Authorizer>,
+        reader: Arc<dyn RequestReader>,
+        agent_repo: Arc<dyn AgentRepo>,
+    ) -> AgentClaim {
+        AgentClaim {
+            authorizer,
+            request_reader: reader,
+            agent_repo,
+            policy: Arc::new(FakePolicyEvaluator),
+            token_signer: Arc::new(FakeTokenSigner),
+            event_dispatcher: Arc::new(NoopDispatcher),
+            clock: Arc::new(FixedClock::now_utc()),
+            id_gen: Arc::new(FixedIdGen::new()),
+            user_repo: Arc::new(FakeUserRepo),
+            role_resolver: Arc::new(FakeRoleResolver),
+        }
+    }
+
+    #[test]
+    fn authz_denied_returns_forbidden() {
+        let uc = build_uc(
+            Arc::new(DenyAll),
+            Arc::new(FakeRequestReader(Some(make_request(RequestStatus::Dispatched)))),
+            Arc::new(FakeAgentRepo::new()),
+        );
+        let result = uc.execute(make_input(default_caps()), &make_user(), &AuditContext::System);
+        assert!(matches!(result, Err(AppError::Forbidden(_))));
+    }
+
+    #[test]
+    fn request_not_found_returns_not_found() {
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(FakeRequestReader(None)),
+            Arc::new(FakeAgentRepo::new()),
+        );
+        let result = uc.execute(make_input(default_caps()), &make_user(), &AuditContext::System);
+        assert!(matches!(result, Err(AppError::NotFound(_))));
+    }
+
+    #[test]
+    fn non_dispatched_status_returns_conflict() {
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(FakeRequestReader(Some(make_request(RequestStatus::Pending)))),
+            Arc::new(FakeAgentRepo::new()),
+        );
+        let result = uc.execute(make_input(default_caps()), &make_user(), &AuditContext::System);
+        assert!(matches!(result, Err(AppError::Conflict(_))));
+    }
+
+    #[test]
+    fn capability_mismatch_returns_forbidden() {
+        let caps = vec![DatabaseCapability {
+            database: DatabaseName::new("other").unwrap(),
+            environment: Environment::new("production").unwrap(),
+        }];
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(FakeRequestReader(Some(make_request(RequestStatus::Dispatched)))),
+            Arc::new(FakeAgentRepo::new()),
+        );
+        let result = uc.execute(make_input(caps), &make_user(), &AuditContext::System);
+        assert!(matches!(result, Err(AppError::Forbidden(_))));
+    }
+
+    #[test]
+    fn wildcard_capability_allows_claim() {
+        let caps = vec![DatabaseCapability {
+            database: DatabaseName::wildcard(),
+            environment: Environment::wildcard(),
+        }];
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(FakeRequestReader(Some(make_request(RequestStatus::Dispatched)))),
+            Arc::new(FakeAgentRepo::new()),
+        );
+        let result = uc.execute(make_input(caps), &make_user(), &AuditContext::System);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn migration_concurrent_returns_conflict() {
+        let mut req = make_request(RequestStatus::Dispatched);
+        req.operation = Operation::MigrateUp;
+        let agent_repo = FakeAgentRepo { has_running: true, claim_result: true };
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(FakeRequestReader(Some(req))),
+            Arc::new(agent_repo),
+        );
+        let result = uc.execute(make_input(default_caps()), &make_user(), &AuditContext::System);
+        assert!(matches!(result, Err(AppError::Conflict(_))));
+    }
+
+    #[test]
+    fn claim_and_mark_running_fails_returns_conflict() {
+        let agent_repo = FakeAgentRepo { has_running: false, claim_result: false };
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(FakeRequestReader(Some(make_request(RequestStatus::Dispatched)))),
+            Arc::new(agent_repo),
+        );
+        let result = uc.execute(make_input(default_caps()), &make_user(), &AuditContext::System);
+        assert!(matches!(result, Err(AppError::Conflict(_))));
+    }
+
+    #[test]
+    fn valid_claim_returns_output() {
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(FakeRequestReader(Some(make_request(RequestStatus::Dispatched)))),
+            Arc::new(FakeAgentRepo::new()),
+        );
+        let output = uc.execute(make_input(default_caps()), &make_user(), &AuditContext::System).unwrap();
+        assert_eq!(output.request_id, "req-001");
+        assert_eq!(output.operation, "execute_select");
+        assert_eq!(output.database, "app");
+        assert_eq!(output.environment, "production");
+        assert_eq!(output.detail, "SELECT 1");
+        assert_eq!(output.execution_token, "fake-token");
+        assert!(!output.execution_id.is_empty());
+    }
 }
