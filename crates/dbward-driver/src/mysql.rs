@@ -9,6 +9,7 @@ use crate::{
 
 pub struct MysqlDriver {
     pool: sqlx::MySqlPool,
+    url: String,
 }
 
 impl MysqlDriver {
@@ -32,7 +33,10 @@ impl MysqlDriver {
             .connect(url)
             .await
             .map_err(classify_mysql_connect_error)?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            url: url.to_owned(),
+        })
     }
 }
 
@@ -345,6 +349,23 @@ impl DatabaseDriver for MysqlDriver {
                 )))
             }
         }
+    }
+
+    async fn cancel_query(&self, connection_id: &str) -> Result<bool, DriverError> {
+        let conn_id: u64 = connection_id.parse().map_err(|_| {
+            DriverError::QueryFailed(format!("invalid MySQL connection_id: {connection_id}"))
+        })?;
+        let cancel_pool = sqlx::mysql::MySqlPoolOptions::new()
+            .max_connections(1)
+            .connect(&self.url)
+            .await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        sqlx::query(&format!("KILL QUERY {conn_id}"))
+            .execute(&cancel_pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        cancel_pool.close().await;
+        Ok(true)
     }
 }
 

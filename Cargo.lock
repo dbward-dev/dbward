@@ -621,9 +621,11 @@ dependencies = [
 name = "dbward-agent"
 version = "0.1.1"
 dependencies = [
+ "async-trait",
  "chrono",
  "clap",
  "dbward-api-types",
+ "dbward-domain",
  "dbward-driver",
  "dbward-migrate",
  "ed25519-dalek",
@@ -725,6 +727,7 @@ dependencies = [
 name = "dbward-migrate"
 version = "0.1.1"
 dependencies = [
+ "async-trait",
  "chrono",
  "dbward-driver",
  "serde",
