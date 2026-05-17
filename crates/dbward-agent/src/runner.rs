@@ -72,6 +72,7 @@ fn is_hard_error(err: &AgentError) -> bool {
         }
         AgentError::Config(_) => true,
         AgentError::TokenVerification(_) => true,
+        AgentError::UnsupportedOperation(_) => true,
         AgentError::Driver(driver_err) => matches!(
             driver_err,
             dbward_driver::DriverError::UnsupportedScheme(_)
@@ -681,6 +682,9 @@ mod tests {
         )));
         assert!(is_hard_error(&AgentError::Driver(
             dbward_driver::DriverError::AuthenticationFailed("password failed".into())
+        )));
+        assert!(is_hard_error(&AgentError::UnsupportedOperation(
+            "future_op".into()
         )));
 
         // Transient

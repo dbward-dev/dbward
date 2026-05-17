@@ -6,7 +6,8 @@ use crate::AgentError;
 
 use super::result::ExecutionResult;
 
-/// Operation dispatch enum. DML fallback for unknown operations (forward-compatible).
+/// Operation dispatch enum. Unknown operations are rejected (fail-closed).
+#[derive(Debug)]
 pub(crate) enum Operation {
     ExecuteSelect,
     ExecuteDml,
@@ -16,14 +17,17 @@ pub(crate) enum Operation {
 }
 
 impl Operation {
-    pub fn resolve(operation: &str) -> Self {
-        match operation {
-            "query" | "execute_select" => Self::ExecuteSelect,
-            "migrate_up" => Self::MigrateUp,
-            "migrate_down" => Self::MigrateDown,
-            "migrate_status" => Self::MigrateStatus,
-            _ => Self::ExecuteDml,
-        }
+    pub fn resolve(operation: &str) -> Result<Self, AgentError> {
+        let domain_op: dbward_domain::values::Operation = operation
+            .parse()
+            .map_err(|_| AgentError::UnsupportedOperation(operation.to_owned()))?;
+        Ok(match domain_op {
+            dbward_domain::values::Operation::ExecuteSelect => Self::ExecuteSelect,
+            dbward_domain::values::Operation::ExecuteDml => Self::ExecuteDml,
+            dbward_domain::values::Operation::MigrateUp => Self::MigrateUp,
+            dbward_domain::values::Operation::MigrateDown => Self::MigrateDown,
+            dbward_domain::values::Operation::MigrateStatus => Self::MigrateStatus,
+        })
     }
 
     pub async fn execute(
@@ -123,37 +127,44 @@ mod tests {
     #[test]
     fn resolve_known_operations() {
         assert!(matches!(
-            Operation::resolve("query"),
+            Operation::resolve("query").unwrap(),
             Operation::ExecuteSelect
         ));
         assert!(matches!(
-            Operation::resolve("execute_select"),
+            Operation::resolve("execute_select").unwrap(),
             Operation::ExecuteSelect
         ));
         assert!(matches!(
-            Operation::resolve("execute_dml"),
+            Operation::resolve("execute_query").unwrap(),
+            Operation::ExecuteSelect
+        ));
+        assert!(matches!(
+            Operation::resolve("execute").unwrap(),
+            Operation::ExecuteSelect
+        ));
+        assert!(matches!(
+            Operation::resolve("execute_dml").unwrap(),
             Operation::ExecuteDml
         ));
         assert!(matches!(
-            Operation::resolve("migrate_up"),
+            Operation::resolve("migrate_up").unwrap(),
             Operation::MigrateUp
         ));
         assert!(matches!(
-            Operation::resolve("migrate_down"),
+            Operation::resolve("migrate_down").unwrap(),
             Operation::MigrateDown
         ));
         assert!(matches!(
-            Operation::resolve("migrate_status"),
+            Operation::resolve("migrate_status").unwrap(),
             Operation::MigrateStatus
         ));
     }
 
     #[test]
-    fn resolve_unknown_falls_to_dml() {
-        assert!(matches!(
-            Operation::resolve("future_op"),
-            Operation::ExecuteDml
-        ));
-        assert!(matches!(Operation::resolve(""), Operation::ExecuteDml));
+    fn resolve_unknown_returns_error() {
+        let err = Operation::resolve("future_op").unwrap_err();
+        assert!(err.to_string().contains("unsupported operation"));
+        let err = Operation::resolve("").unwrap_err();
+        assert!(err.to_string().contains("unsupported operation"));
     }
 }

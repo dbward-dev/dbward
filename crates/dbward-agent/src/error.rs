@@ -18,4 +18,6 @@ pub enum AgentError {
     ServerError { status: u16, body: String },
     #[error("job already claimed")]
     AlreadyClaimed,
+    #[error("unsupported operation: {0}")]
+    UnsupportedOperation(String),
 }

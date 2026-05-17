@@ -624,6 +624,7 @@ dependencies = [
  "chrono",
  "clap",
  "dbward-api-types",
+ "dbward-domain",
  "dbward-driver",
  "dbward-migrate",
  "ed25519-dalek",

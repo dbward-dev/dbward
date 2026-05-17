@@ -92,7 +92,7 @@ impl JobExecutor {
 
         // Stage 3: Resolve
         let driver = self.resolve_driver(claim).await?;
-        let operation = Operation::resolve(&claim.operation);
+        let operation = Operation::resolve(&claim.operation)?;
 
         // Stage 4: Execute with heartbeat
         let result = self
