@@ -548,15 +548,16 @@ pub async fn start(
 
 fn resolve_license(key: Option<&str>, file: Option<&str>) -> dbward_domain::license::License {
     let raw = match (key, file) {
-        (Some(k), _) => Some(k.to_string()),
-        (None, Some(path)) => match std::fs::read_to_string(path) {
-            Ok(content) => Some(content),
+        (Some(k), _) if !k.trim().is_empty() => Some(k.to_string()),
+        (_, Some(path)) if !path.trim().is_empty() => match std::fs::read_to_string(path) {
+            Ok(content) if !content.trim().is_empty() => Some(content),
+            Ok(_) => None,
             Err(e) => {
                 eprintln!("fatal: failed to read license file '{}': {}", path, e);
                 std::process::exit(1);
             }
         },
-        (None, None) => None,
+        _ => None,
     };
 
     let Some(raw) = raw else {
@@ -607,5 +608,28 @@ async fn wait_for_signal() {
     #[cfg(not(unix))]
     {
         ctrl_c.await.ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_license_none_returns_free() {
+        let license = resolve_license(None, None);
+        assert_eq!(license.plan, dbward_domain::license::Plan::Free);
+    }
+
+    #[test]
+    fn resolve_license_empty_string_returns_free() {
+        let license = resolve_license(Some(""), None);
+        assert_eq!(license.plan, dbward_domain::license::Plan::Free);
+    }
+
+    #[test]
+    fn resolve_license_whitespace_only_returns_free() {
+        let license = resolve_license(Some("  \n"), None);
+        assert_eq!(license.plan, dbward_domain::license::Plan::Free);
     }
 }
