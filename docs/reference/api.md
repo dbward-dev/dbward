@@ -24,6 +24,13 @@ POST /api/requests
 }
 ```
 
+**Multi-statement rules for `detail`:**
+
+- Single statements are always allowed: `SELECT * FROM users`
+- SET prelude + one query is allowed: `SET statement_timeout = 5000; SELECT * FROM users`
+- Multiple result-producing statements are rejected: `SELECT 1; SELECT 2` → 400
+- Statements after the query are rejected: `SELECT 1; SET timeout = 5000` → 400
+
 Response (201):
 ```json
 {
