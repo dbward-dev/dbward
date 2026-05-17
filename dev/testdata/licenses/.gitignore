@@ -1,2 +1,4 @@
-# Keep generated test keys but not the secret
+# Generated files — regenerate with: python3 dev/scripts/generate-test-license.py
 test.secret.bin
+pro.key
+expired.key
