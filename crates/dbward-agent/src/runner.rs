@@ -9,8 +9,8 @@ use tracing::{error, info, warn};
 
 use crate::AgentError;
 use crate::client::AgentClient;
-use crate::config::{AgentConfig, DatabaseEntry};
-use crate::executor::{JobExecutor, PoolMap};
+use crate::config::AgentConfig;
+use crate::executor::{JobExecutor, PoolEntry, PoolRegistry};
 use crate::probes::ProbeGuard;
 
 /// Tracks in-flight jobs for observability. Single lock for consistent snapshots.
@@ -229,8 +229,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     };
 
     // --- Startup Phase: connect databases ---
-    let mut pools: PoolMap = HashMap::new();
-    let mut db_entries: HashMap<(String, String), DatabaseEntry> = HashMap::new();
+    let mut registry: PoolRegistry = HashMap::new();
     for (db_name, envs) in &config.databases {
         for (env_name, entry) in envs {
             let mut backoff_ms = startup_initial;
@@ -277,15 +276,16 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                     }
                 }
             };
-            pools.insert(
+            registry.insert(
                 (db_name.clone(), env_name.clone()),
-                Arc::new(tokio::sync::RwLock::new(driver)),
+                PoolEntry {
+                    driver: Arc::new(tokio::sync::RwLock::new(driver)),
+                    config: entry.clone(),
+                },
             );
-            db_entries.insert((db_name.clone(), env_name.clone()), entry.clone());
         }
     }
-    let pools = Arc::new(pools);
-    let db_entries = Arc::new(db_entries);
+    let pools = Arc::new(registry);
 
     // Build capabilities for poll
     let databases: Vec<String> = config.databases.keys().cloned().collect();
@@ -412,22 +412,20 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         // Degraded: attempt reconnect probe
         if degraded {
             let mut all_healthy = true;
-            for ((db_name, env_name), entry) in db_entries.iter() {
+            for ((db_name, env_name), entry) in pools.iter() {
                 let key = (db_name.clone(), env_name.clone());
                 if pool_failure_counts.get(&key).copied().unwrap_or(0) < 2 {
                     continue;
                 }
                 match tokio::time::timeout(
                     Duration::from_secs(5),
-                    dbward_driver::connect(&entry.url, None),
+                    dbward_driver::connect(&entry.config.url, None),
                 )
                 .await
                 {
                     Ok(Ok(new_driver)) => {
                         // Swap pool
-                        if let Some(lock) = pools.get(&key) {
-                            *lock.write().await = new_driver;
-                        }
+                        *entry.driver.write().await = new_driver;
                         pool_failure_counts.remove(&key);
                         info!(
                             phase = "degraded",

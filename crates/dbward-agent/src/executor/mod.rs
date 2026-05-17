@@ -16,18 +16,26 @@ use tracing::{debug, error, info, warn};
 use crate::AgentError;
 use crate::cancel::CancelToken;
 use crate::client::AgentClient;
+use crate::config::DatabaseEntry;
 
 use handlers::Operation;
 use heartbeat::HeartbeatTask;
 use result::error_body;
 use token::ExecutionToken;
 
-pub type PoolMap = HashMap<(String, String), Arc<tokio::sync::RwLock<Arc<dyn DatabaseDriver>>>>;
+pub type PoolKey = (String, String);
+
+pub struct PoolEntry {
+    pub(crate) driver: Arc<tokio::sync::RwLock<Arc<dyn DatabaseDriver>>>,
+    pub(crate) config: DatabaseEntry,
+}
+
+pub type PoolRegistry = HashMap<PoolKey, PoolEntry>;
 
 pub struct JobExecutor {
     pub client: Arc<AgentClient>,
     pub public_key: VerifyingKey,
-    pub pools: Arc<PoolMap>,
+    pub pools: Arc<PoolRegistry>,
     pub statement_timeout_secs: u64,
     pub health_tx: tokio::sync::mpsc::UnboundedSender<PoolHealthEvent>,
 }
@@ -135,13 +143,13 @@ impl JobExecutor {
         claim: &ClaimResponse,
     ) -> Result<Arc<dyn DatabaseDriver>, AgentError> {
         let pool_key = (claim.database.clone(), claim.environment.clone());
-        let lock = self.pools.get(&pool_key).ok_or_else(|| {
+        let entry = self.pools.get(&pool_key).ok_or_else(|| {
             AgentError::Config(format!(
                 "no pool for database={} environment={}",
                 claim.database, claim.environment
             ))
         })?;
-        let driver = lock.read().await.clone();
+        let driver = entry.driver.read().await.clone();
         Ok(driver)
     }
 
