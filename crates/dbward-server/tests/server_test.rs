@@ -22,8 +22,8 @@ struct MockTokenVerifier;
 #[async_trait]
 impl TokenVerifier for MockTokenVerifier {
     async fn verify_api_token(&self, token: &str) -> Result<AuthUser, AuthError> {
-        if token == "valid-test-token" {
-            Ok(AuthUser {
+        match token {
+            "valid-test-token" => Ok(AuthUser {
                 subject_id: "test-user".into(),
                 subject_type: SubjectType::User,
                 roles: vec![ResolvedRole {
@@ -34,9 +34,20 @@ impl TokenVerifier for MockTokenVerifier {
                 }],
                 groups: vec![],
                 token_id: Some("tok-1".into()),
-            })
-        } else {
-            Err(AuthError::InvalidToken)
+            }),
+            "agent-token" => Ok(AuthUser {
+                subject_id: "agent-01".into(),
+                subject_type: SubjectType::Agent,
+                roles: vec![ResolvedRole {
+                    name: "agent".into(),
+                    permissions: [Permission::All].into(),
+                    databases: vec![DatabaseName::new("*").unwrap()],
+                    environments: vec![Environment::new("*").unwrap()],
+                }],
+                groups: vec![],
+                token_id: Some("tok-agent".into()),
+            }),
+            _ => Err(AuthError::InvalidToken),
         }
     }
 
@@ -943,4 +954,126 @@ async fn xff_ignored_when_peer_not_trusted() {
 
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+// === Version upgrade tests ===
+
+#[tokio::test]
+async fn health_returns_json_with_version() {
+    let app = build_app(test_state(), vec![]);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["status"], "ok");
+    assert!(!json["version"].as_str().unwrap().is_empty());
+    assert!(!json["min_agent_version"].as_str().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn poll_returns_upgrade_required_for_old_agent() {
+    let app = build_app(test_state(), vec![]);
+    let body = serde_json::json!({
+        "capabilities": {
+            "databases": ["app"],
+            "operations": ["execute_select"]
+        },
+        "agent_version": "0.0.1"
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/agent/poll")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer agent-token")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["upgrade_required"], true);
+    assert!(json["jobs"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn poll_returns_no_upgrade_for_current_agent() {
+    let app = build_app(test_state(), vec![]);
+    let body = serde_json::json!({
+        "capabilities": {
+            "databases": ["app"],
+            "operations": ["execute_select"]
+        },
+        "agent_version": env!("CARGO_PKG_VERSION")
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/agent/poll")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer agent-token")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["upgrade_required"], false);
+}
+
+#[tokio::test]
+async fn poll_returns_no_upgrade_when_agent_version_missing() {
+    let app = build_app(test_state(), vec![]);
+    let body = serde_json::json!({
+        "capabilities": {
+            "databases": ["app"],
+            "operations": ["execute_select"]
+        }
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/agent/poll")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer agent-token")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["upgrade_required"], false);
+}
+
+#[tokio::test]
+async fn response_includes_version_header() {
+    let app = build_app(test_state(), vec![]);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let header = resp.headers().get("x-dbward-version").unwrap();
+    assert_eq!(header.to_str().unwrap(), env!("CARGO_PKG_VERSION"));
 }

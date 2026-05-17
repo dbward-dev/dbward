@@ -1,8 +1,31 @@
 use crate::error::CliError;
 use reqwest::Client;
 use serde_json::Value;
+use std::sync::OnceLock;
 
 const MAX_ERROR_BODY_PREVIEW: usize = 200;
+
+/// Emit a one-time warning if the server version differs from the CLI version.
+fn check_version_header(resp: &reqwest::Response) {
+    static WARNED: OnceLock<()> = OnceLock::new();
+    if WARNED.get().is_some() {
+        return;
+    }
+    if let Some(sv) = resp
+        .headers()
+        .get("x-dbward-version")
+        .and_then(|v| v.to_str().ok())
+    {
+        let cv = env!("CARGO_PKG_VERSION");
+        if sv != cv {
+            WARNED.get_or_init(|| {
+                eprintln!(
+                    "warning: server is v{sv}, CLI is v{cv}. Run 'dbward self-update' to update."
+                );
+            });
+        }
+    }
+}
 
 /// Structured HTTP error from the server.
 #[derive(Debug)]
@@ -104,6 +127,7 @@ impl ServerClient {
         resp: reqwest::Response,
         context: &str,
     ) -> Result<Value, CliError> {
+        check_version_header(&resp);
         let status = resp.status();
         let text = resp
             .text()
@@ -117,6 +141,7 @@ impl ServerClient {
     }
 
     async fn parse_response_detailed(&self, resp: reqwest::Response) -> Result<Value, ServerError> {
+        check_version_header(&resp);
         let status = resp.status();
         let text = resp
             .text()

@@ -254,14 +254,16 @@ curl -X DELETE http://localhost:3000/api/tokens/$TOKEN_ID \
 ## Health checks
 
 ```bash
-# Liveness
+# Liveness (returns version info)
 curl http://localhost:3000/health
-# → {"status": "ok"}
+# → {"status":"ok","version":"0.1.2","min_agent_version":"0.1.2"}
 
 # Readiness (returns 200 or 503, no body)
 curl -o /dev/null -w "%{http_code}" http://localhost:3000/ready
 # → 200
 ```
+
+All responses include an `X-Dbward-Version` header with the server's version.
 
 ## Metrics
 

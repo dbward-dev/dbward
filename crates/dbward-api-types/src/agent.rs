@@ -10,6 +10,8 @@ pub struct PollRequest {
     pub status: Option<AgentStatusReport>,
     #[serde(default = "default_limit")]
     pub limit: u32,
+    #[serde(default)]
+    pub agent_version: Option<String>,
 }
 
 /// Capabilities declared by the agent.
@@ -30,6 +32,12 @@ fn default_limit() -> u32 {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PollResponse {
     pub jobs: Vec<Job>,
+    #[serde(default)]
+    pub server_version: Option<String>,
+    #[serde(default)]
+    pub min_agent_version: Option<String>,
+    #[serde(default)]
+    pub upgrade_required: bool,
 }
 
 /// A job returned from poll.
