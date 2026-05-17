@@ -4,8 +4,9 @@
 # Usage: ./dev/e2e-policy.sh
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
-source "$(dirname "$0")/helpers.sh"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/helpers.sh"
 
 echo ""
 echo "=== E2E Policy Tests ==="
