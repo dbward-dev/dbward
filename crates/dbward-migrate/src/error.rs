@@ -8,4 +8,6 @@ pub enum MigrateError {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Config(String),
+    #[error("migration cancelled")]
+    Cancelled,
 }

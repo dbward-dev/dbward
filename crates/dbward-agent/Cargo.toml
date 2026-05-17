@@ -13,6 +13,7 @@ path = "src/main.rs"
 dbward-driver = { path = "../dbward-driver", version = "0.1.1" }
 dbward-migrate = { path = "../dbward-migrate" }
 dbward-api-types = { path = "../dbward-api-types" }
+dbward-domain = { path = "../dbward-domain" }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -31,3 +32,4 @@ hostname = "0.4"
 
 [dev-dependencies]
 rand = "0.8"
+async-trait = "0.1"

@@ -48,6 +48,11 @@ pub trait DatabaseDriver: Send + Sync {
         timeout_secs: u64,
         cancel: &CancelState,
     ) -> Result<u64, DriverError>;
+
+    /// Cancel a running query by its connection ID. Returns true if the cancel
+    /// signal was actually delivered to the target backend.
+    /// Opens a fresh connection internally to avoid pool saturation.
+    async fn cancel_query(&self, connection_id: &str) -> Result<bool, DriverError>;
 }
 
 pub async fn connect(

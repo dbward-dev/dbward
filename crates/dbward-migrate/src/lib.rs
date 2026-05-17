@@ -2,6 +2,7 @@ mod approval;
 mod error;
 mod migrator;
 mod parser;
+mod runner;
 
 pub use approval::{
     MigrationApprovalDetail, MigrationDetail, MigrationEntry, build_migrate_down_detail,
@@ -11,3 +12,4 @@ pub use approval::{
 pub use error::MigrateError;
 pub use migrator::{LocalMigrator, MigrationResult, MigrationStatus, Migrator};
 pub use parser::Migration;
+pub use runner::{MigrationRunResult, MigrationRunner};
