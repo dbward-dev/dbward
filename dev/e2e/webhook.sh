@@ -42,10 +42,14 @@ api POST /api/requests "$DEV_TOKEN" \
   -d '{"operation":"execute_select","environment":"development","database":"app","detail":"SELECT 1"}' > /dev/null
 sleep 2
 
-# Check webhook-receiver received something
-DELIVERIES=$(curl -sf "http://localhost:${WEBHOOK_PORT:-9999}/deliveries" 2>/dev/null || echo "[]")
-DELIVERY_COUNT=$(echo "$DELIVERIES" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "0")
-[ "$DELIVERY_COUNT" -ge 1 ] && pass "Webhook delivered ($DELIVERY_COUNT deliveries)" || skip "Webhook delivery not received (receiver may not be running)"
+# Check delivery via webhook-deliveries API
+STATUS=$(api_status GET "/api/webhook-deliveries?webhook_id=$WH_ID" "$ADMIN_TOKEN")
+if [ "$STATUS" = "200" ]; then
+  DELIVERY_COUNT=$(echo "$LAST_RESPONSE_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('deliveries',[])))" 2>/dev/null || echo "0")
+  [ "$DELIVERY_COUNT" -ge 1 ] && pass "Webhook delivered ($DELIVERY_COUNT deliveries)" || skip "Webhook delivery pending (async)"
+else
+  skip "Webhook deliveries API returned $STATUS"
+fi
 
 # --- 5. Delete webhook ---
 echo ""

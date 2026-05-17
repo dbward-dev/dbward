@@ -18,21 +18,22 @@ LICENSE_DIR="$(dirname "$0")/../testdata/licenses"
 # --- 1. Free plan: workflow limit ---
 echo "--- Free plan workflow limit ---"
 
-# Create workflows up to the free limit (5)
-for i in $(seq 1 5); do
+# server.toml already syncs 3 workflows at startup.
+# Free limit is 5, so we can create 2 more before hitting the limit.
+for i in $(seq 1 2); do
   STATUS=$(api_status POST /api/workflows "$ADMIN_TOKEN" \
     -d "{\"database\":\"app\",\"environment\":\"lic-env-$i\",\"operations\":[\"execute_select\"],\"steps\":[]}")
   if [ "$STATUS" != "201" ]; then
-    fail "Create workflow $i" "got $STATUS"
+    fail "Create workflow $i" "got $STATUS (Free limit may already be reached)"
     summary
   fi
 done
-pass "Created 5 workflows (Free limit)"
+pass "Created 2 additional workflows (total now at Free limit)"
 
-# 6th should fail with 402
+# Next one should fail with 402
 STATUS=$(api_status POST /api/workflows "$ADMIN_TOKEN" \
-  -d "{\"database\":\"app\",\"environment\":\"lic-env-6\",\"operations\":[\"execute_select\"],\"steps\":[]}")
-[ "$STATUS" = "402" ] && pass "6th workflow rejected (402 Payment Required)" || fail "Expected 402" "got $STATUS"
+  -d "{\"database\":\"app\",\"environment\":\"lic-env-over\",\"operations\":[\"execute_select\"],\"steps\":[]}")
+[ "$STATUS" = "402" ] && pass "Workflow over Free limit rejected (402 Payment Required)" || fail "Expected 402" "got $STATUS"
 
 # --- 2. Pro plan: unlocks limit ---
 echo ""
