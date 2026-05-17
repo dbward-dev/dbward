@@ -175,6 +175,31 @@ pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyE
         worst = worst.escalate(c);
     }
 
+    // For multi-statement ExecuteSelect, enforce exactly one result-producing
+    // statement with only allowed SET preludes before it.
+    if matches!(worst, InternalClass::Select) && statements.len() > 1 {
+        let mut found_result_producing = false;
+        for stmt in &statements {
+            if is_result_producing(stmt) {
+                if found_result_producing {
+                    return Err(ClassifyError::Rejected {
+                        reason: "multi-statement queries with multiple result sets are not \
+                                 supported; submit each query separately"
+                            .into(),
+                    });
+                }
+                found_result_producing = true;
+            } else if found_result_producing {
+                // Non-result statement after the result-producing one
+                return Err(ClassifyError::Rejected {
+                    reason: "in a multi-statement batch, only SET statements are allowed \
+                             before the query; no statements may follow it"
+                        .into(),
+                });
+            }
+        }
+    }
+
     match worst {
         InternalClass::Select => Ok(Classification {
             operation: Operation::ExecuteSelect,
@@ -393,6 +418,28 @@ fn query_has_dangerous_function(query: &sqlparser::ast::Query) -> bool {
     let mut visitor = DangerousFunctionVisitor { found: false };
     let _ = query.visit(&mut visitor);
     visitor.found
+}
+
+/// Whether a statement produces a result set (rows) when executed.
+/// Distinct from safety classification: SET is "Select" class but not result-producing.
+fn is_result_producing(stmt: &Statement) -> bool {
+    matches!(
+        stmt,
+        Statement::Query(_)
+            | Statement::ShowVariable { .. }
+            | Statement::ShowTables { .. }
+            | Statement::ShowColumns { .. }
+            | Statement::ShowCreate { .. }
+            | Statement::ShowDatabases { .. }
+            | Statement::ShowSchemas { .. }
+            | Statement::ShowViews { .. }
+            | Statement::ShowCollation { .. }
+            | Statement::ShowStatus { .. }
+            | Statement::ShowVariables { .. }
+            | Statement::ShowFunctions { .. }
+            | Statement::ExplainTable { .. }
+            | Statement::Explain { .. }
+    )
 }
 
 fn classify_set(set: &Set) -> InternalClass {
@@ -820,9 +867,77 @@ mod tests {
 
     #[test]
     fn statement_count_multi() {
-        let c = pg("SELECT 1; SELECT 2; SELECT 3").unwrap();
+        // Multi-statement pure-SELECT is now rejected
+        let r = pg("SELECT 1; SELECT 2; SELECT 3");
+        assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+    }
+
+    // === Multi-statement result-producing enforcement ===
+
+    #[test]
+    fn multi_select_rejected() {
+        let r = pg("SELECT 1; SELECT 2");
+        assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+    }
+
+    #[test]
+    fn set_then_select_allowed() {
+        let c = pg("SET statement_timeout = 5000; SELECT 1 AS val").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteSelect);
+        assert_eq!(c.statement_count, 2);
+    }
+
+    #[test]
+    fn multiple_set_then_select_allowed() {
+        let c = pg("SET statement_timeout = 5000; SET timezone = 'UTC'; SELECT 1").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteSelect);
         assert_eq!(c.statement_count, 3);
-        assert_eq!(c.statements.len(), 3);
+    }
+
+    #[test]
+    fn show_then_select_rejected() {
+        let r = pg("SHOW server_version; SELECT 1");
+        assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+    }
+
+    #[test]
+    fn select_then_set_rejected() {
+        let r = pg("SELECT 1; SET statement_timeout = 5000");
+        assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+    }
+
+    #[test]
+    fn explain_then_select_rejected() {
+        let r = pg("EXPLAIN SELECT 1; SELECT 2");
+        assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+    }
+
+    #[test]
+    fn set_then_show_allowed() {
+        let c = mysql("SET sql_mode = 'STRICT_TRANS_TABLES'; SHOW TABLES").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteSelect);
+        assert_eq!(c.statement_count, 2);
+    }
+
+    #[test]
+    fn multi_set_without_query_allowed() {
+        let c = pg("SET statement_timeout = 5000; SET timezone = 'UTC'").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteSelect);
+        assert_eq!(c.statement_count, 2);
+    }
+
+    #[test]
+    fn set_timezone_then_select_allowed() {
+        let c = pg("SET TIME ZONE 'America/New_York'; SELECT now()").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteSelect);
+        assert_eq!(c.statement_count, 2);
+    }
+
+    #[test]
+    fn set_names_then_select_allowed() {
+        let c = mysql("SET NAMES utf8mb4; SELECT 1").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteSelect);
+        assert_eq!(c.statement_count, 2);
     }
 
     // === Fix 1: LOAD DATA rejected ===
