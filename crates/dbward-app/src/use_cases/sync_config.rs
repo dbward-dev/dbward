@@ -51,96 +51,102 @@ pub struct WebhookInput {
 
 impl SyncConfig {
     pub fn sync_workflows(&self, workflows: Vec<WorkflowInput>) -> Result<(), AppError> {
-        // Clean all config-sourced workflows first
+        // Validate all workflows BEFORE deleting existing config (fail-safe)
+        let mut parsed = Vec::with_capacity(workflows.len());
+        for (i, wf) in workflows.iter().enumerate() {
+            let id = format!("config-wf-{i}");
+            parsed.push(Self::parse_workflow(&id, wf)?);
+        }
+
+        // Only delete after successful validation
         for i in 0..100 {
             let _ = self.policy_repo.delete_workflow(&format!("config-wf-{i}"));
         }
 
-        for (i, wf) in workflows.iter().enumerate() {
-            let id = format!("config-wf-{i}");
-            let db = if wf.database == "*" {
-                DatabaseName::wildcard()
-            } else {
-                DatabaseName::new(&wf.database)
-                    .map_err(|e| AppError::Validation(format!("workflow db: {e}")))?
-            };
-            let env = if wf.environment == "*" {
-                Environment::wildcard()
-            } else {
-                Environment::new(&wf.environment)
-                    .map_err(|e| AppError::Validation(format!("workflow env: {e}")))?
-            };
-
-            let mut operations: Vec<Operation> = Vec::new();
-            for op_str in &wf.operations {
-                let op = op_str
-                    .parse::<Operation>()
-                    .map_err(|e| AppError::Validation(format!("workflow {id}: {e}")))?;
-                operations.push(op);
-            }
-
-            let mut steps: Vec<WorkflowStep> = Vec::new();
-            for s in &wf.steps {
-                let mode = match s.mode.as_str() {
-                    "any" => WorkflowStepMode::Any,
-                    "all" => WorkflowStepMode::All,
-                    other => {
-                        return Err(AppError::Validation(format!(
-                            "workflow step: unknown mode '{other}' (expected 'any' or 'all')"
-                        )));
-                    }
-                };
-                let mut approvers = Vec::new();
-                for a in &s.approvers {
-                    let selector = match a.selector_type.as_str() {
-                        "role" => Selector::Role(a.value.clone()),
-                        "group" => Selector::Group(a.value.clone()),
-                        "user" => Selector::User(a.value.clone()),
-                        other => {
-                            return Err(AppError::Validation(format!(
-                                "workflow step: unknown selector_type '{other}'"
-                            )));
-                        }
-                    };
-                    approvers.push(ApproverGroup {
-                        selector,
-                        min: a.min,
-                    });
-                }
-                steps.push(WorkflowStep { approvers, mode });
-            }
-
-            let workflow = Workflow {
-                id,
-                database: db,
-                environment: env,
-                operations,
-                steps,
-                skip_approval_for: wf
-                    .skip_approval_for
-                    .iter()
-                    .filter_map(|s| Selector::parse(s).ok())
-                    .collect(),
-                require_reason: wf.require_reason,
-                allow_self_approve: wf.allow_self_approve,
-                allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
-                pending_ttl_secs: wf.pending_ttl_secs,
-                statement_timeout_secs: wf.statement_timeout_secs,
-                approval_ttl_secs: None,
-                created_at: None,
-                updated_at: None,
-            };
-            self.policy_repo.create_workflow(&workflow)?;
+        for workflow in &parsed {
+            self.policy_repo.create_workflow(workflow)?;
         }
         Ok(())
     }
 
-    pub fn sync_webhooks(&self, webhooks: Vec<WebhookInput>) -> Result<(), AppError> {
-        // Delete all config-sourced webhooks
-        for i in 0..100 {
-            let _ = self.webhook_repo.delete(&format!("config-wh-{i}"));
+    fn parse_workflow(id: &str, wf: &WorkflowInput) -> Result<Workflow, AppError> {
+        let db = if wf.database == "*" {
+            DatabaseName::wildcard()
+        } else {
+            DatabaseName::new(&wf.database)
+                .map_err(|e| AppError::Validation(format!("workflow db: {e}")))?
+        };
+        let env = if wf.environment == "*" {
+            Environment::wildcard()
+        } else {
+            Environment::new(&wf.environment)
+                .map_err(|e| AppError::Validation(format!("workflow env: {e}")))?
+        };
+
+        let mut operations: Vec<Operation> = Vec::new();
+        for op_str in &wf.operations {
+            let op = op_str
+                .parse::<Operation>()
+                .map_err(|e| AppError::Validation(format!("workflow {id}: {e}")))?;
+            operations.push(op);
         }
 
+        let mut steps: Vec<WorkflowStep> = Vec::new();
+        for s in &wf.steps {
+            let mode = match s.mode.as_str() {
+                "any" => WorkflowStepMode::Any,
+                "all" => WorkflowStepMode::All,
+                other => {
+                    return Err(AppError::Validation(format!(
+                        "workflow step: unknown mode '{other}' (expected 'any' or 'all')"
+                    )));
+                }
+            };
+            let mut approvers = Vec::new();
+            for a in &s.approvers {
+                let selector = match a.selector_type.as_str() {
+                    "role" => Selector::Role(a.value.clone()),
+                    "group" => Selector::Group(a.value.clone()),
+                    "user" => Selector::User(a.value.clone()),
+                    other => {
+                        return Err(AppError::Validation(format!(
+                            "workflow step: unknown selector_type '{other}'"
+                        )));
+                    }
+                };
+                approvers.push(ApproverGroup {
+                    selector,
+                    min: a.min,
+                });
+            }
+            steps.push(WorkflowStep { approvers, mode });
+        }
+
+        Ok(Workflow {
+            id: id.to_string(),
+            database: db,
+            environment: env,
+            operations,
+            steps,
+            skip_approval_for: wf
+                .skip_approval_for
+                .iter()
+                .filter_map(|s| Selector::parse(s).ok())
+                .collect(),
+            require_reason: wf.require_reason,
+            allow_self_approve: wf.allow_self_approve,
+            allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
+            pending_ttl_secs: wf.pending_ttl_secs,
+            statement_timeout_secs: wf.statement_timeout_secs,
+            approval_ttl_secs: None,
+            created_at: None,
+            updated_at: None,
+        })
+    }
+
+    pub fn sync_webhooks(&self, webhooks: Vec<WebhookInput>) -> Result<(), AppError> {
+        // Validate all webhooks BEFORE deleting existing config
+        let mut parsed = Vec::with_capacity(webhooks.len());
         let now = self.clock.now();
         for (i, wh) in webhooks.iter().enumerate() {
             let format = match wh.format.as_str() {
@@ -152,7 +158,7 @@ impl SyncConfig {
                     )));
                 }
             };
-            let webhook = Webhook {
+            parsed.push(Webhook {
                 id: format!("config-wh-{i}"),
                 url: wh.url.clone(),
                 events: wh.events.clone(),
@@ -161,8 +167,16 @@ impl SyncConfig {
                 status: WebhookStatus::Active,
                 created_at: Some(now),
                 updated_at: Some(now),
-            };
-            self.webhook_repo.create(&webhook)?;
+            });
+        }
+
+        // Only delete after successful validation
+        for i in 0..100 {
+            let _ = self.webhook_repo.delete(&format!("config-wh-{i}"));
+        }
+
+        for webhook in &parsed {
+            self.webhook_repo.create(webhook)?;
         }
         Ok(())
     }

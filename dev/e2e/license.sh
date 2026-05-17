@@ -15,6 +15,9 @@ TS=$(date +%s)
 ADMIN_TOKEN=$(create_token "e2e-license-admin-$TS" admin)
 LICENSE_DIR="$(dirname "$0")/../testdata/licenses"
 
+# Regenerate test license keys to avoid expiration issues
+python3 "$(dirname "$0")/../scripts/generate-test-license.py" > /dev/null 2>&1 || true
+
 # --- 1. Free plan: workflow limit ---
 echo "--- Free plan workflow limit ---"
 
@@ -77,6 +80,14 @@ if [ -f "$LICENSE_DIR/pro.key" ] && [ -f "$LICENSE_DIR/test.pub.hex" ]; then
     docker compose -f dev/compose.yml -f dev/compose.override.yml up -d dbward-server 2>/dev/null
   sleep 2
   wait_for_server
+
+  # Cleanup: delete workflows created during this test
+  ADMIN_TOKEN=$(create_token "e2e-license-cleanup-$TS" admin)
+  for i in $(seq 1 2); do
+    api DELETE "/api/workflows/app:lic-env-$i" "$ADMIN_TOKEN" > /dev/null 2>&1 || true
+  done
+  api DELETE "/api/workflows/app:lic-env-over" "$ADMIN_TOKEN" > /dev/null 2>&1 || true
+  api DELETE "/api/workflows/app:lic-pro-1" "$ADMIN_TOKEN" > /dev/null 2>&1 || true
 else
   skip "Pro license keys not found (run dev/scripts/generate-test-license.py)"
   skip "Expired license test skipped"
