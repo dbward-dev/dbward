@@ -10,6 +10,8 @@ pub enum AgentError {
     TokenVerification(String),
     #[error("driver error: {0}")]
     Driver(#[from] dbward_driver::DriverError),
+    #[error("migration error: {0}")]
+    Migration(#[from] dbward_migrate::MigrateError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("drain timeout exceeded")]

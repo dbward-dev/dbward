@@ -108,14 +108,21 @@ impl JobExecutor {
         // Report health
         let pool_key_db = claim.database.clone();
         let pool_key_env = claim.environment.clone();
-        match &result {
-            Ok(_) => {
+        let is_connectivity = match &result {
+            Err(AgentError::Driver(e)) => e.is_connectivity_error(),
+            Err(AgentError::Migration(dbward_migrate::MigrateError::Driver(e))) => {
+                e.is_connectivity_error()
+            }
+            _ => false,
+        };
+        match (&result, is_connectivity) {
+            (Ok(_), _) => {
                 let _ = self.health_tx.send(PoolHealthEvent::Success {
                     database: pool_key_db,
                     environment: pool_key_env,
                 });
             }
-            Err(AgentError::Driver(e)) if e.is_connectivity_error() => {
+            (Err(_), true) => {
                 let _ = self.health_tx.send(PoolHealthEvent::ConnectivityError {
                     database: pool_key_db,
                     environment: pool_key_env,

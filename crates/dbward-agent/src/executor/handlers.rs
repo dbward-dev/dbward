@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use dbward_driver::{CancelState, DatabaseDriver, DriverError};
+use dbward_driver::{CancelState, DatabaseDriver};
+use dbward_migrate::MigrationRunner;
 
 use crate::AgentError;
 
@@ -63,55 +64,19 @@ impl Operation {
                 })
             }
             Self::MigrateUp => {
-                let parsed = dbward_migrate::MigrationDetail::parse(detail)
-                    .map_err(|e| AgentError::Driver(DriverError::QueryFailed(e.to_string())))?;
-                driver.ensure_migrations_table().await?;
-                let already = driver.applied_versions().await?;
-                let pending: Vec<_> = parsed
-                    .migrations
-                    .iter()
-                    .filter(|e| !already.contains(&e.version))
-                    .take(parsed.max_count.unwrap_or(usize::MAX))
-                    .collect();
-                let mut applied = vec![];
-                for entry in &pending {
-                    if cancel.is_cancelled() {
-                        return Err(AgentError::Driver(DriverError::Cancelled));
-                    }
-                    driver.apply_migration(&entry.sql, &entry.version).await?;
-                    applied.push(&entry.version);
-                }
+                let r = MigrationRunner::run_up(driver.as_ref(), detail, cancel).await?;
                 Ok(ExecutionResult::Migrate {
-                    data: serde_json::json!({"applied": applied}).to_string(),
+                    data: serde_json::json!({"applied": r.applied}).to_string(),
                 })
             }
             Self::MigrateDown => {
-                let parsed = dbward_migrate::MigrationDetail::parse(detail)
-                    .map_err(|e| AgentError::Driver(DriverError::QueryFailed(e.to_string())))?;
-                driver.ensure_migrations_table().await?;
-                let already = driver.applied_versions().await?;
-                let to_revert: Vec<_> = parsed
-                    .migrations
-                    .iter()
-                    .rev()
-                    .filter(|e| already.contains(&e.version))
-                    .take(parsed.max_count.unwrap_or(usize::MAX))
-                    .collect();
-                let mut reverted = vec![];
-                for entry in &to_revert {
-                    if cancel.is_cancelled() {
-                        return Err(AgentError::Driver(DriverError::Cancelled));
-                    }
-                    driver.revert_migration(&entry.sql, &entry.version).await?;
-                    reverted.push(&entry.version);
-                }
+                let r = MigrationRunner::run_down(driver.as_ref(), detail, cancel).await?;
                 Ok(ExecutionResult::Migrate {
-                    data: serde_json::json!({"reverted": reverted}).to_string(),
+                    data: serde_json::json!({"reverted": r.reverted}).to_string(),
                 })
             }
             Self::MigrateStatus => {
-                driver.ensure_migrations_table().await?;
-                let versions = driver.applied_versions().await?;
+                let versions = MigrationRunner::status(driver.as_ref()).await?;
                 Ok(ExecutionResult::Migrate {
                     data: serde_json::json!({"applied_versions": versions}).to_string(),
                 })
