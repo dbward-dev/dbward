@@ -176,7 +176,8 @@ impl JobExecutor {
         );
 
         let cancel_state = CancelState::new();
-        let cancel_token = CancelToken::new(Some(driver.clone()), is_migration, cancel_state.clone());
+        let cancel_token =
+            CancelToken::new(Some(driver.clone()), is_migration, cancel_state.clone());
 
         let _heartbeat = HeartbeatTask::spawn(
             self.client.clone(),

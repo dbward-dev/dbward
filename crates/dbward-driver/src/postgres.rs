@@ -33,7 +33,10 @@ impl PostgresDriver {
                 })
             });
         let pool = opts.connect(url).await.map_err(classify_connect_error)?;
-        Ok(Self { pool, url: url.to_owned() })
+        Ok(Self {
+            pool,
+            url: url.to_owned(),
+        })
     }
 }
 
@@ -250,11 +253,10 @@ impl DatabaseDriver for PostgresDriver {
             .connect(&self.url)
             .await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
-        let cancelled: bool =
-            sqlx::query_scalar(&format!("SELECT pg_cancel_backend({pid})"))
-                .fetch_one(&cancel_pool)
-                .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let cancelled: bool = sqlx::query_scalar(&format!("SELECT pg_cancel_backend({pid})"))
+            .fetch_one(&cancel_pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         cancel_pool.close().await;
         Ok(cancelled)
     }

@@ -33,7 +33,10 @@ impl MysqlDriver {
             .connect(url)
             .await
             .map_err(classify_mysql_connect_error)?;
-        Ok(Self { pool, url: url.to_owned() })
+        Ok(Self {
+            pool,
+            url: url.to_owned(),
+        })
     }
 }
 

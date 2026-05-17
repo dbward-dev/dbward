@@ -166,10 +166,9 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
 
     info!(agent_id, "starting agent");
 
-    // Liveness probe immediately — process is alive
+    let start_time = Instant::now();
     let probes = ProbeGuard::create_liveness("/tmp/dbward-agent-alive", "/tmp/dbward-agent-ready")?;
 
-    // Install signal handler BEFORE startup retries
     let draining = Arc::new(AtomicBool::new(false));
     let draining_signal = draining.clone();
     tokio::spawn(async move {
@@ -189,20 +188,105 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         &config.server.agent_token,
     )?);
 
-    let startup_start = Instant::now();
+    // --- Startup ---
+    let (public_key, pools) = match startup_with_retry(
+        &config,
+        &client,
+        &draining,
+        startup_initial,
+        startup_max,
+        startup_deadline,
+        &operations,
+        max_concurrent,
+    )
+    .await?
+    {
+        Some(result) => result,
+        None => return Ok(()), // shutdown during startup
+    };
 
-    // --- Startup Phase: fetch public key ---
+    // --- Ready ---
+    probes.set_ready();
+    info!(phase = "ready", "agent initialized and accepting work");
+
+    let databases: Vec<String> = config.databases.keys().cloned().collect();
+    let environments: Vec<String> = config
+        .databases
+        .values()
+        .flat_map(|envs| envs.keys().cloned())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let tracker = Arc::new(JobTracker::new());
+    let (health_tx, health_rx) =
+        tokio::sync::mpsc::unbounded_channel::<crate::executor::PoolHealthEvent>();
+
+    let executor = Arc::new(JobExecutor {
+        client: client.clone(),
+        public_key,
+        pools: pools.clone(),
+        statement_timeout_secs: statement_timeout,
+        health_tx,
+    });
+
+    // --- Poll Loop ---
+    poll_loop(
+        &client,
+        &executor,
+        &pools,
+        &tracker,
+        &draining,
+        &probes,
+        &databases,
+        &environments,
+        &operations,
+        max_concurrent,
+        poll_interval,
+        health_rx,
+        start_time,
+    )
+    .await?;
+
+    // --- Drain ---
+    drain(
+        &client,
+        &tracker,
+        &databases,
+        &environments,
+        &operations,
+        max_concurrent,
+        drain_timeout,
+        start_time,
+    )
+    .await
+}
+
+/// Startup phase: fetch public key, connect databases, validate token.
+/// Returns None if shutdown was requested during startup.
+#[allow(clippy::too_many_arguments)]
+async fn startup_with_retry(
+    config: &AgentConfig,
+    client: &Arc<AgentClient>,
+    draining: &Arc<AtomicBool>,
+    initial_ms: u64,
+    max_ms: u64,
+    deadline_secs: u64,
+    operations: &[String],
+    max_concurrent: u32,
+) -> Result<Option<(ed25519_dalek::VerifyingKey, Arc<PoolRegistry>)>, AgentError> {
+    let start = Instant::now();
+
+    // Fetch public key
     let public_key = {
-        let mut backoff_ms = startup_initial;
+        let mut backoff_ms = initial_ms;
         let mut logger = RetryLogger::new();
         loop {
             if draining.load(Ordering::Acquire) {
                 info!("shutdown during startup, exiting");
-                return Ok(());
+                return Ok(None);
             }
-            if startup_deadline > 0
-                && startup_start.elapsed() > Duration::from_secs(startup_deadline)
-            {
+            if deadline_secs > 0 && start.elapsed() > Duration::from_secs(deadline_secs) {
                 error!(phase = "startup", "startup timeout exceeded, exiting");
                 return Err(AgentError::Config("startup timeout exceeded".into()));
             }
@@ -218,30 +302,28 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                 }
                 Err(e) => {
                     logger.log_failure("server", &e, backoff_ms);
-                    if interruptible_sleep(backoff_ms, &draining).await {
+                    if interruptible_sleep(backoff_ms, draining).await {
                         info!("shutdown during startup, exiting");
-                        return Ok(());
+                        return Ok(None);
                     }
-                    backoff_ms = (backoff_ms * 2).min(startup_max);
+                    backoff_ms = (backoff_ms * 2).min(max_ms);
                 }
             }
         }
     };
 
-    // --- Startup Phase: connect databases ---
+    // Connect databases
     let mut registry: PoolRegistry = HashMap::new();
     for (db_name, envs) in &config.databases {
         for (env_name, entry) in envs {
-            let mut backoff_ms = startup_initial;
+            let mut backoff_ms = initial_ms;
             let mut logger = RetryLogger::new();
             let driver = loop {
                 if draining.load(Ordering::Acquire) {
                     info!("shutdown during startup, exiting");
-                    return Ok(());
+                    return Ok(None);
                 }
-                if startup_deadline > 0
-                    && startup_start.elapsed() > Duration::from_secs(startup_deadline)
-                {
+                if deadline_secs > 0 && start.elapsed() > Duration::from_secs(deadline_secs) {
                     error!(phase = "startup", "startup timeout exceeded, exiting");
                     return Err(AgentError::Config("startup timeout exceeded".into()));
                 }
@@ -255,11 +337,8 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                         let agent_err = AgentError::Driver(e);
                         if is_hard_error(&agent_err) {
                             error!(
-                                phase = "startup",
-                                database = db_name,
-                                environment = env_name,
-                                %agent_err,
-                                "hard error connecting database, exiting"
+                                phase = "startup", database = db_name, environment = env_name,
+                                %agent_err, "hard error connecting database, exiting"
                             );
                             return Err(agent_err);
                         }
@@ -268,11 +347,11 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                             &agent_err,
                             backoff_ms,
                         );
-                        if interruptible_sleep(backoff_ms, &draining).await {
+                        if interruptible_sleep(backoff_ms, draining).await {
                             info!("shutdown during startup, exiting");
-                            return Ok(());
+                            return Ok(None);
                         }
-                        backoff_ms = (backoff_ms * 2).min(startup_max);
+                        backoff_ms = (backoff_ms * 2).min(max_ms);
                     }
                 }
             };
@@ -287,7 +366,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     }
     let pools = Arc::new(registry);
 
-    // Build capabilities for poll
+    // Initial poll to validate token
     let databases: Vec<String> = config.databases.keys().cloned().collect();
     let environments: Vec<String> = config
         .databases
@@ -296,17 +375,15 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
-
-    // --- Startup Phase: initial poll to validate token ---
     {
-        let mut backoff_ms = startup_initial;
+        let mut backoff_ms = initial_ms;
         let mut logger = RetryLogger::new();
         let init_req = PollRequest {
             agent_id: None,
             capabilities: dbward_api_types::agent::PollCapabilities {
                 databases: databases.clone(),
                 environments: environments.clone(),
-                operations: operations.clone(),
+                operations: operations.to_vec(),
             },
             limit: 0,
             status: Some(AgentStatusReport {
@@ -321,11 +398,9 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         loop {
             if draining.load(Ordering::Acquire) {
                 info!("shutdown during startup, exiting");
-                return Ok(());
+                return Ok(None);
             }
-            if startup_deadline > 0
-                && startup_start.elapsed() > Duration::from_secs(startup_deadline)
-            {
+            if deadline_secs > 0 && start.elapsed() > Duration::from_secs(deadline_secs) {
                 error!(phase = "startup", "startup timeout exceeded, exiting");
                 return Err(AgentError::Config("startup timeout exceeded".into()));
             }
@@ -341,40 +416,41 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                 }
                 Err(e) => {
                     logger.log_failure("initial_poll", &e, backoff_ms);
-                    if interruptible_sleep(backoff_ms, &draining).await {
+                    if interruptible_sleep(backoff_ms, draining).await {
                         info!("shutdown during startup, exiting");
-                        return Ok(());
+                        return Ok(None);
                     }
-                    backoff_ms = (backoff_ms * 2).min(startup_max);
+                    backoff_ms = (backoff_ms * 2).min(max_ms);
                 }
             }
         }
     }
 
-    // --- Ready ---
-    probes.set_ready();
-    info!(phase = "ready", "agent initialized and accepting work");
-
-    let tracker = Arc::new(JobTracker::new());
-    let start_time = Instant::now();
+    Ok(Some((public_key, pools)))
+}
+/// Poll loop: dispatch jobs, manage degraded mode, handle health events.
+/// Returns when draining signal is received.
+#[allow(clippy::too_many_arguments)]
+async fn poll_loop(
+    client: &Arc<AgentClient>,
+    executor: &Arc<JobExecutor>,
+    pools: &Arc<PoolRegistry>,
+    tracker: &Arc<JobTracker>,
+    draining: &Arc<AtomicBool>,
+    probes: &ProbeGuard,
+    databases: &[String],
+    environments: &[String],
+    operations: &[String],
+    max_concurrent: u32,
+    poll_interval: Duration,
+    mut health_rx: tokio::sync::mpsc::UnboundedReceiver<crate::executor::PoolHealthEvent>,
+    start_time: Instant,
+) -> Result<(), AgentError> {
     let mut consecutive_failures: u32 = 0;
     let mut is_ready = true;
-
-    // Health channel for degraded mode
-    let (health_tx, mut health_rx) =
-        tokio::sync::mpsc::unbounded_channel::<crate::executor::PoolHealthEvent>();
     let mut pool_failure_counts: HashMap<(String, String), u32> = HashMap::new();
     let mut degraded = false;
 
-    let executor = Arc::new(JobExecutor {
-        client: client.clone(),
-        public_key,
-        pools: pools.clone(),
-        statement_timeout_secs: statement_timeout,
-        health_tx,
-    });
-
-    // Poll loop
     loop {
         // Drain health events from executor
         while let Ok(event) = health_rx.try_recv() {
@@ -403,13 +479,12 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                     database,
                     environment,
                 } => {
-                    let key = (database, environment);
-                    pool_failure_counts.remove(&key);
+                    pool_failure_counts.remove(&(database, environment));
                 }
             }
         }
 
-        // Degraded: attempt reconnect probe
+        // Degraded: attempt reconnect
         if degraded {
             let mut all_healthy = true;
             for ((db_name, env_name), entry) in pools.iter() {
@@ -424,7 +499,6 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                 .await
                 {
                     Ok(Ok(new_driver)) => {
-                        // Swap pool
                         *entry.driver.write().await = new_driver;
                         pool_failure_counts.remove(&key);
                         info!(
@@ -437,13 +511,8 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                     Ok(Err(e))
                         if matches!(e, dbward_driver::DriverError::AuthenticationFailed(_)) =>
                     {
-                        error!(
-                            phase = "degraded",
-                            database = db_name,
-                            environment = env_name,
-                            %e,
-                            "authentication failed during reconnect, exiting"
-                        );
+                        error!(phase = "degraded", database = db_name, environment = env_name,
+                            %e, "authentication failed during reconnect, exiting");
                         return Err(AgentError::Driver(e));
                     }
                     _ => {
@@ -453,7 +522,6 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
             }
             if all_healthy || pool_failure_counts.values().all(|c| *c < 2) {
                 degraded = false;
-                // Only restore readiness if poll is also healthy
                 if consecutive_failures == 0 {
                     is_ready = true;
                     probes.restore_readiness();
@@ -461,65 +529,47 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                         phase = "ready",
                         "all databases recovered, readiness restored"
                     );
-                } else {
-                    info!(
-                        phase = "degraded",
-                        "databases recovered, waiting for server poll to stabilize"
-                    );
                 }
             }
         }
 
         if draining.load(Ordering::Acquire) {
-            // Send final drain status before exiting poll loop
-            let (current_in_flight, active_jobs) = tracker.snapshot();
-            let drain_req = PollRequest {
-                agent_id: None,
-                capabilities: dbward_api_types::agent::PollCapabilities {
-                    databases: databases.clone(),
-                    environments: environments.clone(),
-                    operations: operations.clone(),
-                },
-                limit: 0,
-                status: Some(AgentStatusReport {
-                    in_flight: current_in_flight,
-                    max_concurrent,
-                    draining: true,
-                    uptime_secs: start_time.elapsed().as_secs(),
-                    active_jobs,
-                }),
-                agent_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            };
-            let _ = client.poll(&drain_req).await;
+            // Notify server we're draining, then exit loop
+            let (in_flight, active_jobs) = tracker.snapshot();
+            let req = build_poll_request(
+                databases,
+                environments,
+                operations,
+                0,
+                max_concurrent,
+                true,
+                start_time.elapsed().as_secs(),
+                in_flight,
+                active_jobs,
+            );
+            let _ = client.poll(&req).await;
             probes.remove_readiness();
             break;
         }
 
-        let (current_in_flight, active_jobs) = tracker.snapshot();
-        // When not ready (poll failures or degraded), request no new jobs
+        let (in_flight, active_jobs) = tracker.snapshot();
         let available = if is_ready && !degraded {
-            max_concurrent.saturating_sub(current_in_flight)
+            max_concurrent.saturating_sub(in_flight)
         } else {
             0
         };
 
-        let req = PollRequest {
-            agent_id: None,
-            capabilities: dbward_api_types::agent::PollCapabilities {
-                databases: databases.clone(),
-                environments: environments.clone(),
-                operations: operations.clone(),
-            },
-            limit: available,
-            status: Some(AgentStatusReport {
-                in_flight: current_in_flight,
-                max_concurrent,
-                draining: draining.load(Ordering::Relaxed),
-                uptime_secs: start_time.elapsed().as_secs(),
-                active_jobs,
-            }),
-            agent_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        };
+        let req = build_poll_request(
+            databases,
+            environments,
+            operations,
+            available,
+            max_concurrent,
+            draining.load(Ordering::Relaxed),
+            start_time.elapsed().as_secs(),
+            in_flight,
+            active_jobs,
+        );
 
         match client.poll(&req).await {
             Ok(resp) => {
@@ -575,48 +625,82 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                     probes.remove_readiness();
                     is_ready = false;
                 }
-                // After threshold, log summary every 30s handled by poll interval
             }
         }
 
         tokio::time::sleep(poll_interval).await;
     }
+    Ok(())
+}
 
-    // Drain phase
+/// Drain phase: wait for in-flight jobs, send final status.
+#[allow(clippy::too_many_arguments)]
+async fn drain(
+    client: &Arc<AgentClient>,
+    tracker: &Arc<JobTracker>,
+    databases: &[String],
+    environments: &[String],
+    operations: &[String],
+    max_concurrent: u32,
+    timeout: Duration,
+    start_time: Instant,
+) -> Result<(), AgentError> {
     info!("draining, waiting for in-flight jobs");
-    let drain_deadline = tokio::time::Instant::now() + drain_timeout;
+    let deadline = tokio::time::Instant::now() + timeout;
     while tracker.snapshot().0 > 0 {
-        if tokio::time::Instant::now() >= drain_deadline {
+        if tokio::time::Instant::now() >= deadline {
             error!("drain timeout exceeded");
-            drop(probes);
             return Err(AgentError::DrainTimeout);
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
-    // Final poll to clear stale state on server
-    let final_req = PollRequest {
-        agent_id: None,
-        capabilities: dbward_api_types::agent::PollCapabilities {
-            databases: databases.clone(),
-            environments: environments.clone(),
-            operations: operations.clone(),
-        },
-        limit: 0,
-        status: Some(AgentStatusReport {
-            in_flight: 0,
-            max_concurrent,
-            draining: true,
-            uptime_secs: start_time.elapsed().as_secs(),
-            active_jobs: vec![],
-        }),
-        agent_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-    };
-    let _ = client.poll(&final_req).await;
+    let req = build_poll_request(
+        databases,
+        environments,
+        operations,
+        0,
+        max_concurrent,
+        true,
+        start_time.elapsed().as_secs(),
+        0,
+        vec![],
+    );
+    let _ = client.poll(&req).await;
 
-    drop(probes);
     info!("agent shutdown complete");
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_poll_request(
+    databases: &[String],
+    environments: &[String],
+    operations: &[String],
+    limit: u32,
+    max_concurrent: u32,
+    draining: bool,
+    uptime_secs: u64,
+    in_flight: u32,
+    active_jobs: Vec<ActiveJob>,
+) -> PollRequest {
+    PollRequest {
+        agent_id: None,
+        capabilities: dbward_api_types::agent::PollCapabilities {
+            databases: databases.to_vec(),
+            environments: environments.to_vec(),
+            operations: operations.to_vec(),
+        },
+        limit,
+        status: Some(AgentStatusReport {
+            in_flight,
+            max_concurrent,
+            draining,
+            uptime_secs,
+            active_jobs,
+        }),
+        agent_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+    }
 }
 
 #[cfg(test)]
