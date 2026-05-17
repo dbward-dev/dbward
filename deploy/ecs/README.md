@@ -60,7 +60,7 @@ aws cloudformation deploy --stack-name dbward --template-file template.yaml \
 ```bash
 TASK=$(aws ecs list-tasks --cluster dbward --service-name server --query 'taskArns[0]' --output text)
 aws ecs execute-command --cluster dbward --task $TASK --container server --interactive \
-  --command "dbward-server --data /data/dbward.db token create --user agent --role admin --agent"
+  --command "gosu dbward dbward-server --data /data/dbward.db token create --user agent --role admin --agent"
 
 # Store the output token
 aws secretsmanager create-secret --name dbward/agent-token \

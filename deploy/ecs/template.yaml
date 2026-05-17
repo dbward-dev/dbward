@@ -297,8 +297,7 @@ Resources:
                   cat > /tmp/server.toml << 'TOMLEOF'
                   ${ConfigContent}
                   TOMLEOF
-                  chown -R 10001:10001 /data
-                  exec dbward-server --data /data/dbward.db --listen 0.0.0.0:3000 --config /tmp/server.toml
+                  exec /usr/local/bin/docker-entrypoint.sh dbward-server --data /data/dbward.db --listen 0.0.0.0:3000 --config /tmp/server.toml
                 - ConfigContent: !Ref ServerConfigToml
           PortMappings:
             - ContainerPort: 3000

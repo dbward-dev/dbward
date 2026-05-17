@@ -56,13 +56,17 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
+ && apt-get install -y --no-install-recommends ca-certificates curl gosu \
  && rm -rf /var/lib/apt/lists/* \
+ && gosu nobody true \
  && groupadd -r -g 10001 dbward \
  && useradd -r -u 10001 -g dbward -d /data -s /sbin/nologin dbward \
  && mkdir -p /data && chown dbward:dbward /data
 
 WORKDIR /workspace
+
+COPY deploy/docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 COPY --from=builder /usr/local/bin/dbward /usr/local/bin/dbward
 COPY --from=builder /usr/local/bin/dbward-server /usr/local/bin/dbward-server
@@ -71,4 +75,5 @@ COPY --from=builder /usr/local/bin/dbward-agent /usr/local/bin/dbward-agent
 USER dbward:dbward
 VOLUME /data
 
-ENTRYPOINT ["dbward"]
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["dbward"]
