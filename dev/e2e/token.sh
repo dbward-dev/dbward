@@ -16,47 +16,38 @@ ADMIN_TOKEN=$(create_token "e2e-tok-admin-$TS" admin)
 
 # --- 1. List tokens ---
 echo "--- List tokens ---"
-STATUS=$(api_status GET /api/tokens "$ADMIN_TOKEN")
-[ "$STATUS" = "200" ] && pass "List tokens (200)" || fail "List" "got $STATUS"
-INITIAL_COUNT=$(echo "$LAST_RESPONSE_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('tokens',[])))")
-pass "Initial token count: $INITIAL_COUNT"
+RESP=$(api GET /api/tokens "$ADMIN_TOKEN")
+echo "$RESP" | python3 -c "import sys,json;json.load(sys.stdin)" 2>/dev/null \
+  && pass "List tokens (200, valid JSON)" || fail "List" "invalid response"
 
-# --- 2. Create additional token ---
+# --- 2. Create + revoke ---
 echo ""
-echo "--- Create token ---"
+echo "--- Create and revoke ---"
 EXTRA_TOKEN=$(create_token "e2e-tok-extra-$TS" developer)
 [ -n "$EXTRA_TOKEN" ] && pass "Created extra token" || fail "Create token" ""
 
-# Verify count increased
-STATUS=$(api_status GET /api/tokens "$ADMIN_TOKEN")
-NEW_COUNT=$(echo "$LAST_RESPONSE_BODY" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('tokens',[])))")
-[ "$NEW_COUNT" -gt "$INITIAL_COUNT" ] && pass "Token count increased ($INITIAL_COUNT → $NEW_COUNT)" || fail "Count unchanged" "$NEW_COUNT"
-
-# --- 3. Find the extra token ID ---
-echo ""
-echo "--- Find token to revoke ---"
-TOKEN_ID=$(echo "$LAST_RESPONSE_BODY" | python3 -c "
+# Find the token ID
+RESP=$(api GET /api/tokens "$ADMIN_TOKEN")
+TOKEN_ID=$(echo "$RESP" | python3 -c "
 import sys,json
 tokens = json.load(sys.stdin).get('tokens',[])
 for t in tokens:
     if t.get('subject_id','') == 'e2e-tok-extra-$TS':
-        print(t['id'])
-        break
-")
-[ -n "$TOKEN_ID" ] && pass "Found token ID: $TOKEN_ID" || fail "Token not found in list" ""
+        print(t['id']); break
+" 2>/dev/null || true)
 
-# --- 4. Revoke token ---
-echo ""
-echo "--- Revoke token ---"
 if [ -n "$TOKEN_ID" ]; then
+  pass "Found token ID: ${TOKEN_ID:0:8}..."
+
+  # Revoke
   STATUS=$(api_status DELETE "/api/tokens/$TOKEN_ID" "$ADMIN_TOKEN")
   [ "$STATUS" = "200" ] && pass "Token revoked (200)" || fail "Revoke" "got $STATUS"
 
-  # Verify revoked token can't authenticate
+  # Verify revoked
   STATUS=$(api_status GET /api/requests "$EXTRA_TOKEN")
   [ "$STATUS" = "401" ] && pass "Revoked token rejected (401)" || fail "Revoked auth" "got $STATUS"
 else
-  skip "Cannot test revoke (token ID not found)"
+  fail "Token not found in list" ""
 fi
 
 summary

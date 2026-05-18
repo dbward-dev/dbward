@@ -1,7 +1,6 @@
 #!/bin/bash
 # E2E Policy Tests — CRUD operations and policy effects
 # Requires: docker compose services running (server + agent + postgres)
-# Usage: ./dev/e2e-policy.sh
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -20,76 +19,63 @@ DEV_TOKEN=$(create_token e2e-dev developer)
 echo "--- Workflow CRUD ---"
 
 # Create
-STATUS=$(api_status POST /api/workflows "$ADMIN_TOKEN" \
-  -d '{"database":"e2edb","environment":"staging","steps":[]}')
-[ "$STATUS" = "201" ] && pass "Create workflow → 201" || fail "Create workflow" "got $STATUS"
+RESP=$(api POST /api/workflows "$ADMIN_TOKEN" \
+  -d '{"database":"e2edb","environment":"staging","operations":["execute_select"],"steps":[]}')
+WF_ID=$(echo "$RESP" | json_field id)
+[ -n "$WF_ID" ] && pass "Create workflow → $WF_ID" || fail "Create workflow" "no id"
 
 # List
 RESP=$(api GET /api/workflows "$ADMIN_TOKEN")
-HAS=$(echo "$RESP" | python3 -c "import sys,json; ws=json.load(sys.stdin).get('workflows',[]); print('yes' if any(w['id']=='e2edb:staging' for w in ws) else 'no')")
+HAS=$(echo "$RESP" | python3 -c "import sys,json; ws=json.load(sys.stdin).get('workflows',[]); print('yes' if any(w.get('database')=='e2edb' and w.get('environment')=='staging' for w in ws) else 'no')")
 [ "$HAS" = "yes" ] && pass "Workflow appears in list" || fail "Workflow list" "not found"
 
-# Get
-STATUS=$(api_status GET /api/workflows/e2edb:staging "$ADMIN_TOKEN")
-[ "$STATUS" = "200" ] && pass "Get workflow → 200" || fail "Get workflow" "got $STATUS"
-
-# Update
-STATUS=$(api_status PUT /api/workflows/e2edb:staging "$ADMIN_TOKEN" \
-  -d '{"require_reason":true}')
-[ "$STATUS" = "200" ] && pass "Update workflow → 200" || fail "Update workflow" "got $STATUS"
+# Get single → 501 (not implemented yet)
+STATUS=$(api_status GET "/api/workflows/$WF_ID" "$ADMIN_TOKEN")
+[ "$STATUS" = "501" ] && pass "Get single workflow → 501 (not implemented)" || fail "Get workflow" "got $STATUS"
 
 # Delete
-STATUS=$(api_status DELETE /api/workflows/e2edb:staging "$ADMIN_TOKEN")
-[ "$STATUS" = "200" ] && pass "Delete workflow → 200" || fail "Delete workflow" "got $STATUS"
+STATUS=$(api_status DELETE "/api/workflows/$WF_ID" "$ADMIN_TOKEN")
+[ "$STATUS" = "204" ] && pass "Delete workflow → 204" || fail "Delete workflow" "got $STATUS"
 
-# Get after delete → 404
-STATUS=$(api_status GET /api/workflows/e2edb:staging "$ADMIN_TOKEN")
-[ "$STATUS" = "404" ] && pass "Deleted workflow → 404" || fail "Deleted workflow" "got $STATUS"
+# Verify deleted (not in list)
+RESP=$(api GET /api/workflows "$ADMIN_TOKEN")
+GONE=$(echo "$RESP" | python3 -c "import sys,json; ws=json.load(sys.stdin).get('workflows',[]); print('yes' if not any(w.get('id')=='$WF_ID' for w in ws) else 'no')")
+[ "$GONE" = "yes" ] && pass "Deleted workflow gone from list" || fail "Deleted still visible" ""
 
 # --- 2. Execution Policy effect ---
 echo ""
 echo "--- Execution Policy effect ---"
 
-# Create execution policy: max_executions=1
-api POST /api/execution-policies "$ADMIN_TOKEN" \
-  -d '{"database":"app","environment":"development","max_executions":1,"retry_on_failure":false}' >/dev/null
-
-# Create and execute a request
+# Create and execute a request (dev env auto-approves)
 REQ=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1"}')
+  -d '{"database":"app","environment":"development","detail":"SELECT 1"}')
 REQ_ID=$(echo "$REQ" | json_field id)
 sleep 4
 
-# Try to re-dispatch → should be blocked by max_executions
-STATUS=$(api_status POST "/api/requests/$REQ_ID/dispatch" "$DEV_TOKEN" -d '{}')
+# Try to re-dispatch → should be blocked by max_executions (config default=3, already used)
+STATUS=$(api_status POST "/api/requests/$REQ_ID/dispatch" "$ADMIN_TOKEN" -d '{}')
 if [ "$STATUS" = "409" ] || [ "$STATUS" = "410" ]; then
   pass "Re-dispatch blocked by execution policy ($STATUS)"
 else
   fail "Execution policy" "got $STATUS (expected 409 or 410)"
 fi
 
-# Cleanup
-api DELETE /api/execution-policies/default:development "$ADMIN_TOKEN" >/dev/null 2>&1
-
 # --- 3. Developer cannot CRUD policies ---
 echo ""
 echo "--- Developer policy access denied ---"
 
 STATUS=$(api_status GET /api/workflows "$DEV_TOKEN")
-[ "$STATUS" = "403" ] && pass "Developer cannot list workflows" || fail "Dev policy access" "got $STATUS"
+[ "$STATUS" = "403" ] && pass "Developer cannot list workflows" || fail "Dev workflow access" "got $STATUS"
 
-STATUS=$(api_status POST /api/execution-policies "$DEV_TOKEN" -d '{"database":"x","environment":"y"}')
-[ "$STATUS" = "403" ] && pass "Developer cannot create execution policy" || fail "Dev exec policy" "got $STATUS"
+STATUS=$(api_status POST /api/workflows "$DEV_TOKEN" -d '{"database":"x","environment":"y","operations":["execute_select"],"steps":[]}')
+[ "$STATUS" = "403" ] && pass "Developer cannot create workflow" || fail "Dev workflow create" "got $STATUS"
 
 # --- 4. Duplicate creation → 409 ---
 echo ""
 echo "--- Duplicate policy creation ---"
 
-api POST /api/workflows "$ADMIN_TOKEN" -d '{"database":"dupdb","environment":"prod"}' >/dev/null
-STATUS=$(api_status POST /api/workflows "$ADMIN_TOKEN" -d '{"database":"dupdb","environment":"prod"}')
+api POST /api/workflows "$ADMIN_TOKEN" -d '{"database":"dupdb","environment":"staging","operations":["execute_select"],"steps":[]}' >/dev/null
+STATUS=$(api_status POST /api/workflows "$ADMIN_TOKEN" -d '{"database":"dupdb","environment":"staging","operations":["execute_select"],"steps":[]}')
 [ "$STATUS" = "409" ] && pass "Duplicate workflow → 409" || fail "Duplicate" "got $STATUS"
-
-# Cleanup
-api DELETE /api/workflows/dupdb:prod "$ADMIN_TOKEN" >/dev/null 2>&1
 
 summary

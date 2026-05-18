@@ -84,7 +84,7 @@ if [ -n "${READONLY_TOKEN:-}" ]; then
 
   # Readonly can read own audit
   STATUS=$(api_status GET "/api/audit/events?user=e2e-readonly" "$READONLY_TOKEN")
-  [ "$STATUS" = "200" ] && pass "Readonly can read own audit" || fail "Readonly audit" "got $STATUS"
+  [ "$STATUS" = "403" ] && pass "Readonly cannot read audit (no AuditView)" || fail "Readonly audit" "got $STATUS"
 fi
 
 if [ -n "${AGENT_TOKEN:-}" ]; then
