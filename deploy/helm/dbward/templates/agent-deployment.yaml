@@ -30,8 +30,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: agent
-          image: {{ include "dbward.image" . }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ include "dbward.agentImage" . }}
+          imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
           command: ["dbward-agent"]
           args:
             - --config

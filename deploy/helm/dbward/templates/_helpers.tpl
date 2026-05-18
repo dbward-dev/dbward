@@ -21,6 +21,10 @@ app.kubernetes.io/part-of: dbward
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end }}
 
-{{- define "dbward.image" -}}
-{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
+{{- define "dbward.serverImage" -}}
+{{ .Values.server.image.repository }}:{{ .Values.server.image.tag | default .Chart.AppVersion }}
+{{- end }}
+
+{{- define "dbward.agentImage" -}}
+{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag | default .Chart.AppVersion }}
 {{- end }}

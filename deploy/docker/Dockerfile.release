@@ -1,5 +1,5 @@
-# Dockerfile.release — used by CI to package pre-built binaries into a multi-arch image
-FROM debian:bookworm-slim
+# Dockerfile.release — multi-stage build for server, agent, and CLI images
+FROM debian:bookworm-slim AS base
 
 ARG TARGETARCH
 
@@ -11,19 +11,31 @@ RUN apt-get update \
  && useradd -r -u 10001 -g dbward -d /data -s /sbin/nologin dbward \
  && mkdir -p /data && chown dbward:dbward /data
 
-WORKDIR /workspace
-
 COPY deploy/docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-COPY binaries/${TARGETARCH}/dbward /usr/local/bin/dbward
+WORKDIR /workspace
+
+FROM base AS server
+ARG TARGETARCH
 COPY binaries/${TARGETARCH}/dbward-server /usr/local/bin/dbward-server
-COPY binaries/${TARGETARCH}/dbward-agent /usr/local/bin/dbward-agent
-
-RUN chmod +x /usr/local/bin/dbward /usr/local/bin/dbward-server /usr/local/bin/dbward-agent
-
+RUN chmod +x /usr/local/bin/dbward-server
 USER dbward:dbward
 VOLUME /data
-
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["dbward"]
+CMD ["dbward-server"]
+
+FROM base AS agent
+ARG TARGETARCH
+COPY binaries/${TARGETARCH}/dbward-agent /usr/local/bin/dbward-agent
+RUN chmod +x /usr/local/bin/dbward-agent
+USER dbward:dbward
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["dbward-agent"]
+
+FROM base AS cli
+ARG TARGETARCH
+COPY binaries/${TARGETARCH}/dbward /usr/local/bin/dbward
+RUN chmod +x /usr/local/bin/dbward
+USER dbward:dbward
+ENTRYPOINT ["dbward"]

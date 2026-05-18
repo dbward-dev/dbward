@@ -20,7 +20,7 @@ Parameters:
 
   ImageRepository:
     Type: String
-    Default: ghcr.io/dbward-dev/dbward
+    Default: ghcr.io/dbward-dev/dbward-agent
 
   ImageTag:
     Type: String

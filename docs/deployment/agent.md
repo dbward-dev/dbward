@@ -168,8 +168,8 @@ docker run -d \
   -e DBWARD_AGENT_TOKEN=dbw_... \
   -e DATABASE_URL=postgres://user:pass@db:5432/app \
   -v ./dbward-agent.toml:/etc/dbward/dbward-agent.toml:ro \
-  ghcr.io/dbward-dev/dbward:latest \
-  dbward agent --config /etc/dbward/dbward-agent.toml
+  ghcr.io/dbward-dev/dbward-agent:latest \
+  --config /etc/dbward/dbward-agent.toml
 ```
 
 ## Startup and resilience
