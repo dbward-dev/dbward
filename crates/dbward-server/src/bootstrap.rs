@@ -64,6 +64,8 @@ pub fn create_token_standalone(
     role: &str,
     is_agent: bool,
     groups: &[String],
+    license_key: Option<&str>,
+    license_file: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let conn = dbward_infra::sqlite::open(data)?;
 
@@ -72,14 +74,13 @@ pub fn create_token_standalone(
     let policy_repo = Arc::new(dbward_infra::sqlite::SqlitePolicyRepo::new(conn.clone()));
     let audit_logger = Arc::new(dbward_infra::sqlite::SqliteAuditLogger::new(conn));
 
+    let license = crate::resolve_license(license_key, license_file);
     let uc = TokenManage {
         authorizer: Arc::new(dbward_infra::auth::RbacAuthorizer),
         token_repo,
         user_repo,
         policy_repo,
-        license: Arc::new(dbward_infra::LicenseCheckerImpl::new(
-            dbward_domain::license::License::default(),
-        )),
+        license: Arc::new(dbward_infra::LicenseCheckerImpl::new(license)),
         audit: audit_logger,
         clock: Arc::new(dbward_infra::UtcClock),
         id_gen: Arc::new(dbward_infra::UuidGenerator),
