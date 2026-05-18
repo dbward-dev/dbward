@@ -98,3 +98,26 @@ cp dbward.db.bak.v7 dbward.db
 # 4. Restart
 systemctl start dbward-server dbward-agent
 ```
+
+## v0.1.2 Breaking Changes
+
+### Helm chart: image values restructured
+
+The single `image.*` block has been replaced with per-component image configuration:
+
+```yaml
+# Before (v0.1.1)
+image:
+  repository: ghcr.io/dbward-dev/dbward
+  tag: "0.1.1"
+
+# After (v0.1.2+)
+server:
+  image:
+    repository: ghcr.io/dbward-dev/dbward-server
+    tag: "0.1.2"
+agent:
+  image:
+    repository: ghcr.io/dbward-dev/dbward-agent
+    tag: "0.1.2"
+```
