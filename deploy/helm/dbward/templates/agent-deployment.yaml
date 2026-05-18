@@ -32,6 +32,7 @@ spec:
         - name: agent
           image: {{ include "dbward.agentImage" . }}
           imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
+          command: ["dbward-agent"]
           args:
             - --config
             - /config/agent.toml
