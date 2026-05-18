@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use dbward_app::error::AppError;
-use dbward_app::ports::ResultStore;
+use dbward_app::ports::{PutOptions, ResultStore, ResultStream};
+use futures_util::{StreamExt, TryStreamExt};
 use object_store::ObjectStore;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
@@ -24,7 +25,7 @@ impl LocalResultStore {
 
 #[async_trait]
 impl ResultStore for LocalResultStore {
-    async fn put(&self, key: &str, data: &[u8]) -> Result<(), AppError> {
+    async fn put(&self, key: &str, data: &[u8], _opts: PutOptions) -> Result<(), AppError> {
         let path = Path::from(key);
         self.store
             .put(&path, data.to_vec().into())
@@ -33,18 +34,22 @@ impl ResultStore for LocalResultStore {
         Ok(())
     }
 
-    async fn get(&self, key: &str) -> Result<Vec<u8>, AppError> {
+    async fn get_stream(&self, key: &str) -> Result<ResultStream, AppError> {
         let path = Path::from(key);
         let result = self
             .store
             .get(&path)
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
-        let bytes = result
-            .bytes()
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        Ok(bytes.to_vec())
+        let content_length = Some(result.meta.size as u64);
+        let stream = result
+            .into_stream()
+            .map_err(|e| AppError::Internal(e.to_string()))
+            .boxed();
+        Ok(ResultStream {
+            content_length,
+            stream,
+        })
     }
 
     async fn delete(&self, key: &str) -> Result<(), AppError> {

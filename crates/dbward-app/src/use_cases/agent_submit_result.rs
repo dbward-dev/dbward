@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use sha2::Digest;
+
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{
     AuditEvent, ExecutionResult, ExecutionStatus, RequestStatus, ResultAccess, SelectorType,
@@ -22,6 +24,7 @@ pub struct AgentSubmitResult {
     pub clock: Arc<dyn Clock>,
     pub max_persist_bytes: usize,
     pub policy_repo: Arc<dyn PolicyRepo>,
+    pub storage_backend: String,
 }
 
 pub struct AgentSubmitResultInput {
@@ -147,22 +150,33 @@ impl AgentSubmitResult {
                 }
                 let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
                 if should_store {
-                    self.result_store.put(&storage_key, data).await?;
+                    let stored_at = self.clock.now();
+                    let expires_at = stored_at + chrono::Duration::days(retention_days as i64);
+                    self.result_store
+                        .put(
+                            &storage_key,
+                            data,
+                            crate::ports::PutOptions {
+                                expires_at: Some(expires_at),
+                            },
+                        )
+                        .await?;
                 }
                 data_len = data.len() as u64;
+                let checksum = hex::encode(sha2::Sha256::digest(data));
                 let stored_at = self.clock.now();
                 result_manifest = Some(ExecutionResult {
                     id: format!("res-{}", execution.id),
                     request_id: execution.request_id.clone(),
                     execution_id: execution.id.clone(),
-                    storage_backend: "local".to_string(),
+                    storage_backend: self.storage_backend.clone(),
                     storage_key: if should_store {
                         storage_key
                     } else {
                         String::new()
                     },
                     content_length: data_len,
-                    checksum_sha256: String::new(),
+                    checksum_sha256: checksum,
                     retention_days,
                     status: dbward_domain::entities::ResultStatus::Stored,
                     truncated: false,
@@ -183,7 +197,11 @@ impl AgentSubmitResult {
             });
             let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
             self.result_store
-                .put(&storage_key, err_json.to_string().as_bytes())
+                .put(
+                    &storage_key,
+                    err_json.to_string().as_bytes(),
+                    crate::ports::PutOptions::default(),
+                )
                 .await?;
         }
 
@@ -553,15 +571,34 @@ mod tests {
     }
     #[async_trait]
     impl ResultStore for FakeResultStore {
-        async fn put(&self, key: &str, _: &[u8]) -> Result<(), AppError> {
+        async fn put(
+            &self,
+            key: &str,
+            _: &[u8],
+            _: crate::ports::PutOptions,
+        ) -> Result<(), AppError> {
             self.stored.lock().unwrap().push(key.into());
             Ok(())
         }
-        async fn get(&self, _: &str) -> Result<Vec<u8>, AppError> {
-            Ok(vec![])
+        async fn get_stream(&self, _: &str) -> Result<crate::ports::ResultStream, AppError> {
+            Ok(crate::ports::ResultStream {
+                content_length: Some(0),
+                stream: Box::pin(EmptyStream),
+            })
         }
         async fn delete(&self, _: &str) -> Result<(), AppError> {
             Ok(())
+        }
+    }
+
+    struct EmptyStream;
+    impl futures_core::Stream for EmptyStream {
+        type Item = Result<bytes::Bytes, AppError>;
+        fn poll_next(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            std::task::Poll::Ready(None)
         }
     }
 
@@ -767,6 +804,7 @@ mod tests {
             clock: Arc::new(FakeClock),
             max_persist_bytes: 10 * 1024 * 1024,
             policy_repo: Arc::new(FakePolicyRepo),
+            storage_backend: "local".into(),
         }
     }
 
@@ -788,6 +826,7 @@ mod tests {
             clock: Arc::new(FakeClock),
             max_persist_bytes: 10 * 1024 * 1024,
             policy_repo: Arc::new(FakePolicyRepo),
+            storage_backend: "local".into(),
         };
         let input = AgentSubmitResultInput {
             execution_id: "nope".into(),

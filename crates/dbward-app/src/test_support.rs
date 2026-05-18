@@ -319,9 +319,6 @@ impl BackgroundTaskRepo for FakeBackgroundTaskRepo {
     fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
         Ok(0)
     }
-    fn wal_checkpoint(&self) -> Result<(), AppError> {
-        Ok(())
-    }
 }
 
 // --- PolicyEvaluator ---

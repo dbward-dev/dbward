@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "dbward ECS deployment — server + agent on Fargate with EBS"
+Description: "dbward Server — Fargate with EFS + Service Connect"
 
 Parameters:
   VpcId:
@@ -21,22 +21,6 @@ Parameters:
     Default: latest
     Description: Change this and update-stack to upgrade
 
-  ServerDataVolumeSizeGiB:
-    Type: Number
-    Default: 10
-
-  AgentDesiredCount:
-    Type: Number
-    Default: 1
-
-  AgentTokenSecretArn:
-    Type: String
-    Default: ""
-    Description: Secrets Manager ARN for agent token
-  DatabaseUrlSecretArn:
-    Type: String
-    Description: Secrets Manager ARN for database URL
-
   ServerConfigToml:
     Type: String
     Default: |
@@ -48,82 +32,110 @@ Parameters:
       [result_storage]
       backend = "local"
       root_dir = "/data/results"
-
-  AgentConfigToml:
-    Type: String
-    Default: |
-      agent_id = "ecs-agent"
-      poll_interval_ms = 1000
-      max_concurrent_tasks = 4
-      [server]
-      url = "http://server.STACK_NAME.local:3000"
-      agent_token = "${DBWARD_AGENT_TOKEN}"
-      [databases.app.production]
-      url = "${DATABASE_URL}"
-    Description: "agent.toml content. Replace STACK_NAME with your stack name in server.url"
+    Description: "server.toml content. result_storage section is normalized by ResultStorageBackend at runtime."
 
   EnableAlb:
     Type: String
     Default: "false"
     AllowedValues: ["true", "false"]
+
+  ResultStorageBackend:
+    Type: String
+    Default: "local"
+    AllowedValues: ["local", "s3"]
+    Description: Result storage backend. Use "s3" with a bucket from storage.yaml.
+
+  ResultBucketName:
+    Type: String
+    Default: ""
+    Description: S3 bucket name for result storage (from storage.yaml output). Required when ResultStorageBackend=s3.
+
   AlbSubnetIds:
     Type: CommaDelimitedList
     Default: ""
     Description: Public subnets for ALB (if EnableAlb=true)
-
-  DatabasePort:
-    Type: Number
-    Default: 5432
-    Description: Database port (5432 for PostgreSQL, 3306 for MySQL)
 
   EcrRepositoryName:
     Type: String
     Default: ""
     Description: ECR repository name (leave empty if using public registry)
 
+Rules:
+  S3RequiresBucketName:
+    RuleCondition: !Equals [!Ref ResultStorageBackend, "s3"]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref ResultBucketName, ""]]
+        AssertDescription: ResultBucketName is required when ResultStorageBackend=s3
+
 Conditions:
   CreateAlb: !Equals [!Ref EnableAlb, "true"]
-  HasAgentToken: !Not [!Equals [!Ref AgentTokenSecretArn, ""]]
   UseEcr: !Not [!Equals [!Ref EcrRepositoryName, ""]]
+  UseS3Storage: !Equals [!Ref ResultStorageBackend, "s3"]
 
 Resources:
-  # --- Cluster ---
+  # --- Cluster with Service Connect namespace ---
   Cluster:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: !Sub "${AWS::StackName}"
+      ServiceConnectDefaults:
+        Namespace: !GetAtt HttpNamespace.Arn
 
-  # --- Service Discovery ---
-  DnsNamespace:
-    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+  HttpNamespace:
+    Type: AWS::ServiceDiscovery::HttpNamespace
     Properties:
-      Name: !Sub "${AWS::StackName}.local"
-      Vpc: !Ref VpcId
+      Name: !Sub "${AWS::StackName}"
 
-  ServerDiscovery:
-    Type: AWS::ServiceDiscovery::Service
+  # --- EFS for SQLite persistence ---
+  DataFileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
-      Name: server
-      NamespaceId: !Ref DnsNamespace
-      DnsConfig:
-        DnsRecords:
-          - Type: A
-            TTL: 10
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: elastic
 
-  # --- Log Groups ---
+  DataAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref DataFileSystem
+      RootDirectory:
+        Path: /dbward
+        CreationInfo:
+          OwnerUid: "10001"
+          OwnerGid: "10001"
+          Permissions: "0750"
+      PosixUser:
+        Uid: "10001"
+        Gid: "10001"
+
+  DataMountTarget0:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref DataFileSystem
+      SubnetId: !Select [0, !Ref SubnetIds]
+      SecurityGroups: [!Ref EfsSG]
+
+  EfsSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: dbward EFS
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref ServerSG
+
+  # --- Log Group ---
   ServerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/ecs/${AWS::StackName}/server"
       RetentionInDays: 14
 
-  AgentLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub "/ecs/${AWS::StackName}/agent"
-      RetentionInDays: 14
-
-  # --- Security Groups ---
+  # --- Security Group ---
   ServerSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -134,41 +146,27 @@ Resources:
           FromPort: 3000
           ToPort: 3000
           CidrIp: !Ref AllowedIngressCidr
-
-  AgentSG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: dbward agent (egress only)
-      VpcId: !Ref VpcId
       SecurityGroupEgress:
-        - IpProtocol: tcp
-          FromPort: 3000
-          ToPort: 3000
-          DestinationSecurityGroupId: !Ref ServerSG
-        - IpProtocol: tcp
-          FromPort: !Ref DatabasePort
-          ToPort: !Ref DatabasePort
-          CidrIp: "0.0.0.0/0"
-          Description: Database egress
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
           CidrIp: "0.0.0.0/0"
-          Description: HTTPS (ECR pull, etc)
+          Description: HTTPS (ECR, CloudWatch, S3)
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: "0.0.0.0/0"
+          Description: NFS (EFS)
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: "0.0.0.0/0"
+          Description: DNS (TCP)
         - IpProtocol: udp
           FromPort: 53
           ToPort: 53
           CidrIp: "0.0.0.0/0"
-          Description: DNS
-
-  ServerIngressFromAgent:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      GroupId: !Ref ServerSG
-      IpProtocol: tcp
-      FromPort: 3000
-      ToPort: 3000
-      SourceSecurityGroupId: !Ref AgentSG
+          Description: DNS (UDP)
 
   # --- IAM ---
   ExecutionRole:
@@ -192,15 +190,7 @@ Resources:
                 Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource:
-                  - !Sub "${ServerLogGroup.Arn}:*"
-                  - !Sub "${AgentLogGroup.Arn}:*"
-              - Sid: Secrets
-                Effect: Allow
-                Action: secretsmanager:GetSecretValue
-                Resource:
-                  - !Ref DatabaseUrlSecretArn
-                  - !If [HasAgentToken, !Ref AgentTokenSecretArn, !Ref "AWS::NoValue"]
+                Resource: !Sub "${ServerLogGroup.Arn}:*"
 
   EcrPolicy:
     Type: AWS::IAM::Policy
@@ -244,36 +234,49 @@ Resources:
                   - ssmmessages:OpenControlChannel
                   - ssmmessages:OpenDataChannel
                 Resource: "*"
+        - PolicyName: efs-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                Resource: !GetAtt DataFileSystem.Arn
+                Condition:
+                  StringEquals:
+                    elasticfilesystem:AccessPointArn: !GetAtt DataAccessPoint.Arn
 
-  EbsInfrastructureRole:
-    Type: AWS::IAM::Role
+  ServerS3Policy:
+    Type: AWS::IAM::Policy
+    Condition: UseS3Storage
     Properties:
-      RoleName: !Sub "${AWS::StackName}-ebs-infra"
-      AssumeRolePolicyDocument:
+      PolicyName: s3-result-storage
+      Roles: [!Ref ServerTaskRole]
+      PolicyDocument:
         Version: "2012-10-17"
         Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSInfrastructureRolePolicyForVolumes
+          - Sid: ResultObjects
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+              - s3:PutObjectTagging
+            Resource: !Sub "arn:aws:s3:::${ResultBucketName}/results/*"
+          - Sid: ListBucket
+            Effect: Allow
+            Action:
+              - s3:ListBucket
+            Resource: !Sub "arn:aws:s3:::${ResultBucketName}"
+            Condition:
+              StringLike:
+                s3:prefix: "results/*"
 
-  AgentTaskRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub "${AWS::StackName}-agent-task"
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-
-  # --- Server Task Definition (Fargate + EBS) ---
+  # --- Server Task Definition ---
   ServerTaskDef:
     Type: AWS::ECS::TaskDefinition
+    DependsOn: DataMountTarget0
     Properties:
       Family: !Sub "${AWS::StackName}-server"
       NetworkMode: awsvpc
@@ -284,28 +287,55 @@ Resources:
       TaskRoleArn: !GetAtt ServerTaskRole.Arn
       Volumes:
         - Name: data
-          ConfiguredAtLaunch: true
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref DataFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref DataAccessPoint
+              IAM: ENABLED
       ContainerDefinitions:
         - Name: server
           Image: !Sub "${ImageRepository}:${ImageTag}"
           Essential: true
-          User: "0:0"
           EntryPoint: ["/bin/sh", "-c"]
           Command:
             - Fn::Sub:
                 - |
-                  cat > /tmp/server.toml << 'TOMLEOF'
+                  cat > /tmp/server.toml.raw << 'TOMLEOF'
                   ${ConfigContent}
                   TOMLEOF
-                  exec /usr/local/bin/docker-entrypoint.sh dbward-server --data /data/dbward.db --listen 0.0.0.0:3000 --config /tmp/server.toml
+                  awk '
+                    BEGIN { skip = 0 }
+                    /^\[result_storage\]$/ { skip = 1; next }
+                    /^\[/ && skip == 1 { skip = 0 }
+                    skip == 0 { print }
+                  ' /tmp/server.toml.raw > /tmp/server.toml
+                  cat >> /tmp/server.toml << 'TOMLEOF'
+                  ${ResultStorageConfig}
+                  TOMLEOF
+                  exec dbward-server --data /data/dbward.db --listen 0.0.0.0:3000 --config /tmp/server.toml
                 - ConfigContent: !Ref ServerConfigToml
+                  ResultStorageConfig: !If
+                    - UseS3Storage
+                    - !Sub |
+                        [result_storage]
+                        backend = "s3"
+                        bucket = "${ResultBucketName}"
+                        region = "${AWS::Region}"
+                    - |
+                        [result_storage]
+                        backend = "local"
+                        root_dir = "/data/results"
           PortMappings:
             - ContainerPort: 3000
+              Name: http
+              AppProtocol: http
           MountPoints:
             - SourceVolume: data
               ContainerPath: /data
           Environment:
             - {Name: RUST_LOG, Value: info}
+            - {Name: AWS_EC2_METADATA_DISABLED, Value: "true"}
           HealthCheck:
             Command: ["CMD-SHELL", "curl -sf http://localhost:3000/health || exit 1"]
             Interval: 10
@@ -324,8 +354,6 @@ Resources:
   # --- Server Service ---
   ServerService:
     Type: AWS::ECS::Service
-    DependsOn:
-      - EbsInfrastructureRole
     Properties:
       Cluster: !Ref Cluster
       ServiceName: server
@@ -338,89 +366,23 @@ Resources:
         MaximumPercent: 100
       NetworkConfiguration:
         AwsvpcConfiguration:
-          Subnets: !Ref SubnetIds
+          Subnets:
+            - !Select [0, !Ref SubnetIds]
           SecurityGroups: [!Ref ServerSG]
           AssignPublicIp: ENABLED
-      ServiceRegistries:
-        - RegistryArn: !GetAtt ServerDiscovery.Arn
-      VolumeConfigurations:
-        - Name: data
-          ManagedEBSVolume:
-            RoleArn: !GetAtt EbsInfrastructureRole.Arn
-            SizeInGiB: !Ref ServerDataVolumeSizeGiB
-            VolumeType: gp3
-            FilesystemType: ext4
+      ServiceConnectConfiguration:
+        Enabled: true
+        Services:
+          - PortName: http
+            ClientAliases:
+              - Port: 3000
+                DnsName: server
       LoadBalancers: !If
         - CreateAlb
         - - ContainerName: server
             ContainerPort: 3000
             TargetGroupArn: !Ref AlbTargetGroup
         - !Ref "AWS::NoValue"
-
-  # --- Agent Task Definition ---
-  AgentTaskDef:
-    Type: AWS::ECS::TaskDefinition
-    Condition: HasAgentToken
-    Properties:
-      Family: !Sub "${AWS::StackName}-agent"
-      NetworkMode: awsvpc
-      RequiresCompatibilities: [FARGATE]
-      Cpu: "256"
-      Memory: "512"
-      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
-      TaskRoleArn: !GetAtt AgentTaskRole.Arn
-      ContainerDefinitions:
-        - Name: agent
-          Image: !Sub "${ImageRepository}:${ImageTag}"
-          Essential: true
-          EntryPoint: ["/bin/sh", "-c"]
-          Command:
-            - Fn::Sub:
-                - |
-                  cat > /tmp/agent.toml << 'TOMLEOF'
-                  ${ConfigContent}
-                  TOMLEOF
-                  exec dbward-agent --config /tmp/agent.toml
-                - ConfigContent: !Ref AgentConfigToml
-          Secrets:
-            - Name: DBWARD_AGENT_TOKEN
-              ValueFrom: !Ref AgentTokenSecretArn
-            - Name: DATABASE_URL
-              ValueFrom: !Ref DatabaseUrlSecretArn
-          Environment:
-            - {Name: RUST_LOG, Value: info}
-          HealthCheck:
-            Command: ["CMD-SHELL", "test -f /tmp/dbward-agent-ready"]
-            Interval: 10
-            Timeout: 5
-            Retries: 3
-            StartPeriod: 60
-          StopTimeout: 90
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref AgentLogGroup
-              awslogs-region: !Ref AWS::Region
-              awslogs-stream-prefix: agent
-          LinuxParameters:
-            InitProcessEnabled: true
-
-  # --- Agent Service ---
-  AgentService:
-    Type: AWS::ECS::Service
-    Condition: HasAgentToken
-    DependsOn: ServerService
-    Properties:
-      Cluster: !Ref Cluster
-      ServiceName: agent
-      TaskDefinition: !Ref AgentTaskDef
-      DesiredCount: !Ref AgentDesiredCount
-      LaunchType: FARGATE
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          Subnets: !Ref SubnetIds
-          SecurityGroups: [!Ref AgentSG]
-          AssignPublicIp: ENABLED
 
   # --- Optional ALB ---
   AlbSG:
@@ -478,11 +440,29 @@ Resources:
 Outputs:
   ClusterName:
     Value: !Ref Cluster
+    Export:
+      Name: !Sub "${AWS::StackName}-ClusterName"
+
+  ServerSecurityGroupId:
+    Value: !Ref ServerSG
+    Export:
+      Name: !Sub "${AWS::StackName}-ServerSG"
+
   ServerEndpoint:
     Value: !If
       - CreateAlb
       - !Sub "http://${Alb.DNSName}"
-      - !Sub "http://server.${AWS::StackName}.local:3000"
+      - "http://server:3000 (Service Connect — accessible from tasks in this cluster)"
+
+  FileSystemId:
+    Value: !Ref DataFileSystem
+
   UpgradeCommand:
     Value: !Sub |
       aws cloudformation deploy --stack-name ${AWS::StackName} --template-file template.yaml --parameter-overrides ImageTag=NEW_TAG --capabilities CAPABILITY_NAMED_IAM
+
+  BootstrapCommand:
+    Description: Create initial tokens after first deploy
+    Value: !Sub |
+      TASK=$(aws ecs list-tasks --cluster ${AWS::StackName} --service-name server --query "taskArns[0]" --output text)
+      aws ecs execute-command --cluster ${AWS::StackName} --task $TASK --container server --interactive --command "dbward-server --data /data/dbward.db token create --user admin --role admin"

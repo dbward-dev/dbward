@@ -174,11 +174,28 @@ pub async fn run_from_args(
     // Result storage
     let result_store: Arc<dyn dbward_app::ports::ResultStore> =
         match cfg.result_storage.backend.as_str() {
-            "s3" => Arc::new(dbward_infra::storage::S3ResultStore::new(
-                cfg.result_storage.bucket.as_deref().unwrap_or("dbward"),
-                cfg.result_storage.region.as_deref().unwrap_or("us-east-1"),
-                cfg.result_storage.endpoint.as_deref(),
-            )?),
+            "s3" => {
+                let s3_store =
+                    dbward_infra::storage::S3ResultStore::new(dbward_infra::storage::S3Config {
+                        bucket: cfg
+                            .result_storage
+                            .bucket
+                            .clone()
+                            .unwrap_or_else(|| "dbward".into()),
+                        region: cfg
+                            .result_storage
+                            .region
+                            .clone()
+                            .unwrap_or_else(|| "us-east-1".into()),
+                        endpoint: cfg.result_storage.endpoint.clone(),
+                        access_key_id: cfg.result_storage.access_key_id.clone(),
+                        secret_access_key: cfg.result_storage.secret_access_key.clone(),
+                        path_style: cfg.result_storage.path_style,
+                        prefix: cfg.result_storage.prefix.clone(),
+                    })?;
+                s3_store.health_check().await?;
+                Arc::new(s3_store)
+            }
             _ => Arc::new(dbward_infra::storage::LocalResultStore::new(
                 &cfg.result_storage.root_dir,
             )?),
@@ -271,6 +288,7 @@ pub async fn run_from_args(
         default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
         max_persist_bytes: cfg.result_storage.max_persist_bytes,
         auth_mode: cfg.auth.mode.clone(),
+        storage_backend: cfg.result_storage.backend.clone(),
         draining: draining.clone(),
     };
 

@@ -69,6 +69,39 @@ services:
       - ./scripts/dev-entrypoint.sh:/scripts/dev-entrypoint.sh:ro
     profiles: [dev]
 
+  # === S3 Profile (MinIO) ===
+  # Usage: docker compose --profile s3 up -d
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      start_period: 5s
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    profiles: [s3]
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mc alias set local http://minio:9000 minioadmin minioadmin
+        mc mb --ignore-existing local/dbward-results
+    networks: [backend]
+    profiles: [s3]
+
   # === OIDC Profile ===
   # Usage: ./dev/up-oidc.sh [-d]
   # Keycloak: http://localhost:8080 (admin/admin)

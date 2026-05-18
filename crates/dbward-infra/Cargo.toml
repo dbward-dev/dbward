@@ -37,6 +37,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 
 # Object storage
 object_store = { version = "0.11", features = ["aws"] }
+futures-util = "0.3"
 
 # JWT / OIDC
 jsonwebtoken = "9"

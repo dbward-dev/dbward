@@ -19,7 +19,6 @@ const LEASE_RECLAIM_INTERVAL: TokioDuration = TokioDuration::from_secs(60);
 const TTL_EXPIRY_INTERVAL: TokioDuration = TokioDuration::from_secs(60);
 const DISPATCH_TIMEOUT_INTERVAL: TokioDuration = TokioDuration::from_secs(60);
 const RECORD_PURGE_INTERVAL: TokioDuration = TokioDuration::from_secs(3600);
-const WAL_CHECKPOINT_INTERVAL: TokioDuration = TokioDuration::from_secs(3600);
 const DISPATCH_TIMEOUT_SECS: i64 = 300;
 const WEBHOOK_RETRY_INTERVAL: TokioDuration = TokioDuration::from_secs(30);
 const WEBHOOK_STALE_CLAIM_SECS: i64 = 300;
@@ -50,7 +49,6 @@ pub fn spawn_background_tasks(
         shutdown.clone(),
         retention,
     ));
-    set.spawn(wal_checkpoint_loop(state.clone(), shutdown.clone()));
     set.spawn(webhook_retry_loop(state.clone(), shutdown.clone()));
 
     // Bridge: when draining is set externally, also cancel background tasks
@@ -358,29 +356,6 @@ pub(crate) async fn run_record_purge_once(
     }
 
     result
-}
-
-// --- WAL Checkpoint ---
-
-async fn wal_checkpoint_loop(state: AppState, shutdown: CancellationToken) {
-    let start = Instant::now() + WAL_CHECKPOINT_INTERVAL;
-    let mut ticker = interval_at(start, WAL_CHECKPOINT_INTERVAL);
-    loop {
-        tokio::select! {
-            _ = ticker.tick() => {
-                run_wal_checkpoint_once(&state);
-            }
-            _ = shutdown.cancelled() => break,
-        }
-    }
-}
-
-pub(crate) fn run_wal_checkpoint_once(state: &AppState) {
-    if let Err(e) = state.background_task_repo.wal_checkpoint() {
-        error!(task = "wal_checkpoint", error = %e, "WAL checkpoint failed");
-    } else {
-        info!(task = "wal_checkpoint", "checkpoint completed");
-    }
 }
 
 // --- Helpers ---

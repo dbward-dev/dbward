@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "dbward result storage — S3 bucket with lifecycle and access control"
+
+Parameters:
+  BucketName:
+    Type: String
+    Default: ""
+    Description: Optional bucket name. If empty, CloudFormation generates a unique name.
+
+  RetentionDays:
+    Type: Number
+    Default: 30
+    Description: S3 Lifecycle expiration days. Set >= max retention_days in your result_policy.
+
+Conditions:
+  HasBucketName: !Not [!Equals [!Ref BucketName, ""]]
+
+Resources:
+  ResultBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !If [HasBucketName, !Ref BucketName, !Ref "AWS::NoValue"]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-results
+            Status: Enabled
+            Prefix: results/
+            ExpirationInDays: !Ref RetentionDays
+      VersioningConfiguration:
+        Status: Suspended
+
+  ResultBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ResultBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt ResultBucket.Arn
+              - !Sub "${ResultBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+Outputs:
+  BucketName:
+    Value: !Ref ResultBucket
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketName"
+
+  BucketArn:
+    Value: !GetAtt ResultBucket.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-BucketArn"
+
+  Region:
+    Value: !Ref AWS::Region
+
+  ServerTomlConfig:
+    Description: Add this to your server.toml
+    Value: !Sub |
+      [result_storage]
+      backend = "s3"
+      bucket = "${ResultBucket}"
+      region = "${AWS::Region}"
+
+  RequiredIAMPolicy:
+    Description: Attach this policy to your server task role
+    Value: !Sub |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:PutObjectTagging"],
+            "Resource": "${ResultBucket.Arn}/results/*"
+          },
+          {
+            "Effect": "Allow",
+            "Action": ["s3:ListBucket"],
+            "Resource": "${ResultBucket.Arn}",
+            "Condition": {"StringLike": {"s3:prefix": "results/*"}}
+          }
+        ]
+      }
+
+  RecommendedBucketPolicy:
+    Description: Optional strict policy for production (add AllowedRoleArns manually)
+    Value: !Sub |
+      {
+        "Sid": "DenyAccessExceptAllowedPrincipals",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:*",
+        "Resource": ["${ResultBucket.Arn}", "${ResultBucket.Arn}/*"],
+        "Condition": {
+          "ArnNotEquals": {
+            "aws:PrincipalArn": [
+              "YOUR_SERVER_TASK_ROLE_ARN",
+              "arn:aws:iam::${AWS::AccountId}:root"
+            ]
+          }
+        }
+      }

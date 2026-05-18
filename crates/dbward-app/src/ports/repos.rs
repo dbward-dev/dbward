@@ -122,7 +122,6 @@ pub trait BackgroundTaskRepo: Send + Sync {
         now: &str,
     ) -> Result<bool, AppError>;
     fn purge_old_requests(&self, before: &str) -> Result<u32, AppError>;
-    fn wal_checkpoint(&self) -> Result<(), AppError>;
 }
 
 // --- AgentRepo ---
@@ -396,10 +395,44 @@ pub trait SsrfValidator: Send + Sync {
 
 // --- ResultStore ---
 
+/// Options for storing a result object.
+#[derive(Default)]
+pub struct PutOptions {
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// A streaming result from object storage.
+pub struct ResultStream {
+    pub content_length: Option<u64>,
+    pub stream: futures_core::stream::BoxStream<'static, Result<bytes::Bytes, AppError>>,
+}
+
+impl ResultStream {
+    /// Collect all chunks into a Vec<u8> (for tests and small results).
+    pub async fn collect(self) -> Result<Vec<u8>, AppError> {
+        let stream = self.stream;
+        let mut buf = Vec::new();
+        let mut pinned = std::pin::pin!(stream);
+        loop {
+            match std::future::poll_fn(|cx| {
+                use futures_core::Stream;
+                pinned.as_mut().poll_next(cx)
+            })
+            .await
+            {
+                Some(Ok(chunk)) => buf.extend_from_slice(&chunk),
+                Some(Err(e)) => return Err(e),
+                None => break,
+            }
+        }
+        Ok(buf)
+    }
+}
+
 #[async_trait]
 pub trait ResultStore: Send + Sync {
-    async fn put(&self, key: &str, data: &[u8]) -> Result<(), AppError>;
-    async fn get(&self, key: &str) -> Result<Vec<u8>, AppError>;
+    async fn put(&self, key: &str, data: &[u8], opts: PutOptions) -> Result<(), AppError>;
+    async fn get_stream(&self, key: &str) -> Result<ResultStream, AppError>;
     async fn delete(&self, key: &str) -> Result<(), AppError>;
 }
 
