@@ -564,7 +564,10 @@ pub async fn start(
     Ok(())
 }
 
-fn resolve_license(key: Option<&str>, file: Option<&str>) -> dbward_domain::license::License {
+pub(crate) fn resolve_license(
+    key: Option<&str>,
+    file: Option<&str>,
+) -> dbward_domain::license::License {
     let raw = match (key, file) {
         (Some(k), _) if !k.trim().is_empty() => Some(k.to_string()),
         (_, Some(path)) if !path.trim().is_empty() => match std::fs::read_to_string(path) {

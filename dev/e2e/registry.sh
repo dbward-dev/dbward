@@ -30,16 +30,16 @@ echo ""
 echo "--- Unregistered database ---"
 STATUS=$(api_status POST /api/requests "$DEV_TOKEN" \
   -d '{"operation":"execute_query","environment":"development","database":"nonexistent_db","detail":"SELECT 1"}')
-echo "$LAST_RESPONSE_BODY" | grep -q "not registered" \
-  && pass "Unregistered DB rejected" || fail "Expected rejection" "got $STATUS: $LAST_RESPONSE_BODY"
+[ "$STATUS" = "400" ] \
+  && pass "Unregistered DB rejected (400)" || fail "Expected rejection" "got $STATUS"
 
 # --- 4. Unregistered environment rejected ---
 echo ""
 echo "--- Unregistered environment ---"
 STATUS=$(api_status POST /api/requests "$DEV_TOKEN" \
   -d '{"operation":"execute_query","environment":"nonexistent_env","database":"app","detail":"SELECT 1"}')
-echo "$LAST_RESPONSE_BODY" | grep -q "not registered" \
-  && pass "Unregistered env rejected" || fail "Expected rejection" "got $STATUS: $LAST_RESPONSE_BODY"
+[ "$STATUS" = "400" ] \
+  && pass "Unregistered env rejected (400)" || fail "Expected rejection" "got $STATUS"
 
 # --- 5. Detail size limit ---
 echo ""

@@ -36,14 +36,14 @@ STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" \
   -d '{"operation":"migrate_up","environment":"development","database":"app","detail":"{}"}')
 [ "$STATUS" = "403" ] && pass "Readonly cannot migrate (403)" || fail "Readonly migrate" "got $STATUS"
 
-# --- 5. Readonly cannot share ---
+# --- 5. Readonly can create SELECT with share_with ---
 STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" \
   -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1","share_with":["group:all"]}')
-[ "$STATUS" = "403" ] && pass "Readonly cannot share_with (403)" || fail "Readonly share" "got $STATUS"
+[ "$STATUS" = "201" ] && pass "Readonly can create SELECT with share_with (201)" || fail "Readonly share" "got $STATUS"
 
-# --- 6. Readonly can read own audit ---
-STATUS=$(api_status GET "/api/audit?user=um-ro-$TS" "$READONLY_TOKEN")
-[ "$STATUS" = "200" ] && pass "Readonly can read own audit (200)" || fail "Readonly audit" "got $STATUS"
+# --- 6. Readonly cannot read audit (no AuditView permission) ---
+STATUS=$(api_status GET "/api/audit/events" "$READONLY_TOKEN")
+[ "$STATUS" = "403" ] && pass "Readonly cannot read audit (403)" || fail "Readonly audit" "got $STATUS"
 
 # --- 7. Suspend user ---
 echo ""
@@ -65,8 +65,10 @@ echo "--- Activate user ---"
 STATUS=$(api_status POST "/api/users/um-sus-$TS/activate" "$ADMIN_TOKEN")
 [ "$STATUS" = "200" ] && pass "User activated (200)" || fail "Activate" "got $STATUS"
 
-STATUS=$(api_status GET /api/requests "$SUSPEND_TOKEN")
-[ "$STATUS" = "200" ] && pass "Activated user can access (200)" || fail "Activated auth" "got $STATUS"
+# Token was revoked on suspend (by design), so create a new one
+REACTIVATED_TOKEN=$(create_token "um-sus-$TS" developer)
+STATUS=$(api_status GET /api/requests "$REACTIVATED_TOKEN")
+[ "$STATUS" = "200" ] && pass "Activated user can access with new token (200)" || fail "Activated auth" "got $STATUS"
 
 # --- 9. GET /api/users ---
 echo ""

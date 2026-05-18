@@ -13,12 +13,15 @@ wait_for_server
 
 TS=$(date +%s)
 ADMIN_TOKEN=$(create_token "e2e-wh-admin-$TS" admin)
-WEBHOOK_URL="http://webhook-receiver:9999/hook"
+# Default URL uses example.com (public, non-private IP) for CRUD testing.
+# Docker internal IPs are blocked by SSRF protection.
+# For delivery verification, override: WEBHOOK_URL=http://host.docker.internal:9999/hook
+WEBHOOK_URL="${WEBHOOK_URL:-https://example.com/webhook}"
 
 # --- 1. Create webhook ---
 echo "--- Create webhook ---"
 RESP=$(api POST /api/webhooks "$ADMIN_TOKEN" \
-  -d "{\"url\":\"$WEBHOOK_URL\",\"events\":[\"request_created\",\"request_executed\"],\"format\":\"generic\",\"secret\":\"test-secret-123\"}")
+  -d "{\"name\":\"e2e-hook\",\"url\":\"$WEBHOOK_URL\",\"events\":[\"request_created\",\"request_completed\"],\"secret\":\"test-secret-123\"}")
 WH_ID=$(echo "$RESP" | json_field id)
 [ -n "$WH_ID" ] && pass "Webhook created: $WH_ID" || fail "Create webhook" "no id"
 

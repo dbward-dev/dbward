@@ -72,7 +72,13 @@ async fn main() {
                 agent,
                 groups,
             } => dbward_server::bootstrap::create_token_standalone(
-                &cli.data, &user, &role, agent, &groups,
+                &cli.data,
+                &user,
+                &role,
+                agent,
+                &groups,
+                cli.license_key.as_deref(),
+                cli.license_file.as_deref(),
             ),
             TokenCommand::Revoke { id } => {
                 dbward_server::bootstrap::revoke_token_standalone(&cli.data, &id)
