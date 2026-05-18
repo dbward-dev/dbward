@@ -21,15 +21,19 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             container: rust:1.88-bookworm
+            suffix: linux-amd64
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             container: rust:1.88-bookworm
+            suffix: linux-arm64
           - target: x86_64-apple-darwin
             os: macos-latest
             container: ""
+            suffix: darwin-amd64
           - target: aarch64-apple-darwin
             os: macos-latest
             container: ""
+            suffix: darwin-arm64
 
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container || null }}
@@ -65,12 +69,12 @@ jobs:
           for bin in dbward dbward-server dbward-agent; do
             SRC="target/${{ matrix.target }}/release/$bin"
             [ -f "$SRC" ] || continue
-            cp "$SRC" "dist/${bin}-${{ matrix.target }}"
+            cp "$SRC" "dist/${bin}-${{ matrix.suffix }}"
           done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: binaries-${{ matrix.target }}
+          name: binaries-${{ matrix.suffix }}
           path: dist/
 
   release:
@@ -95,20 +99,20 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: binaries-x86_64-unknown-linux-gnu
+          name: binaries-linux-amd64
           path: dist/amd64
 
       - uses: actions/download-artifact@v4
         with:
-          name: binaries-aarch64-unknown-linux-gnu
+          name: binaries-linux-arm64
           path: dist/arm64
 
       - name: Extract binaries
         run: |
           mkdir -p binaries/amd64 binaries/arm64
           for bin in dbward dbward-server dbward-agent; do
-            cp "dist/amd64/${bin}-x86_64-unknown-linux-gnu" "binaries/amd64/${bin}"
-            cp "dist/arm64/${bin}-aarch64-unknown-linux-gnu" "binaries/arm64/${bin}"
+            cp "dist/amd64/${bin}-linux-amd64" "binaries/amd64/${bin}"
+            cp "dist/arm64/${bin}-linux-arm64" "binaries/arm64/${bin}"
             chmod +x "binaries/amd64/${bin}" "binaries/arm64/${bin}"
           done
 
