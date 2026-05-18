@@ -61,18 +61,11 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
           mkdir -p dist
           for bin in dbward dbward-server dbward-agent; do
             SRC="target/${{ matrix.target }}/release/$bin"
             [ -f "$SRC" ] || continue
-            ARCHIVE="${bin}-v${VERSION}-${{ matrix.target }}.tar.gz"
-            tar czf "dist/${ARCHIVE}" -C "target/${{ matrix.target }}/release" "$bin"
-            if command -v sha256sum &>/dev/null; then
-              (cd dist && sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256")
-            else
-              (cd dist && shasum -a 256 "$ARCHIVE" > "${ARCHIVE}.sha256")
-            fi
+            cp "$SRC" "dist/${bin}-${{ matrix.target }}"
           done
 
       - uses: actions/upload-artifact@v4
@@ -112,11 +105,11 @@ jobs:
 
       - name: Extract binaries
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
           mkdir -p binaries/amd64 binaries/arm64
           for bin in dbward dbward-server dbward-agent; do
-            tar xzf "dist/amd64/${bin}-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz" -C binaries/amd64/
-            tar xzf "dist/arm64/${bin}-v${VERSION}-aarch64-unknown-linux-gnu.tar.gz" -C binaries/arm64/
+            cp "dist/amd64/${bin}-x86_64-unknown-linux-gnu" "binaries/amd64/${bin}"
+            cp "dist/arm64/${bin}-aarch64-unknown-linux-gnu" "binaries/arm64/${bin}"
+            chmod +x "binaries/amd64/${bin}" "binaries/arm64/${bin}"
           done
 
       - uses: docker/setup-buildx-action@v3
