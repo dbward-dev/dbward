@@ -32,9 +32,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: server
-          image: {{ include "dbward.image" . }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["dbward-server"]
+          image: {{ include "dbward.serverImage" . }}
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
           args:
             - --data
             - /data/dbward.db

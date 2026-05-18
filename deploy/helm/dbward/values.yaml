@@ -1,7 +1,14 @@
-image:
-  repository: ghcr.io/dbward-dev/dbward
-  tag: ""  # defaults to Chart.appVersion
-  pullPolicy: IfNotPresent
+server:
+  image:
+    repository: ghcr.io/dbward-dev/dbward-server
+    tag: ""  # defaults to Chart.appVersion
+    pullPolicy: IfNotPresent
+
+agent:
+  image:
+    repository: ghcr.io/dbward-dev/dbward-agent
+    tag: ""  # defaults to Chart.appVersion
+    pullPolicy: IfNotPresent
 
 nameOverride: ""
 fullnameOverride: ""

@@ -17,7 +17,9 @@ docker compose up -d
 
 The server container stops gracefully (drains active requests), restarts with the new image, and applies any pending SQLite schema migrations. The agent waits for the server healthcheck before starting, ensuring correct update order automatically.
 
-**Image registry:** `ghcr.io/dbward-dev/dbward`
+**Image registries:**
+- `ghcr.io/dbward-dev/dbward-server`
+- `ghcr.io/dbward-dev/dbward-agent`
 
 **Tag options:**
 - `v0.1.2` — pinned to a specific release (recommended for production)
@@ -28,8 +30,7 @@ The server container stops gracefully (drains active requests), restarts with th
 # compose.yml example
 services:
   dbward-server:
-    image: ghcr.io/dbward-dev/dbward:0.1
-    entrypoint: ["dbward-server"]
+    image: ghcr.io/dbward-dev/dbward-server:0.1
     # ...
 ```
 

@@ -186,7 +186,7 @@ aws secretsmanager delete-secret --secret-id dbward/agent-token --force-delete-w
 |---|---|---|
 | VpcId | ✅ | VPC ID |
 | SubnetIds | ✅ | Subnet IDs (at least one) |
-| ImageRepository | | Container image repo (default: ghcr.io/dbward-dev/dbward) |
+| ImageRepository | | Container image repo (default: ghcr.io/dbward-dev/dbward-server) |
 | ImageTag | | Image tag (default: latest) |
 | ServerConfigToml | | server.toml content |
 | EnableAlb | | Create ALB (default: false) |

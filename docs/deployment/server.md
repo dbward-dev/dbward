@@ -237,7 +237,7 @@ docker run -d \
   -p 3000:3000 \
   -v dbward-data:/data \
   -v ./dbward-server.toml:/etc/dbward/dbward-server.toml:ro \
-  ghcr.io/dbward-dev/dbward:latest \
+  ghcr.io/dbward-dev/dbward-server:latest \
   dbward server start \
     --config /etc/dbward/dbward-server.toml \
     --data /data/dbward.db \

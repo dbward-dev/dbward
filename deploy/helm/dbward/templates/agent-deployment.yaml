@@ -30,9 +30,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: agent
-          image: {{ include "dbward.image" . }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["dbward-agent"]
+          image: {{ include "dbward.agentImage" . }}
+          imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
           args:
             - --config
             - /config/agent.toml

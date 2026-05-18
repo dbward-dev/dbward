@@ -19,7 +19,7 @@ Production readiness: Kubernetes/ECS deployment, agent resilience, Pro plan enfo
 - **Pro plan enforcement**: License key verification (Ed25519), Free tier limits on workflows/databases/agents/tokens
 - **Kubernetes deployment**: Manifests, Helm chart, liveness/readiness probes, ConfigMap/Secret management
 - **ECS deployment**: CloudFormation template with Fargate + EBS, Service Connect, EFS support
-- **Docker image**: Published to `ghcr.io/dbward-dev/dbward` (amd64 + arm64)
+- **Docker image**: Published to `ghcr.io/dbward-dev/dbward-server` and `ghcr.io/dbward-dev/dbward-agent` (amd64 + arm64)
 - **S3 Result Storage**: Production-ready with streaming, zero-copy relay, TTL-based lifecycle deletion
 - **Agent reconnect**: Startup retry + exponential backoff + degraded mode
 - **gosu privilege drop**: Docker entrypoint handles EBS volume chown then drops to non-root
