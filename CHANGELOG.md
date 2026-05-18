@@ -1,5 +1,60 @@
 # Changelog
 
+## [0.1.2] — 2026-05-18
+
+Production readiness: Kubernetes/ECS deployment, agent resilience, Pro plan enforcement, and operational hardening.
+
+### Bug Fixes
+
+- **max_executions off-by-one**: Execution count check now uses `>=` instead of `>`
+- **reject permission asymmetry**: Non-admin requesters can no longer reject others' requests
+- **find_similar_requests**: Fixed permission check and improved matching logic
+- **apply_migration multi-statement**: MySQL migrations with multiple statements now execute atomically
+- **Result truncation**: Large results are properly truncated with reason metadata
+- **Multi-statement SELECT**: Queries with multiple result-producing statements are now rejected with a clear error (was silently broken — PG merged result sets, MySQL dropped all but first)
+- **token create license limit**: CLI `token create` now respects Free plan token limits
+
+### Features
+
+- **Pro plan enforcement**: License key verification (Ed25519), Free tier limits on workflows/databases/agents/tokens
+- **Kubernetes deployment**: Manifests, Helm chart, liveness/readiness probes, ConfigMap/Secret management
+- **ECS deployment**: CloudFormation template with Fargate + EBS, Service Connect, EFS support
+- **Docker image**: Published to `ghcr.io/dbward-dev/dbward` (amd64 + arm64)
+- **S3 Result Storage**: Production-ready with streaming, zero-copy relay, TTL-based lifecycle deletion
+- **Agent reconnect**: Startup retry + exponential backoff + degraded mode
+- **gosu privilege drop**: Docker entrypoint handles EBS volume chown then drops to non-root
+- **Audit enrichment**: Reject reason, approval comment, row count, execution duration recorded
+- **Version upgrade strategy**: Compatibility model, self-update detection, automatic schema migration
+
+### UX
+
+- Long query display with truncation indicator
+- Result format switching (table/json/csv)
+- DDL rejection error shows next action (`dbward migrate create`)
+- Selector format errors show expected pattern
+- `/api/me` returns permissions + scope
+
+### Refactoring
+
+- RequestRepo split into focused modules
+- Shared test mock/fake aggregation
+- Approval progress display improvements
+- Agent crate architecture: runner/executor/heartbeat separation
+- display.rs module split
+
+### Testing
+
+- Test strategy documented (testing-rules.md)
+- +40 unit tests (fake aggregation, agent/auth/boundary)
+- E2E scripts: 3 new + existing fixes (users.sh, registry.sh)
+- CI stabilized: 550+ tests pass, clippy/fmt clean
+
+### Infrastructure
+
+- Agent metrics and extended health checks
+- Docker security hardening (non-root, network isolation, secrets management)
+- `gosu` for ECS EBS volume permission handling
+
 ## [0.1.1] — 2026-05-15
 
 Quality, safety, and completeness improvements based on comprehensive scenario testing.
