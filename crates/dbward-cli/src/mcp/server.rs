@@ -443,10 +443,13 @@ async fn handle_tools_call(
         }
         "dbward_find_similar_requests" => {
             let sql = args["sql"].as_str().unwrap_or("");
-            let op = args["operation"].as_str().unwrap_or("execute_query");
+            let op = args["operation"].as_str().unwrap_or("execute_select");
             let limit = args["limit"].as_u64().unwrap_or(5).clamp(1, 20);
+            let fetch_limit = limit * 4;
             client
-                .get_json(&format!("/api/requests?limit={limit}&status=executed"))
+                .get_json(&format!(
+                    "/api/requests?limit={fetch_limit}&status=executed"
+                ))
                 .await
                 .map(|v| {
                     let requests = v["requests"].as_array();
@@ -457,10 +460,17 @@ async fn handle_tools_call(
                                 .iter()
                                 .filter(|r| {
                                     r["operation"].as_str().unwrap_or("") == op
-                                        && matches_similarity_terms(
-                                            r["detail"].as_str().unwrap_or(""),
-                                            &sql_terms,
-                                        )
+                                        && if sql_terms.is_empty() {
+                                            matches_normalized(
+                                                r["detail"].as_str().unwrap_or(""),
+                                                sql,
+                                            )
+                                        } else {
+                                            matches_similarity_terms(
+                                                r["detail"].as_str().unwrap_or(""),
+                                                &sql_terms,
+                                            )
+                                        }
                                 })
                                 .take(limit as usize)
                                 .collect();
@@ -502,7 +512,7 @@ async fn handle_tools_call(
         "dbward_explain_policy_failure" => {
             let req_id = args["request_id"].as_str().unwrap_or("");
             if req_id.is_empty() {
-                let op = args["operation"].as_str().unwrap_or("execute_query");
+                let op = args["operation"].as_str().unwrap_or("execute_select");
                 let env_arg = args["environment"].as_str().unwrap_or(env);
                 let db = args["database"].as_str().unwrap_or(db_name);
                 Ok(format!(

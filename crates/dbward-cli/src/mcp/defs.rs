@@ -444,7 +444,7 @@ pub(crate) fn normalized_similarity_terms(sql: &str) -> Vec<String> {
 
 pub(crate) fn matches_similarity_terms(candidate: &str, terms: &[String]) -> bool {
     if terms.is_empty() {
-        return true;
+        return false;
     }
     let haystack = candidate.to_ascii_lowercase();
     let matched = terms
@@ -453,6 +453,23 @@ pub(crate) fn matches_similarity_terms(candidate: &str, terms: &[String]) -> boo
         .count();
     // At least 50% of structural terms must match
     matched * 2 >= terms.len()
+}
+
+/// Normalized containment match for short queries where terms extraction yields nothing.
+pub(crate) fn matches_normalized(candidate: &str, query: &str) -> bool {
+    let normalize = |s: &str| {
+        s.to_ascii_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim_end_matches(';')
+            .to_string()
+    };
+    let nq = normalize(query);
+    if nq.is_empty() {
+        return false;
+    }
+    normalize(candidate).contains(&nq)
 }
 
 pub(crate) fn format_approval_progress(

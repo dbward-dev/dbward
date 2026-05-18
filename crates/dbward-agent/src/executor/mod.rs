@@ -209,6 +209,10 @@ impl JobExecutor {
                     info!(execution_id, "result submitted");
                     return;
                 }
+                Err(ref e) if !Self::is_retryable(e) => {
+                    error!(execution_id, error = %e, "result submission failed (non-retryable)");
+                    return;
+                }
                 Err(e) => {
                     if tokio::time::Instant::now() + delay > deadline {
                         error!(execution_id, "result submission failed after retries: {e}");
@@ -223,6 +227,14 @@ impl JobExecutor {
                     delay = (delay * 2).min(max_delay);
                 }
             }
+        }
+    }
+
+    fn is_retryable(err: &AgentError) -> bool {
+        match err {
+            AgentError::ServerError { status, .. } => *status >= 500 || *status == 429,
+            AgentError::Http(e) => e.is_timeout() || e.is_connect(),
+            _ => false,
         }
     }
 }
