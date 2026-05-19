@@ -110,6 +110,8 @@ impl CreateRequest {
                     &sql_reviewer::ReviewRules::default(),
                 );
                 let _tables = table_extractor::extract_tables(stmts);
+                // TODO: match extracted tables against schema_snapshot for TableRiskInfo
+                // (needed when AutoApproveConfig is enabled from server config)
                 let schema_status = match self
                     .schema_repo
                     .get_snapshot(input.database.as_str(), input.environment.as_str())
