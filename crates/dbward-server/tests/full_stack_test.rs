@@ -247,6 +247,8 @@ fn real_state() -> AppState {
         default_approval_ttl_secs: Some(3600),
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),
+        sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+        auto_approve_config: dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(),
     }
 }
 

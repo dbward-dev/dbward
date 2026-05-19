@@ -293,6 +293,8 @@ pub async fn run_from_args(
         max_persist_bytes: cfg.result_storage.max_persist_bytes,
         auth_mode: cfg.auth.mode.clone(),
         storage_backend: cfg.result_storage.backend.clone(),
+        sql_review_rules: cfg.sql_review.to_review_rules(),
+        auto_approve_config: cfg.auto_approve.to_auto_approve_config(),
         draining: draining.clone(),
     };
 

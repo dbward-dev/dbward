@@ -54,6 +54,8 @@ pub struct AppState {
     pub max_persist_bytes: usize,
     pub auth_mode: String,
     pub storage_backend: String,
+    pub sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
+    pub auto_approve_config: dbward_domain::services::workflow_matcher::AutoApproveConfig,
     // Shutdown
     pub draining: Arc<AtomicBool>,
 }

@@ -24,6 +24,10 @@ pub struct ServerConfig {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub trusted_proxies: Vec<String>,
+    #[serde(default)]
+    pub sql_review: SqlReviewConfig,
+    #[serde(default)]
+    pub auto_approve: AutoApproveServerConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -336,5 +340,97 @@ approval_ttl_secs = 0
         let cfg: ServerConfig = toml::from_str(toml).unwrap();
         let err = cfg.validate().unwrap_err();
         assert!(err.contains("approval_ttl_secs must be > 0"));
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SqlReviewConfig {
+    #[serde(default = "default_warn")]
+    pub no_where_delete: String,
+    #[serde(default = "default_warn")]
+    pub no_where_update: String,
+    #[serde(default = "default_warn")]
+    pub drop_table: String,
+    #[serde(default = "default_warn")]
+    pub drop_column: String,
+    #[serde(default = "default_warn")]
+    pub not_null_without_default: String,
+    #[serde(default = "default_warn")]
+    pub create_index_not_concurrently: String,
+    #[serde(default = "default_warn")]
+    pub alter_column_type: String,
+    #[serde(default = "default_warn")]
+    pub truncate: String,
+    #[serde(default = "default_warn")]
+    pub mixed_ddl_dml: String,
+    #[serde(default = "default_warn")]
+    pub large_in_list: String,
+}
+
+fn default_warn() -> String {
+    "warn".into()
+}
+
+impl SqlReviewConfig {
+    pub fn to_review_rules(&self) -> dbward_domain::services::sql_reviewer::ReviewRules {
+        use dbward_domain::services::sql_reviewer::{ReviewRules, RuleAction};
+        fn parse_action(s: &str) -> RuleAction {
+            match s {
+                "block" => RuleAction::Block,
+                "off" => RuleAction::Off,
+                _ => RuleAction::Warn,
+            }
+        }
+        ReviewRules {
+            no_where_delete: parse_action(&self.no_where_delete),
+            no_where_update: parse_action(&self.no_where_update),
+            drop_table: parse_action(&self.drop_table),
+            drop_column: parse_action(&self.drop_column),
+            not_null_without_default: parse_action(&self.not_null_without_default),
+            create_index_not_concurrently: parse_action(&self.create_index_not_concurrently),
+            alter_column_type: parse_action(&self.alter_column_type),
+            truncate: parse_action(&self.truncate),
+            mixed_ddl_dml: parse_action(&self.mixed_ddl_dml),
+            large_in_list: parse_action(&self.large_in_list),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AutoApproveServerConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_max_risk")]
+    pub max_risk_level: String,
+}
+
+fn default_max_risk() -> String {
+    "low".into()
+}
+
+impl Default for AutoApproveServerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_risk_level: default_max_risk(),
+        }
+    }
+}
+
+impl AutoApproveServerConfig {
+    pub fn to_auto_approve_config(
+        &self,
+    ) -> dbward_domain::services::workflow_matcher::AutoApproveConfig {
+        use dbward_domain::services::risk_scorer::RiskLevel;
+        use dbward_domain::services::workflow_matcher::AutoApproveConfig;
+        let max = match self.max_risk_level.as_str() {
+            "medium" => RiskLevel::Medium,
+            "high" => RiskLevel::High,
+            _ => RiskLevel::Low,
+        };
+        AutoApproveConfig {
+            enabled: self.enabled,
+            max_risk_level: max,
+        }
     }
 }
