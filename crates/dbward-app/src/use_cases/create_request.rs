@@ -19,6 +19,8 @@ pub struct CreateRequest {
     pub request_reader: Arc<dyn RequestReader>,
     pub request_writer: Arc<dyn RequestWriter>,
     pub db_registry: Arc<dyn DatabaseRegistry>,
+    pub schema_repo: Arc<dyn SchemaRepo>,
+    pub dry_run_repo: Arc<dyn DryRunRepo>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
@@ -86,6 +88,50 @@ impl CreateRequest {
                     ClassifyError::Rejected { reason } => AppError::Validation(reason),
                 })?;
                 classification.operation
+            }
+        };
+
+        // 1a. SQL Review + Risk assessment (best-effort, never blocks request creation)
+        let risk_level = {
+            use dbward_domain::services::{risk_scorer, sql_parser, sql_reviewer, table_extractor};
+            let dialect_str = self
+                .schema_repo
+                .get_dialect(input.database.as_str(), input.environment.as_str())
+                .unwrap_or(None);
+            let dialect = match dialect_str.as_deref() {
+                Some("mysql") => Dialect::MySql,
+                _ => Dialect::PostgreSql,
+            };
+            let parse_result = sql_parser::parse_statements(&input.detail, dialect);
+            if let Ok(ref stmts) = parse_result {
+                let review = sql_reviewer::review_statements(
+                    stmts,
+                    Some(dialect),
+                    &sql_reviewer::ReviewRules::default(),
+                );
+                let _tables = table_extractor::extract_tables(stmts);
+                let schema_status = match self
+                    .schema_repo
+                    .get_snapshot(input.database.as_str(), input.environment.as_str())
+                {
+                    Ok(Some(s)) if s.status == "ready" => risk_scorer::SchemaStatus::Ready,
+                    Ok(Some(_)) => risk_scorer::SchemaStatus::Failed,
+                    _ => risk_scorer::SchemaStatus::NotSynced,
+                };
+                let allow_read_only = operation == Operation::ExecuteSelect;
+                let assessment = risk_scorer::evaluate(&risk_scorer::RiskInput {
+                    operation,
+                    findings: &review.findings,
+                    schema_status,
+                    tables: &[],
+                    statement_count: stmts.len(),
+                    has_dml: matches!(operation, Operation::ExecuteDml),
+                    allow_read_only,
+                    max_estimated_rows: 10_000,
+                });
+                Some(assessment.level)
+            } else {
+                None
             }
         };
 
@@ -195,7 +241,7 @@ impl CreateRequest {
                 &user.groups,
                 &user.subject_id,
                 true,
-                None, // risk_level: not evaluated yet in v0.1.3 Phase 0
+                risk_level,
                 &workflow_matcher::AutoApproveConfig::disabled(),
             )
         };
@@ -364,6 +410,8 @@ mod tests {
             request_reader: Arc::new(FakeRequestReader::new()),
             request_writer: Arc::new(FakeRequestWriter::new()),
             db_registry: Arc::new(FakeDatabaseRegistry),
+            schema_repo: Arc::new(FakeSchemaRepo),
+            dry_run_repo: Arc::new(FakeDryRunRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
@@ -582,6 +630,8 @@ mod tests {
             request_reader: Arc::new(FakeRequestReader::new()),
             request_writer: Arc::new(FakeRequestWriter::new()),
             db_registry: Arc::new(FakeDatabaseRegistryNotFound),
+            schema_repo: Arc::new(FakeSchemaRepo),
+            dry_run_repo: Arc::new(FakeDryRunRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
@@ -607,6 +657,8 @@ mod tests {
             request_reader: Arc::new(FakeRequestReader::new()),
             request_writer: Arc::new(FakeRequestWriter::new()),
             db_registry: Arc::new(FakeDatabaseRegistry),
+            schema_repo: Arc::new(FakeSchemaRepo),
+            dry_run_repo: Arc::new(FakeDryRunRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),

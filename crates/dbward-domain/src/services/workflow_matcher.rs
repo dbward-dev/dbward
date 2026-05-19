@@ -31,14 +31,7 @@ impl ApprovalDecision {
 }
 
 /// Risk level for risk-based auto-approve decisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum RiskLevel {
-    Low,
-    Medium,
-    High,
-    Critical,
-    Unknown,
-}
+pub use super::risk_scorer::RiskLevel;
 
 /// Configuration for risk-based auto-approve.
 #[derive(Debug, Clone)]
