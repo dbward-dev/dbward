@@ -317,7 +317,29 @@ impl CreateRequest {
             .db_registry
             .exists(&input.database, &input.environment)?
         {
-            return Err(AppError::Validation("database not registered".into()));
+            let mut msg = format!(
+                "database '{}' not registered in environment '{}'",
+                input.database, input.environment
+            );
+            // Show available environments for this database if <=5
+            if let Ok(pairs) = self.db_registry.list() {
+                let envs: Vec<&str> = pairs
+                    .iter()
+                    .filter(|(db, _)| db == &input.database)
+                    .map(|(_, env)| env.as_str())
+                    .collect();
+                if !envs.is_empty() && envs.len() <= 5 {
+                    msg.push_str(&format!(
+                        ". Available environments: {}. Use --environment to specify",
+                        envs.join(", ")
+                    ));
+                } else if envs.is_empty() {
+                    msg.push_str(". Register it with: dbward database register");
+                } else {
+                    msg.push_str(". Use --environment to specify the correct environment");
+                }
+            }
+            return Err(AppError::Validation(msg));
         }
 
         // 3. Idempotency
@@ -844,7 +866,7 @@ mod tests {
             )
             .unwrap_err();
         assert!(
-            matches!(err, AppError::Validation(ref m) if m.contains("database not registered"))
+            matches!(err, AppError::Validation(ref m) if m.contains("not registered in environment"))
         );
     }
 
