@@ -15,6 +15,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub webhooks: Vec<WebhookDef>,
     #[serde(default)]
+    pub execution_policies: Vec<ExecutionPolicyDef>,
+    #[serde(default)]
     pub retention: RetentionConfig,
     #[serde(default)]
     pub auth: AuthConfig,
@@ -253,6 +255,26 @@ fn default_webhook_format() -> String {
     "generic".into()
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ExecutionPolicyDef {
+    #[serde(default = "star")]
+    pub database: String,
+    #[serde(default = "star")]
+    pub environment: String,
+    #[serde(default)]
+    pub max_executions: Option<u32>,
+    #[serde(default)]
+    pub execution_window_secs: Option<u64>,
+    #[serde(default)]
+    pub retry_on_failure: Option<bool>,
+    #[serde(default)]
+    pub statement_timeout_secs: Option<u32>,
+    #[serde(default)]
+    pub max_statement_timeout_secs: Option<u32>,
+    #[serde(default)]
+    pub max_rows: Option<u32>,
+}
+
 impl ServerConfig {
     pub fn load(path: &Path) -> Result<Self, String> {
         let content =
@@ -269,6 +291,16 @@ impl ServerConfig {
             return Err(
                 "retention.approval_ttl_secs must be > 0 (immediate expiry makes approval impossible)".into(),
             );
+        }
+        for (i, ep) in self.execution_policies.iter().enumerate() {
+            if matches!(
+                (ep.statement_timeout_secs, ep.max_statement_timeout_secs),
+                (Some(st), Some(max_st)) if st > max_st
+            ) {
+                return Err(format!(
+                    "execution_policies[{i}]: statement_timeout_secs must not exceed max_statement_timeout_secs"
+                ));
+            }
         }
         Ok(())
     }

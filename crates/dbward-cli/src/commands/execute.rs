@@ -24,6 +24,7 @@ pub async fn run_execute(
     share_with: &[String],
     no_store: bool,
     result_format: ResultFormat,
+    timeout: Option<u64>,
 ) -> Result<(), CliError> {
     if emergency && reason.is_none() {
         return Err(CliError::Config("--emergency requires --reason".into()));
@@ -41,26 +42,40 @@ pub async fn run_execute(
         Some(share_with)
     };
 
-    let outcome = tokio::select! {
-        result = workflow::submit_and_orchestrate(
-            sc,
-            CreateRequest {
-                operation: "execute_query",
-                environment: env_str,
-                database: db_name,
-                detail: sql,
-                emergency,
-                reason,
-                metadata: metadata.as_ref(),
-                idempotency_key,
-                share_with: sw,
-                no_store,
-            },
-            true,
-        ) => result?,
-        _ = tokio::signal::ctrl_c() => {
-            eprintln!("\nInterrupted. If a request was created, check: dbward request list");
-            return Ok(());
+    let request = CreateRequest {
+        operation: "execute_query",
+        environment: env_str,
+        database: db_name,
+        detail: sql,
+        emergency,
+        reason,
+        metadata: metadata.as_ref(),
+        idempotency_key,
+        share_with: sw,
+        no_store,
+    };
+
+    let outcome = if let Some(secs) = timeout {
+        tokio::select! {
+            result = workflow::submit_and_orchestrate(sc, request, true) => result?,
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("\nInterrupted. If a request was created, check: dbward request list");
+                return Ok(());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(secs)) => {
+                eprintln!("Timed out after {secs}s waiting for completion.");
+                eprintln!("Request may still be in progress. Check: dbward request list");
+                eprintln!("Use --timeout to increase the wait time.");
+                std::process::exit(124);
+            }
+        }
+    } else {
+        tokio::select! {
+            result = workflow::submit_and_orchestrate(sc, request, true) => result?,
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("\nInterrupted. If a request was created, check: dbward request list");
+                return Ok(());
+            }
         }
     };
 
