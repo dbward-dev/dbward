@@ -94,6 +94,29 @@ url = "http://webhook-receiver:9999"
 format = "generic"
 events = ["request_created", "request_approved", "request_auto_approved", "request_rejected", "request_completed", "request_failed", "break_glass", "step_approved"]
 
+# Execution policies (synced to SQLite on startup)
+
+# Production: strict limits
+[[execution_policies]]
+database = "*"
+environment = "production"
+max_executions = 1
+execution_window_secs = 3600
+retry_on_failure = false
+statement_timeout_secs = 30
+max_statement_timeout_secs = 300
+
+# Development: relaxed limits
+[[execution_policies]]
+database = "*"
+environment = "development"
+max_executions = 5
+execution_window_secs = 86400
+retry_on_failure = true
+statement_timeout_secs = 60
+max_statement_timeout_secs = 600
+max_rows = 10000
+
 # Result storage (local filesystem inside container)
 [result_storage]
 backend = "local"
