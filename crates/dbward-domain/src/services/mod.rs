@@ -1,6 +1,7 @@
 pub mod approval_checker;
 pub mod approval_progress;
 pub mod classification;
+pub mod risk_scorer;
 pub mod sql_classifier;
 pub mod sql_parser;
 pub mod sql_reviewer;
