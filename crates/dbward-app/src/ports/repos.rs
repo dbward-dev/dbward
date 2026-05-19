@@ -257,6 +257,26 @@ pub trait DatabaseRegistry: Send + Sync {
     fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError>;
 }
 
+// --- SchemaRepo ---
+
+#[derive(Debug, Clone)]
+pub struct SchemaSnapshotRecord {
+    pub database_name: String,
+    pub environment: String,
+    pub status: String,
+    pub snapshot_json: Option<String>,
+    pub error_message: Option<String>,
+    pub dialect: String,
+    pub collected_at: String,
+    pub agent_id: String,
+}
+
+pub trait SchemaRepo: Send + Sync {
+    fn upsert_snapshot(&self, record: &SchemaSnapshotRecord) -> Result<(), AppError>;
+    fn get_snapshot(&self, db: &str, env: &str) -> Result<Option<SchemaSnapshotRecord>, AppError>;
+    fn get_dialect(&self, db: &str, env: &str) -> Result<Option<String>, AppError>;
+}
+
 // --- AuditLogger ---
 
 pub trait AuditLogger: Send + Sync {

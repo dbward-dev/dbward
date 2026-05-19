@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 5;
+const SCHEMA_VERSION: u32 = 6;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -33,6 +33,20 @@ ALTER TABLE agents ADD COLUMN active_jobs_json TEXT NOT NULL DEFAULT '[]';
 const MIGRATION_V5: &str = "
 ALTER TABLE workflows ADD COLUMN require_approval INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE databases ADD COLUMN dialect TEXT DEFAULT NULL;
+";
+
+const MIGRATION_V6: &str = "
+CREATE TABLE IF NOT EXISTS schema_snapshots (
+    database_name TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ready',
+    snapshot_json TEXT,
+    error_message TEXT,
+    dialect TEXT NOT NULL,
+    collected_at TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    PRIMARY KEY (database_name, environment)
+);
 ";
 
 /// Initialize the database: set pragmas and create schema.
@@ -69,6 +83,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(MIGRATION_V3)?;
         conn.execute_batch(MIGRATION_V4)?;
         conn.execute_batch(MIGRATION_V5)?;
+        conn.execute_batch(MIGRATION_V6)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -82,6 +97,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 5 {
             conn.execute_batch(MIGRATION_V5)?;
+        }
+        if current < 6 {
+            conn.execute_batch(MIGRATION_V6)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }

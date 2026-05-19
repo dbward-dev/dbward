@@ -9,8 +9,8 @@ pub use repos::{
     AgentRepo, ApprovalRepo, AuditFilter, AuditLogger, AuditRepo, AuditVerifyResult,
     BackgroundTaskRepo, DatabaseRegistry, ExecutionTokenClaims, LicenseChecker, PolicyRepo,
     PutOptions, RequestReader, RequestWriter, ResultChannel, ResultStore, ResultStream,
-    SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner, UserRepo, WebhookDeliveryRepo,
-    WebhookRepo,
+    SchemaRepo, SchemaSnapshotRecord, SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner,
+    UserRepo, WebhookDeliveryRepo, WebhookRepo,
 };
 pub use services::{Notifier, WebhookEvent, WebhookSender};
 

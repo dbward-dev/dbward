@@ -527,6 +527,26 @@ impl DatabaseRegistry for StubDatabaseRegistry {
     }
 }
 
+struct StubSchemaRepo;
+impl dbward_app::ports::SchemaRepo for StubSchemaRepo {
+    fn upsert_snapshot(
+        &self,
+        _: &dbward_app::ports::SchemaSnapshotRecord,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get_snapshot(
+        &self,
+        _: &str,
+        _: &str,
+    ) -> Result<Option<dbward_app::ports::SchemaSnapshotRecord>, AppError> {
+        Ok(None)
+    }
+    fn get_dialect(&self, _: &str, _: &str) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
+}
+
 struct StubAuditLogger;
 impl AuditLogger for StubAuditLogger {
     fn record(&self, _: &AuditEvent) -> Result<(), AppError> {
@@ -690,6 +710,7 @@ fn test_state() -> AppState {
         webhook_repo: Arc::new(StubWebhookRepo),
         policy_repo: Arc::new(StubPolicyRepo),
         database_registry: Arc::new(StubDatabaseRegistry),
+        schema_repo: Arc::new(StubSchemaRepo),
         audit_logger: Arc::new(StubAuditLogger),
         audit_repo: Arc::new(StubAuditRepo),
         policy_evaluator: Arc::new(StubPolicyEvaluator),

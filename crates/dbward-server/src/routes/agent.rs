@@ -405,6 +405,39 @@ fn version_lt(a: &str, b: &str) -> bool {
     parse(a) < parse(b)
 }
 
+#[derive(Deserialize)]
+pub struct SchemaSyncBody {
+    pub database: String,
+    pub environment: String,
+    pub dialect: String,
+    pub status: String,
+    pub snapshot: Option<serde_json::Value>,
+    pub error_message: Option<String>,
+}
+
+pub async fn schema_sync(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<SchemaSyncBody>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    require_agent(&user)?;
+
+    let now = state.clock.now().to_rfc3339();
+    let record = dbward_app::ports::SchemaSnapshotRecord {
+        database_name: body.database,
+        environment: body.environment,
+        status: body.status,
+        snapshot_json: body.snapshot.map(|v| v.to_string()),
+        error_message: body.error_message,
+        dialect: body.dialect,
+        collected_at: now,
+        agent_id: user.subject_id,
+    };
+    state.schema_repo.upsert_snapshot(&record).map_err(map_error)?;
+
+    Ok(StatusCode::OK)
+}
+
 #[cfg(test)]
 mod tests {
     use super::version_lt;

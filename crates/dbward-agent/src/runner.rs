@@ -209,6 +209,51 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     probes.set_ready();
     info!(phase = "ready", "agent initialized and accepting work");
 
+    // --- Background schema sync (non-blocking) ---
+    {
+        let client_bg = client.clone();
+        let pools_bg = pools.clone();
+        tokio::spawn(async move {
+            for ((db_name, env_name), entry) in pools_bg.iter() {
+                let driver = entry.driver.read().await;
+                let (dialect, status, snapshot, error_message) = match driver.collect_schema().await
+                {
+                    Ok(snap) => {
+                        let json = serde_json::to_value(&snap).ok();
+                        (driver.dialect(), "ready", json, None)
+                    }
+                    Err(e) => (driver.dialect(), "failed", None, Some(e.to_string())),
+                };
+                match client_bg
+                    .schema_sync(
+                        db_name,
+                        env_name,
+                        dialect,
+                        status,
+                        snapshot.as_ref(),
+                        error_message.as_deref(),
+                    )
+                    .await
+                {
+                    Ok(_) => {
+                        info!(database = db_name, environment = env_name, "schema sync completed");
+                    }
+                    Err(AgentError::ServerError {
+                        status: 404 | 501, ..
+                    }) => {
+                        info!(
+                            database = db_name,
+                            "schema-sync not supported by server (upgrade to v0.1.3+)"
+                        );
+                    }
+                    Err(e) => {
+                        warn!(database = db_name, environment = env_name, %e, "schema sync failed");
+                    }
+                }
+            }
+        });
+    }
+
     let databases: Vec<String> = config.databases.keys().cloned().collect();
     let environments: Vec<String> = config
         .databases

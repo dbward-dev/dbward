@@ -125,6 +125,41 @@ impl AgentClient {
         Ok(())
     }
 
+    pub async fn schema_sync(
+        &self,
+        database: &str,
+        environment: &str,
+        dialect: &str,
+        status: &str,
+        snapshot: Option<&serde_json::Value>,
+        error_message: Option<&str>,
+    ) -> Result<(), AgentError> {
+        let body = serde_json::json!({
+            "database": database,
+            "environment": environment,
+            "dialect": dialect,
+            "status": status,
+            "snapshot": snapshot,
+            "error_message": error_message,
+        });
+        let resp = self
+            .http
+            .post(format!("{}/api/agent/schema-sync", self.base_url))
+            .bearer_auth(&self.agent_token)
+            .json(&body)
+            .send()
+            .await?;
+        let status_code = resp.status();
+        if !status_code.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AgentError::ServerError {
+                status: status_code.as_u16(),
+                body,
+            });
+        }
+        Ok(())
+    }
+
     async fn parse_response<T: serde::de::DeserializeOwned>(
         &self,
         resp: reqwest::Response,

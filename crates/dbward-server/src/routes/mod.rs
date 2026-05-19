@@ -127,6 +127,10 @@ pub fn build_router(state: AppState) -> Router {
             )),
         )
         .route("/api/agents", axum::routing::get(agent::list_agents))
+        .route(
+            "/api/agent/schema-sync",
+            axum::routing::post(agent::schema_sync),
+        )
         // Tokens
         .route(
             "/api/tokens",

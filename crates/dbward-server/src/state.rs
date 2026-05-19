@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicBool;
 use dbward_app::ports::{
     AgentRepo, ApprovalRepo, AuditLogger, AuditRepo, Authorizer, BackgroundTaskRepo, Clock,
     DatabaseRegistry, EventDispatcher, IdGenerator, LicenseChecker, Notifier, PolicyEvaluator,
-    PolicyRepo, RequestReader, RequestWriter, ResultChannel, ResultStore, RoleResolver,
+    PolicyRepo, RequestReader, RequestWriter, ResultChannel, ResultStore, RoleResolver, SchemaRepo,
     SsrfValidator, TokenRepo, TokenSigner, TokenVerifier, UserRepo, WebhookRepo,
 };
 
@@ -27,6 +27,7 @@ pub struct AppState {
     pub webhook_repo: Arc<dyn WebhookRepo>,
     pub policy_repo: Arc<dyn PolicyRepo>,
     pub database_registry: Arc<dyn DatabaseRegistry>,
+    pub schema_repo: Arc<dyn SchemaRepo>,
     pub audit_logger: Arc<dyn AuditLogger>,
     pub audit_repo: Arc<dyn AuditRepo>,
     // Services
