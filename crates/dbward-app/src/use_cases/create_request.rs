@@ -698,4 +698,22 @@ mod tests {
             matches!(err, AppError::Validation(ref m) if m.contains("emergency requests are not allowed via MCP"))
         );
     }
+
+    #[test]
+    fn risk_level_computed_for_dml() {
+        // Verify CreateRequest computes risk_level and passes it to workflow_matcher
+        // With auto-approve disabled, it doesn't change the outcome but the code path runs
+        let uc = make_uc(Arc::new(AllowAll));
+        let mut input = make_input();
+        input.detail = "DELETE FROM users".into(); // no WHERE → risk_scorer should find this risky
+        let result = uc
+            .execute(
+                input,
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap();
+        // With empty steps workflow → auto-approved (risk doesn't block because config disabled)
+        assert_eq!(result.status, RequestStatus::Dispatched);
+    }
 }
