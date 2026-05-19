@@ -171,27 +171,31 @@ pub async fn poll(
         .iter()
         .flat_map(|db| {
             envs.iter()
+                .filter(|env| env.as_str() != "*")
                 .map(move |env| (db.as_str().to_string(), env.as_str().to_string()))
         })
         .collect();
-    let dry_run_jobs: Vec<serde_json::Value> = if upgrade_required {
+    let dry_run_jobs: Vec<serde_json::Value> = if upgrade_required || db_pairs.is_empty() {
         vec![]
     } else {
-        state
-            .dry_run_repo
-            .find_pending_for_agent(&db_pairs)
-            .unwrap_or_default()
-            .iter()
-            .map(|j| {
-                serde_json::json!({
-                    "id": j.id,
-                    "request_id": j.request_id,
-                    "database": j.database_name,
-                    "environment": j.environment,
-                    "sql": j.sql_text,
+        match state.dry_run_repo.find_pending_for_agent(&db_pairs) {
+            Ok(jobs) => jobs
+                .iter()
+                .map(|j| {
+                    serde_json::json!({
+                        "id": j.id,
+                        "request_id": j.request_id,
+                        "database": j.database_name,
+                        "environment": j.environment,
+                        "sql": j.sql_text,
+                    })
                 })
-            })
-            .collect()
+                .collect(),
+            Err(e) => {
+                tracing::warn!(%e, "failed to fetch dry-run jobs");
+                vec![]
+            }
+        }
     };
 
     Ok((
@@ -508,6 +512,8 @@ pub async fn dry_run_claim(
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
+    // Security: job IDs are UUIDv4, only discoverable through poll which is scope-filtered.
+    // Claim atomicity (pending→claimed) prevents double-claim.
     let claim_token = uuid::Uuid::new_v4().to_string();
     let now = state.clock.now().to_rfc3339();
     let claimed = state
