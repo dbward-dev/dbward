@@ -450,11 +450,11 @@ impl DatabaseDriver for PostgresDriver {
         // Always rollback (read-only, no side effects)
         let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
         let row = result?;
-        let plan: String = row
+        // PG EXPLAIN (FORMAT JSON) returns a json column, decode directly
+        let plan: serde_json::Value = row
             .try_get(0)
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        serde_json::from_str(&plan)
-            .map_err(|e| DriverError::QueryFailed(format!("invalid EXPLAIN JSON: {e}")))
+        Ok(plan)
     }
 
     fn dialect(&self) -> &'static str {
