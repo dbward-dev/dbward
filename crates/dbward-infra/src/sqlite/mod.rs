@@ -2,6 +2,7 @@ mod schema;
 
 mod agent_repo;
 mod audit_repo;
+mod context_repo;
 mod database_repo;
 mod dry_run_repo;
 mod policy_repo;
@@ -16,6 +17,7 @@ pub use schema::initialize;
 
 pub use agent_repo::SqliteAgentRepo;
 pub use audit_repo::{SqliteAuditLogger, SqliteAuditRepo};
+pub use context_repo::SqliteContextRepo;
 pub use database_repo::SqliteDatabaseRegistry;
 pub use dry_run_repo::SqliteDryRunRepo;
 pub use policy_repo::{SqlitePolicyEvaluator, SqlitePolicyRepo};

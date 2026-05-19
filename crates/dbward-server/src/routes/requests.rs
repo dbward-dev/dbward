@@ -118,6 +118,7 @@ pub async fn create(
         db_registry: state.database_registry.clone(),
         schema_repo: state.schema_repo.clone(),
         dry_run_repo: state.dry_run_repo.clone(),
+        context_repo: state.context_repo.clone(),
         event_dispatcher: state.event_dispatcher.clone(),
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),

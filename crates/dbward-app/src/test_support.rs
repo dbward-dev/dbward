@@ -440,3 +440,10 @@ impl crate::ports::DryRunRepo for FakeDryRunRepo {
         Ok(vec![])
     }
 }
+
+pub struct FakeContextRepo;
+impl crate::ports::ContextRepo for FakeContextRepo {
+    fn create(&self, _: &crate::ports::RequestContextRecord) -> Result<(), crate::error::AppError> { Ok(()) }
+    fn get(&self, _: &str) -> Result<Option<crate::ports::RequestContextRecord>, crate::error::AppError> { Ok(None) }
+    fn update_explain(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), crate::error::AppError> { Ok(()) }
+}

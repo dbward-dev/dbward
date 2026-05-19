@@ -21,6 +21,7 @@ pub struct CreateRequest {
     pub db_registry: Arc<dyn DatabaseRegistry>,
     pub schema_repo: Arc<dyn SchemaRepo>,
     pub dry_run_repo: Arc<dyn DryRunRepo>,
+    pub context_repo: Arc<dyn ContextRepo>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
@@ -92,7 +93,7 @@ impl CreateRequest {
         };
 
         // 1a. SQL Review + Risk assessment (best-effort, never blocks request creation)
-        let risk_level = {
+        let (risk_level, review_json, risk_json, parsed_stmts) = {
             use dbward_domain::services::{risk_scorer, sql_parser, sql_reviewer, table_extractor};
             let dialect_str = self
                 .schema_repo
@@ -103,13 +104,13 @@ impl CreateRequest {
                 _ => Dialect::PostgreSql,
             };
             let parse_result = sql_parser::parse_statements(&input.detail, dialect);
-            if let Ok(ref stmts) = parse_result {
+            if let Ok(stmts) = parse_result {
                 let review = sql_reviewer::review_statements(
-                    stmts,
+                    &stmts,
                     Some(dialect),
                     &sql_reviewer::ReviewRules::default(),
                 );
-                let _tables = table_extractor::extract_tables(stmts);
+                let _tables = table_extractor::extract_tables(&stmts);
                 // TODO: match extracted tables against schema_snapshot for TableRiskInfo
                 // (needed when AutoApproveConfig is enabled from server config)
                 let schema_status = match self
@@ -131,9 +132,24 @@ impl CreateRequest {
                     allow_read_only,
                     max_estimated_rows: 10_000,
                 });
-                Some(assessment.level)
+                let r_json = serde_json::json!({
+                    "level": format!("{:?}", assessment.level),
+                    "factors": assessment.factors.iter().map(|f| format!("{:?}", f)).collect::<Vec<_>>(),
+                });
+                let rev_json = serde_json::json!({
+                    "findings": review.findings.iter().map(|f| {
+                        serde_json::json!({"rule": format!("{:?}", f.rule), "message": &f.message})
+                    }).collect::<Vec<_>>(),
+                    "blocked": review.blocked,
+                });
+                (
+                    Some(assessment.level),
+                    Some(rev_json.to_string()),
+                    Some(r_json.to_string()),
+                    Some(stmts),
+                )
             } else {
-                None
+                (None, None, None, None)
             }
         };
 
@@ -380,23 +396,52 @@ impl CreateRequest {
             && !request.no_store
         {
             let now_str = now.to_rfc3339();
-            let job = DryRunJobRecord {
-                id: self.id_gen.generate(),
-                request_id: id.clone(),
-                database_name: request.database.as_str().to_string(),
-                environment: request.environment.as_str().to_string(),
-                sql_text: request.detail.clone(),
-                status: "pending".into(),
-                claimed_by: None,
-                claimed_at: None,
-                claim_token: None,
-                result_json: None,
-                error_message: None,
-                created_at: now_str,
-                completed_at: None,
+            // Per-statement jobs (or single job if parse failed)
+            let sql_texts: Vec<String> = if let Some(ref stmts) = parsed_stmts {
+                stmts.iter().map(|s| s.to_string()).collect()
+            } else {
+                vec![request.detail.clone()]
             };
-            if let Err(e) = self.dry_run_repo.create_jobs(&[job]) {
-                tracing::warn!(%e, "failed to create dry-run job");
+            let jobs: Vec<DryRunJobRecord> = sql_texts
+                .iter()
+                .map(|sql| DryRunJobRecord {
+                    id: self.id_gen.generate(),
+                    request_id: id.clone(),
+                    database_name: request.database.as_str().to_string(),
+                    environment: request.environment.as_str().to_string(),
+                    sql_text: sql.clone(),
+                    status: "pending".into(),
+                    claimed_by: None,
+                    claimed_at: None,
+                    claim_token: None,
+                    result_json: None,
+                    error_message: None,
+                    created_at: now_str.clone(),
+                    completed_at: None,
+                })
+                .collect();
+            if let Err(e) = self.dry_run_repo.create_jobs(&jobs) {
+                tracing::warn!(%e, "failed to create dry-run jobs");
+            }
+        }
+
+        // 10. Create request_context record (best-effort)
+        if !request.no_store {
+            let now_str = now.to_rfc3339();
+            let has_dry_run = matches!(operation, Operation::ExecuteSelect | Operation::ExecuteDml);
+            let ctx_status = if has_dry_run { "collecting" } else { "ready" };
+            let ctx_record = RequestContextRecord {
+                request_id: id.clone(),
+                status: ctx_status.into(),
+                tables_json: None,
+                sql_review_json: review_json,
+                risk_json,
+                explain_json: None,
+                created_at: now_str.clone(),
+                updated_at: now_str,
+            };
+            if let Err(e) = self.context_repo.create(&ctx_record) {
+                tracing::warn!(%e, "failed to create request context");
             }
         }
 
@@ -439,6 +484,7 @@ mod tests {
             db_registry: Arc::new(FakeDatabaseRegistry),
             schema_repo: Arc::new(FakeSchemaRepo),
             dry_run_repo: Arc::new(FakeDryRunRepo),
+            context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
@@ -659,6 +705,7 @@ mod tests {
             db_registry: Arc::new(FakeDatabaseRegistryNotFound),
             schema_repo: Arc::new(FakeSchemaRepo),
             dry_run_repo: Arc::new(FakeDryRunRepo),
+            context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
@@ -686,6 +733,7 @@ mod tests {
             db_registry: Arc::new(FakeDatabaseRegistry),
             schema_repo: Arc::new(FakeSchemaRepo),
             dry_run_repo: Arc::new(FakeDryRunRepo),
+            context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),

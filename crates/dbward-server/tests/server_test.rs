@@ -575,6 +575,13 @@ impl dbward_app::ports::DryRunRepo for StubDryRunRepo {
     }
 }
 
+struct StubContextRepo;
+impl dbward_app::ports::ContextRepo for StubContextRepo {
+    fn create(&self, _: &dbward_app::ports::RequestContextRecord) -> Result<(), AppError> { Ok(()) }
+    fn get(&self, _: &str) -> Result<Option<dbward_app::ports::RequestContextRecord>, AppError> { Ok(None) }
+    fn update_explain(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), AppError> { Ok(()) }
+}
+
 struct StubAuditLogger;
 impl AuditLogger for StubAuditLogger {
     fn record(&self, _: &AuditEvent) -> Result<(), AppError> {
@@ -740,6 +747,7 @@ fn test_state() -> AppState {
         database_registry: Arc::new(StubDatabaseRegistry),
         schema_repo: Arc::new(StubSchemaRepo),
         dry_run_repo: Arc::new(StubDryRunRepo),
+        context_repo: Arc::new(StubContextRepo),
         audit_logger: Arc::new(StubAuditLogger),
         audit_repo: Arc::new(StubAuditRepo),
         policy_evaluator: Arc::new(StubPolicyEvaluator),

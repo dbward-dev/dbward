@@ -329,6 +329,32 @@ pub trait DryRunRepo: Send + Sync {
     fn find_for_request(&self, request_id: &str) -> Result<Vec<DryRunJobRecord>, AppError>;
 }
 
+// --- ContextRepo ---
+
+#[derive(Debug, Clone)]
+pub struct RequestContextRecord {
+    pub request_id: String,
+    pub status: String,
+    pub tables_json: Option<String>,
+    pub sql_review_json: Option<String>,
+    pub risk_json: Option<String>,
+    pub explain_json: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+pub trait ContextRepo: Send + Sync {
+    fn create(&self, ctx: &RequestContextRecord) -> Result<(), AppError>;
+    fn get(&self, request_id: &str) -> Result<Option<RequestContextRecord>, AppError>;
+    fn update_explain(
+        &self,
+        request_id: &str,
+        explain_json: &str,
+        status: &str,
+        now: &str,
+    ) -> Result<(), AppError>;
+}
+
 // --- AuditLogger ---
 
 pub trait AuditLogger: Send + Sync {

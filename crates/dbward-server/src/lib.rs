@@ -75,6 +75,7 @@ pub async fn run_from_args(
     ));
     let schema_repo = Arc::new(dbward_infra::sqlite::SqliteSchemaRepo::new(conn.clone()));
     let dry_run_repo = Arc::new(dbward_infra::sqlite::SqliteDryRunRepo::new(conn.clone()));
+    let context_repo = Arc::new(dbward_infra::sqlite::SqliteContextRepo::new(conn.clone()));
     let audit_logger: Arc<dyn dbward_app::ports::AuditLogger> =
         Arc::new(dbward_infra::sqlite::SqliteAuditLogger::new(conn.clone()));
     let audit_repo = Arc::new(dbward_infra::sqlite::SqliteAuditRepo::new(conn.clone()));
@@ -273,6 +274,7 @@ pub async fn run_from_args(
         database_registry,
         schema_repo,
         dry_run_repo,
+        context_repo,
         audit_logger,
         audit_repo,
         policy_evaluator,

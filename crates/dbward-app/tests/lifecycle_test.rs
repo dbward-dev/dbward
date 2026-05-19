@@ -716,6 +716,12 @@ impl TestHarness {
             fn reclaim_stale(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
             fn find_for_request(&self, _: &str) -> Result<Vec<DryRunJobRecord>, AppError> { Ok(vec![]) }
         }
+        struct FakeContextRepo;
+        impl ContextRepo for FakeContextRepo {
+            fn create(&self, _: &RequestContextRecord) -> Result<(), AppError> { Ok(()) }
+            fn get(&self, _: &str) -> Result<Option<RequestContextRecord>, AppError> { Ok(None) }
+            fn update_explain(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), AppError> { Ok(()) }
+        }
         CreateRequest {
             authorizer: self.authorizer.clone(),
             policy: self.policy.clone(),
@@ -724,6 +730,7 @@ impl TestHarness {
             db_registry: self.db_registry.clone(),
             schema_repo: Arc::new(FakeSchemaRepo),
             dry_run_repo: Arc::new(FakeDryRunRepo),
+            context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
             id_gen: self.id_gen.clone(),
