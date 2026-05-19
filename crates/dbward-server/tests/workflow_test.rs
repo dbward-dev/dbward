@@ -283,6 +283,7 @@ fn workflow_state() -> AppState {
         policy_repo: Arc::new(SqlitePolicyRepo::new(conn.clone())),
         database_registry: Arc::new(SqliteDatabaseRegistry::new(conn.clone())),
         schema_repo: Arc::new(dbward_infra::sqlite::SqliteSchemaRepo::new(conn.clone())),
+        dry_run_repo: Arc::new(dbward_infra::sqlite::SqliteDryRunRepo::new(conn.clone())),
         audit_logger: Arc::new(SqliteAuditLogger::new(conn.clone())),
         audit_repo: Arc::new(SqliteAuditRepo::new(conn.clone())),
         policy_evaluator: Arc::new(SqlitePolicyEvaluator::new(conn.clone())),

@@ -547,6 +547,37 @@ impl dbward_app::ports::SchemaRepo for StubSchemaRepo {
     }
 }
 
+struct StubDryRunRepo;
+impl dbward_app::ports::DryRunRepo for StubDryRunRepo {
+    fn create_jobs(&self, _: &[dbward_app::ports::DryRunJobRecord]) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn find_pending_for_agent(
+        &self,
+        _: &[(String, String)],
+    ) -> Result<Vec<dbward_app::ports::DryRunJobRecord>, AppError> {
+        Ok(vec![])
+    }
+    fn claim(&self, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn complete(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn fail(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn reclaim_stale(&self, _: &str) -> Result<u32, AppError> {
+        Ok(0)
+    }
+    fn find_for_request(
+        &self,
+        _: &str,
+    ) -> Result<Vec<dbward_app::ports::DryRunJobRecord>, AppError> {
+        Ok(vec![])
+    }
+}
+
 struct StubAuditLogger;
 impl AuditLogger for StubAuditLogger {
     fn record(&self, _: &AuditEvent) -> Result<(), AppError> {
@@ -711,6 +742,7 @@ fn test_state() -> AppState {
         policy_repo: Arc::new(StubPolicyRepo),
         database_registry: Arc::new(StubDatabaseRegistry),
         schema_repo: Arc::new(StubSchemaRepo),
+        dry_run_repo: Arc::new(StubDryRunRepo),
         audit_logger: Arc::new(StubAuditLogger),
         audit_repo: Arc::new(StubAuditRepo),
         policy_evaluator: Arc::new(StubPolicyEvaluator),

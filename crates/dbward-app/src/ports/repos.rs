@@ -277,6 +277,58 @@ pub trait SchemaRepo: Send + Sync {
     fn get_dialect(&self, db: &str, env: &str) -> Result<Option<String>, AppError>;
 }
 
+// --- DryRunRepo ---
+
+#[derive(Debug, Clone)]
+pub struct DryRunJobRecord {
+    pub id: String,
+    pub request_id: String,
+    pub database_name: String,
+    pub environment: String,
+    pub sql_text: String,
+    pub status: String,
+    pub claimed_by: Option<String>,
+    pub claimed_at: Option<String>,
+    pub claim_token: Option<String>,
+    pub result_json: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at: String,
+    pub completed_at: Option<String>,
+}
+
+pub trait DryRunRepo: Send + Sync {
+    fn create_jobs(&self, jobs: &[DryRunJobRecord]) -> Result<(), AppError>;
+    fn find_pending_for_agent(
+        &self,
+        databases: &[(String, String)],
+    ) -> Result<Vec<DryRunJobRecord>, AppError>;
+    fn claim(
+        &self,
+        job_id: &str,
+        agent_id: &str,
+        claim_token: &str,
+        now: &str,
+    ) -> Result<bool, AppError>;
+    fn complete(
+        &self,
+        job_id: &str,
+        agent_id: &str,
+        claim_token: &str,
+        result_json: &str,
+        now: &str,
+    ) -> Result<bool, AppError>;
+    fn fail(
+        &self,
+        job_id: &str,
+        agent_id: &str,
+        claim_token: &str,
+        error: &str,
+        now: &str,
+    ) -> Result<bool, AppError>;
+    fn reclaim_stale(&self, cutoff: &str) -> Result<u32, AppError>;
+    fn find_for_request(&self, request_id: &str) -> Result<Vec<DryRunJobRecord>, AppError>;
+}
+
 // --- AuditLogger ---
 
 pub trait AuditLogger: Send + Sync {

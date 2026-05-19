@@ -33,11 +33,23 @@ fn default_limit() -> u32 {
 pub struct PollResponse {
     pub jobs: Vec<Job>,
     #[serde(default)]
+    pub dry_run_jobs: Vec<DryRunJob>,
+    #[serde(default)]
     pub server_version: Option<String>,
     #[serde(default)]
     pub min_agent_version: Option<String>,
     #[serde(default)]
     pub upgrade_required: bool,
+}
+
+/// A dry-run EXPLAIN job for the agent to execute.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DryRunJob {
+    pub id: String,
+    pub request_id: String,
+    pub database: String,
+    pub environment: String,
+    pub sql: String,
 }
 
 /// A job returned from poll.

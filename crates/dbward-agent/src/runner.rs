@@ -658,6 +658,40 @@ async fn poll_loop(
                         }
                     });
                 }
+                // Process dry-run EXPLAIN jobs (fire-and-forget, not tracked)
+                for dry_job in resp.dry_run_jobs {
+                    let client_dr = client.clone();
+                    let pools_dr = pools.clone();
+                    tokio::spawn(async move {
+                        let key = (dry_job.database.clone(), dry_job.environment.clone());
+                        let Some(entry) = pools_dr.get(&key) else { return };
+                        let claim_token = match client_dr.dry_run_claim(&dry_job.id).await {
+                            Ok(t) => t,
+                            Err(AgentError::AlreadyClaimed) => return,
+                            Err(AgentError::ServerError { status: 404 | 501, .. }) => return,
+                            Err(e) => {
+                                warn!(job_id = %dry_job.id, %e, "dry-run claim failed");
+                                return;
+                            }
+                        };
+                        let driver = entry.driver.read().await;
+                        let (result, error) = match driver.explain(&dry_job.sql, 5).await {
+                            Ok(plan) => (Some(plan), None),
+                            Err(e) => (None, Some(e.to_string())),
+                        };
+                        if let Err(e) = client_dr
+                            .dry_run_result(
+                                &dry_job.id,
+                                &claim_token,
+                                result.as_ref(),
+                                error.as_deref(),
+                            )
+                            .await
+                        {
+                            warn!(job_id = %dry_job.id, %e, "dry-run result submit failed");
+                        }
+                    });
+                }
             }
             Err(e) => {
                 consecutive_failures += 1;

@@ -166,10 +166,39 @@ pub async fn poll(
             .collect()
     };
 
+    // Fetch pending dry-run jobs for this agent's databases
+    let db_pairs: Vec<(String, String)> = databases
+        .iter()
+        .flat_map(|db| {
+            envs.iter()
+                .map(move |env| (db.as_str().to_string(), env.as_str().to_string()))
+        })
+        .collect();
+    let dry_run_jobs: Vec<serde_json::Value> = if upgrade_required {
+        vec![]
+    } else {
+        state
+            .dry_run_repo
+            .find_pending_for_agent(&db_pairs)
+            .unwrap_or_default()
+            .iter()
+            .map(|j| {
+                serde_json::json!({
+                    "id": j.id,
+                    "request_id": j.request_id,
+                    "database": j.database_name,
+                    "environment": j.environment,
+                    "sql": j.sql_text,
+                })
+            })
+            .collect()
+    };
+
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
             "jobs": jobs,
+            "dry_run_jobs": dry_run_jobs,
             "server_version": env!("CARGO_PKG_VERSION"),
             "min_agent_version": min_agent_version,
             "upgrade_required": upgrade_required,
@@ -472,6 +501,69 @@ pub async fn schema_sync(
     Ok(StatusCode::OK)
 }
 
+
+pub async fn dry_run_claim(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    require_agent(&user)?;
+    let claim_token = uuid::Uuid::new_v4().to_string();
+    let now = state.clock.now().to_rfc3339();
+    let claimed = state
+        .dry_run_repo
+        .claim(&id, &user.subject_id, &claim_token, &now)
+        .map_err(map_error)?;
+    if !claimed {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "already_claimed", "code": "conflict"})),
+        ));
+    }
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({"claim_token": claim_token})),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct DryRunResultBody {
+    pub claim_token: String,
+    pub result: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+pub async fn dry_run_result(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    Json(body): Json<DryRunResultBody>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    require_agent(&user)?;
+    let now = state.clock.now().to_rfc3339();
+    let success = if let Some(error) = body.error {
+        state
+            .dry_run_repo
+            .fail(&id, &user.subject_id, &body.claim_token, &error, &now)
+            .map_err(map_error)?
+    } else {
+        let result_json = body
+            .result
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "{}".to_string());
+        state
+            .dry_run_repo
+            .complete(&id, &user.subject_id, &body.claim_token, &result_json, &now)
+            .map_err(map_error)?
+    };
+    if !success {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "fencing_violation", "code": "conflict"})),
+        ));
+    }
+    Ok(StatusCode::OK)
+}
 #[cfg(test)]
 mod tests {
     use super::version_lt;

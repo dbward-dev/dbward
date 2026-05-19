@@ -125,6 +125,55 @@ impl AgentClient {
         Ok(())
     }
 
+
+    pub async fn dry_run_claim(&self, job_id: &str) -> Result<String, AgentError> {
+        let resp = self
+            .http
+            .post(format!("{}/api/agent/dry-run/{}/claim", self.base_url, job_id))
+            .bearer_auth(&self.agent_token)
+            .send()
+            .await?;
+        let status = resp.status();
+        if status.as_u16() == 409 {
+            return Err(AgentError::AlreadyClaimed);
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AgentError::ServerError { status: status.as_u16(), body });
+        }
+        let body: serde_json::Value = resp.json().await?;
+        body["claim_token"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| AgentError::ServerError { status: 200, body: "missing claim_token".into() })
+    }
+
+    pub async fn dry_run_result(
+        &self,
+        job_id: &str,
+        claim_token: &str,
+        result: Option<&serde_json::Value>,
+        error: Option<&str>,
+    ) -> Result<(), AgentError> {
+        let body = serde_json::json!({
+            "claim_token": claim_token,
+            "result": result,
+            "error": error,
+        });
+        let resp = self
+            .http
+            .post(format!("{}/api/agent/dry-run/{}/result", self.base_url, job_id))
+            .bearer_auth(&self.agent_token)
+            .json(&body)
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(AgentError::ServerError { status: status.as_u16(), body });
+        }
+        Ok(())
+    }
     pub async fn schema_sync(
         &self,
         database: &str,

@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -49,6 +49,37 @@ CREATE TABLE IF NOT EXISTS schema_snapshots (
 );
 ";
 
+const MIGRATION_V7: &str = "
+CREATE TABLE IF NOT EXISTS dry_run_jobs (
+    id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    database_name TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    sql_text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    claimed_by TEXT,
+    claimed_at TEXT,
+    claim_token TEXT,
+    result_json TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    FOREIGN KEY (request_id) REFERENCES requests(id)
+);
+CREATE TABLE IF NOT EXISTS request_context (
+    request_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'collecting',
+    schema_snapshot_collected_at TEXT,
+    tables_json TEXT,
+    explain_json TEXT,
+    sql_review_json TEXT,
+    risk_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (request_id) REFERENCES requests(id)
+);
+";
+
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
@@ -84,6 +115,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(MIGRATION_V4)?;
         conn.execute_batch(MIGRATION_V5)?;
         conn.execute_batch(MIGRATION_V6)?;
+        conn.execute_batch(MIGRATION_V7)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -100,6 +132,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 6 {
             conn.execute_batch(MIGRATION_V6)?;
+        }
+        if current < 7 {
+            conn.execute_batch(MIGRATION_V7)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
