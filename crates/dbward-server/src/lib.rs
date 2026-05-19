@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use axum::Router;
 use dbward_app::ports::PolicyRepo;
 use dbward_app::use_cases::sync_config::{
-    ApproverInput, SyncConfig, WebhookInput, WorkflowInput, WorkflowStepInput,
+    ApproverInput, ExecutionPolicyInput, SyncConfig, WebhookInput, WorkflowInput, WorkflowStepInput,
 };
 use dbward_domain::values::{DatabaseName, Environment};
 use state::AppState;
@@ -336,6 +336,9 @@ pub async fn run_from_args(
     // BUG-28: Sync webhooks from config
     sync_webhooks(&state, &cfg.webhooks)?;
 
+    // Sync execution policies from config
+    sync_execution_policies(&state, &cfg.execution_policies)?;
+
     // BUG-31: OIDC verifier initialized above (injected into ApiTokenVerifier)
 
     let addr: std::net::SocketAddr = listen.parse()?;
@@ -483,6 +486,35 @@ fn sync_webhooks(
     if let Err(e) = state.notifier.reload() {
         tracing::warn!("failed to reload webhooks after sync: {e}");
     }
+    Ok(())
+}
+
+fn sync_execution_policies(
+    state: &AppState,
+    policies: &[config::ExecutionPolicyDef],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let uc = SyncConfig {
+        policy_repo: state.policy_repo.clone(),
+        webhook_repo: state.webhook_repo.clone(),
+        clock: state.clock.clone(),
+        id_gen: state.id_generator.clone(),
+    };
+
+    let inputs: Vec<ExecutionPolicyInput> = policies
+        .iter()
+        .map(|ep| ExecutionPolicyInput {
+            database: ep.database.clone(),
+            environment: ep.environment.clone(),
+            max_executions: ep.max_executions,
+            execution_window_secs: ep.execution_window_secs,
+            retry_on_failure: ep.retry_on_failure,
+            statement_timeout_secs: ep.statement_timeout_secs,
+            max_statement_timeout_secs: ep.max_statement_timeout_secs,
+            max_rows: ep.max_rows,
+        })
+        .collect();
+
+    uc.sync_execution_policies(inputs)?;
     Ok(())
 }
 
