@@ -213,47 +213,18 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     if config.schema_sync.enabled && config.schema_sync.sync_on_startup {
         let client_bg = client.clone();
         let pools_bg = pools.clone();
+        tokio::spawn(run_schema_sync_once(pools_bg, client_bg));
+    }
+    if config.schema_sync.enabled && config.schema_sync.interval_secs > 0 {
+        let client_bg = client.clone();
+        let pools_bg = pools.clone();
+        let interval = std::time::Duration::from_secs(config.schema_sync.interval_secs);
         tokio::spawn(async move {
-            for ((db_name, env_name), entry) in pools_bg.iter() {
-                let driver = entry.driver.read().await;
-                let (dialect, status, snapshot, error_message) = match driver.collect_schema().await
-                {
-                    Ok(snap) => {
-                        let json = serde_json::to_value(&snap).ok();
-                        (driver.dialect(), "ready", json, None)
-                    }
-                    Err(e) => (driver.dialect(), "failed", None, Some(e.to_string())),
-                };
-                match client_bg
-                    .schema_sync(
-                        db_name,
-                        env_name,
-                        dialect,
-                        status,
-                        snapshot.as_ref(),
-                        error_message.as_deref(),
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        info!(
-                            database = db_name,
-                            environment = env_name,
-                            "schema sync completed"
-                        );
-                    }
-                    Err(AgentError::ServerError {
-                        status: 404 | 501, ..
-                    }) => {
-                        info!(
-                            database = db_name,
-                            "schema-sync not supported by server (upgrade to v0.1.3+)"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(database = db_name, environment = env_name, %e, "schema sync failed");
-                    }
-                }
+            // Skip first tick (handled by sync_on_startup if enabled)
+            tokio::time::sleep(interval).await;
+            loop {
+                run_schema_sync_once(pools_bg.clone(), client_bg.clone()).await;
+                tokio::time::sleep(interval).await;
             }
         });
     }
@@ -309,6 +280,49 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         start_time,
     )
     .await
+}
+
+async fn run_schema_sync_once(pools: Arc<PoolRegistry>, client: Arc<AgentClient>) {
+    for ((db_name, env_name), entry) in pools.iter() {
+        let driver = entry.driver.read().await;
+        let (dialect, status, snapshot, error_message) = match driver.collect_schema().await {
+            Ok(snap) => {
+                let json = serde_json::to_value(&snap).ok();
+                (driver.dialect(), "ready", json, None)
+            }
+            Err(e) => (driver.dialect(), "failed", None, Some(e.to_string())),
+        };
+        match client
+            .schema_sync(
+                db_name,
+                env_name,
+                dialect,
+                status,
+                snapshot.as_ref(),
+                error_message.as_deref(),
+            )
+            .await
+        {
+            Ok(_) => {
+                info!(
+                    database = db_name,
+                    environment = env_name,
+                    "schema sync completed"
+                );
+            }
+            Err(AgentError::ServerError {
+                status: 404 | 501, ..
+            }) => {
+                info!(
+                    database = db_name,
+                    "schema-sync not supported by server (upgrade to v0.1.3+)"
+                );
+            }
+            Err(e) => {
+                warn!(database = db_name, environment = env_name, %e, "schema sync failed");
+            }
+        }
+    }
 }
 
 /// Startup phase: fetch public key, connect databases, validate token.
