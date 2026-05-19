@@ -179,7 +179,9 @@ impl CreateRequest {
         // Fail-closed: no workflow configured = reject (unless break-glass)
         let decision = if workflow.is_none() {
             if input.emergency {
-                workflow_matcher::ApprovalDecision::AutoApproved
+                workflow_matcher::ApprovalDecision::AutoApproved {
+                    reason: workflow_matcher::AutoApproveReason::EmptySteps,
+                }
             } else {
                 return Err(AppError::Validation(format!(
                     "no workflow configured for {}/{}",
@@ -193,11 +195,13 @@ impl CreateRequest {
                 &user.groups,
                 &user.subject_id,
                 true,
+                None, // risk_level: not evaluated yet in v0.1.3 Phase 0
+                &workflow_matcher::AutoApproveConfig::disabled(),
             )
         };
 
         // 5. Determine initial status
-        let needs_approval = !matches!(decision, workflow_matcher::ApprovalDecision::AutoApproved);
+        let needs_approval = decision.needs_approval();
         let status = status_machine::initial_status(needs_approval, input.emergency);
 
         // 5b. Workflow require_reason check
@@ -508,6 +512,7 @@ mod tests {
                 require_reason: true,
                 allow_self_approve: false,
                 allow_same_approver_across_steps: false,
+            require_approval: false,
                 pending_ttl_secs: None,
                 statement_timeout_secs: None,
                 approval_ttl_secs: None,

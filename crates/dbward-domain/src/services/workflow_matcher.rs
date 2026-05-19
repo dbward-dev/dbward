@@ -6,10 +6,54 @@ use crate::values::{DatabaseName, Environment, Operation};
 pub enum ApprovalDecision {
     /// No workflow matched → pending (fail-closed).
     Pending,
-    /// Workflow matched, steps exist → pending with workflow.
-    PendingWithWorkflow,
-    /// Workflow matched, skip_approval_for matched or steps empty → auto_approved.
-    AutoApproved,
+    /// Workflow requires human approval.
+    NeedsApproval,
+    /// Auto-approved with explicit reason.
+    AutoApproved { reason: AutoApproveReason },
+}
+
+/// Why a request was auto-approved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AutoApproveReason {
+    /// Workflow has no approval steps.
+    EmptySteps,
+    /// User matched skip_approval_for selector.
+    SkipSelector,
+    /// Risk level is below threshold (v0.1.3+).
+    RiskBased,
+}
+
+impl ApprovalDecision {
+    /// Returns true if the request needs human approval.
+    pub fn needs_approval(&self) -> bool {
+        matches!(self, Self::Pending | Self::NeedsApproval)
+    }
+}
+
+/// Risk level for risk-based auto-approve decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RiskLevel {
+    Low,
+    Medium,
+    High,
+    Critical,
+    Unknown,
+}
+
+/// Configuration for risk-based auto-approve.
+#[derive(Debug, Clone)]
+pub struct AutoApproveConfig {
+    pub enabled: bool,
+    pub max_risk_level: RiskLevel,
+}
+
+impl AutoApproveConfig {
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            max_risk_level: RiskLevel::Low,
+        }
+    }
 }
 
 /// 4-stage workflow lookup.
@@ -47,24 +91,46 @@ pub fn evaluate(
     user_groups: &[String],
     user_id: &str,
     is_requester: bool,
+    risk_level: Option<RiskLevel>,
+    auto_approve_config: &AutoApproveConfig,
 ) -> ApprovalDecision {
     let workflow = match workflow {
         None => return ApprovalDecision::Pending,
         Some(w) => w,
     };
 
+    // require_approval overrides all bypass mechanisms
+    if workflow.require_approval {
+        return ApprovalDecision::NeedsApproval;
+    }
+
     if workflow.is_auto_approve() {
-        return ApprovalDecision::AutoApproved;
+        return ApprovalDecision::AutoApproved {
+            reason: AutoApproveReason::EmptySteps,
+        };
     }
 
     // Check skip_approval_for
     for selector in &workflow.skip_approval_for {
         if selector.matches(role_names, user_groups, user_id, is_requester) {
-            return ApprovalDecision::AutoApproved;
+            return ApprovalDecision::AutoApproved {
+                reason: AutoApproveReason::SkipSelector,
+            };
         }
     }
 
-    ApprovalDecision::PendingWithWorkflow
+    // Risk-based auto-approve
+    if auto_approve_config.enabled {
+        if let Some(level) = risk_level {
+            if level != RiskLevel::Unknown && level <= auto_approve_config.max_risk_level {
+                return ApprovalDecision::AutoApproved {
+                    reason: AutoApproveReason::RiskBased,
+                };
+            }
+        }
+    }
+
+    ApprovalDecision::NeedsApproval
 }
 
 fn matches_scope(policy_db: &DatabaseName, request_db: &DatabaseName) -> bool {
@@ -115,6 +181,7 @@ mod tests {
             require_reason: false,
             allow_self_approve: false,
             allow_same_approver_across_steps: false,
+            require_approval: false,
             pending_ttl_secs: None,
             statement_timeout_secs: None,
             approval_ttl_secs: None,
@@ -135,22 +202,22 @@ mod tests {
 
     #[test]
     fn no_workflow_returns_pending() {
-        let decision = evaluate(None, &[], &[], "alice", true);
+        let decision = evaluate(None, &[], &[], "alice", true, None, &AutoApproveConfig::disabled());
         assert_eq!(decision, ApprovalDecision::Pending);
     }
 
     #[test]
     fn empty_steps_returns_auto_approved() {
         let w = wf("*", "*", vec![], vec![], vec![]);
-        let decision = evaluate(Some(&w), &[], &[], "alice", true);
-        assert_eq!(decision, ApprovalDecision::AutoApproved);
+        let decision = evaluate(Some(&w), &[], &[], "alice", true, None, &AutoApproveConfig::disabled());
+        assert!(matches!(decision, ApprovalDecision::AutoApproved { .. }));
     }
 
     #[test]
     fn steps_present_returns_pending_with_workflow() {
         let w = wf("*", "*", vec![], vec![step()], vec![]);
-        let decision = evaluate(Some(&w), &[], &[], "alice", true);
-        assert_eq!(decision, ApprovalDecision::PendingWithWorkflow);
+        let decision = evaluate(Some(&w), &[], &[], "alice", true, None, &AutoApproveConfig::disabled());
+        assert_eq!(decision, ApprovalDecision::NeedsApproval);
     }
 
     #[test]
@@ -162,8 +229,8 @@ mod tests {
             vec![step()],
             vec![Selector::Role("admin".to_string())],
         );
-        let decision = evaluate(Some(&w), &["admin".to_string()], &[], "alice", true);
-        assert_eq!(decision, ApprovalDecision::AutoApproved);
+        let decision = evaluate(Some(&w), &["admin".to_string()], &[], "alice", true, None, &AutoApproveConfig::disabled());
+        assert!(matches!(decision, ApprovalDecision::AutoApproved { .. }));
     }
 
     #[test]
@@ -175,8 +242,8 @@ mod tests {
             vec![step()],
             vec![Selector::Role("admin".to_string())],
         );
-        let decision = evaluate(Some(&w), &["developer".to_string()], &[], "alice", true);
-        assert_eq!(decision, ApprovalDecision::PendingWithWorkflow);
+        let decision = evaluate(Some(&w), &["developer".to_string()], &[], "alice", true, None, &AutoApproveConfig::disabled());
+        assert_eq!(decision, ApprovalDecision::NeedsApproval);
     }
 
     #[test]

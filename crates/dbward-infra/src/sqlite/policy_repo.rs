@@ -30,8 +30,8 @@ impl PolicyRepo for SqlitePolicyRepo {
         let skip_json = serde_json::to_string(&wf.skip_approval_for)
             .map_err(|e| AppError::Internal(e.to_string()))?;
         conn.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs, require_approval)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 wf.id,
                 wf.database.as_str(),
@@ -45,6 +45,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 wf.pending_ttl_secs.map(|v| v as i64),
                 wf.approval_ttl_secs.map(|v| v as i64),
                 wf.statement_timeout_secs.map(|v| v as i64),
+                wf.require_approval,
             ],
         ).map_err(|e| {
             if e.to_string().contains("UNIQUE constraint failed") {
@@ -755,6 +756,7 @@ fn row_to_workflow(row: &rusqlite::Row) -> rusqlite::Result<Result<Workflow, App
     let pending_ttl: Option<i64> = row.get(9)?;
     let approval_ttl: Option<i64> = row.get(10)?;
     let stmt_timeout: Option<i64> = row.get(11)?;
+    let require_approval: bool = row.get::<_, bool>(12).unwrap_or(false);
 
     Ok((|| {
         let database = DatabaseName::new(db_str).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -776,6 +778,7 @@ fn row_to_workflow(row: &rusqlite::Row) -> rusqlite::Result<Result<Workflow, App
             require_reason,
             allow_self_approve,
             allow_same_approver_across_steps: allow_same,
+            require_approval,
             pending_ttl_secs: pending_ttl.map(|v| v as u64),
             statement_timeout_secs: stmt_timeout.map(|v| v as u64),
             approval_ttl_secs: approval_ttl.map(|v| v as u64),

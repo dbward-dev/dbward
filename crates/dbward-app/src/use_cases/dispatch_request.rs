@@ -685,6 +685,7 @@ mod tests {
             require_reason: false,
             allow_self_approve: false,
             allow_same_approver_across_steps: false,
+            require_approval: false,
             pending_ttl_secs: None,
             statement_timeout_secs: None,
             approval_ttl_secs: Some(60),

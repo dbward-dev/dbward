@@ -226,6 +226,8 @@ pub struct WorkflowDef {
     #[serde(default = "default_true")]
     pub allow_same_approver_across_steps: bool,
     #[serde(default)]
+    pub require_approval: bool,
+    #[serde(default)]
     pub pending_ttl_secs: Option<u64>,
     #[serde(default)]
     pub statement_timeout_secs: Option<u64>,

@@ -447,6 +447,7 @@ fn sync_workflows(
             require_reason: wf.require_reason,
             allow_self_approve: wf.allow_self_approve,
             allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
+            require_approval: wf.require_approval,
             pending_ttl_secs: wf.pending_ttl_secs,
             statement_timeout_secs: wf.statement_timeout_secs,
         })
