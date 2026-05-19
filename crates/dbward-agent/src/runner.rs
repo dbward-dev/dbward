@@ -210,6 +210,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     info!(phase = "ready", "agent initialized and accepting work");
 
     // --- Background schema sync (non-blocking) ---
+    // TODO(v0.1.3-phase2): re-run schema sync after migration execution completes
     {
         let client_bg = client.clone();
         let pools_bg = pools.clone();

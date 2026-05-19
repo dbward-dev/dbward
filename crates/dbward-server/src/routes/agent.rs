@@ -422,6 +422,40 @@ pub async fn schema_sync(
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
 
+    // Validate dialect
+    if !matches!(body.dialect.as_str(), "postgresql" | "mysql") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "invalid dialect", "code": "validation_error"})),
+        ));
+    }
+    // Validate status
+    if !matches!(body.status.as_str(), "ready" | "failed" | "partial") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "invalid status", "code": "validation_error"})),
+        ));
+    }
+    // Validate consistency: ready requires snapshot, failed requires error_message
+    if body.status == "ready" && body.snapshot.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "snapshot required when status=ready", "code": "validation_error"})),
+        ));
+    }
+
+    // Scope check: agent must have capability for this database
+    let agent = state.agent_repo.get(&user.subject_id).map_err(map_error)?;
+    if let Some(agent) = agent {
+        let db_match = agent.databases.iter().any(|d| d.database.as_str() == body.database);
+        if !db_match {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error": "agent not authorized for this database", "code": "forbidden"})),
+            ));
+        }
+    }
+
     let now = state.clock.now().to_rfc3339();
     let record = dbward_app::ports::SchemaSnapshotRecord {
         database_name: body.database,
