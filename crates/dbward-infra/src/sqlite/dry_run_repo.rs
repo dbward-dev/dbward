@@ -176,6 +176,20 @@ impl DryRunRepo for SqliteDryRunRepo {
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| AppError::Internal(e.to_string()))
     }
+
+    fn get_request_id(&self, job_id: &str) -> Result<Option<String>, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn.query_row(
+            "SELECT request_id FROM dry_run_jobs WHERE id = ?1",
+            params![job_id],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(AppError::Internal(e.to_string())),
+        }
+    }
 }
 
 #[cfg(test)]

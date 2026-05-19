@@ -460,13 +460,40 @@ impl DatabaseDriver for MysqlDriver {
                 }
             }
 
+            // Indexes
+            let idx_rows = sqlx::query(
+                "SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE FROM information_schema.STATISTICS \
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY INDEX_NAME, SEQ_IN_INDEX"
+            )
+            .bind(&name)
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+
+            let mut indexes: Vec<IndexInfo> = Vec::new();
+            for r in &idx_rows {
+                let idx_name: String = r.get("INDEX_NAME");
+                let col: String = r.get("COLUMN_NAME");
+                let non_unique: i32 = r.get("NON_UNIQUE");
+                if let Some(existing) = indexes.iter_mut().find(|i| i.name == idx_name) {
+                    existing.columns.push(col);
+                } else {
+                    indexes.push(IndexInfo {
+                        name: idx_name,
+                        columns: vec![col],
+                        is_unique: non_unique == 0,
+                        index_type: "btree".into(),
+                    });
+                }
+            }
+
             tables.push(TableInfo {
                 name,
                 schema_name: String::new(),
                 estimated_rows,
                 columns,
                 constraints,
-                indexes: vec![],
+                indexes,
             });
         }
 

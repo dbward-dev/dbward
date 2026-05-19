@@ -78,4 +78,98 @@ impl ContextRepo for SqliteContextRepo {
         .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(())
     }
+
+    fn timeout_collecting(&self, cutoff: &str, now: &str) -> Result<u32, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn
+            .execute(
+                "UPDATE request_context SET status = 'unavailable', updated_at = ?1 \
+             WHERE status = 'collecting' AND created_at < ?2",
+                params![now, cutoff],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(n as u32)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sqlite::open_memory;
+    use crate::sqlite::schema::initialize;
+
+    fn setup() -> DbConn {
+        let conn = open_memory().unwrap();
+        {
+            let c = conn.lock().unwrap();
+            initialize(&c).unwrap();
+            c.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+        }
+        conn
+    }
+
+    #[test]
+    fn create_and_get() {
+        let conn = setup();
+        let repo = SqliteContextRepo::new(conn);
+        let ctx = RequestContextRecord {
+            request_id: "req-1".into(),
+            status: "collecting".into(),
+            tables_json: Some(r#"["users"]"#.into()),
+            sql_review_json: Some(r#"{"blocked":false}"#.into()),
+            risk_json: Some(r#"{"level":"Low"}"#.into()),
+            explain_json: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        };
+        repo.create(&ctx).unwrap();
+        let got = repo.get("req-1").unwrap().unwrap();
+        assert_eq!(got.status, "collecting");
+        assert_eq!(got.risk_json.as_deref(), Some(r#"{"level":"Low"}"#));
+    }
+
+    #[test]
+    fn update_explain_transitions_status() {
+        let conn = setup();
+        let repo = SqliteContextRepo::new(conn);
+        let ctx = RequestContextRecord {
+            request_id: "req-2".into(),
+            status: "collecting".into(),
+            tables_json: None,
+            sql_review_json: None,
+            risk_json: None,
+            explain_json: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        };
+        repo.create(&ctx).unwrap();
+        repo.update_explain("req-2", "[{\"plan\":{}}]", "ready", "2026-01-01T01:00:00Z")
+            .unwrap();
+        let got = repo.get("req-2").unwrap().unwrap();
+        assert_eq!(got.status, "ready");
+        assert!(got.explain_json.is_some());
+    }
+
+    #[test]
+    fn timeout_collecting() {
+        let conn = setup();
+        let repo = SqliteContextRepo::new(conn);
+        let ctx = RequestContextRecord {
+            request_id: "req-3".into(),
+            status: "collecting".into(),
+            tables_json: None,
+            sql_review_json: None,
+            risk_json: None,
+            explain_json: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        };
+        repo.create(&ctx).unwrap();
+        let n = repo
+            .timeout_collecting("2026-01-01T00:05:01Z", "2026-01-01T00:06:00Z")
+            .unwrap();
+        assert_eq!(n, 1);
+        let got = repo.get("req-3").unwrap().unwrap();
+        assert_eq!(got.status, "unavailable");
+    }
 }

@@ -51,6 +51,7 @@ pub fn spawn_background_tasks(
     ));
     set.spawn(webhook_retry_loop(state.clone(), shutdown.clone()));
     set.spawn(dry_run_reclaim_loop(state.clone(), shutdown.clone()));
+    set.spawn(context_timeout_loop(state.clone(), shutdown.clone()));
 
     // Bridge: when draining is set externally, also cancel background tasks
     let shutdown_bridge = shutdown.clone();
@@ -534,6 +535,29 @@ async fn dry_run_reclaim_loop(state: AppState, shutdown: CancellationToken) {
                     Ok(_) => {}
                     Err(e) => {
                         tracing::error!(task = "dry_run_reclaim", error = %e, "reclaim_stale failed");
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn context_timeout_loop(state: AppState, shutdown: CancellationToken) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => break,
+            _ = interval.tick() => {
+                let now = state.clock.now();
+                let cutoff = (now - chrono::Duration::seconds(300)).to_rfc3339();
+                let now_str = now.to_rfc3339();
+                match state.context_repo.timeout_collecting(&cutoff, &now_str) {
+                    Ok(n) if n > 0 => {
+                        tracing::info!(task = "context_timeout", timed_out = n, "marked collecting contexts as unavailable");
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::error!(task = "context_timeout", error = %e, "timeout_collecting failed");
                     }
                 }
             }

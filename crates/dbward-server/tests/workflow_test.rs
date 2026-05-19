@@ -307,7 +307,8 @@ fn workflow_state() -> AppState {
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),
         sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-        auto_approve_config: dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(),
+        auto_approve_config: dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(
+        ),
     }
 }
 

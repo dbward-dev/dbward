@@ -27,6 +27,7 @@ pub struct CreateRequest {
     pub id_gen: Arc<dyn IdGenerator>,
     pub default_approval_ttl_secs: Option<u64>,
     pub review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
+    pub auto_approve_config: workflow_matcher::AutoApproveConfig,
 }
 
 #[derive(Clone)]
@@ -94,7 +95,7 @@ impl CreateRequest {
         };
 
         // 1a. SQL Review + Risk assessment (best-effort, never blocks request creation)
-        let (risk_level, review_json, risk_json, parsed_stmts) = {
+        let (risk_level, review_json, risk_json, parsed_stmts, tables_json) = {
             use dbward_domain::services::{risk_scorer, sql_parser, sql_reviewer, table_extractor};
             let dialect_str = self
                 .schema_repo
@@ -106,13 +107,12 @@ impl CreateRequest {
             };
             let parse_result = sql_parser::parse_statements(&input.detail, dialect);
             if let Ok(stmts) = parse_result {
-                let review = sql_reviewer::review_statements(
-                    &stmts,
-                    Some(dialect),
-                    &self.review_rules,
-                );
+                let review =
+                    sql_reviewer::review_statements(&stmts, Some(dialect), &self.review_rules);
                 if review.blocked {
-                    let reasons: Vec<&str> = review.findings.iter()
+                    let reasons: Vec<&str> = review
+                        .findings
+                        .iter()
                         .filter(|f| f.action == sql_reviewer::RuleAction::Block)
                         .map(|f| f.message.as_str())
                         .collect();
@@ -121,9 +121,20 @@ impl CreateRequest {
                         reasons.join("; ")
                     )));
                 }
-                let _tables = table_extractor::extract_tables(&stmts);
-                // TODO: match extracted tables against schema_snapshot for TableRiskInfo
-                // (needed when AutoApproveConfig is enabled from server config)
+                let tables = table_extractor::extract_tables(&stmts);
+                let t_json = serde_json::to_string(
+                    &tables
+                        .iter()
+                        .map(|t| {
+                            if let Some(ref s) = t.schema {
+                                format!("{}.{}", s, t.name)
+                            } else {
+                                t.name.clone()
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .ok();
                 let schema_status = match self
                     .schema_repo
                     .get_snapshot(input.database.as_str(), input.environment.as_str())
@@ -158,9 +169,10 @@ impl CreateRequest {
                     Some(rev_json.to_string()),
                     Some(r_json.to_string()),
                     Some(stmts),
+                    t_json,
                 )
             } else {
-                (None, None, None, None)
+                (None, None, None, None, None)
             }
         };
 
@@ -271,7 +283,7 @@ impl CreateRequest {
                 &user.subject_id,
                 true,
                 risk_level,
-                &workflow_matcher::AutoApproveConfig::disabled(),
+                &self.auto_approve_config,
             )
         };
 
@@ -444,7 +456,7 @@ impl CreateRequest {
             let ctx_record = RequestContextRecord {
                 request_id: id.clone(),
                 status: ctx_status.into(),
-                tables_json: None,
+                tables_json,
                 sql_review_json: review_json,
                 risk_json,
                 explain_json: None,
@@ -501,6 +513,8 @@ mod tests {
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
             review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+            auto_approve_config:
+                dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(),
         }
     }
 
@@ -723,6 +737,8 @@ mod tests {
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
             review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+            auto_approve_config:
+                dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(),
         };
         let err = uc
             .execute(
@@ -752,6 +768,8 @@ mod tests {
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
             review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+            auto_approve_config:
+                dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(),
         };
         let mut input = make_input();
         input.reason = None;

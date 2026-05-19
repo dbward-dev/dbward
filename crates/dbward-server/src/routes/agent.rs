@@ -479,18 +479,33 @@ pub async fn schema_sync(
         ));
     }
 
-    // Scope check: agent must have capability for this database
+    // Scope check: agent must have capability for this database+environment
     let agent = state.agent_repo.get(&user.subject_id).map_err(map_error)?;
     if let Some(agent) = agent {
-        let db_match = agent
-            .databases
-            .iter()
-            .any(|d| d.database.as_str() == body.database);
-        if !db_match {
+        let scope_match = agent.databases.iter().any(|d| {
+            d.database.as_str() == body.database && d.environment.as_str() == body.environment
+        });
+        if !scope_match {
             return Err((
                 StatusCode::FORBIDDEN,
                 Json(
-                    serde_json::json!({"error": "agent not authorized for this database", "code": "forbidden"}),
+                    serde_json::json!({"error": "agent not authorized for this database/environment", "code": "forbidden"}),
+                ),
+            ));
+        }
+    }
+    // Verify database+environment is registered
+    {
+        use dbward_domain::values::{DatabaseName, Environment};
+        if let (Ok(db), Ok(env)) = (
+            DatabaseName::new(&body.database),
+            Environment::new(&body.environment),
+        ) && !state.database_registry.exists(&db, &env).unwrap_or(false)
+        {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(
+                    serde_json::json!({"error": "database/environment not registered", "code": "validation_error"}),
                 ),
             ));
         }
@@ -577,6 +592,39 @@ pub async fn dry_run_result(
             Json(serde_json::json!({"error": "fencing_violation", "code": "conflict"})),
         ));
     }
+
+    // on_dry_run_complete: check if all jobs for this request are done, update context
+    if let Ok(Some(request_id)) = state.dry_run_repo.get_request_id(&id)
+        && let Ok(jobs) = state.dry_run_repo.find_for_request(&request_id)
+    {
+        let all_done = jobs
+            .iter()
+            .all(|j| j.status != "pending" && j.status != "claimed");
+        if all_done {
+            let results: Vec<serde_json::Value> = jobs
+                .iter()
+                .map(|j| {
+                    if j.status == "completed" {
+                        serde_json::json!({"sql": &j.sql_text, "plan": &j.result_json})
+                    } else {
+                        serde_json::json!({"sql": &j.sql_text, "error": &j.error_message})
+                    }
+                })
+                .collect();
+            let explain_json = serde_json::to_string(&results).unwrap_or_default();
+            let ctx_status = if jobs.iter().all(|j| j.status == "completed") {
+                "ready"
+            } else {
+                "partial"
+            };
+            let now_str = state.clock.now().to_rfc3339();
+            let _ =
+                state
+                    .context_repo
+                    .update_explain(&request_id, &explain_json, ctx_status, &now_str);
+        }
+    }
+
     Ok(StatusCode::OK)
 }
 #[cfg(test)]

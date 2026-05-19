@@ -573,13 +573,25 @@ impl dbward_app::ports::DryRunRepo for StubDryRunRepo {
     ) -> Result<Vec<dbward_app::ports::DryRunJobRecord>, AppError> {
         Ok(vec![])
     }
+    fn get_request_id(&self, _: &str) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
 }
 
 struct StubContextRepo;
 impl dbward_app::ports::ContextRepo for StubContextRepo {
-    fn create(&self, _: &dbward_app::ports::RequestContextRecord) -> Result<(), AppError> { Ok(()) }
-    fn get(&self, _: &str) -> Result<Option<dbward_app::ports::RequestContextRecord>, AppError> { Ok(None) }
-    fn update_explain(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), AppError> { Ok(()) }
+    fn create(&self, _: &dbward_app::ports::RequestContextRecord) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get(&self, _: &str) -> Result<Option<dbward_app::ports::RequestContextRecord>, AppError> {
+        Ok(None)
+    }
+    fn update_explain(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn timeout_collecting(&self, _: &str, _: &str) -> Result<u32, AppError> {
+        Ok(0)
+    }
 }
 
 struct StubAuditLogger;
@@ -770,7 +782,8 @@ fn test_state() -> AppState {
         auth_mode: "both".to_string(),
         storage_backend: "local".into(),
         sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-        auto_approve_config: dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(),
+        auto_approve_config: dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(
+        ),
     }
 }
 

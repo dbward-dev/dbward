@@ -327,6 +327,7 @@ pub trait DryRunRepo: Send + Sync {
     ) -> Result<bool, AppError>;
     fn reclaim_stale(&self, cutoff: &str) -> Result<u32, AppError>;
     fn find_for_request(&self, request_id: &str) -> Result<Vec<DryRunJobRecord>, AppError>;
+    fn get_request_id(&self, job_id: &str) -> Result<Option<String>, AppError>;
 }
 
 // --- ContextRepo ---
@@ -353,6 +354,7 @@ pub trait ContextRepo: Send + Sync {
         status: &str,
         now: &str,
     ) -> Result<(), AppError>;
+    fn timeout_collecting(&self, cutoff: &str, now: &str) -> Result<u32, AppError>;
 }
 
 // --- AuditLogger ---
