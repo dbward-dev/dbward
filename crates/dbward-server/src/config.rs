@@ -402,10 +402,22 @@ pub struct AutoApproveServerConfig {
     pub enabled: bool,
     #[serde(default = "default_max_risk")]
     pub max_risk_level: String,
+    #[serde(default = "default_allow_read_only")]
+    pub allow_read_only: bool,
+    #[serde(default = "default_max_estimated_rows")]
+    pub max_estimated_rows: u64,
 }
 
 fn default_max_risk() -> String {
     "low".into()
+}
+
+fn default_allow_read_only() -> bool {
+    true
+}
+
+fn default_max_estimated_rows() -> u64 {
+    1000
 }
 
 impl Default for AutoApproveServerConfig {
@@ -413,6 +425,8 @@ impl Default for AutoApproveServerConfig {
         Self {
             enabled: false,
             max_risk_level: default_max_risk(),
+            allow_read_only: default_allow_read_only(),
+            max_estimated_rows: default_max_estimated_rows(),
         }
     }
 }

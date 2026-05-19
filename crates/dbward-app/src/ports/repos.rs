@@ -275,6 +275,12 @@ pub trait SchemaRepo: Send + Sync {
     fn upsert_snapshot(&self, record: &SchemaSnapshotRecord) -> Result<(), AppError>;
     fn get_snapshot(&self, db: &str, env: &str) -> Result<Option<SchemaSnapshotRecord>, AppError>;
     fn get_dialect(&self, db: &str, env: &str) -> Result<Option<String>, AppError>;
+    fn get_tables_for(
+        &self,
+        db: &str,
+        env: &str,
+        tables: &[dbward_domain::services::table_extractor::TableRef],
+    ) -> Result<Option<String>, AppError>;
 }
 
 // --- DryRunRepo ---

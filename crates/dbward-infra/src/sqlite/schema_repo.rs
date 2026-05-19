@@ -81,6 +81,59 @@ impl SchemaRepo for SqliteSchemaRepo {
             Err(e) => Err(AppError::Internal(e.to_string())),
         }
     }
+
+    fn get_tables_for(
+        &self,
+        db: &str,
+        env: &str,
+        tables: &[dbward_domain::services::table_extractor::TableRef],
+    ) -> Result<Option<String>, AppError> {
+        let snapshot = self.get_snapshot(db, env)?;
+        let snapshot = match snapshot {
+            Some(s) if s.status == "ready" => s,
+            _ => return Ok(None),
+        };
+        let json = match &snapshot.snapshot_json {
+            Some(j) => j,
+            None => return Ok(None),
+        };
+        let full: serde_json::Value = match serde_json::from_str(json) {
+            Ok(v) => v,
+            Err(_) => return Ok(None),
+        };
+        let all_tables = full.get("tables").and_then(|t| t.as_array());
+        let Some(all_tables) = all_tables else {
+            return Ok(None);
+        };
+        let matched: Vec<&serde_json::Value> = all_tables
+            .iter()
+            .filter(|t| {
+                let name = t.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let schema = t.get("schema_name").and_then(|s| s.as_str()).unwrap_or("");
+                tables.iter().any(|ref_t| {
+                    if let Some(ref s) = ref_t.schema {
+                        s == schema && ref_t.name == name
+                    } else {
+                        ref_t.name == name
+                    }
+                })
+            })
+            .collect();
+        // Ambiguity check: unqualified refs with multiple schema hits → None
+        for ref_t in tables.iter().filter(|t| t.schema.is_none()) {
+            let count = matched
+                .iter()
+                .filter(|t| t.get("name").and_then(|n| n.as_str()) == Some(&ref_t.name))
+                .count();
+            if count > 1 {
+                return Ok(None);
+            }
+        }
+        if matched.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(serde_json::to_string(&matched).unwrap_or_default()))
+    }
 }
 
 #[cfg(test)]

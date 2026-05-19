@@ -99,8 +99,13 @@ pub fn evaluate(input: &RiskInput) -> RiskAssessment {
     }
 
     // Table-level risks
+    let effective_max_rows = if input.max_estimated_rows == 0 {
+        i64::MAX
+    } else {
+        input.max_estimated_rows
+    };
     for table in input.tables {
-        if table.has_cascade_fk && table.estimated_rows > input.max_estimated_rows {
+        if table.has_cascade_fk && table.estimated_rows > effective_max_rows {
             factors.push(RiskFactor::CascadeDelete {
                 targets: table.cascade_targets.clone(),
             });
@@ -110,7 +115,7 @@ pub fn evaluate(input: &RiskInput) -> RiskAssessment {
                 targets: table.cascade_targets.clone(),
             });
             level = level.max(RiskLevel::Medium);
-        } else if table.estimated_rows > input.max_estimated_rows {
+        } else if table.estimated_rows > effective_max_rows {
             factors.push(RiskFactor::LargeTable {
                 rows: table.estimated_rows,
             });

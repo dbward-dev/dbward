@@ -715,6 +715,14 @@ impl TestHarness {
             fn get_dialect(&self, _: &str, _: &str) -> Result<Option<String>, AppError> {
                 Ok(None)
             }
+            fn get_tables_for(
+                &self,
+                _: &str,
+                _: &str,
+                _: &[dbward_domain::services::table_extractor::TableRef],
+            ) -> Result<Option<String>, AppError> {
+                Ok(None)
+            }
         }
         struct FakeDryRunRepo;
         impl DryRunRepo for FakeDryRunRepo {

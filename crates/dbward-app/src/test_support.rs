@@ -391,6 +391,14 @@ impl crate::ports::SchemaRepo for FakeSchemaRepo {
     fn get_dialect(&self, _: &str, _: &str) -> Result<Option<String>, crate::error::AppError> {
         Ok(None)
     }
+    fn get_tables_for(
+        &self,
+        _: &str,
+        _: &str,
+        _: &[dbward_domain::services::table_extractor::TableRef],
+    ) -> Result<Option<String>, crate::error::AppError> {
+        Ok(None)
+    }
 }
 
 pub struct FakeDryRunRepo;

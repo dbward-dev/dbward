@@ -25,5 +25,6 @@ impl IpSource {
 #[derive(Clone, Debug)]
 pub enum AuditContext {
     Request(ClientInfo),
+    Agent { agent_id: String },
     System,
 }
