@@ -375,6 +375,31 @@ impl CreateRequest {
             status
         };
 
+        // 9. Create dry-run EXPLAIN jobs (best-effort, never blocks request)
+        if matches!(operation, Operation::ExecuteSelect | Operation::ExecuteDml)
+            && !request.no_store
+        {
+            let now_str = now.to_rfc3339();
+            let job = DryRunJobRecord {
+                id: self.id_gen.generate(),
+                request_id: id.clone(),
+                database_name: request.database.as_str().to_string(),
+                environment: request.environment.as_str().to_string(),
+                sql_text: request.detail.clone(),
+                status: "pending".into(),
+                claimed_by: None,
+                claimed_at: None,
+                claim_token: None,
+                result_json: None,
+                error_message: None,
+                created_at: now_str,
+                completed_at: None,
+            };
+            if let Err(e) = self.dry_run_repo.create_jobs(&[job]) {
+                tracing::warn!(%e, "failed to create dry-run job");
+            }
+        }
+
         Ok(CreateRequestOutput {
             id,
             status: final_status,
