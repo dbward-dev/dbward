@@ -529,10 +529,7 @@ impl DatabaseRegistry for StubDatabaseRegistry {
 
 struct StubSchemaRepo;
 impl dbward_app::ports::SchemaRepo for StubSchemaRepo {
-    fn upsert_snapshot(
-        &self,
-        _: &dbward_app::ports::SchemaSnapshotRecord,
-    ) -> Result<(), AppError> {
+    fn upsert_snapshot(&self, _: &dbward_app::ports::SchemaSnapshotRecord) -> Result<(), AppError> {
         Ok(())
     }
     fn get_snapshot(

@@ -14,7 +14,9 @@ pub enum ParseError {
     NullBytes,
     TooLarge,
     TooManyStatements,
-    Rejected { reason: String },
+    Rejected {
+        reason: String,
+    },
     /// Parser failed but SQL is not outright rejected — fail-closed as DML.
     ParseFailed,
 }

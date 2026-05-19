@@ -89,7 +89,11 @@ pub fn evaluate(input: &RiskInput) -> RiskAssessment {
     }
 
     // DROP/TRUNCATE
-    if input.findings.iter().any(|f| matches!(f.rule, RuleId::DropTable | RuleId::Truncate)) {
+    if input
+        .findings
+        .iter()
+        .any(|f| matches!(f.rule, RuleId::DropTable | RuleId::Truncate))
+    {
         factors.push(RiskFactor::DropOperation);
         level = level.max(RiskLevel::High);
     }
@@ -97,13 +101,19 @@ pub fn evaluate(input: &RiskInput) -> RiskAssessment {
     // Table-level risks
     for table in input.tables {
         if table.has_cascade_fk && table.estimated_rows > input.max_estimated_rows {
-            factors.push(RiskFactor::CascadeDelete { targets: table.cascade_targets.clone() });
+            factors.push(RiskFactor::CascadeDelete {
+                targets: table.cascade_targets.clone(),
+            });
             level = level.max(RiskLevel::High);
         } else if table.has_cascade_fk {
-            factors.push(RiskFactor::CascadeDelete { targets: table.cascade_targets.clone() });
+            factors.push(RiskFactor::CascadeDelete {
+                targets: table.cascade_targets.clone(),
+            });
             level = level.max(RiskLevel::Medium);
         } else if table.estimated_rows > input.max_estimated_rows {
-            factors.push(RiskFactor::LargeTable { rows: table.estimated_rows });
+            factors.push(RiskFactor::LargeTable {
+                rows: table.estimated_rows,
+            });
             level = level.max(RiskLevel::Medium);
         }
     }
@@ -116,8 +126,12 @@ mod tests {
     use super::*;
     use crate::services::sql_reviewer::RuleAction;
 
-    fn no_findings() -> Vec<Finding> { vec![] }
-    fn no_tables() -> Vec<TableRiskInfo> { vec![] }
+    fn no_findings() -> Vec<Finding> {
+        vec![]
+    }
+    fn no_tables() -> Vec<TableRiskInfo> {
+        vec![]
+    }
 
     #[test]
     fn select_with_allow_read_only_is_low() {
@@ -242,12 +256,14 @@ mod tests {
 
     #[test]
     fn many_warnings_is_high() {
-        let findings: Vec<Finding> = (0..3).map(|i| Finding {
-            rule: RuleId::NoWhereDelete,
-            action: RuleAction::Warn,
-            message: format!("warn {i}"),
-            statement_index: i,
-        }).collect();
+        let findings: Vec<Finding> = (0..3)
+            .map(|i| Finding {
+                rule: RuleId::NoWhereDelete,
+                action: RuleAction::Warn,
+                message: format!("warn {i}"),
+                statement_index: i,
+            })
+            .collect();
         let r = evaluate(&RiskInput {
             operation: Operation::ExecuteDml,
             findings: &findings,

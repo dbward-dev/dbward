@@ -270,7 +270,7 @@ impl DatabaseDriver for PostgresDriver {
             "SELECT c.relname, n.nspname, c.reltuples::bigint \
              FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid \
              WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
-             AND c.relkind = 'r'"
+             AND c.relkind = 'r'",
         )
         .fetch_all(&self.pool)
         .await
@@ -287,7 +287,7 @@ impl DatabaseDriver for PostgresDriver {
                 "SELECT column_name, data_type, is_nullable, column_default \
                  FROM information_schema.columns \
                  WHERE table_schema = $1 AND table_name = $2 \
-                 ORDER BY ordinal_position"
+                 ORDER BY ordinal_position",
             )
             .bind(&schema_name)
             .bind(&name)
@@ -295,15 +295,18 @@ impl DatabaseDriver for PostgresDriver {
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
 
-            let columns: Vec<ColumnInfo> = col_rows.iter().map(|r| {
-                ColumnInfo {
-                    name: r.get("column_name"),
-                    data_type: r.get("data_type"),
-                    nullable: r.get::<String, _>("is_nullable") == "YES",
-                    default_value: r.get("column_default"),
-                    is_primary_key: false, // filled below
-                }
-            }).collect();
+            let columns: Vec<ColumnInfo> = col_rows
+                .iter()
+                .map(|r| {
+                    ColumnInfo {
+                        name: r.get("column_name"),
+                        data_type: r.get("data_type"),
+                        nullable: r.get::<String, _>("is_nullable") == "YES",
+                        default_value: r.get("column_default"),
+                        is_primary_key: false, // filled below
+                    }
+                })
+                .collect();
 
             // 3. Constraints
             let constraint_rows = sqlx::query(
@@ -339,10 +342,11 @@ impl DatabaseDriver for PostgresDriver {
                     if !existing.columns.contains(&col) {
                         existing.columns.push(col);
                     }
-                    if let Some(rc) = ref_col {
-                        if let Some(ref mut refs) = existing.referenced_columns {
-                            if !refs.contains(&rc) { refs.push(rc); }
-                        }
+                    if let Some(rc) = ref_col
+                        && let Some(ref mut refs) = existing.referenced_columns
+                        && !refs.contains(&rc)
+                    {
+                        refs.push(rc);
                     }
                 } else {
                     constraints.push(ConstraintInfo {
@@ -356,12 +360,12 @@ impl DatabaseDriver for PostgresDriver {
                         columns: vec![col],
                         referenced_table: ref_table,
                         referenced_columns: ref_col.map(|c| vec![c]),
-                        on_delete: delete_rule.and_then(|r| match r.as_str() {
-                            "CASCADE" => Some(FkAction::Cascade),
-                            "SET NULL" => Some(FkAction::SetNull),
-                            "RESTRICT" => Some(FkAction::Restrict),
-                            "SET DEFAULT" => Some(FkAction::SetDefault),
-                            _ => Some(FkAction::NoAction),
+                        on_delete: delete_rule.map(|r| match r.as_str() {
+                            "CASCADE" => FkAction::Cascade,
+                            "SET NULL" => FkAction::SetNull,
+                            "RESTRICT" => FkAction::Restrict,
+                            "SET DEFAULT" => FkAction::SetDefault,
+                            _ => FkAction::NoAction,
                         }),
                     });
                 }
@@ -370,7 +374,7 @@ impl DatabaseDriver for PostgresDriver {
             // 4. Indexes
             let idx_rows = sqlx::query(
                 "SELECT indexname, indexdef FROM pg_indexes \
-                 WHERE schemaname = $1 AND tablename = $2"
+                 WHERE schemaname = $1 AND tablename = $2",
             )
             .bind(&schema_name)
             .bind(&name)
@@ -378,20 +382,24 @@ impl DatabaseDriver for PostgresDriver {
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
 
-            let indexes: Vec<IndexInfo> = idx_rows.iter().map(|r| {
-                let indexdef: String = r.get("indexdef");
-                let is_unique = indexdef.contains("UNIQUE");
-                IndexInfo {
-                    name: r.get("indexname"),
-                    columns: vec![], // simplified: full parsing of indexdef not needed for v0.1.3
-                    is_unique,
-                    index_type: "btree".into(),
-                }
-            }).collect();
+            let indexes: Vec<IndexInfo> = idx_rows
+                .iter()
+                .map(|r| {
+                    let indexdef: String = r.get("indexdef");
+                    let is_unique = indexdef.contains("UNIQUE");
+                    IndexInfo {
+                        name: r.get("indexname"),
+                        columns: vec![], // simplified: full parsing of indexdef not needed for v0.1.3
+                        is_unique,
+                        index_type: "btree".into(),
+                    }
+                })
+                .collect();
 
             // Mark PK columns
             let mut columns = columns;
-            let pk_cols: Vec<&str> = constraints.iter()
+            let pk_cols: Vec<&str> = constraints
+                .iter()
                 .filter(|c| c.constraint_type == ConstraintType::PrimaryKey)
                 .flat_map(|c| c.columns.iter().map(|s| s.as_str()))
                 .collect();
@@ -414,12 +422,21 @@ impl DatabaseDriver for PostgresDriver {
         Ok(SchemaSnapshot { tables })
     }
 
-    async fn explain(&self, sql: &str, timeout_secs: u64) -> Result<serde_json::Value, DriverError> {
+    async fn explain(
+        &self,
+        sql: &str,
+        timeout_secs: u64,
+    ) -> Result<serde_json::Value, DriverError> {
         use sqlx::Row;
-        let mut conn = self.pool.acquire().await
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
         // BEGIN transaction so SET LOCAL is scoped correctly
-        sqlx::query("BEGIN").execute(&mut *conn).await
+        sqlx::query("BEGIN")
+            .execute(&mut *conn)
+            .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         sqlx::query(&format!("SET LOCAL statement_timeout = '{timeout_secs}s'"))
             .execute(&mut *conn)
@@ -433,7 +450,8 @@ impl DatabaseDriver for PostgresDriver {
         // Always rollback (read-only, no side effects)
         let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
         let row = result?;
-        let plan: String = row.try_get(0)
+        let plan: String = row
+            .try_get(0)
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         serde_json::from_str(&plan)
             .map_err(|e| DriverError::QueryFailed(format!("invalid EXPLAIN JSON: {e}")))

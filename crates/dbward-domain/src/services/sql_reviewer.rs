@@ -76,7 +76,10 @@ pub fn review(sql: &str, dialect: Option<Dialect>, rules: &ReviewRules) -> Revie
         Ok(statements) => review_statements(&statements, dialect, rules),
         Err(_) => {
             // Parse failure → cannot review. Return empty (classifier handles rejection).
-            ReviewResult { findings: vec![], blocked: false }
+            ReviewResult {
+                findings: vec![],
+                blocked: false,
+            }
         }
     }
 }
@@ -98,14 +101,23 @@ pub fn review_statements(
         check_drop_column(stmt, idx, rules.drop_column, &mut findings);
         check_not_null_without_default(stmt, idx, rules.not_null_without_default, &mut findings);
         if dialect == Some(Dialect::PostgreSql) {
-            check_create_index_not_concurrently(stmt, idx, rules.create_index_not_concurrently, &mut findings);
+            check_create_index_not_concurrently(
+                stmt,
+                idx,
+                rules.create_index_not_concurrently,
+                &mut findings,
+            );
         }
         check_alter_column_type(stmt, idx, rules.alter_column_type, &mut findings);
         check_truncate(stmt, idx, rules.truncate, &mut findings);
         check_large_in_list(stmt, idx, rules.large_in_list, &mut findings);
 
-        if is_ddl(stmt) { has_ddl = true; }
-        if is_dml(stmt) { has_dml = true; }
+        if is_ddl(stmt) {
+            has_ddl = true;
+        }
+        if is_dml(stmt) {
+            has_dml = true;
+        }
     }
 
     if has_ddl && has_dml && rules.mixed_ddl_dml != RuleAction::Off {
@@ -121,8 +133,15 @@ pub fn review_statements(
     ReviewResult { findings, blocked }
 }
 
-fn check_no_where_delete(stmt: &Statement, idx: usize, action: RuleAction, findings: &mut Vec<Finding>) {
-    if action == RuleAction::Off { return; }
+fn check_no_where_delete(
+    stmt: &Statement,
+    idx: usize,
+    action: RuleAction,
+    findings: &mut Vec<Finding>,
+) {
+    if action == RuleAction::Off {
+        return;
+    }
     if let Statement::Delete(del) = stmt {
         if del.selection.is_none() {
             findings.push(Finding {
@@ -135,8 +154,15 @@ fn check_no_where_delete(stmt: &Statement, idx: usize, action: RuleAction, findi
     }
 }
 
-fn check_no_where_update(stmt: &Statement, idx: usize, action: RuleAction, findings: &mut Vec<Finding>) {
-    if action == RuleAction::Off { return; }
+fn check_no_where_update(
+    stmt: &Statement,
+    idx: usize,
+    action: RuleAction,
+    findings: &mut Vec<Finding>,
+) {
+    if action == RuleAction::Off {
+        return;
+    }
     if let Statement::Update(upd) = stmt {
         if upd.selection.is_none() {
             findings.push(Finding {
@@ -150,7 +176,9 @@ fn check_no_where_update(stmt: &Statement, idx: usize, action: RuleAction, findi
 }
 
 fn check_drop_table(stmt: &Statement, idx: usize, action: RuleAction, findings: &mut Vec<Finding>) {
-    if action == RuleAction::Off { return; }
+    if action == RuleAction::Off {
+        return;
+    }
     if let Statement::Drop { object_type, .. } = stmt {
         if *object_type == ObjectType::Table {
             findings.push(Finding {
@@ -163,8 +191,15 @@ fn check_drop_table(stmt: &Statement, idx: usize, action: RuleAction, findings: 
     }
 }
 
-fn check_drop_column(stmt: &Statement, idx: usize, action: RuleAction, findings: &mut Vec<Finding>) {
-    if action == RuleAction::Off { return; }
+fn check_drop_column(
+    stmt: &Statement,
+    idx: usize,
+    action: RuleAction,
+    findings: &mut Vec<Finding>,
+) {
+    if action == RuleAction::Off {
+        return;
+    }
     if let Statement::AlterTable(alter) = stmt {
         for op in &alter.operations {
             if matches!(op, AlterTableOperation::DropColumn { .. }) {
@@ -180,17 +215,26 @@ fn check_drop_column(stmt: &Statement, idx: usize, action: RuleAction, findings:
     }
 }
 
-fn check_not_null_without_default(stmt: &Statement, idx: usize, action: RuleAction, findings: &mut Vec<Finding>) {
-    if action == RuleAction::Off { return; }
+fn check_not_null_without_default(
+    stmt: &Statement,
+    idx: usize,
+    action: RuleAction,
+    findings: &mut Vec<Finding>,
+) {
+    if action == RuleAction::Off {
+        return;
+    }
     if let Statement::AlterTable(alter) = stmt {
         for op in &alter.operations {
             if let AlterTableOperation::AddColumn { column_def, .. } = op {
-                let has_not_null = column_def.options.iter().any(|o| {
-                    matches!(o.option, ColumnOption::NotNull)
-                });
-                let has_default = column_def.options.iter().any(|o| {
-                    matches!(o.option, ColumnOption::Default(_))
-                });
+                let has_not_null = column_def
+                    .options
+                    .iter()
+                    .any(|o| matches!(o.option, ColumnOption::NotNull));
+                let has_default = column_def
+                    .options
+                    .iter()
+                    .any(|o| matches!(o.option, ColumnOption::Default(_)));
                 if has_not_null && !has_default {
                     findings.push(Finding {
                         rule: RuleId::NotNullWithoutDefault,
@@ -205,8 +249,15 @@ fn check_not_null_without_default(stmt: &Statement, idx: usize, action: RuleActi
     }
 }
 
-fn check_create_index_not_concurrently(stmt: &Statement, idx: usize, action: RuleAction, findings: &mut Vec<Finding>) {
-    if action == RuleAction::Off { return; }
+fn check_create_index_not_concurrently(
+    stmt: &Statement,
+    idx: usize,
+    action: RuleAction,
+    findings: &mut Vec<Finding>,
+) {
+    if action == RuleAction::Off {
+        return;
+    }
     if let Statement::CreateIndex(ci) = stmt {
         if !ci.concurrently {
             findings.push(Finding {
@@ -219,11 +270,24 @@ fn check_create_index_not_concurrently(stmt: &Statement, idx: usize, action: Rul
     }
 }
 
-fn check_alter_column_type(stmt: &Statement, idx: usize, action: RuleAction, findings: &mut Vec<Finding>) {
-    if action == RuleAction::Off { return; }
+fn check_alter_column_type(
+    stmt: &Statement,
+    idx: usize,
+    action: RuleAction,
+    findings: &mut Vec<Finding>,
+) {
+    if action == RuleAction::Off {
+        return;
+    }
     if let Statement::AlterTable(alter) = stmt {
         for op in &alter.operations {
-            if matches!(op, AlterTableOperation::AlterColumn { op: AlterColumnOperation::SetDataType { .. }, .. }) {
+            if matches!(
+                op,
+                AlterTableOperation::AlterColumn {
+                    op: AlterColumnOperation::SetDataType { .. },
+                    ..
+                }
+            ) {
                 findings.push(Finding {
                     rule: RuleId::AlterColumnType,
                     action,
@@ -237,7 +301,9 @@ fn check_alter_column_type(stmt: &Statement, idx: usize, action: RuleAction, fin
 }
 
 fn check_truncate(stmt: &Statement, idx: usize, action: RuleAction, findings: &mut Vec<Finding>) {
-    if action == RuleAction::Off { return; }
+    if action == RuleAction::Off {
+        return;
+    }
     if matches!(stmt, Statement::Truncate(_)) {
         findings.push(Finding {
             rule: RuleId::Truncate,
@@ -248,9 +314,16 @@ fn check_truncate(stmt: &Statement, idx: usize, action: RuleAction, findings: &m
     }
 }
 
-fn check_large_in_list(stmt: &Statement, idx: usize, action: RuleAction, findings: &mut Vec<Finding>) {
-    if action == RuleAction::Off { return; }
-    visit_expressions(stmt, |expr| {
+fn check_large_in_list(
+    stmt: &Statement,
+    idx: usize,
+    action: RuleAction,
+    findings: &mut Vec<Finding>,
+) {
+    if action == RuleAction::Off {
+        return;
+    }
+    let _ = visit_expressions(stmt, |expr| {
         if let Expr::InList { list, .. } = expr {
             if list.len() > 100 {
                 findings.push(Finding {
@@ -266,15 +339,20 @@ fn check_large_in_list(stmt: &Statement, idx: usize, action: RuleAction, finding
 }
 
 fn is_ddl(stmt: &Statement) -> bool {
-    matches!(stmt,
-        Statement::CreateTable(_) | Statement::CreateIndex(_) |
-        Statement::AlterTable(_) | Statement::Drop { .. } |
-        Statement::Truncate(_) | Statement::CreateView { .. }
+    matches!(
+        stmt,
+        Statement::CreateTable(_)
+            | Statement::CreateIndex(_)
+            | Statement::AlterTable(_)
+            | Statement::Drop { .. }
+            | Statement::Truncate(_)
+            | Statement::CreateView { .. }
     )
 }
 
 fn is_dml(stmt: &Statement) -> bool {
-    matches!(stmt,
+    matches!(
+        stmt,
         Statement::Insert(_) | Statement::Update(_) | Statement::Delete(_)
     )
 }
@@ -328,13 +406,19 @@ mod tests {
     #[test]
     fn create_index_not_concurrently_pg() {
         let r = review_pg("CREATE INDEX idx ON users(email)");
-        assert!(r.findings.iter().any(|f| f.rule == RuleId::CreateIndexNotConcurrently));
+        assert!(r
+            .findings
+            .iter()
+            .any(|f| f.rule == RuleId::CreateIndexNotConcurrently));
     }
 
     #[test]
     fn create_index_not_concurrently_skipped_for_mysql() {
         let r = review_mysql("CREATE INDEX idx ON users(email)");
-        assert!(!r.findings.iter().any(|f| f.rule == RuleId::CreateIndexNotConcurrently));
+        assert!(!r
+            .findings
+            .iter()
+            .any(|f| f.rule == RuleId::CreateIndexNotConcurrently));
     }
 
     #[test]

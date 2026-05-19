@@ -237,7 +237,11 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
                     .await
                 {
                     Ok(_) => {
-                        info!(database = db_name, environment = env_name, "schema sync completed");
+                        info!(
+                            database = db_name,
+                            environment = env_name,
+                            "schema sync completed"
+                        );
                     }
                     Err(AgentError::ServerError {
                         status: 404 | 501, ..
@@ -664,11 +668,15 @@ async fn poll_loop(
                     let pools_dr = pools.clone();
                     tokio::spawn(async move {
                         let key = (dry_job.database.clone(), dry_job.environment.clone());
-                        let Some(entry) = pools_dr.get(&key) else { return };
+                        let Some(entry) = pools_dr.get(&key) else {
+                            return;
+                        };
                         let claim_token = match client_dr.dry_run_claim(&dry_job.id).await {
                             Ok(t) => t,
                             Err(AgentError::AlreadyClaimed) => return,
-                            Err(AgentError::ServerError { status: 404 | 501, .. }) => return,
+                            Err(AgentError::ServerError {
+                                status: 404 | 501, ..
+                            }) => return,
                             Err(e) => {
                                 warn!(job_id = %dry_job.id, %e, "dry-run claim failed");
                                 return;

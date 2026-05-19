@@ -374,7 +374,7 @@ impl DatabaseDriver for MysqlDriver {
 
         let table_rows = sqlx::query(
             "SELECT table_name, table_rows FROM information_schema.tables \
-             WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"
+             WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'",
         )
         .fetch_all(&self.pool)
         .await
@@ -389,23 +389,26 @@ impl DatabaseDriver for MysqlDriver {
                 "SELECT column_name, data_type, is_nullable, column_default, column_key \
                  FROM information_schema.columns \
                  WHERE table_schema = DATABASE() AND table_name = ? \
-                 ORDER BY ordinal_position"
+                 ORDER BY ordinal_position",
             )
             .bind(&name)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
 
-            let columns: Vec<ColumnInfo> = col_rows.iter().map(|r| {
-                let key: String = r.get::<Option<String>, _>("column_key").unwrap_or_default();
-                ColumnInfo {
-                    name: r.get("column_name"),
-                    data_type: r.get("data_type"),
-                    nullable: r.get::<String, _>("is_nullable") == "YES",
-                    default_value: r.get("column_default"),
-                    is_primary_key: key == "PRI",
-                }
-            }).collect();
+            let columns: Vec<ColumnInfo> = col_rows
+                .iter()
+                .map(|r| {
+                    let key: String = r.get::<Option<String>, _>("column_key").unwrap_or_default();
+                    ColumnInfo {
+                        name: r.get("column_name"),
+                        data_type: r.get("data_type"),
+                        nullable: r.get::<String, _>("is_nullable") == "YES",
+                        default_value: r.get("column_default"),
+                        is_primary_key: key == "PRI",
+                    }
+                })
+                .collect();
 
             let fk_rows = sqlx::query(
                 "SELECT kcu.constraint_name, kcu.column_name, \
@@ -431,11 +434,14 @@ impl DatabaseDriver for MysqlDriver {
                 let delete_rule: Option<String> = r.get("delete_rule");
 
                 if let Some(existing) = constraints.iter_mut().find(|c| c.name == cname) {
-                    if !existing.columns.contains(&col) { existing.columns.push(col); }
-                    if let Some(rc) = ref_col {
-                        if let Some(ref mut refs) = existing.referenced_columns {
-                            if !refs.contains(&rc) { refs.push(rc); }
-                        }
+                    if !existing.columns.contains(&col) {
+                        existing.columns.push(col);
+                    }
+                    if let Some(rc) = ref_col
+                        && let Some(ref mut refs) = existing.referenced_columns
+                        && !refs.contains(&rc)
+                    {
+                        refs.push(rc);
                     }
                 } else {
                     constraints.push(ConstraintInfo {
@@ -444,11 +450,11 @@ impl DatabaseDriver for MysqlDriver {
                         columns: vec![col],
                         referenced_table: ref_table,
                         referenced_columns: ref_col.map(|c| vec![c]),
-                        on_delete: delete_rule.and_then(|r| match r.as_str() {
-                            "CASCADE" => Some(FkAction::Cascade),
-                            "SET NULL" => Some(FkAction::SetNull),
-                            "RESTRICT" => Some(FkAction::Restrict),
-                            _ => Some(FkAction::NoAction),
+                        on_delete: delete_rule.map(|r| match r.as_str() {
+                            "CASCADE" => FkAction::Cascade,
+                            "SET NULL" => FkAction::SetNull,
+                            "RESTRICT" => FkAction::Restrict,
+                            _ => FkAction::NoAction,
                         }),
                     });
                 }
@@ -467,10 +473,15 @@ impl DatabaseDriver for MysqlDriver {
         Ok(SchemaSnapshot { tables })
     }
 
-    async fn explain(&self, sql: &str, timeout_secs: u64) -> Result<serde_json::Value, DriverError> {
+    async fn explain(
+        &self,
+        sql: &str,
+        timeout_secs: u64,
+    ) -> Result<serde_json::Value, DriverError> {
         use sqlx::{Connection, Row};
         // Use dedicated connection to avoid session pollution
-        let mut conn = sqlx::MySqlConnection::connect(&self.url).await
+        let mut conn = sqlx::MySqlConnection::connect(&self.url)
+            .await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
         let ms = timeout_secs * 1000;
         sqlx::query(&format!("SET max_execution_time = {ms}"))
@@ -482,7 +493,8 @@ impl DatabaseDriver for MysqlDriver {
             .fetch_one(&mut conn)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        let plan: String = row.try_get(0)
+        let plan: String = row
+            .try_get(0)
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         serde_json::from_str(&plan)
             .map_err(|e| DriverError::QueryFailed(format!("invalid EXPLAIN JSON: {e}")))

@@ -195,21 +195,45 @@ mod tests {
 
     #[test]
     fn no_workflow_returns_pending() {
-        let decision = evaluate(None, &[], &[], "alice", true, None, &AutoApproveConfig::disabled());
+        let decision = evaluate(
+            None,
+            &[],
+            &[],
+            "alice",
+            true,
+            None,
+            &AutoApproveConfig::disabled(),
+        );
         assert_eq!(decision, ApprovalDecision::Pending);
     }
 
     #[test]
     fn empty_steps_returns_auto_approved() {
         let w = wf("*", "*", vec![], vec![], vec![]);
-        let decision = evaluate(Some(&w), &[], &[], "alice", true, None, &AutoApproveConfig::disabled());
+        let decision = evaluate(
+            Some(&w),
+            &[],
+            &[],
+            "alice",
+            true,
+            None,
+            &AutoApproveConfig::disabled(),
+        );
         assert!(matches!(decision, ApprovalDecision::AutoApproved { .. }));
     }
 
     #[test]
     fn steps_present_returns_pending_with_workflow() {
         let w = wf("*", "*", vec![], vec![step()], vec![]);
-        let decision = evaluate(Some(&w), &[], &[], "alice", true, None, &AutoApproveConfig::disabled());
+        let decision = evaluate(
+            Some(&w),
+            &[],
+            &[],
+            "alice",
+            true,
+            None,
+            &AutoApproveConfig::disabled(),
+        );
         assert_eq!(decision, ApprovalDecision::NeedsApproval);
     }
 
@@ -222,7 +246,15 @@ mod tests {
             vec![step()],
             vec![Selector::Role("admin".to_string())],
         );
-        let decision = evaluate(Some(&w), &["admin".to_string()], &[], "alice", true, None, &AutoApproveConfig::disabled());
+        let decision = evaluate(
+            Some(&w),
+            &["admin".to_string()],
+            &[],
+            "alice",
+            true,
+            None,
+            &AutoApproveConfig::disabled(),
+        );
         assert!(matches!(decision, ApprovalDecision::AutoApproved { .. }));
     }
 
@@ -235,7 +267,15 @@ mod tests {
             vec![step()],
             vec![Selector::Role("admin".to_string())],
         );
-        let decision = evaluate(Some(&w), &["developer".to_string()], &[], "alice", true, None, &AutoApproveConfig::disabled());
+        let decision = evaluate(
+            Some(&w),
+            &["developer".to_string()],
+            &[],
+            "alice",
+            true,
+            None,
+            &AutoApproveConfig::disabled(),
+        );
         assert_eq!(decision, ApprovalDecision::NeedsApproval);
     }
 

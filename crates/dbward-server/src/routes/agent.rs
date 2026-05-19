@@ -473,18 +473,25 @@ pub async fn schema_sync(
     if body.status == "ready" && body.snapshot.is_none() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": "snapshot required when status=ready", "code": "validation_error"})),
+            Json(
+                serde_json::json!({"error": "snapshot required when status=ready", "code": "validation_error"}),
+            ),
         ));
     }
 
     // Scope check: agent must have capability for this database
     let agent = state.agent_repo.get(&user.subject_id).map_err(map_error)?;
     if let Some(agent) = agent {
-        let db_match = agent.databases.iter().any(|d| d.database.as_str() == body.database);
+        let db_match = agent
+            .databases
+            .iter()
+            .any(|d| d.database.as_str() == body.database);
         if !db_match {
             return Err((
                 StatusCode::FORBIDDEN,
-                Json(serde_json::json!({"error": "agent not authorized for this database", "code": "forbidden"})),
+                Json(
+                    serde_json::json!({"error": "agent not authorized for this database", "code": "forbidden"}),
+                ),
             ));
         }
     }
@@ -500,11 +507,13 @@ pub async fn schema_sync(
         collected_at: now,
         agent_id: user.subject_id,
     };
-    state.schema_repo.upsert_snapshot(&record).map_err(map_error)?;
+    state
+        .schema_repo
+        .upsert_snapshot(&record)
+        .map_err(map_error)?;
 
     Ok(StatusCode::OK)
 }
-
 
 pub async fn dry_run_claim(
     State(state): State<AppState>,

@@ -427,7 +427,7 @@ fn single_step_workflow() -> Workflow {
         require_reason: false,
         allow_self_approve: false,
         allow_same_approver_across_steps: true,
-            require_approval: false,
+        require_approval: false,
         pending_ttl_secs: None,
         statement_timeout_secs: None,
         approval_ttl_secs: Some(3600),
@@ -462,7 +462,7 @@ fn two_step_workflow() -> Workflow {
         require_reason: false,
         allow_self_approve: false,
         allow_same_approver_across_steps: true,
-            require_approval: false,
+        require_approval: false,
         pending_ttl_secs: None,
         statement_timeout_secs: None,
         approval_ttl_secs: Some(3600),
@@ -700,12 +700,30 @@ impl TestHarness {
     }
 
     fn create_uc(&self) -> CreateRequest {
+        struct FakeSchemaRepo;
+        impl SchemaRepo for FakeSchemaRepo {
+            fn upsert_snapshot(&self, _: &SchemaSnapshotRecord) -> Result<(), AppError> { Ok(()) }
+            fn get_snapshot(&self, _: &str, _: &str) -> Result<Option<SchemaSnapshotRecord>, AppError> { Ok(None) }
+            fn get_dialect(&self, _: &str, _: &str) -> Result<Option<String>, AppError> { Ok(None) }
+        }
+        struct FakeDryRunRepo;
+        impl DryRunRepo for FakeDryRunRepo {
+            fn create_jobs(&self, _: &[DryRunJobRecord]) -> Result<(), AppError> { Ok(()) }
+            fn find_pending_for_agent(&self, _: &[(String, String)]) -> Result<Vec<DryRunJobRecord>, AppError> { Ok(vec![]) }
+            fn claim(&self, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(false) }
+            fn complete(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(false) }
+            fn fail(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> { Ok(false) }
+            fn reclaim_stale(&self, _: &str) -> Result<u32, AppError> { Ok(0) }
+            fn find_for_request(&self, _: &str) -> Result<Vec<DryRunJobRecord>, AppError> { Ok(vec![]) }
+        }
         CreateRequest {
             authorizer: self.authorizer.clone(),
             policy: self.policy.clone(),
             request_reader: self.repo.clone(),
             request_writer: self.repo.clone(),
             db_registry: self.db_registry.clone(),
+            schema_repo: Arc::new(FakeSchemaRepo),
+            dry_run_repo: Arc::new(FakeDryRunRepo),
             event_dispatcher: self.event_dispatcher.clone(),
             clock: self.clock.clone(),
             id_gen: self.id_gen.clone(),
@@ -991,7 +1009,7 @@ fn auto_approved_request_dispatches_directly() {
         require_reason: false,
         allow_self_approve: false,
         allow_same_approver_across_steps: true,
-            require_approval: false,
+        require_approval: false,
         pending_ttl_secs: None,
         statement_timeout_secs: None,
         approval_ttl_secs: None,
@@ -1675,7 +1693,7 @@ fn event_dispatcher_records_auto_approved_two_events() {
         require_reason: false,
         allow_self_approve: false,
         allow_same_approver_across_steps: true,
-            require_approval: false,
+        require_approval: false,
         pending_ttl_secs: None,
         statement_timeout_secs: None,
         approval_ttl_secs: None,

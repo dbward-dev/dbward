@@ -1,4 +1,4 @@
-use sqlparser::ast::{Insert, ObjectName, ObjectNamePart, Query, SetExpr, Statement, visit_relations};
+use sqlparser::ast::{visit_relations, ObjectName, Query, SetExpr, Statement};
 use std::collections::HashSet;
 
 /// A reference to a table found in SQL.
@@ -28,7 +28,7 @@ pub fn extract_tables(statements: &[Statement]) -> Vec<TableRef> {
 
     // Use sqlparser's visitor to find all relation references
     for stmt in statements {
-        visit_relations(stmt, |relation| {
+        let _ = visit_relations(stmt, |relation| {
             let table_ref = object_name_to_ref(relation);
             tables.insert(table_ref);
             std::ops::ControlFlow::<()>::Continue(())
@@ -111,55 +111,105 @@ mod tests {
     #[test]
     fn simple_select() {
         let tables = extract("SELECT * FROM orders");
-        assert_eq!(tables, vec![TableRef { schema: None, name: "orders".into() }]);
+        assert_eq!(
+            tables,
+            vec![TableRef {
+                schema: None,
+                name: "orders".into()
+            }]
+        );
     }
 
     #[test]
     fn join() {
         let tables = extract("SELECT * FROM orders o JOIN users u ON o.user_id = u.id");
         assert_eq!(tables.len(), 2);
-        assert!(tables.contains(&TableRef { schema: None, name: "orders".into() }));
-        assert!(tables.contains(&TableRef { schema: None, name: "users".into() }));
+        assert!(tables.contains(&TableRef {
+            schema: None,
+            name: "orders".into()
+        }));
+        assert!(tables.contains(&TableRef {
+            schema: None,
+            name: "users".into()
+        }));
     }
 
     #[test]
     fn cte_excluded() {
         let tables = extract("WITH cte AS (SELECT * FROM orders) SELECT * FROM cte");
-        assert_eq!(tables, vec![TableRef { schema: None, name: "orders".into() }]);
+        assert_eq!(
+            tables,
+            vec![TableRef {
+                schema: None,
+                name: "orders".into()
+            }]
+        );
     }
 
     #[test]
     fn subquery() {
         let tables = extract("SELECT * FROM (SELECT * FROM orders) sub");
-        assert_eq!(tables, vec![TableRef { schema: None, name: "orders".into() }]);
+        assert_eq!(
+            tables,
+            vec![TableRef {
+                schema: None,
+                name: "orders".into()
+            }]
+        );
     }
 
     #[test]
     fn schema_qualified() {
         let tables = extract("SELECT * FROM public.orders");
-        assert_eq!(tables, vec![TableRef { schema: Some("public".into()), name: "orders".into() }]);
+        assert_eq!(
+            tables,
+            vec![TableRef {
+                schema: Some("public".into()),
+                name: "orders".into()
+            }]
+        );
     }
 
     #[test]
     fn insert_select() {
         let tables = extract("INSERT INTO target SELECT * FROM source");
         assert_eq!(tables.len(), 2);
-        assert!(tables.contains(&TableRef { schema: None, name: "source".into() }));
-        assert!(tables.contains(&TableRef { schema: None, name: "target".into() }));
+        assert!(tables.contains(&TableRef {
+            schema: None,
+            name: "source".into()
+        }));
+        assert!(tables.contains(&TableRef {
+            schema: None,
+            name: "target".into()
+        }));
     }
 
     #[test]
     fn delete_simple() {
         let tables = extract("DELETE FROM orders WHERE id = 1");
-        assert_eq!(tables, vec![TableRef { schema: None, name: "orders".into() }]);
+        assert_eq!(
+            tables,
+            vec![TableRef {
+                schema: None,
+                name: "orders".into()
+            }]
+        );
     }
 
     #[test]
     fn where_subquery() {
-        let tables = extract("SELECT * FROM orders WHERE user_id IN (SELECT id FROM users WHERE active = true)");
+        let tables = extract(
+            "SELECT * FROM orders WHERE user_id IN (SELECT id FROM users WHERE active = true)",
+        );
         assert_eq!(tables.len(), 2);
-        assert!(tables.contains(&TableRef { schema: None, name: "orders".into() }));
-        assert!(tables.contains(&TableRef { schema: None, name: "users".into() }));
+        assert!(tables.contains(&TableRef {
+            schema: None,
+            name: "orders".into()
+        }));
+        assert!(tables.contains(&TableRef {
+            schema: None,
+            name: "users".into()
+        }));
     }
 
     #[test]

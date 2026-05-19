@@ -40,7 +40,13 @@ impl DryRunRepo for SqliteDryRunRepo {
         // Build WHERE clause for (database_name, environment) pairs
         let conditions: Vec<String> = databases
             .iter()
-            .map(|(db, env)| format!("(database_name = '{}' AND environment = '{}')", db.replace('\'', "''"), env.replace('\'', "''")))
+            .map(|(db, env)| {
+                format!(
+                    "(database_name = '{}' AND environment = '{}')",
+                    db.replace('\'', "''"),
+                    env.replace('\'', "''")
+                )
+            })
             .collect();
         let sql = format!(
             "SELECT id, request_id, database_name, environment, sql_text, status, \
@@ -48,24 +54,28 @@ impl DryRunRepo for SqliteDryRunRepo {
              FROM dry_run_jobs WHERE status = 'pending' AND ({}) LIMIT 10",
             conditions.join(" OR ")
         );
-        let mut stmt = conn.prepare(&sql).map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt.query_map([], |row| {
-            Ok(DryRunJobRecord {
-                id: row.get(0)?,
-                request_id: row.get(1)?,
-                database_name: row.get(2)?,
-                environment: row.get(3)?,
-                sql_text: row.get(4)?,
-                status: row.get(5)?,
-                claimed_by: row.get(6)?,
-                claimed_at: row.get(7)?,
-                claim_token: row.get(8)?,
-                result_json: row.get(9)?,
-                error_message: row.get(10)?,
-                created_at: row.get(11)?,
-                completed_at: row.get(12)?,
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(DryRunJobRecord {
+                    id: row.get(0)?,
+                    request_id: row.get(1)?,
+                    database_name: row.get(2)?,
+                    environment: row.get(3)?,
+                    sql_text: row.get(4)?,
+                    status: row.get(5)?,
+                    claimed_by: row.get(6)?,
+                    claimed_at: row.get(7)?,
+                    claim_token: row.get(8)?,
+                    result_json: row.get(9)?,
+                    error_message: row.get(10)?,
+                    created_at: row.get(11)?,
+                    completed_at: row.get(12)?,
+                })
             })
-        }).map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| AppError::Internal(e.to_string()))
     }
@@ -96,12 +106,13 @@ impl DryRunRepo for SqliteDryRunRepo {
         now: &str,
     ) -> Result<bool, AppError> {
         let conn = self.conn.lock().unwrap();
-        let affected = conn.execute(
-            "UPDATE dry_run_jobs SET status = 'completed', result_json = ?1, completed_at = ?2 \
+        let affected = conn
+            .execute(
+                "UPDATE dry_run_jobs SET status = 'completed', result_json = ?1, completed_at = ?2 \
              WHERE id = ?3 AND claimed_by = ?4 AND claim_token = ?5 AND status = 'claimed'",
-            params![result_json, now, job_id, agent_id, claim_token],
-        )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+                params![result_json, now, job_id, agent_id, claim_token],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(affected > 0)
     }
 
@@ -114,12 +125,13 @@ impl DryRunRepo for SqliteDryRunRepo {
         now: &str,
     ) -> Result<bool, AppError> {
         let conn = self.conn.lock().unwrap();
-        let affected = conn.execute(
-            "UPDATE dry_run_jobs SET status = 'failed', error_message = ?1, completed_at = ?2 \
+        let affected = conn
+            .execute(
+                "UPDATE dry_run_jobs SET status = 'failed', error_message = ?1, completed_at = ?2 \
              WHERE id = ?3 AND claimed_by = ?4 AND claim_token = ?5 AND status = 'claimed'",
-            params![error, now, job_id, agent_id, claim_token],
-        )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+                params![error, now, job_id, agent_id, claim_token],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(affected > 0)
     }
 
@@ -142,23 +154,25 @@ impl DryRunRepo for SqliteDryRunRepo {
              FROM dry_run_jobs WHERE request_id = ?1",
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt.query_map(params![request_id], |row| {
-            Ok(DryRunJobRecord {
-                id: row.get(0)?,
-                request_id: row.get(1)?,
-                database_name: row.get(2)?,
-                environment: row.get(3)?,
-                sql_text: row.get(4)?,
-                status: row.get(5)?,
-                claimed_by: row.get(6)?,
-                claimed_at: row.get(7)?,
-                claim_token: row.get(8)?,
-                result_json: row.get(9)?,
-                error_message: row.get(10)?,
-                created_at: row.get(11)?,
-                completed_at: row.get(12)?,
+        let rows = stmt
+            .query_map(params![request_id], |row| {
+                Ok(DryRunJobRecord {
+                    id: row.get(0)?,
+                    request_id: row.get(1)?,
+                    database_name: row.get(2)?,
+                    environment: row.get(3)?,
+                    sql_text: row.get(4)?,
+                    status: row.get(5)?,
+                    claimed_by: row.get(6)?,
+                    claimed_at: row.get(7)?,
+                    claim_token: row.get(8)?,
+                    result_json: row.get(9)?,
+                    error_message: row.get(10)?,
+                    created_at: row.get(11)?,
+                    completed_at: row.get(12)?,
+                })
             })
-        }).map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(|e| AppError::Internal(e.to_string()))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| AppError::Internal(e.to_string()))
     }
@@ -208,7 +222,9 @@ mod tests {
             completed_at: None,
         };
         repo.create_jobs(&[job]).unwrap();
-        let pending = repo.find_pending_for_agent(&[("app".into(), "production".into())]).unwrap();
+        let pending = repo
+            .find_pending_for_agent(&[("app".into(), "production".into())])
+            .unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, "job-1");
     }
@@ -224,19 +240,48 @@ mod tests {
             environment: "prod".into(),
             sql_text: "SELECT 1".into(),
             status: "pending".into(),
-            claimed_by: None, claimed_at: None, claim_token: None,
-            result_json: None, error_message: None,
+            claimed_by: None,
+            claimed_at: None,
+            claim_token: None,
+            result_json: None,
+            error_message: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             completed_at: None,
         };
         repo.create_jobs(&[job]).unwrap();
-        assert!(repo.claim("job-2", "agent-1", "token-abc", "2026-01-01T00:01:00Z").unwrap());
+        assert!(
+            repo.claim("job-2", "agent-1", "token-abc", "2026-01-01T00:01:00Z")
+                .unwrap()
+        );
         // Double claim fails
-        assert!(!repo.claim("job-2", "agent-2", "token-def", "2026-01-01T00:02:00Z").unwrap());
+        assert!(
+            !repo
+                .claim("job-2", "agent-2", "token-def", "2026-01-01T00:02:00Z")
+                .unwrap()
+        );
         // Complete with correct token
-        assert!(repo.complete("job-2", "agent-1", "token-abc", "{}", "2026-01-01T00:03:00Z").unwrap());
+        assert!(
+            repo.complete(
+                "job-2",
+                "agent-1",
+                "token-abc",
+                "{}",
+                "2026-01-01T00:03:00Z"
+            )
+            .unwrap()
+        );
         // Complete again fails (fencing)
-        assert!(!repo.complete("job-2", "agent-1", "token-abc", "{}", "2026-01-01T00:04:00Z").unwrap());
+        assert!(
+            !repo
+                .complete(
+                    "job-2",
+                    "agent-1",
+                    "token-abc",
+                    "{}",
+                    "2026-01-01T00:04:00Z"
+                )
+                .unwrap()
+        );
     }
 
     #[test]
@@ -250,17 +295,23 @@ mod tests {
             environment: "prod".into(),
             sql_text: "SELECT 1".into(),
             status: "pending".into(),
-            claimed_by: None, claimed_at: None, claim_token: None,
-            result_json: None, error_message: None,
+            claimed_by: None,
+            claimed_at: None,
+            claim_token: None,
+            result_json: None,
+            error_message: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             completed_at: None,
         };
         repo.create_jobs(&[job]).unwrap();
-        repo.claim("job-3", "agent-1", "tok", "2026-01-01T00:00:00Z").unwrap();
+        repo.claim("job-3", "agent-1", "tok", "2026-01-01T00:00:00Z")
+            .unwrap();
         let reclaimed = repo.reclaim_stale("2026-01-01T00:01:01Z").unwrap();
         assert_eq!(reclaimed, 1);
         // Now it's pending again
-        let pending = repo.find_pending_for_agent(&[("app".into(), "prod".into())]).unwrap();
+        let pending = repo
+            .find_pending_for_agent(&[("app".into(), "prod".into())])
+            .unwrap();
         assert_eq!(pending.len(), 1);
     }
 }

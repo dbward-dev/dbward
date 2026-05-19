@@ -9,7 +9,9 @@ pub use cancel_state::CancelState;
 pub use error::DriverError;
 pub use mysql::MysqlDriver;
 pub use postgres::PostgresDriver;
-pub use schema::{SchemaSnapshot, TableInfo, ColumnInfo, ConstraintInfo, IndexInfo, ConstraintType, FkAction};
+pub use schema::{
+    ColumnInfo, ConstraintInfo, ConstraintType, FkAction, IndexInfo, SchemaSnapshot, TableInfo,
+};
 
 use std::sync::Arc;
 
@@ -60,7 +62,8 @@ pub trait DatabaseDriver: Send + Sync {
     async fn collect_schema(&self) -> Result<SchemaSnapshot, DriverError>;
 
     /// Execute EXPLAIN (FORMAT JSON) in a read-only transaction.
-    async fn explain(&self, sql: &str, timeout_secs: u64) -> Result<serde_json::Value, DriverError>;
+    async fn explain(&self, sql: &str, timeout_secs: u64)
+    -> Result<serde_json::Value, DriverError>;
 
     /// Return the dialect identifier ("postgresql" or "mysql").
     fn dialect(&self) -> &'static str;
