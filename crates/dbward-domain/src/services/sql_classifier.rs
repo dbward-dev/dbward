@@ -1,11 +1,83 @@
 use crate::services::classification::{Classification, ClassifyError, Dialect, DmlReason};
+use crate::services::sql_parser::{self, ParseError};
 use crate::values::Operation;
 use sqlparser::ast::{Set, SetExpr, Statement};
-use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect};
-use sqlparser::parser::Parser;
 
-const MAX_SQL_BYTES: usize = 1_048_576;
-const MAX_STATEMENTS: usize = 100;
+/// Classify SQL using pre-parsed statements.
+pub fn classify_statements(statements: &[Statement]) -> Result<Classification, ClassifyError> {
+    let stmt_strings: Vec<String> = statements.iter().map(|s| s.to_string()).collect();
+
+    let mut worst = InternalClass::Select;
+    for stmt in statements {
+        let c = classify_statement(stmt);
+        worst = worst.escalate(c);
+    }
+
+    // For multi-statement ExecuteSelect, enforce exactly one result-producing
+    if matches!(worst, InternalClass::Select) && statements.len() > 1 {
+        let mut found_result_producing = false;
+        for stmt in statements {
+            if is_result_producing(stmt) {
+                if found_result_producing {
+                    return Err(ClassifyError::Rejected {
+                        reason: "multi-statement queries with multiple result sets are not \
+                                 supported; submit each query separately"
+                            .into(),
+                    });
+                }
+                found_result_producing = true;
+            } else if found_result_producing {
+                return Err(ClassifyError::Rejected {
+                    reason: "in a multi-statement batch, only SET statements are allowed \
+                             before the query; no statements may follow it"
+                        .into(),
+                });
+            }
+        }
+    }
+
+    match worst {
+        InternalClass::Select => Ok(Classification {
+            operation: Operation::ExecuteSelect,
+            dml_reason: None,
+            statement_count: stmt_strings.len(),
+            statements: stmt_strings,
+        }),
+        InternalClass::Dml(reason) => Ok(Classification {
+            operation: Operation::ExecuteDml,
+            dml_reason: Some(reason),
+            statement_count: stmt_strings.len(),
+            statements: stmt_strings,
+        }),
+        InternalClass::Rejected(reason) => Err(ClassifyError::Rejected { reason }),
+    }
+}
+
+pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyError> {
+    match sql_parser::parse_statements(sql, dialect) {
+        Ok(statements) => classify_statements(&statements),
+        Err(ParseError::Empty) => Err(ClassifyError::Empty),
+        Err(ParseError::NullBytes) => Err(ClassifyError::Rejected {
+            reason: "query contains null bytes".into(),
+        }),
+        Err(ParseError::TooLarge) => Err(ClassifyError::Rejected {
+            reason: format!("query exceeds maximum size of {} bytes", 1_048_576),
+        }),
+        Err(ParseError::TooManyStatements) => Err(ClassifyError::Rejected {
+            reason: format!("query exceeds maximum of {} statements", 100),
+        }),
+        Err(ParseError::Rejected { reason }) => Err(ClassifyError::Rejected { reason }),
+        Err(ParseError::ParseFailed) => {
+            let trimmed = sql.trim();
+            Ok(Classification {
+                operation: Operation::ExecuteDml,
+                dml_reason: Some(DmlReason::ParseFailure),
+                statement_count: 1,
+                statements: vec![trimmed.to_string()],
+            })
+        }
+    }
+}
 
 /// Dangerous functions that can cause side effects when called inside SELECT.
 const DANGEROUS_FUNCTIONS: &[&str] = &[
@@ -50,172 +122,6 @@ const SAFE_SET_VARIABLES: &[&str] = &[
     "character_set_client",
     "wait_timeout",
 ];
-
-/// Check if the first significant keyword (skipping comments and whitespace) matches `target`.
-fn first_keyword_is(sql: &str, target: &str) -> bool {
-    let bytes = sql.as_bytes();
-    let len = bytes.len();
-    let mut i = 0;
-    while i < len {
-        let b = bytes[i];
-        if b.is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-        // Skip line comment (-- or #)
-        if (b == b'-' && i + 1 < len && bytes[i + 1] == b'-') || b == b'#' {
-            i += 1;
-            while i < len && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        // Skip block comment
-        if b == b'/' && i + 1 < len && bytes[i + 1] == b'*' {
-            i += 2;
-            while i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                i += 1;
-            }
-            i += 2; // skip */
-            continue;
-        }
-        // Extract first word
-        let start = i;
-        while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-            i += 1;
-        }
-        return sql[start..i].eq_ignore_ascii_case(target);
-    }
-    false
-}
-
-/// Check if SQL contains a DO keyword that likely starts a statement (for parse-failure path).
-fn contains_opaque_keyword(sql: &str) -> bool {
-    for part in sql.split(';') {
-        if first_keyword_is(part, "DO") {
-            return true;
-        }
-    }
-    false
-}
-
-pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyError> {
-    if sql.contains('\0') {
-        return Err(ClassifyError::Rejected {
-            reason: "query contains null bytes".into(),
-        });
-    }
-
-    let trimmed = sql.trim();
-    if trimmed.is_empty() {
-        return Err(ClassifyError::Empty);
-    }
-
-    if trimmed.len() > MAX_SQL_BYTES {
-        return Err(ClassifyError::Rejected {
-            reason: format!("query exceeds maximum size of {MAX_SQL_BYTES} bytes"),
-        });
-    }
-
-    // Pre-parse: reject statements whose body is opaque to sqlparser
-    if first_keyword_is(trimmed, "DO") {
-        return Err(ClassifyError::Rejected {
-            reason: "DO statements are not allowed; body content cannot be inspected".into(),
-        });
-    }
-    if first_keyword_is(trimmed, "LOAD") {
-        return Err(ClassifyError::Rejected {
-            reason: "LOAD DATA is not allowed".into(),
-        });
-    }
-
-    // Parse directly — MAX_SQL_BYTES (1MB) limit above prevents pathological inputs
-    let statements = {
-        let d: &dyn sqlparser::dialect::Dialect = match dialect {
-            Dialect::PostgreSql => &PostgreSqlDialect {},
-            Dialect::MySql => &MySqlDialect {},
-        };
-        match Parser::parse_sql(d, trimmed) {
-            Ok(stmts) => stmts,
-            Err(_) => {
-                // Parse failure with opaque statements → reject outright
-                if contains_opaque_keyword(trimmed) {
-                    return Err(ClassifyError::Rejected {
-                        reason: "DO statements are not allowed; body content cannot be inspected"
-                            .into(),
-                    });
-                }
-                // Parse failure → fail-closed: treat as DML (requires approval)
-                return Ok(Classification {
-                    operation: Operation::ExecuteDml,
-                    dml_reason: Some(DmlReason::ParseFailure),
-                    statement_count: 1,
-                    statements: vec![trimmed.to_string()],
-                });
-            }
-        }
-    };
-
-    if statements.is_empty() {
-        return Err(ClassifyError::Empty);
-    }
-
-    if statements.len() > MAX_STATEMENTS {
-        return Err(ClassifyError::Rejected {
-            reason: format!("query exceeds maximum of {MAX_STATEMENTS} statements"),
-        });
-    }
-
-    let stmt_strings: Vec<String> = statements.iter().map(|s| s.to_string()).collect();
-
-    // Classify each statement, escalating to the most restrictive
-    let mut worst = InternalClass::Select;
-    for stmt in &statements {
-        let c = classify_statement(stmt);
-        worst = worst.escalate(c);
-    }
-
-    // For multi-statement ExecuteSelect, enforce exactly one result-producing
-    // statement with only allowed SET preludes before it.
-    if matches!(worst, InternalClass::Select) && statements.len() > 1 {
-        let mut found_result_producing = false;
-        for stmt in &statements {
-            if is_result_producing(stmt) {
-                if found_result_producing {
-                    return Err(ClassifyError::Rejected {
-                        reason: "multi-statement queries with multiple result sets are not \
-                                 supported; submit each query separately"
-                            .into(),
-                    });
-                }
-                found_result_producing = true;
-            } else if found_result_producing {
-                // Non-result statement after the result-producing one
-                return Err(ClassifyError::Rejected {
-                    reason: "in a multi-statement batch, only SET statements are allowed \
-                             before the query; no statements may follow it"
-                        .into(),
-                });
-            }
-        }
-    }
-
-    match worst {
-        InternalClass::Select => Ok(Classification {
-            operation: Operation::ExecuteSelect,
-            dml_reason: None,
-            statement_count: stmt_strings.len(),
-            statements: stmt_strings,
-        }),
-        InternalClass::Dml(reason) => Ok(Classification {
-            operation: Operation::ExecuteDml,
-            dml_reason: Some(reason),
-            statement_count: stmt_strings.len(),
-            statements: stmt_strings,
-        }),
-        InternalClass::Rejected(reason) => Err(ClassifyError::Rejected { reason }),
-    }
-}
 
 #[derive(Debug)]
 enum InternalClass {
@@ -501,6 +407,7 @@ fn classify_set(set: &Set) -> InternalClass {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::sql_parser::{MAX_SQL_BYTES, MAX_STATEMENTS};
 
     fn pg(sql: &str) -> Result<Classification, ClassifyError> {
         classify(sql, Dialect::PostgreSql)
