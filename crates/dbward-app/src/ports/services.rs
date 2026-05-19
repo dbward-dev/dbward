@@ -26,4 +26,7 @@ pub struct WebhookEvent {
     pub error_summary: Option<String>,
     pub approval_hint: Option<String>,
     pub operation: Option<String>,
+    pub step_index: Option<u32>,
+    pub total_steps: Option<u32>,
+    pub expires_at: Option<String>,
 }
