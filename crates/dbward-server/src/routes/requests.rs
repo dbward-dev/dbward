@@ -123,6 +123,7 @@ pub async fn create(
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
         default_approval_ttl_secs: state.default_approval_ttl_secs,
+        review_rules: state.sql_review_rules.clone(),
     };
 
     match uc.execute(input, &user, &audit_ctx) {

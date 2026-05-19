@@ -106,3 +106,7 @@ result_ttl_days = 1
 approval_ttl_secs = 60
 
 
+
+[sql_review]
+no_where_delete = "block"
+no_where_update = "block"

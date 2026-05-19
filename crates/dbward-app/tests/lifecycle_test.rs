@@ -735,6 +735,7 @@ impl TestHarness {
             clock: self.clock.clone(),
             id_gen: self.id_gen.clone(),
             default_approval_ttl_secs: Some(3600),
+            review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
         }
     }
 

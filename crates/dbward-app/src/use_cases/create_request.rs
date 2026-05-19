@@ -26,6 +26,7 @@ pub struct CreateRequest {
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
     pub default_approval_ttl_secs: Option<u64>,
+    pub review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
 }
 
 #[derive(Clone)]
@@ -108,8 +109,18 @@ impl CreateRequest {
                 let review = sql_reviewer::review_statements(
                     &stmts,
                     Some(dialect),
-                    &sql_reviewer::ReviewRules::default(),
+                    &self.review_rules,
                 );
+                if review.blocked {
+                    let reasons: Vec<&str> = review.findings.iter()
+                        .filter(|f| f.action == sql_reviewer::RuleAction::Block)
+                        .map(|f| f.message.as_str())
+                        .collect();
+                    return Err(AppError::Validation(format!(
+                        "SQL blocked by review: {}",
+                        reasons.join("; ")
+                    )));
+                }
                 let _tables = table_extractor::extract_tables(&stmts);
                 // TODO: match extracted tables against schema_snapshot for TableRiskInfo
                 // (needed when AutoApproveConfig is enabled from server config)
@@ -489,6 +500,7 @@ mod tests {
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
+            review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
         }
     }
 
@@ -710,6 +722,7 @@ mod tests {
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
+            review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
         };
         let err = uc
             .execute(
@@ -738,6 +751,7 @@ mod tests {
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
+            review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
         };
         let mut input = make_input();
         input.reason = None;
