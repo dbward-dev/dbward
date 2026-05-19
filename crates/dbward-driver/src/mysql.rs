@@ -367,6 +367,125 @@ impl DatabaseDriver for MysqlDriver {
         cancel_pool.close().await;
         Ok(true)
     }
+
+    async fn collect_schema(&self) -> Result<crate::SchemaSnapshot, DriverError> {
+        use crate::schema::*;
+        use sqlx::Row;
+
+        let table_rows = sqlx::query(
+            "SELECT table_name, table_rows FROM information_schema.tables \
+             WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+        let mut tables = Vec::new();
+        for row in &table_rows {
+            let name: String = row.get("table_name");
+            let estimated_rows: i64 = row.get::<Option<i64>, _>("table_rows").unwrap_or(0);
+
+            let col_rows = sqlx::query(
+                "SELECT column_name, data_type, is_nullable, column_default, column_key \
+                 FROM information_schema.columns \
+                 WHERE table_schema = DATABASE() AND table_name = ? \
+                 ORDER BY ordinal_position"
+            )
+            .bind(&name)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+            let columns: Vec<ColumnInfo> = col_rows.iter().map(|r| {
+                let key: String = r.get::<Option<String>, _>("column_key").unwrap_or_default();
+                ColumnInfo {
+                    name: r.get("column_name"),
+                    data_type: r.get("data_type"),
+                    nullable: r.get::<String, _>("is_nullable") == "YES",
+                    default_value: r.get("column_default"),
+                    is_primary_key: key == "PRI",
+                }
+            }).collect();
+
+            let fk_rows = sqlx::query(
+                "SELECT kcu.constraint_name, kcu.column_name, \
+                        kcu.referenced_table_name, kcu.referenced_column_name, \
+                        rc.delete_rule \
+                 FROM information_schema.key_column_usage kcu \
+                 JOIN information_schema.referential_constraints rc \
+                   ON kcu.constraint_name = rc.constraint_name AND kcu.constraint_schema = rc.constraint_schema \
+                 WHERE kcu.table_schema = DATABASE() AND kcu.table_name = ? \
+                   AND kcu.referenced_table_name IS NOT NULL"
+            )
+            .bind(&name)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+            let mut constraints: Vec<ConstraintInfo> = Vec::new();
+            for r in &fk_rows {
+                let cname: String = r.get("constraint_name");
+                let col: String = r.get("column_name");
+                let ref_table: Option<String> = r.get("referenced_table_name");
+                let ref_col: Option<String> = r.get("referenced_column_name");
+                let delete_rule: Option<String> = r.get("delete_rule");
+
+                if let Some(existing) = constraints.iter_mut().find(|c| c.name == cname) {
+                    if !existing.columns.contains(&col) { existing.columns.push(col); }
+                } else {
+                    constraints.push(ConstraintInfo {
+                        name: cname,
+                        constraint_type: ConstraintType::ForeignKey,
+                        columns: vec![col],
+                        referenced_table: ref_table,
+                        referenced_columns: ref_col.map(|c| vec![c]),
+                        on_delete: delete_rule.and_then(|r| match r.as_str() {
+                            "CASCADE" => Some(FkAction::Cascade),
+                            "SET NULL" => Some(FkAction::SetNull),
+                            "RESTRICT" => Some(FkAction::Restrict),
+                            _ => Some(FkAction::NoAction),
+                        }),
+                    });
+                }
+            }
+
+            tables.push(TableInfo {
+                name,
+                schema_name: String::new(),
+                estimated_rows,
+                columns,
+                constraints,
+                indexes: vec![],
+            });
+        }
+
+        Ok(SchemaSnapshot { tables })
+    }
+
+    async fn explain(&self, sql: &str, timeout_secs: u64) -> Result<serde_json::Value, DriverError> {
+        use sqlx::{Connection, Row};
+        // Use dedicated connection to avoid session pollution
+        let mut conn = sqlx::MySqlConnection::connect(&self.url).await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let ms = timeout_secs * 1000;
+        sqlx::query(&format!("SET max_execution_time = {ms}"))
+            .execute(&mut conn)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let explain_sql = format!("EXPLAIN FORMAT=JSON {sql}");
+        let row = sqlx::query(&explain_sql)
+            .fetch_one(&mut conn)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let plan: String = row.try_get(0)
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        serde_json::from_str(&plan)
+            .map_err(|e| DriverError::QueryFailed(format!("invalid EXPLAIN JSON: {e}")))
+    }
+
+    fn dialect(&self) -> &'static str {
+        "mysql"
+    }
 }
 
 use sqlparser::dialect::MySqlDialect;

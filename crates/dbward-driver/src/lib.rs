@@ -3,11 +3,13 @@ pub mod error;
 mod mysql;
 pub(crate) mod pg_array;
 mod postgres;
+pub mod schema;
 
 pub use cancel_state::CancelState;
 pub use error::DriverError;
 pub use mysql::MysqlDriver;
 pub use postgres::PostgresDriver;
+pub use schema::{SchemaSnapshot, TableInfo, ColumnInfo, ConstraintInfo, IndexInfo, ConstraintType, FkAction};
 
 use std::sync::Arc;
 
@@ -53,6 +55,15 @@ pub trait DatabaseDriver: Send + Sync {
     /// signal was actually delivered to the target backend.
     /// Opens a fresh connection internally to avoid pool saturation.
     async fn cancel_query(&self, connection_id: &str) -> Result<bool, DriverError>;
+
+    /// Collect schema information from the database.
+    async fn collect_schema(&self) -> Result<SchemaSnapshot, DriverError>;
+
+    /// Execute EXPLAIN (FORMAT JSON) in a read-only transaction.
+    async fn explain(&self, sql: &str, timeout_secs: u64) -> Result<serde_json::Value, DriverError>;
+
+    /// Return the dialect identifier ("postgresql" or "mysql").
+    fn dialect(&self) -> &'static str;
 }
 
 pub async fn connect(

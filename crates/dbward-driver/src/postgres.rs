@@ -260,6 +260,177 @@ impl DatabaseDriver for PostgresDriver {
         cancel_pool.close().await;
         Ok(cancelled)
     }
+
+    async fn collect_schema(&self) -> Result<crate::SchemaSnapshot, DriverError> {
+        use crate::schema::*;
+        use sqlx::Row;
+
+        // 1. Tables + estimated rows
+        let table_rows = sqlx::query(
+            "SELECT c.relname, n.nspname, c.reltuples::bigint \
+             FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid \
+             WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
+             AND c.relkind = 'r'"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+        let mut tables = Vec::new();
+        for row in &table_rows {
+            let name: String = row.get("relname");
+            let schema_name: String = row.get("nspname");
+            let estimated_rows: i64 = row.get::<i64, _>(2);
+
+            // 2. Columns
+            let col_rows = sqlx::query(
+                "SELECT column_name, data_type, is_nullable, column_default \
+                 FROM information_schema.columns \
+                 WHERE table_schema = $1 AND table_name = $2 \
+                 ORDER BY ordinal_position"
+            )
+            .bind(&schema_name)
+            .bind(&name)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+            let columns: Vec<ColumnInfo> = col_rows.iter().map(|r| {
+                ColumnInfo {
+                    name: r.get("column_name"),
+                    data_type: r.get("data_type"),
+                    nullable: r.get::<String, _>("is_nullable") == "YES",
+                    default_value: r.get("column_default"),
+                    is_primary_key: false, // filled below
+                }
+            }).collect();
+
+            // 3. Constraints
+            let constraint_rows = sqlx::query(
+                "SELECT tc.constraint_name, tc.constraint_type, \
+                        kcu.column_name, \
+                        ccu.table_name AS ref_table, ccu.column_name AS ref_column, \
+                        rc.delete_rule \
+                 FROM information_schema.table_constraints tc \
+                 JOIN information_schema.key_column_usage kcu \
+                   ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema \
+                 LEFT JOIN information_schema.constraint_column_usage ccu \
+                   ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema \
+                 LEFT JOIN information_schema.referential_constraints rc \
+                   ON tc.constraint_name = rc.constraint_name AND tc.constraint_schema = rc.constraint_schema \
+                 WHERE tc.table_schema = $1 AND tc.table_name = $2"
+            )
+            .bind(&schema_name)
+            .bind(&name)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+            let mut constraints: Vec<ConstraintInfo> = Vec::new();
+            for cr in &constraint_rows {
+                let cname: String = cr.get("constraint_name");
+                let ctype: String = cr.get("constraint_type");
+                let col: String = cr.get("column_name");
+                let ref_table: Option<String> = cr.get("ref_table");
+                let ref_col: Option<String> = cr.get("ref_column");
+                let delete_rule: Option<String> = cr.get("delete_rule");
+
+                if let Some(existing) = constraints.iter_mut().find(|c| c.name == cname) {
+                    if !existing.columns.contains(&col) {
+                        existing.columns.push(col);
+                    }
+                } else {
+                    constraints.push(ConstraintInfo {
+                        name: cname,
+                        constraint_type: match ctype.as_str() {
+                            "PRIMARY KEY" => ConstraintType::PrimaryKey,
+                            "FOREIGN KEY" => ConstraintType::ForeignKey,
+                            "UNIQUE" => ConstraintType::Unique,
+                            _ => ConstraintType::Check,
+                        },
+                        columns: vec![col],
+                        referenced_table: ref_table,
+                        referenced_columns: ref_col.map(|c| vec![c]),
+                        on_delete: delete_rule.and_then(|r| match r.as_str() {
+                            "CASCADE" => Some(FkAction::Cascade),
+                            "SET NULL" => Some(FkAction::SetNull),
+                            "RESTRICT" => Some(FkAction::Restrict),
+                            "SET DEFAULT" => Some(FkAction::SetDefault),
+                            _ => Some(FkAction::NoAction),
+                        }),
+                    });
+                }
+            }
+
+            // 4. Indexes
+            let idx_rows = sqlx::query(
+                "SELECT indexname, indexdef FROM pg_indexes \
+                 WHERE schemaname = $1 AND tablename = $2"
+            )
+            .bind(&schema_name)
+            .bind(&name)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+            let indexes: Vec<IndexInfo> = idx_rows.iter().map(|r| {
+                let indexdef: String = r.get("indexdef");
+                let is_unique = indexdef.contains("UNIQUE");
+                IndexInfo {
+                    name: r.get("indexname"),
+                    columns: vec![], // simplified: full parsing of indexdef not needed for v0.1.3
+                    is_unique,
+                    index_type: "btree".into(),
+                }
+            }).collect();
+
+            // Mark PK columns
+            let mut columns = columns;
+            let pk_cols: Vec<&str> = constraints.iter()
+                .filter(|c| c.constraint_type == ConstraintType::PrimaryKey)
+                .flat_map(|c| c.columns.iter().map(|s| s.as_str()))
+                .collect();
+            for col in &mut columns {
+                if pk_cols.contains(&col.name.as_str()) {
+                    col.is_primary_key = true;
+                }
+            }
+
+            tables.push(TableInfo {
+                name,
+                schema_name,
+                estimated_rows,
+                columns,
+                constraints,
+                indexes,
+            });
+        }
+
+        Ok(SchemaSnapshot { tables })
+    }
+
+    async fn explain(&self, sql: &str, timeout_secs: u64) -> Result<serde_json::Value, DriverError> {
+        use sqlx::Row;
+        let mut conn = self.pool.acquire().await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        sqlx::query(&format!("SET LOCAL statement_timeout = '{timeout_secs}s'"))
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let explain_sql = format!("EXPLAIN (FORMAT JSON) {sql}");
+        let row = sqlx::query(&explain_sql)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let plan: String = row.try_get(0)
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        serde_json::from_str(&plan)
+            .map_err(|e| DriverError::QueryFailed(format!("invalid EXPLAIN JSON: {e}")))
+    }
+
+    fn dialect(&self) -> &'static str {
+        "postgresql"
+    }
 }
 
 fn pg_row_to_json(row: &sqlx::postgres::PgRow) -> serde_json::Value {
