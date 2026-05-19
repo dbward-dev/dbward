@@ -422,6 +422,53 @@ approval_ttl_secs = 0
         let err = cfg.validate().unwrap_err();
         assert!(err.contains("approval_ttl_secs must be > 0"));
     }
+
+    #[test]
+    fn unknown_toml_sections_are_silently_ignored() {
+        let toml = r#"
+[[databases]]
+name = "app"
+environments = ["dev"]
+
+[[result_policies]]
+database = "*"
+delivery_mode = "direct"
+
+[[notification_policies]]
+database = "*"
+"#;
+        let cfg: ServerConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.databases.len(), 1);
+    }
+
+    #[test]
+    fn execution_policies_parsed_from_toml() {
+        let toml = r#"
+[[execution_policies]]
+database = "app"
+environment = "production"
+max_executions = 3
+statement_timeout_secs = 60
+max_statement_timeout_secs = 300
+"#;
+        let cfg: ServerConfig = toml::from_str(toml).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.execution_policies.len(), 1);
+        assert_eq!(cfg.execution_policies[0].database, "app");
+        assert_eq!(cfg.execution_policies[0].max_executions, Some(3));
+    }
+
+    #[test]
+    fn validate_rejects_timeout_exceeding_max() {
+        let toml = r#"
+[[execution_policies]]
+statement_timeout_secs = 500
+max_statement_timeout_secs = 300
+"#;
+        let cfg: ServerConfig = toml::from_str(toml).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("statement_timeout_secs must not exceed"));
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
