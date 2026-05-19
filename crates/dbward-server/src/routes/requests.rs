@@ -231,6 +231,7 @@ pub async fn get(
         request_reader: state.request_reader.clone(),
         approval_repo: state.approval_repo.clone(),
         authorizer: state.authorizer.clone(),
+        context_repo: state.context_repo.clone(),
     };
 
     // Authorize BEFORE any waiting
