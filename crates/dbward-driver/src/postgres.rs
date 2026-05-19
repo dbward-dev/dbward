@@ -339,6 +339,11 @@ impl DatabaseDriver for PostgresDriver {
                     if !existing.columns.contains(&col) {
                         existing.columns.push(col);
                     }
+                    if let Some(rc) = ref_col {
+                        if let Some(ref mut refs) = existing.referenced_columns {
+                            if !refs.contains(&rc) { refs.push(rc); }
+                        }
+                    }
                 } else {
                     constraints.push(ConstraintInfo {
                         name: cname,
@@ -413,15 +418,21 @@ impl DatabaseDriver for PostgresDriver {
         use sqlx::Row;
         let mut conn = self.pool.acquire().await
             .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        // BEGIN transaction so SET LOCAL is scoped correctly
+        sqlx::query("BEGIN").execute(&mut *conn).await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         sqlx::query(&format!("SET LOCAL statement_timeout = '{timeout_secs}s'"))
             .execute(&mut *conn)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         let explain_sql = format!("EXPLAIN (FORMAT JSON) {sql}");
-        let row = sqlx::query(&explain_sql)
+        let result = sqlx::query(&explain_sql)
             .fetch_one(&mut *conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(|e| DriverError::QueryFailed(e.to_string()));
+        // Always rollback (read-only, no side effects)
+        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+        let row = result?;
         let plan: String = row.try_get(0)
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         serde_json::from_str(&plan)

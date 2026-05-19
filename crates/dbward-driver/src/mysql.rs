@@ -432,6 +432,11 @@ impl DatabaseDriver for MysqlDriver {
 
                 if let Some(existing) = constraints.iter_mut().find(|c| c.name == cname) {
                     if !existing.columns.contains(&col) { existing.columns.push(col); }
+                    if let Some(rc) = ref_col {
+                        if let Some(ref mut refs) = existing.referenced_columns {
+                            if !refs.contains(&rc) { refs.push(rc); }
+                        }
+                    }
                 } else {
                     constraints.push(ConstraintInfo {
                         name: cname,
