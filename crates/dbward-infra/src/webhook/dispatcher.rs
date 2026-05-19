@@ -482,6 +482,15 @@ impl EventDispatcher for CompositeEventDispatcher {
                 _ => None,
             },
             approval_hint: None,
+            step_index: match &event.metadata {
+                EventMetadata::StepApproved { step_index, .. } => Some(*step_index),
+                _ => None,
+            },
+            total_steps: match &event.metadata {
+                EventMetadata::StepApproved { total_steps, .. } => Some(*total_steps),
+                _ => None,
+            },
+            expires_at: None,
         };
         // Dispatched events do not trigger webhooks
         if event_type != "request_dispatched" {

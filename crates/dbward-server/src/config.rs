@@ -24,6 +24,8 @@ pub struct ServerConfig {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub trusted_proxies: Vec<String>,
+    #[serde(default)]
+    pub slack: Option<SlackServerConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -251,6 +253,28 @@ pub struct WebhookDef {
 
 fn default_webhook_format() -> String {
     "generic".into()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SlackServerConfig {
+    pub bot_token: String,
+    pub signing_secret: String,
+    #[serde(default = "default_slack_channel")]
+    pub channel: String,
+    #[serde(default)]
+    pub channels: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub user_mappings: Vec<SlackUserMappingDef>,
+}
+
+fn default_slack_channel() -> String {
+    "#db-approvals".into()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SlackUserMappingDef {
+    pub slack_user_id: String,
+    pub dbward_subject: String,
 }
 
 impl ServerConfig {

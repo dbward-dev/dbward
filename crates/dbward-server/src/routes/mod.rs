@@ -10,6 +10,7 @@ mod health;
 mod metrics;
 mod policies;
 mod requests;
+pub(crate) mod slack;
 mod tokens;
 mod users;
 mod webhooks;
@@ -242,6 +243,10 @@ pub fn build_router(state: AppState) -> Router {
     let public = Router::new()
         .route("/health", axum::routing::get(health::health))
         .route("/ready", axum::routing::get(health::ready))
+        .route(
+            "/api/slack/interactions",
+            axum::routing::post(slack::interactions),
+        )
         .with_state(state);
 
     public

@@ -53,4 +53,6 @@ pub struct AppState {
     pub storage_backend: String,
     // Shutdown
     pub draining: Arc<AtomicBool>,
+    // Slack
+    pub slack_config: Option<dbward_infra::slack::SlackConfig>,
 }
