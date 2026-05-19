@@ -1,7 +1,6 @@
 use crate::services::classification::Dialect;
+use crate::services::sql_parser;
 use sqlparser::ast::*;
-use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect};
-use sqlparser::parser::Parser;
 use std::ops::ControlFlow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,17 +71,14 @@ impl Default for ReviewRules {
 
 /// Review SQL statements for safety issues.
 pub fn review(sql: &str, dialect: Option<Dialect>, rules: &ReviewRules) -> ReviewResult {
-    let d: &dyn sqlparser::dialect::Dialect = match dialect {
-        Some(Dialect::MySql) => &MySqlDialect {},
-        _ => &PostgreSqlDialect {},
-    };
-
-    let statements = match Parser::parse_sql(d, sql) {
-        Ok(stmts) => stmts,
-        Err(_) => return ReviewResult { findings: vec![], blocked: false },
-    };
-
-    review_statements(&statements, dialect, rules)
+    let d = dialect.unwrap_or(Dialect::PostgreSql);
+    match sql_parser::parse_statements(sql, d) {
+        Ok(statements) => review_statements(&statements, dialect, rules),
+        Err(_) => {
+            // Parse failure → cannot review. Return empty (classifier handles rejection).
+            ReviewResult { findings: vec![], blocked: false }
+        }
+    }
 }
 
 /// Review pre-parsed statements.

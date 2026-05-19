@@ -73,7 +73,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn list_workflows(&self) -> Result<Vec<Workflow>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows",
+            "SELECT id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs, require_approval FROM workflows",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
         let rows = stmt
             .query_map([], row_to_workflow)
@@ -660,7 +660,7 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
         let workflows = {
             let conn = self.conn.lock().unwrap();
             let mut stmt = conn.prepare(
-                "SELECT id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows",
+                "SELECT id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs, require_approval FROM workflows",
             ).map_err(|e| AppError::Internal(e.to_string()))?;
             let rows = stmt
                 .query_map([], row_to_workflow)

@@ -1,4 +1,4 @@
-use sqlparser::ast::{ObjectName, ObjectNamePart, Statement, visit_relations};
+use sqlparser::ast::{Insert, ObjectName, ObjectNamePart, Query, SetExpr, Statement, visit_relations};
 use std::collections::HashSet;
 
 /// A reference to a table found in SQL.
@@ -43,12 +43,28 @@ pub fn extract_tables(statements: &[Statement]) -> Vec<TableRef> {
 }
 
 fn collect_cte_names(stmt: &Statement, cte_names: &mut HashSet<String>) {
-    if let Statement::Query(q) = stmt {
-        if let Some(with) = &q.with {
-            for cte in &with.cte_tables {
-                cte_names.insert(cte.alias.name.value.to_lowercase());
+    // Use visit_expressions approach won't work for CTEs; manually check common patterns
+    match stmt {
+        Statement::Query(q) => collect_cte_names_from_query(q, cte_names),
+        Statement::Insert(ins) => {
+            if let Some(src) = &ins.source {
+                collect_cte_names_from_query(src.as_ref(), cte_names);
             }
         }
+        _ => {}
+    }
+}
+
+fn collect_cte_names_from_query(query: &Query, cte_names: &mut HashSet<String>) {
+    if let Some(with) = &query.with {
+        for cte in &with.cte_tables {
+            cte_names.insert(cte.alias.name.value.to_lowercase());
+            collect_cte_names_from_query(&cte.query, cte_names);
+        }
+    }
+    // Check subqueries in body
+    if let SetExpr::Query(sub) = query.body.as_ref() {
+        collect_cte_names_from_query(sub, cte_names);
     }
 }
 
