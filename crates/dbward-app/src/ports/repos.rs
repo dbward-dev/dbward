@@ -275,6 +275,7 @@ pub trait SchemaRepo: Send + Sync {
     fn upsert_snapshot(&self, record: &SchemaSnapshotRecord) -> Result<(), AppError>;
     fn get_snapshot(&self, db: &str, env: &str) -> Result<Option<SchemaSnapshotRecord>, AppError>;
     fn get_dialect(&self, db: &str, env: &str) -> Result<Option<String>, AppError>;
+    // TODO(v0.2): Return domain DTO (Vec<TableRiskInfo>) instead of raw JSON string
     fn get_tables_for(
         &self,
         db: &str,

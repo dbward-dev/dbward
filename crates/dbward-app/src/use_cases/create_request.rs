@@ -86,11 +86,20 @@ impl CreateRequest {
                 input.operation
             }
             _ => {
-                let classification = sql_classifier::classify(&input.detail, Dialect::PostgreSql)
+                let classify_dialect = self
+                    .schema_repo
+                    .get_dialect(input.database.as_str(), input.environment.as_str())
+                    .unwrap_or(None)
+                    .map(|d| match d.as_str() {
+                        "mysql" => Dialect::MySql,
+                        _ => Dialect::PostgreSql,
+                    })
+                    .unwrap_or(Dialect::PostgreSql);
+                let classification = sql_classifier::classify(&input.detail, classify_dialect)
                     .map_err(|e| match e {
-                    ClassifyError::Empty => AppError::Validation("empty query".into()),
-                    ClassifyError::Rejected { reason } => AppError::Validation(reason),
-                })?;
+                        ClassifyError::Empty => AppError::Validation("empty query".into()),
+                        ClassifyError::Rejected { reason } => AppError::Validation(reason),
+                    })?;
                 classification.operation
             }
         };

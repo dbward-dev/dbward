@@ -448,6 +448,7 @@ pub struct SchemaSyncBody {
     pub error_message: Option<String>,
 }
 
+// TODO(v0.2): Extract schema_sync + dry_run_claim/result to dbward-app use cases for Clean Architecture alignment
 pub async fn schema_sync(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
@@ -481,18 +482,22 @@ pub async fn schema_sync(
 
     // Scope check: agent must have capability for this database+environment
     let agent = state.agent_repo.get(&user.subject_id).map_err(map_error)?;
-    if let Some(agent) = agent {
-        let scope_match = agent.databases.iter().any(|d| {
-            d.database.as_str() == body.database && d.environment.as_str() == body.environment
-        });
-        if !scope_match {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(
-                    serde_json::json!({"error": "agent not authorized for this database/environment", "code": "forbidden"}),
-                ),
-            ));
-        }
+    let agent = agent.ok_or_else(|| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "agent not registered", "code": "forbidden"})),
+        )
+    })?;
+    let scope_match = agent.databases.iter().any(|d| {
+        d.database.as_str() == body.database && d.environment.as_str() == body.environment
+    });
+    if !scope_match {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(
+                serde_json::json!({"error": "agent not authorized for this database/environment", "code": "forbidden"}),
+            ),
+        ));
     }
     // Verify database+environment is registered
     {
@@ -557,8 +562,29 @@ pub async fn dry_run_claim(
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
-    // Security: job IDs are UUIDv4, only discoverable through poll which is scope-filtered.
-    // Claim atomicity (pending→claimed) prevents double-claim.
+
+    // Scope check: verify job belongs to agent's registered databases
+    if let Ok(Some(request_id)) = state.dry_run_repo.get_request_id(&id)
+        && let Ok(jobs) = state.dry_run_repo.find_for_request(&request_id)
+        && let Some(job) = jobs.iter().find(|j| j.id == id)
+    {
+        let agent = state.agent_repo.get(&user.subject_id).map_err(map_error)?;
+        if let Some(agent) = agent {
+            let scope_ok = agent.databases.iter().any(|d| {
+                d.database.as_str() == job.database_name
+                    && d.environment.as_str() == job.environment
+            });
+            if !scope_ok {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(
+                        serde_json::json!({"error": "agent not authorized for this job", "code": "forbidden"}),
+                    ),
+                ));
+            }
+        }
+    }
+
     let claim_token = uuid::Uuid::new_v4().to_string();
     let now = state.clock.now().to_rfc3339();
     let claimed = state
@@ -626,7 +652,12 @@ pub async fn dry_run_result(
                 .iter()
                 .map(|j| {
                     if j.status == "completed" {
-                        serde_json::json!({"sql": &j.sql_text, "plan": &j.result_json})
+                        let plan = j
+                            .result_json
+                            .as_deref()
+                            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                            .unwrap_or(serde_json::Value::Null);
+                        serde_json::json!({"sql": &j.sql_text, "plan": plan})
                     } else {
                         serde_json::json!({"sql": &j.sql_text, "error": &j.error_message})
                     }

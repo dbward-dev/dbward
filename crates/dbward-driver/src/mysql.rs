@@ -379,7 +379,10 @@ impl DatabaseDriver for MysqlDriver {
                     row.try_get::<Vec<u8>, _>(idx)
                         .map(|v| String::from_utf8_lossy(&v).into_owned())
                 })
-                .unwrap_or_default()
+                .unwrap_or_else(|e| {
+                    tracing::warn!(column_idx = idx, error = %e, "MySQL column decode fallback to empty");
+                    String::new()
+                })
         }
         fn get_opt_str(row: &sqlx::mysql::MySqlRow, idx: usize) -> Option<String> {
             row.try_get::<Option<String>, _>(idx)
@@ -442,7 +445,8 @@ impl DatabaseDriver for MysqlDriver {
                  JOIN information_schema.referential_constraints rc \
                    ON kcu.constraint_name = rc.constraint_name AND kcu.constraint_schema = rc.constraint_schema \
                  WHERE kcu.table_schema = DATABASE() AND kcu.table_name = ? \
-                   AND kcu.referenced_table_name IS NOT NULL"
+                   AND kcu.referenced_table_name IS NOT NULL \
+                 ORDER BY kcu.constraint_name, kcu.ordinal_position"
             )
             .bind(&name)
             .fetch_all(&self.pool)
