@@ -342,6 +342,7 @@ pub trait DryRunRepo: Send + Sync {
 pub struct RequestContextRecord {
     pub request_id: String,
     pub status: String,
+    pub schema_snapshot_collected_at: Option<String>,
     pub tables_json: Option<String>,
     pub sql_review_json: Option<String>,
     pub risk_json: Option<String>,

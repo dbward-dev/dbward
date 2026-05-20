@@ -96,7 +96,7 @@ impl CreateRequest {
         };
 
         // 1a. SQL Review + Risk assessment (best-effort, never blocks request creation)
-        let (risk_level, review_json, risk_json, parsed_stmts, tables_json) = {
+        let (risk_level, review_json, risk_json, parsed_stmts, tables_json, schema_collected_at) = {
             use dbward_domain::services::{risk_scorer, sql_parser, sql_reviewer, table_extractor};
             let dialect_str = self
                 .schema_repo
@@ -152,13 +152,15 @@ impl CreateRequest {
                         .collect::<Vec<_>>(),
                 )
                 .ok();
-                let schema_status = match self
+                let (schema_status, schema_collected_at) = match self
                     .schema_repo
                     .get_snapshot(input.database.as_str(), input.environment.as_str())
                 {
-                    Ok(Some(s)) if s.status == "ready" => risk_scorer::SchemaStatus::Ready,
-                    Ok(Some(_)) => risk_scorer::SchemaStatus::Failed,
-                    _ => risk_scorer::SchemaStatus::NotSynced,
+                    Ok(Some(s)) if s.status == "ready" => {
+                        (risk_scorer::SchemaStatus::Ready, Some(s.collected_at))
+                    }
+                    Ok(Some(s)) => (risk_scorer::SchemaStatus::Failed, Some(s.collected_at)),
+                    _ => (risk_scorer::SchemaStatus::NotSynced, None),
                 };
                 let allow_read_only = operation == Operation::ExecuteSelect
                     && self.auto_approve_config.allow_read_only;
@@ -232,9 +234,10 @@ impl CreateRequest {
                     Some(r_json.to_string()),
                     Some(stmts),
                     t_json,
+                    schema_collected_at,
                 )
             } else {
-                (None, None, None, None, None)
+                (None, None, None, None, None, None)
             }
         };
 
@@ -518,6 +521,7 @@ impl CreateRequest {
             let ctx_record = RequestContextRecord {
                 request_id: id.clone(),
                 status: ctx_status.into(),
+                schema_snapshot_collected_at: schema_collected_at,
                 tables_json,
                 sql_review_json: review_json,
                 risk_json,
