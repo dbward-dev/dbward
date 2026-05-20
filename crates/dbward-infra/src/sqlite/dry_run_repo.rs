@@ -37,14 +37,16 @@ impl DryRunRepo for SqliteDryRunRepo {
             return Ok(vec![]);
         }
         let conn = self.conn.lock().unwrap();
-        // Build WHERE clause for (database_name, environment) pairs
-        let conditions: Vec<String> = databases
+        // Build parameterized WHERE clause for (database_name, environment) pairs
+        let placeholders: Vec<String> = databases
             .iter()
-            .map(|(db, env)| {
+            .enumerate()
+            .map(|(i, _)| {
+                let base = i * 2 + 1;
                 format!(
-                    "(database_name = '{}' AND environment = '{}')",
-                    db.replace('\'', "''"),
-                    env.replace('\'', "''")
+                    "(database_name = ?{} AND environment = ?{})",
+                    base,
+                    base + 1
                 )
             })
             .collect();
@@ -52,13 +54,22 @@ impl DryRunRepo for SqliteDryRunRepo {
             "SELECT id, request_id, database_name, environment, sql_text, status, \
              claimed_by, claimed_at, claim_token, result_json, error_message, created_at, completed_at \
              FROM dry_run_jobs WHERE status = 'pending' AND ({}) LIMIT 10",
-            conditions.join(" OR ")
+            placeholders.join(" OR ")
         );
         let mut stmt = conn
             .prepare(&sql)
             .map_err(|e| AppError::Internal(e.to_string()))?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = databases
+            .iter()
+            .flat_map(|(db, env)| {
+                vec![
+                    db as &dyn rusqlite::types::ToSql,
+                    env as &dyn rusqlite::types::ToSql,
+                ]
+            })
+            .collect();
         let rows = stmt
-            .query_map([], |row| {
+            .query_map(params.as_slice(), |row| {
                 Ok(DryRunJobRecord {
                     id: row.get(0)?,
                     request_id: row.get(1)?,
