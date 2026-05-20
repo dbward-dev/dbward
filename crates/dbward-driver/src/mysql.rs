@@ -372,6 +372,27 @@ impl DatabaseDriver for MysqlDriver {
         use crate::schema::*;
         use sqlx::Row;
 
+        // MySQL 8.0 information_schema may return VARBINARY for string columns
+        fn get_str(row: &sqlx::mysql::MySqlRow, idx: usize) -> String {
+            row.try_get::<String, _>(idx)
+                .or_else(|_| {
+                    row.try_get::<Vec<u8>, _>(idx)
+                        .map(|v| String::from_utf8_lossy(&v).into_owned())
+                })
+                .unwrap_or_default()
+        }
+        fn get_opt_str(row: &sqlx::mysql::MySqlRow, idx: usize) -> Option<String> {
+            row.try_get::<Option<String>, _>(idx)
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    row.try_get::<Option<Vec<u8>>, _>(idx)
+                        .ok()
+                        .flatten()
+                        .map(|v| String::from_utf8_lossy(&v).into_owned())
+                })
+        }
+
         let table_rows = sqlx::query(
             "SELECT table_name, table_rows FROM information_schema.tables \
              WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'",
@@ -382,8 +403,11 @@ impl DatabaseDriver for MysqlDriver {
 
         let mut tables = Vec::new();
         for row in &table_rows {
-            let name: String = row.get("table_name");
-            let estimated_rows: i64 = row.get::<Option<i64>, _>("table_rows").unwrap_or(0);
+            let name: String = get_str(row, 0);
+            let estimated_rows: i64 = row
+                .try_get::<Option<i64>, _>(1)
+                .unwrap_or(None)
+                .unwrap_or(0);
 
             let col_rows = sqlx::query(
                 "SELECT column_name, data_type, is_nullable, column_default, column_key \
@@ -399,12 +423,12 @@ impl DatabaseDriver for MysqlDriver {
             let columns: Vec<ColumnInfo> = col_rows
                 .iter()
                 .map(|r| {
-                    let key: String = r.get::<Option<String>, _>("column_key").unwrap_or_default();
+                    let key = get_str(r, 4);
                     ColumnInfo {
-                        name: r.get("column_name"),
-                        data_type: r.get("data_type"),
-                        nullable: r.get::<String, _>("is_nullable") == "YES",
-                        default_value: r.get("column_default"),
+                        name: get_str(r, 0),
+                        data_type: get_str(r, 1),
+                        nullable: get_str(r, 2) == "YES",
+                        default_value: get_opt_str(r, 3),
                         is_primary_key: key == "PRI",
                     }
                 })
@@ -427,11 +451,11 @@ impl DatabaseDriver for MysqlDriver {
 
             let mut constraints: Vec<ConstraintInfo> = Vec::new();
             for r in &fk_rows {
-                let cname: String = r.get("constraint_name");
-                let col: String = r.get("column_name");
-                let ref_table: Option<String> = r.get("referenced_table_name");
-                let ref_col: Option<String> = r.get("referenced_column_name");
-                let delete_rule: Option<String> = r.get("delete_rule");
+                let cname = get_str(r, 0);
+                let col = get_str(r, 1);
+                let ref_table = get_opt_str(r, 2);
+                let ref_col = get_opt_str(r, 3);
+                let delete_rule = get_opt_str(r, 4);
 
                 if let Some(existing) = constraints.iter_mut().find(|c| c.name == cname) {
                     if !existing.columns.contains(&col) {
@@ -472,9 +496,9 @@ impl DatabaseDriver for MysqlDriver {
 
             let mut indexes: Vec<IndexInfo> = Vec::new();
             for r in &idx_rows {
-                let idx_name: String = r.get("INDEX_NAME");
-                let col: String = r.get("COLUMN_NAME");
-                let non_unique: i32 = r.get("NON_UNIQUE");
+                let idx_name = get_str(r, 0);
+                let col = get_str(r, 1);
+                let non_unique: i32 = r.try_get(2).unwrap_or(1);
                 if let Some(existing) = indexes.iter_mut().find(|i| i.name == idx_name) {
                     existing.columns.push(col);
                 } else {
