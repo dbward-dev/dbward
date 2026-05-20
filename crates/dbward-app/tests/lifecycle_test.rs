@@ -786,6 +786,7 @@ impl TestHarness {
             dry_run_repo: Arc::new(FakeDryRunRepo),
             context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: self.event_dispatcher.clone(),
+            audit_logger: self.audit_logger.clone(),
             clock: self.clock.clone(),
             id_gen: self.id_gen.clone(),
             default_approval_ttl_secs: Some(3600),

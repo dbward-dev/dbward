@@ -520,12 +520,33 @@ pub async fn schema_sync(
         error_message: body.error_message,
         dialect: body.dialect,
         collected_at: now,
-        agent_id: user.subject_id,
+        agent_id: user.subject_id.clone(),
     };
     state
         .schema_repo
         .upsert_snapshot(&record)
         .map_err(map_error)?;
+
+    // Audit event
+    let event_type = if record.status == "ready" {
+        "schema_snapshot_updated"
+    } else {
+        "schema_snapshot_failed"
+    };
+    let audit_ctx = dbward_domain::entities::AuditContext::Agent {
+        agent_id: user.subject_id.clone(),
+    };
+    let mut event = dbward_domain::entities::AuditEvent::simple(
+        event_type,
+        "agent",
+        &user.subject_id,
+        None,
+        state.clock.now(),
+        &audit_ctx,
+    );
+    event.database_name = Some(record.database_name.clone());
+    event.environment = Some(record.environment.clone());
+    let _ = state.audit_logger.record(&event);
 
     Ok(StatusCode::OK)
 }

@@ -23,6 +23,7 @@ pub struct CreateRequest {
     pub dry_run_repo: Arc<dyn DryRunRepo>,
     pub context_repo: Arc<dyn ContextRepo>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
+    pub audit_logger: Arc<dyn AuditLogger>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
     pub default_approval_ttl_secs: Option<u64>,
@@ -116,6 +117,22 @@ impl CreateRequest {
                         .filter(|f| f.action == sql_reviewer::RuleAction::Block)
                         .map(|f| f.message.as_str())
                         .collect();
+                    // Audit: record blocked request
+                    let mut audit_event = dbward_domain::entities::AuditEvent::simple(
+                        "request_blocked_by_review",
+                        "request",
+                        &user.subject_id,
+                        None,
+                        self.clock.now(),
+                        ctx,
+                    );
+                    audit_event.database_name = Some(input.database.to_string());
+                    audit_event.environment = Some(input.environment.to_string());
+                    audit_event.metadata_json = serde_json::json!({
+                        "blocked_rules": reasons,
+                    })
+                    .to_string();
+                    let _ = self.audit_logger.record(&audit_event);
                     return Err(AppError::Validation(format!(
                         "SQL blocked by review: {}",
                         reasons.join("; ")
@@ -509,6 +526,7 @@ mod tests {
             dry_run_repo: Arc::new(FakeDryRunRepo),
             context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
+            audit_logger: Arc::new(NoopAuditLogger),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
@@ -733,6 +751,7 @@ mod tests {
             dry_run_repo: Arc::new(FakeDryRunRepo),
             context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
+            audit_logger: Arc::new(NoopAuditLogger),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
@@ -764,6 +783,7 @@ mod tests {
             dry_run_repo: Arc::new(FakeDryRunRepo),
             context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
+            audit_logger: Arc::new(NoopAuditLogger),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
