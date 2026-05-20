@@ -276,6 +276,7 @@ fn category_str(c: EventCategory) -> &'static str {
         EventCategory::Token => "token",
         EventCategory::Identity => "identity",
         EventCategory::Policy => "policy",
+        EventCategory::Request => "request",
     }
 }
 

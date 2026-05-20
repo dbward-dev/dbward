@@ -659,7 +659,10 @@ pub async fn dry_run_result(
                             .unwrap_or(serde_json::Value::Null);
                         serde_json::json!({"sql": &j.sql_text, "plan": plan})
                     } else {
-                        serde_json::json!({"sql": &j.sql_text, "error": &j.error_message})
+                        let hint = j.error_message.as_deref()
+                            .filter(|m| m.contains("permission denied") || m.contains("Access denied"))
+                            .map(|_| "Grant EXPLAIN privilege to agent DB user");
+                        serde_json::json!({"sql": &j.sql_text, "error": &j.error_message, "hint": hint})
                     }
                 })
                 .collect();

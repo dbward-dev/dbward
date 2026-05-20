@@ -13,6 +13,7 @@ pub enum EventCategory {
     Token,
     Identity,
     Policy,
+    Request,
 }
 
 impl EventCategory {
@@ -24,6 +25,7 @@ impl EventCategory {
             "auth" => Self::Auth,
             "token" => Self::Token,
             "identity" => Self::Identity,
+            "request" => Self::Request,
             _ => Self::Policy,
         }
     }

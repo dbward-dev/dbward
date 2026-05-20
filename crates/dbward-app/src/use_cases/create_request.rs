@@ -31,6 +31,9 @@ pub struct CreateRequest {
     pub auto_approve_config: workflow_matcher::AutoApproveConfig,
 }
 
+const MAX_QUERY_BYTES: usize = 100_000;
+const MAX_REASON_BYTES: usize = 1024;
+
 #[derive(Clone)]
 pub struct CreateRequestInput {
     pub database: DatabaseName,
@@ -71,14 +74,26 @@ impl CreateRequest {
         user: &AuthUser,
         ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<CreateRequestOutput, AppError> {
-        if input.detail.len() > 100_000 {
+        if input.detail.len() > MAX_QUERY_BYTES {
             return Err(AppError::Validation("query too long (max 100KB)".into()));
         }
         if let Some(ref reason) = input.reason {
-            if reason.len() > 1024 {
+            if reason.len() > MAX_REASON_BYTES {
                 return Err(AppError::Validation("reason too long (max 1KB)".into()));
             }
         }
+
+        // Resolve dialect once (used for classify, parse, review, risk)
+        let dialect_str = self
+            .schema_repo
+            .get_dialect(input.database.as_str(), input.environment.as_str())
+            .unwrap_or(None);
+        let dialect = match dialect_str.as_deref() {
+            Some(d) if d == dbward_domain::services::status_constants::dialect::MYSQL => {
+                Dialect::MySql
+            }
+            _ => Dialect::PostgreSql,
+        };
 
         // 1. Determine operation: migration types are explicit, others classified from SQL
         let operation = match input.operation {
@@ -86,17 +101,8 @@ impl CreateRequest {
                 input.operation
             }
             _ => {
-                let classify_dialect = self
-                    .schema_repo
-                    .get_dialect(input.database.as_str(), input.environment.as_str())
-                    .unwrap_or(None)
-                    .map(|d| match d.as_str() {
-                        "mysql" => Dialect::MySql,
-                        _ => Dialect::PostgreSql,
-                    })
-                    .unwrap_or(Dialect::PostgreSql);
-                let classification = sql_classifier::classify(&input.detail, classify_dialect)
-                    .map_err(|e| match e {
+                let classification =
+                    sql_classifier::classify(&input.detail, dialect).map_err(|e| match e {
                         ClassifyError::Empty => AppError::Validation("empty query".into()),
                         ClassifyError::Rejected { reason } => AppError::Validation(reason),
                     })?;
@@ -107,14 +113,6 @@ impl CreateRequest {
         // 1a. SQL Review + Risk assessment (best-effort, never blocks request creation)
         let (risk_level, review_json, risk_json, parsed_stmts, tables_json, schema_collected_at) = {
             use dbward_domain::services::{risk_scorer, sql_parser, sql_reviewer, table_extractor};
-            let dialect_str = self
-                .schema_repo
-                .get_dialect(input.database.as_str(), input.environment.as_str())
-                .unwrap_or(None);
-            let dialect = match dialect_str.as_deref() {
-                Some("mysql") => Dialect::MySql,
-                _ => Dialect::PostgreSql,
-            };
             let parse_result = sql_parser::parse_statements(&input.detail, dialect);
             if let Ok(stmts) = parse_result {
                 let review =
@@ -165,7 +163,9 @@ impl CreateRequest {
                     .schema_repo
                     .get_snapshot(input.database.as_str(), input.environment.as_str())
                 {
-                    Ok(Some(s)) if s.status == "ready" => {
+                    Ok(Some(s))
+                        if s.status == dbward_domain::services::status_constants::schema::READY =>
+                    {
                         (risk_scorer::SchemaStatus::Ready, Some(s.collected_at))
                     }
                     Ok(Some(s)) => (risk_scorer::SchemaStatus::Failed, Some(s.collected_at)),
@@ -210,7 +210,23 @@ impl CreateRequest {
                                         .and_then(|r| r.as_i64())
                                         .unwrap_or(0),
                                     has_cascade_fk: has_cascade,
-                                    cascade_targets: vec![],
+                                    cascade_targets: t
+                                        .get("constraints")
+                                        .and_then(|c| c.as_array())
+                                        .map(|cs| {
+                                            cs.iter()
+                                                .filter(|c| {
+                                                    c.get("on_delete").and_then(|d| d.as_str())
+                                                        == Some("CASCADE")
+                                                })
+                                                .filter_map(|c| {
+                                                    c.get("referenced_table")
+                                                        .and_then(|t| t.as_str())
+                                                        .map(String::from)
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
                                 }
                             })
                             .collect()
@@ -526,7 +542,11 @@ impl CreateRequest {
         if !request.no_store {
             let now_str = now.to_rfc3339();
             let has_dry_run = matches!(operation, Operation::ExecuteSelect | Operation::ExecuteDml);
-            let ctx_status = if has_dry_run { "collecting" } else { "ready" };
+            let ctx_status = if has_dry_run {
+                dbward_domain::services::status_constants::context::COLLECTING
+            } else {
+                dbward_domain::services::status_constants::context::READY
+            };
             let ctx_record = RequestContextRecord {
                 request_id: id.clone(),
                 status: ctx_status.into(),
