@@ -1,4 +1,24 @@
 use crate::services::classification::{Classification, ClassifyError, Dialect, DmlReason};
+use sqlparser::ast::*;
+
+/// Check if a DDL statement is considered "safe" for auto-approve.
+pub fn is_safe_ddl_statement(stmt: &Statement, dialect: Option<Dialect>) -> bool {
+    match stmt {
+        Statement::CreateTable(ct) => !ct.or_replace && ct.query.is_none(),
+        Statement::CreateIndex(ci) => {
+            matches!(dialect, Some(Dialect::PostgreSql)) && ci.concurrently
+        }
+        Statement::CreateView(cv) => !cv.or_replace,
+        Statement::AlterTable(at) => {
+            matches!(dialect, Some(Dialect::PostgreSql))
+                && at
+                    .operations
+                    .iter()
+                    .all(|op| matches!(op, AlterTableOperation::AddColumn { .. }))
+        }
+        _ => false,
+    }
+}
 use crate::services::sql_parser::{self, ParseError};
 use crate::values::Operation;
 use sqlparser::ast::{Set, SetExpr, Statement};
@@ -42,13 +62,18 @@ pub fn classify_statements(statements: &[Statement]) -> Result<Classification, C
             dml_reason: None,
             statement_count: stmt_strings.len(),
             statements: stmt_strings,
+            is_ddl_only: false,
         }),
-        InternalClass::Dml(reason) => Ok(Classification {
-            operation: Operation::ExecuteDml,
-            dml_reason: Some(reason),
-            statement_count: stmt_strings.len(),
-            statements: stmt_strings,
-        }),
+        InternalClass::Dml(reason) => {
+            let is_ddl_only = matches!(reason, DmlReason::Ddl);
+            Ok(Classification {
+                operation: Operation::ExecuteDml,
+                dml_reason: Some(reason),
+                statement_count: stmt_strings.len(),
+                statements: stmt_strings,
+                is_ddl_only,
+            })
+        }
         InternalClass::Rejected(reason) => Err(ClassifyError::Rejected { reason }),
     }
 }
@@ -74,6 +99,7 @@ pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyE
                 dml_reason: Some(DmlReason::ParseFailure),
                 statement_count: 1,
                 statements: vec![trimmed.to_string()],
+                is_ddl_only: false,
             })
         }
     }
@@ -135,6 +161,8 @@ impl InternalClass {
         match (&self, &other) {
             (InternalClass::Rejected(_), _) => self,
             (_, InternalClass::Rejected(_)) => other,
+            (InternalClass::Dml(_), InternalClass::Dml(DmlReason::Ddl)) => self, // DML wins over DDL
+            (InternalClass::Dml(DmlReason::Ddl), InternalClass::Dml(_)) => other,
             (InternalClass::Dml(_), _) => self,
             (_, InternalClass::Dml(_)) => other,
             _ => self,
@@ -203,18 +231,20 @@ fn classify_statement(stmt: &Statement) -> InternalClass {
             InternalClass::Rejected("LOCK TABLE is not allowed".into())
         }
 
-        // === Rejected (DDL) ===
+        // === DDL (safe candidates — reviewed by sql_reviewer) ===
         Statement::CreateTable(_)
         | Statement::CreateView(_)
         | Statement::CreateIndex(_)
-        | Statement::CreateSchema { .. }
+        | Statement::AlterTable(_) => InternalClass::Dml(DmlReason::Ddl),
+
+        // === Rejected (DDL — infrastructure/permission/code execution) ===
+        Statement::CreateSchema { .. }
         | Statement::CreateDatabase { .. }
         | Statement::CreateFunction(_)
         | Statement::CreateProcedure { .. }
         | Statement::CreateSequence { .. }
         | Statement::CreateType { .. }
         | Statement::CreateRole(_)
-        | Statement::AlterTable(_)
         | Statement::AlterIndex { .. }
         | Statement::AlterView { .. }
         | Statement::AlterRole { .. }
@@ -222,7 +252,7 @@ fn classify_statement(stmt: &Statement) -> InternalClass {
         | Statement::Drop { .. }
         | Statement::Grant(_)
         | Statement::Revoke(_) => InternalClass::Rejected(
-            "DDL statements (CREATE, ALTER, DROP, GRANT, REVOKE) are not allowed. \
+            "DDL statements (DROP, GRANT, REVOKE, CREATE ROLE/FUNCTION/DATABASE) are not allowed. \
              Use 'dbward migrate create <name>' to generate a migration file, then 'dbward migrate up'."
                 .into(),
         ),
@@ -512,14 +542,16 @@ mod tests {
 
     #[test]
     fn rejects_create_table() {
-        let r = pg("CREATE TABLE t (id int)");
-        assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+        let c = pg("CREATE TABLE t (id int)").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteDml);
+        assert!(c.is_ddl_only);
     }
 
     #[test]
     fn rejects_alter_table() {
-        let r = pg("ALTER TABLE t ADD COLUMN x int");
-        assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+        let c = pg("ALTER TABLE t ADD COLUMN x int").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteDml);
+        assert!(c.is_ddl_only);
     }
 
     #[test]

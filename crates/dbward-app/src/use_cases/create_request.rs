@@ -161,6 +161,12 @@ impl CreateRequest {
                     _ => risk_scorer::SchemaStatus::NotSynced,
                 };
                 let allow_read_only = operation == Operation::ExecuteSelect;
+                let safe_ddl = self.auto_approve_config.allow_safe_ddl
+                    && stmts.len() == 1
+                    && stmts
+                        .iter()
+                        .all(|s| sql_classifier::is_safe_ddl_statement(s, Some(dialect)))
+                    && review.findings.is_empty();
                 let assessment = risk_scorer::evaluate(&risk_scorer::RiskInput {
                     operation,
                     findings: &review.findings,
@@ -169,6 +175,7 @@ impl CreateRequest {
                     statement_count: stmts.len(),
                     has_dml: matches!(operation, Operation::ExecuteDml),
                     allow_read_only,
+                    safe_ddl,
                     max_estimated_rows: 10_000,
                 });
                 let r_json = serde_json::json!({
@@ -728,7 +735,7 @@ mod tests {
     fn ddl_rejected_returns_validation() {
         let uc = make_uc(Arc::new(AllowAll));
         let mut input = make_input();
-        input.detail = "CREATE TABLE foo (id INT)".into();
+        input.detail = "GRANT ALL ON users TO admin".into();
         let err = uc
             .execute(
                 input,

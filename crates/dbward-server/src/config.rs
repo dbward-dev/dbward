@@ -404,6 +404,8 @@ pub struct AutoApproveServerConfig {
     pub max_risk_level: String,
     #[serde(default = "default_allow_read_only")]
     pub allow_read_only: bool,
+    #[serde(default = "default_allow_safe_ddl")]
+    pub allow_safe_ddl: bool,
     #[serde(default = "default_max_estimated_rows")]
     pub max_estimated_rows: u64,
 }
@@ -413,6 +415,10 @@ fn default_max_risk() -> String {
 }
 
 fn default_allow_read_only() -> bool {
+    true
+}
+
+fn default_allow_safe_ddl() -> bool {
     true
 }
 
@@ -426,6 +432,7 @@ impl Default for AutoApproveServerConfig {
             enabled: false,
             max_risk_level: default_max_risk(),
             allow_read_only: default_allow_read_only(),
+            allow_safe_ddl: default_allow_safe_ddl(),
             max_estimated_rows: default_max_estimated_rows(),
         }
     }
@@ -445,6 +452,7 @@ impl AutoApproveServerConfig {
         AutoApproveConfig {
             enabled: self.enabled,
             max_risk_level: max,
+            allow_safe_ddl: self.allow_safe_ddl,
         }
     }
 }

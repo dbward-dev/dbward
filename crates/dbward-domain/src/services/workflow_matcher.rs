@@ -38,6 +38,7 @@ pub use super::risk_scorer::RiskLevel;
 pub struct AutoApproveConfig {
     pub enabled: bool,
     pub max_risk_level: RiskLevel,
+    pub allow_safe_ddl: bool,
 }
 
 impl AutoApproveConfig {
@@ -45,6 +46,7 @@ impl AutoApproveConfig {
         Self {
             enabled: false,
             max_risk_level: RiskLevel::Low,
+            allow_safe_ddl: false,
         }
     }
 }

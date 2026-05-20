@@ -13,6 +13,7 @@ pub enum RiskLevel {
 #[derive(Debug, Clone)]
 pub enum RiskFactor {
     ReadOnly,
+    SafeDdl,
     CascadeDelete { targets: Vec<String> },
     LargeTable { rows: i64 },
     DropOperation,
@@ -42,6 +43,7 @@ pub struct RiskInput<'a> {
     pub statement_count: usize,
     pub has_dml: bool,
     pub allow_read_only: bool,
+    pub safe_ddl: bool,
     pub max_estimated_rows: i64,
 }
 
@@ -59,6 +61,14 @@ pub fn evaluate(input: &RiskInput) -> RiskAssessment {
         return RiskAssessment {
             level: RiskLevel::Low,
             factors: vec![RiskFactor::ReadOnly],
+        };
+    }
+
+    // Safe DDL → Low (schema status irrelevant for new object creation)
+    if input.safe_ddl {
+        return RiskAssessment {
+            level: RiskLevel::Low,
+            factors: vec![RiskFactor::SafeDdl],
         };
     }
 
@@ -149,6 +159,7 @@ mod tests {
             has_dml: false,
             allow_read_only: true,
             max_estimated_rows: 1000,
+            safe_ddl: false,
         });
         assert_eq!(r.level, RiskLevel::Low);
     }
@@ -164,6 +175,7 @@ mod tests {
             has_dml: false,
             allow_read_only: false,
             max_estimated_rows: 1000,
+            safe_ddl: false,
         });
         assert_eq!(r.level, RiskLevel::Unknown);
     }
@@ -179,6 +191,7 @@ mod tests {
             has_dml: true,
             allow_read_only: true,
             max_estimated_rows: 1000,
+            safe_ddl: false,
         });
         assert_eq!(r.level, RiskLevel::Unknown);
     }
@@ -199,6 +212,7 @@ mod tests {
             has_dml: true,
             allow_read_only: true,
             max_estimated_rows: 1000,
+            safe_ddl: false,
         });
         assert_eq!(r.level, RiskLevel::Low);
     }
@@ -219,6 +233,7 @@ mod tests {
             has_dml: true,
             allow_read_only: true,
             max_estimated_rows: 1000,
+            safe_ddl: false,
         });
         assert_eq!(r.level, RiskLevel::High);
     }
@@ -240,6 +255,7 @@ mod tests {
             has_dml: true,
             allow_read_only: true,
             max_estimated_rows: 1000,
+            safe_ddl: false,
         });
         assert_eq!(r.level, RiskLevel::High);
     }
@@ -255,6 +271,7 @@ mod tests {
             has_dml: true,
             allow_read_only: true,
             max_estimated_rows: 1000,
+            safe_ddl: false,
         });
         assert_eq!(r.level, RiskLevel::High);
     }
@@ -278,6 +295,7 @@ mod tests {
             has_dml: true,
             allow_read_only: true,
             max_estimated_rows: 1000,
+            safe_ddl: false,
         });
         assert_eq!(r.level, RiskLevel::High);
     }
@@ -298,6 +316,7 @@ mod tests {
             has_dml: true,
             allow_read_only: true,
             max_estimated_rows: 1000,
+            safe_ddl: false,
         });
         assert_eq!(r.level, RiskLevel::Medium);
     }
