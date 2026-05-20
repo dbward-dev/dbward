@@ -268,7 +268,7 @@ pub async fn get(
                     _ => break,
                 }
             }
-            // Re-fetch with authorization and redaction
+            // Re-fetch with authorization
             uc.execute(&id, &user).map_err(map_error)?
         } else {
             output

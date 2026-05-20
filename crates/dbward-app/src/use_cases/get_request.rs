@@ -58,11 +58,7 @@ impl GetRequest {
             false
         };
 
-        let detail = if is_approver_view && user.subject_id != req.requester {
-            "[redacted - approve to view]".to_string()
-        } else {
-            req.detail.clone()
-        };
+        let detail = req.detail.clone();
 
         // Build approval progress from workflow snapshot + approvals
         let approval_progress = req
@@ -76,11 +72,7 @@ impl GetRequest {
                     .map(|approvals| build_progress(&wf.steps, &approvals))
             });
 
-        let context = if !is_approver_view {
-            self.context_repo.get(&req.id).unwrap_or(None)
-        } else {
-            None
-        };
+        let context = self.context_repo.get(&req.id).unwrap_or(None);
 
         Ok(GetRequestOutput {
             request: req,
@@ -313,7 +305,8 @@ mod tests {
         };
         let out = uc.execute("req-1", &test_user("u2")).unwrap();
         assert!(out.is_approver_view);
-        assert_eq!(out.detail, "[redacted - approve to view]");
+        // Approvers can see SQL detail (needed for informed approval decisions)
+        assert_eq!(out.detail, "SELECT 1");
     }
 
     #[test]
