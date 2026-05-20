@@ -453,6 +453,8 @@ impl AutoApproveServerConfig {
             enabled: self.enabled,
             max_risk_level: max,
             allow_safe_ddl: self.allow_safe_ddl,
+            allow_read_only: self.allow_read_only,
+            max_estimated_rows: self.max_estimated_rows,
         }
     }
 }

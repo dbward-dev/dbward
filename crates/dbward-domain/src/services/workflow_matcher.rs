@@ -39,6 +39,8 @@ pub struct AutoApproveConfig {
     pub enabled: bool,
     pub max_risk_level: RiskLevel,
     pub allow_safe_ddl: bool,
+    pub allow_read_only: bool,
+    pub max_estimated_rows: u64,
 }
 
 impl AutoApproveConfig {
@@ -47,6 +49,8 @@ impl AutoApproveConfig {
             enabled: false,
             max_risk_level: RiskLevel::Low,
             allow_safe_ddl: false,
+            allow_read_only: true,
+            max_estimated_rows: 1000,
         }
     }
 }

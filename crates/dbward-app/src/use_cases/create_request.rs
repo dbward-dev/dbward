@@ -160,23 +160,61 @@ impl CreateRequest {
                     Ok(Some(_)) => risk_scorer::SchemaStatus::Failed,
                     _ => risk_scorer::SchemaStatus::NotSynced,
                 };
-                let allow_read_only = operation == Operation::ExecuteSelect;
+                let allow_read_only = operation == Operation::ExecuteSelect
+                    && self.auto_approve_config.allow_read_only;
                 let safe_ddl = self.auto_approve_config.allow_safe_ddl
                     && stmts.len() == 1
                     && stmts
                         .iter()
                         .all(|s| sql_classifier::is_safe_ddl_statement(s, Some(dialect)))
                     && review.findings.is_empty();
+                let table_risk_info: Vec<risk_scorer::TableRiskInfo> = self
+                    .schema_repo
+                    .get_tables_for(input.database.as_str(), input.environment.as_str(), &tables)
+                    .unwrap_or(None)
+                    .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(&json).ok())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|t| {
+                                let has_cascade = t
+                                    .get("constraints")
+                                    .and_then(|c| c.as_array())
+                                    .map(|cs| {
+                                        cs.iter().any(|c| {
+                                            c.get("on_delete")
+                                                .and_then(|d| d.as_str())
+                                                .map(|d| d == "CASCADE")
+                                                .unwrap_or(false)
+                                        })
+                                    })
+                                    .unwrap_or(false);
+                                risk_scorer::TableRiskInfo {
+                                    name: t
+                                        .get("name")
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    estimated_rows: t
+                                        .get("estimated_rows")
+                                        .and_then(|r| r.as_i64())
+                                        .unwrap_or(0),
+                                    has_cascade_fk: has_cascade,
+                                    cascade_targets: vec![],
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 let assessment = risk_scorer::evaluate(&risk_scorer::RiskInput {
                     operation,
                     findings: &review.findings,
                     schema_status,
-                    tables: &[],
+                    tables: &table_risk_info,
                     statement_count: stmts.len(),
                     has_dml: matches!(operation, Operation::ExecuteDml),
                     allow_read_only,
                     safe_ddl,
-                    max_estimated_rows: 10_000,
+                    max_estimated_rows: self.auto_approve_config.max_estimated_rows as i64,
                 });
                 let r_json = serde_json::json!({
                     "level": format!("{:?}", assessment.level),

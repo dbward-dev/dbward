@@ -907,4 +907,65 @@ mod tests {
         assert_eq!(c.operation, Operation::ExecuteDml);
         assert_eq!(c.dml_reason, Some(DmlReason::DangerousFunction));
     }
+
+    #[test]
+    fn is_safe_ddl_create_table() {
+        let stmts = sql_parser::parse_statements(
+            "CREATE TABLE t (id INT PRIMARY KEY)",
+            Dialect::PostgreSql,
+        )
+        .unwrap();
+        assert!(is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
+    }
+
+    #[test]
+    fn is_safe_ddl_create_table_or_replace_not_safe() {
+        let stmts =
+            sql_parser::parse_statements("CREATE OR REPLACE TABLE t (id INT)", Dialect::PostgreSql);
+        // May not parse on PG; if it does, it should not be safe
+        if let Ok(stmts) = stmts {
+            assert!(!is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
+        }
+    }
+
+    #[test]
+    fn is_safe_ddl_create_index_concurrently() {
+        let stmts = sql_parser::parse_statements(
+            "CREATE INDEX CONCURRENTLY idx ON t(col)",
+            Dialect::PostgreSql,
+        )
+        .unwrap();
+        assert!(is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
+    }
+
+    #[test]
+    fn is_safe_ddl_create_index_without_concurrently_not_safe() {
+        let stmts = sql_parser::parse_statements("CREATE INDEX idx ON t(col)", Dialect::PostgreSql)
+            .unwrap();
+        assert!(!is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
+    }
+
+    #[test]
+    fn is_safe_ddl_mysql_create_index_not_safe() {
+        let stmts =
+            sql_parser::parse_statements("CREATE INDEX idx ON t(col)", Dialect::MySql).unwrap();
+        assert!(!is_safe_ddl_statement(&stmts[0], Some(Dialect::MySql)));
+    }
+
+    #[test]
+    fn is_safe_ddl_alter_table_add_column_pg() {
+        let stmts =
+            sql_parser::parse_statements("ALTER TABLE t ADD COLUMN name TEXT", Dialect::PostgreSql)
+                .unwrap();
+        assert!(is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
+    }
+
+    #[test]
+    fn is_safe_ddl_drop_table_not_safe() {
+        let stmts = sql_parser::parse_statements("DROP TABLE t", Dialect::PostgreSql);
+        // DROP is rejected by classifier, but if it reaches here
+        if let Ok(stmts) = stmts {
+            assert!(!is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
+        }
+    }
 }
