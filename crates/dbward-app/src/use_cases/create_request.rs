@@ -28,7 +28,7 @@ pub struct CreateRequest {
     pub id_gen: Arc<dyn IdGenerator>,
     pub default_approval_ttl_secs: Option<u64>,
     pub review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
-    pub auto_approve_config: workflow_matcher::AutoApproveConfig,
+    pub auto_approve_entries: Vec<workflow_matcher::AutoApproveEntry>,
 }
 
 const MAX_QUERY_BYTES: usize = 100_000;
@@ -171,9 +171,14 @@ impl CreateRequest {
                     Ok(Some(s)) => (risk_scorer::SchemaStatus::Failed, Some(s.collected_at)),
                     _ => (risk_scorer::SchemaStatus::NotSynced, None),
                 };
+                let auto_entry = workflow_matcher::find_auto_approve(
+                    &self.auto_approve_entries,
+                    &input.database,
+                    &input.environment,
+                );
                 let allow_read_only = operation == Operation::ExecuteSelect
-                    && self.auto_approve_config.allow_read_only;
-                let safe_ddl = self.auto_approve_config.allow_safe_ddl
+                    && auto_entry.map(|e| e.allow_read_only).unwrap_or(true);
+                let safe_ddl = auto_entry.map(|e| e.allow_safe_ddl).unwrap_or(true)
                     && stmts.len() == 1
                     && stmts
                         .iter()
@@ -241,7 +246,7 @@ impl CreateRequest {
                     has_dml: matches!(operation, Operation::ExecuteDml),
                     allow_read_only,
                     safe_ddl,
-                    max_estimated_rows: self.auto_approve_config.max_estimated_rows as i64,
+                    max_estimated_rows: auto_entry.map(|e| e.max_estimated_rows as i64).unwrap_or(1000),
                 });
                 let r_json = serde_json::json!({
                     "level": format!("{:?}", assessment.level),
@@ -352,7 +357,6 @@ impl CreateRequest {
         let workflow =
             self.policy
                 .evaluate_workflow(&input.database, &input.environment, operation)?;
-        let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
         // Fail-closed: no workflow configured = reject (unless break-glass)
         let decision = if workflow.is_none() {
             if input.emergency {
@@ -366,15 +370,12 @@ impl CreateRequest {
                 )));
             }
         } else {
-            workflow_matcher::evaluate(
-                workflow.as_ref(),
-                &role_names,
-                &user.groups,
-                &user.subject_id,
-                true,
-                risk_level,
-                &self.auto_approve_config,
-            )
+            let auto_approve_entry = workflow_matcher::find_auto_approve(
+                &self.auto_approve_entries,
+                &input.database,
+                &input.environment,
+            );
+            workflow_matcher::evaluate(workflow.as_ref(), risk_level, auto_approve_entry)
         };
 
         // 5. Determine initial status
@@ -609,8 +610,7 @@ mod tests {
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
             review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-            auto_approve_config:
-                dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(),
+            auto_approve_entries: vec![],
         }
     }
 
@@ -751,11 +751,9 @@ mod tests {
                 environment: Environment::wildcard(),
                 operations: vec![],
                 steps: vec![],
-                skip_approval_for: vec![],
                 require_reason: true,
                 allow_self_approve: false,
                 allow_same_approver_across_steps: false,
-                require_approval: false,
                 pending_ttl_secs: None,
                 statement_timeout_secs: None,
                 approval_ttl_secs: None,
@@ -834,8 +832,7 @@ mod tests {
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
             review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-            auto_approve_config:
-                dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(),
+            auto_approve_entries: vec![],
         };
         let err = uc
             .execute(
@@ -866,8 +863,7 @@ mod tests {
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
             review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-            auto_approve_config:
-                dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(),
+            auto_approve_entries: vec![],
         };
         let mut input = make_input();
         input.reason = None;

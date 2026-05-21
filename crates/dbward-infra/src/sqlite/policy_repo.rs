@@ -27,25 +27,21 @@ impl PolicyRepo for SqlitePolicyRepo {
             serde_json::to_string(&wf.operations).map_err(|e| AppError::Internal(e.to_string()))?;
         let steps_json =
             serde_json::to_string(&wf.steps).map_err(|e| AppError::Internal(e.to_string()))?;
-        let skip_json = serde_json::to_string(&wf.skip_approval_for)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
         conn.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs, require_approval)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 wf.id,
                 wf.database.as_str(),
                 wf.environment.as_str(),
                 operations_json,
                 steps_json,
-                skip_json,
                 wf.require_reason,
                 wf.allow_self_approve,
                 wf.allow_same_approver_across_steps,
                 wf.pending_ttl_secs.map(|v| v as i64),
                 wf.approval_ttl_secs.map(|v| v as i64),
                 wf.statement_timeout_secs.map(|v| v as i64),
-                wf.require_approval,
             ],
         ).map_err(|e| {
             if e.to_string().contains("UNIQUE constraint failed") {
@@ -60,7 +56,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn get_workflow(&self, id: &str) -> Result<Option<Workflow>, AppError> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs
+            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs
              FROM workflows WHERE id = ?1",
             params![id],
             row_to_workflow,
@@ -73,7 +69,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn list_workflows(&self) -> Result<Vec<Workflow>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs, require_approval FROM workflows",
+            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
         let rows = stmt
             .query_map([], row_to_workflow)
@@ -660,7 +656,7 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
         let workflows = {
             let conn = self.conn.lock().unwrap();
             let mut stmt = conn.prepare(
-                "SELECT id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs, require_approval FROM workflows",
+                "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows",
             ).map_err(|e| AppError::Internal(e.to_string()))?;
             let rows = stmt
                 .query_map([], row_to_workflow)
@@ -749,14 +745,12 @@ fn row_to_workflow(row: &rusqlite::Row) -> rusqlite::Result<Result<Workflow, App
     let env_str: String = row.get(2)?;
     let ops_json: String = row.get(3)?;
     let steps_json: String = row.get(4)?;
-    let skip_json: String = row.get(5)?;
-    let require_reason: bool = row.get(6)?;
-    let allow_self_approve: bool = row.get(7)?;
-    let allow_same: bool = row.get(8)?;
-    let pending_ttl: Option<i64> = row.get(9)?;
-    let approval_ttl: Option<i64> = row.get(10)?;
-    let stmt_timeout: Option<i64> = row.get(11)?;
-    let require_approval: bool = row.get::<_, bool>(12).unwrap_or(false);
+    let require_reason: bool = row.get(5)?;
+    let allow_self_approve: bool = row.get(6)?;
+    let allow_same: bool = row.get(7)?;
+    let pending_ttl: Option<i64> = row.get(8)?;
+    let approval_ttl: Option<i64> = row.get(9)?;
+    let stmt_timeout: Option<i64> = row.get(10)?;
 
     Ok((|| {
         let database = DatabaseName::new(db_str).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -766,19 +760,15 @@ fn row_to_workflow(row: &rusqlite::Row) -> rusqlite::Result<Result<Workflow, App
             serde_json::from_str(&ops_json).map_err(|e| AppError::Internal(e.to_string()))?;
         let steps =
             serde_json::from_str(&steps_json).map_err(|e| AppError::Internal(e.to_string()))?;
-        let skip_approval_for =
-            serde_json::from_str(&skip_json).map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(Workflow {
             id,
             database,
             environment,
             operations,
             steps,
-            skip_approval_for,
             require_reason,
             allow_self_approve,
             allow_same_approver_across_steps: allow_same,
-            require_approval,
             pending_ttl_secs: pending_ttl.map(|v| v as u64),
             statement_timeout_secs: stmt_timeout.map(|v| v as u64),
             approval_ttl_secs: approval_ttl.map(|v| v as u64),

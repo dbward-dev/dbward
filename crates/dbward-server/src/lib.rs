@@ -295,8 +295,16 @@ pub async fn run_from_args(
         max_persist_bytes: cfg.result_storage.max_persist_bytes,
         auth_mode: cfg.auth.mode.clone(),
         storage_backend: cfg.result_storage.backend.clone(),
-        sql_review_rules: cfg.sql_review.to_review_rules(),
-        auto_approve_config: cfg.auto_approve.to_auto_approve_config(),
+        sql_review_rules: cfg.sql_review.to_review_rules().map_err(|e| format!("config: {e}"))?,
+        auto_approve_entries: {
+            let mut entries = Vec::new();
+            for (i, a) in cfg.auto_approve.iter().enumerate() {
+                entries.push(a.to_entry().map_err(|e| {
+                    format!("auto_approve[{i}]: {e}")
+                })?);
+            }
+            entries
+        },
         draining: draining.clone(),
     };
 
@@ -451,11 +459,9 @@ fn sync_workflows(
                     WorkflowStepInput { mode, approvers }
                 })
                 .collect(),
-            skip_approval_for: wf.skip_approval_for.clone(),
             require_reason: wf.require_reason,
             allow_self_approve: wf.allow_self_approve,
             allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
-            require_approval: wf.require_approval,
             pending_ttl_secs: wf.pending_ttl_secs,
             statement_timeout_secs: wf.statement_timeout_secs,
         })

@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 8;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -80,6 +80,12 @@ CREATE TABLE IF NOT EXISTS request_context (
 );
 ";
 
+const MIGRATION_V8: &str = "
+-- Remove skip_approval_for_json and require_approval from workflows (breaking simplification)
+ALTER TABLE workflows DROP COLUMN skip_approval_for_json;
+ALTER TABLE workflows DROP COLUMN require_approval;
+";
+
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
@@ -116,6 +122,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(MIGRATION_V5)?;
         conn.execute_batch(MIGRATION_V6)?;
         conn.execute_batch(MIGRATION_V7)?;
+        conn.execute_batch(MIGRATION_V8)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -135,6 +142,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 7 {
             conn.execute_batch(MIGRATION_V7)?;
+        }
+        if current < 8 {
+            conn.execute_batch(MIGRATION_V8)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
