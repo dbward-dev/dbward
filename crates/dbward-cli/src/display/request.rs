@@ -224,12 +224,11 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
                         println!("  Explain:     (no plan available)");
                     } else {
                         for (i, entry) in arr.iter().enumerate() {
-                            let plan = entry["plan"].as_str().unwrap_or("?");
-                            let preview: String = plan.chars().take(80).collect();
+                            let summary = summarize_explain_entry(entry);
                             if i == 0 {
-                                println!("  Explain:     {preview}");
+                                println!("  Explain:     {summary}");
                             } else {
-                                println!("               {preview}");
+                                println!("               {summary}");
                             }
                         }
                     }
@@ -316,4 +315,37 @@ pub(crate) fn print_approve_result(body: &serde_json::Value, id: &str) {
     } else {
         println!("Waiting for further approvals.");
     }
+}
+
+/// Extract a one-line summary from an explain entry's JSON plan.
+/// Format: "NodeType on Table (rows=N, cost=X)"
+fn summarize_explain_entry(entry: &serde_json::Value) -> String {
+    // plan can be a string (text format) or array (JSON format from EXPLAIN JSON)
+    if let Some(plan_str) = entry["plan"].as_str() {
+        let preview: String = plan_str.chars().take(80).collect();
+        return preview;
+    }
+    // JSON format: plan is an array of plan objects
+    if let Some(first) = entry["plan"].as_array().and_then(|a| a.first()) {
+        let plan_node = &first["Plan"];
+        if !plan_node.is_null() {
+            let node_type = plan_node["Node Type"].as_str().unwrap_or("?");
+            let relation = plan_node["Relation Name"].as_str().unwrap_or("");
+            let rows = plan_node["Plan Rows"].as_u64()
+                .or_else(|| plan_node["Plans"].as_array()
+                    .and_then(|p| p.first())
+                    .and_then(|p| p["Plan Rows"].as_u64()))
+                .unwrap_or(0);
+            let cost = plan_node["Total Cost"].as_f64().unwrap_or(0.0);
+            let child_node = plan_node["Plans"].as_array()
+                .and_then(|p| p.first())
+                .map(|p| p["Node Type"].as_str().unwrap_or(""))
+                .unwrap_or("");
+
+            let on_part = if relation.is_empty() { String::new() } else { format!(" on {relation}") };
+            let via_part = if child_node.is_empty() { String::new() } else { format!(" via {child_node}") };
+            return format!("{node_type}{on_part}{via_part} (rows={rows}, cost={cost:.0})");
+        }
+    }
+    "(plan format unknown)".to_string()
 }
