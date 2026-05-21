@@ -276,13 +276,19 @@ impl ServerConfig {
 
         // Validate workflow operations overlap within same (db, env) scope
         use std::collections::{HashMap, HashSet};
-        type ScopeEntries<'a> = Vec<(usize, &'a [String])>;
-        let mut scope_ops: HashMap<(&str, &str), ScopeEntries<'_>> = HashMap::new();
+        type ScopeEntries = Vec<(usize, Vec<String>)>;
+        let mut scope_ops: HashMap<(&str, &str), ScopeEntries> = HashMap::new();
         for (i, wf) in self.workflows.iter().enumerate() {
+            // Parse to canonical operation names for overlap detection
+            let canonical: Vec<String> = wf.operations.iter().map(|op| {
+                op.parse::<dbward_domain::values::Operation>()
+                    .map(|o| format!("{o:?}"))
+                    .unwrap_or_else(|_| op.clone())
+            }).collect();
             scope_ops
                 .entry((wf.database.as_str(), wf.environment.as_str()))
                 .or_default()
-                .push((i, &wf.operations));
+                .push((i, canonical));
         }
         for ((db, env), entries) in &scope_ops {
             let has_catchall = entries.iter().any(|(_, ops)| ops.is_empty());
@@ -291,10 +297,10 @@ impl ServerConfig {
                     "workflow validation: database={db}, environment={env} has both catchall (operations omitted) and specific operations workflows — ambiguous"
                 ));
             }
-            // Check operations overlap
+            // Check operations overlap using canonical names
             let mut seen: HashSet<&str> = HashSet::new();
             for (idx, ops) in entries {
-                for op in *ops {
+                for op in ops {
                     if !seen.insert(op.as_str()) {
                         return Err(format!(
                             "workflow validation: operation '{op}' appears in multiple workflows for database={db}, environment={env} (workflow index {idx})"
