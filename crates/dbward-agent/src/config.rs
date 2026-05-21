@@ -17,8 +17,28 @@ pub struct AgentConfig {
     pub startup_retry_initial_ms: Option<u64>,
     pub startup_retry_max_ms: Option<u64>,
     pub startup_max_wait_secs: Option<u64>,
+    #[serde(default)]
+    pub schema_sync: SchemaSyncConfig,
     pub server: ServerConfig,
     pub databases: HashMap<String, HashMap<String, DatabaseEntry>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SchemaSyncConfig {
+    pub enabled: bool,
+    pub sync_on_startup: bool,
+    pub interval_secs: u64,
+}
+
+impl Default for SchemaSyncConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sync_on_startup: true,
+            interval_secs: 0,
+        }
+    }
 }
 
 #[derive(Clone, Deserialize)]

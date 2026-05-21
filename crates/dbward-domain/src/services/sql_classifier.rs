@@ -1,11 +1,109 @@
 use crate::services::classification::{Classification, ClassifyError, Dialect, DmlReason};
+use sqlparser::ast::*;
+
+/// Check if a DDL statement is considered "safe" for auto-approve.
+pub fn is_safe_ddl_statement(stmt: &Statement, dialect: Option<Dialect>) -> bool {
+    match stmt {
+        Statement::CreateTable(ct) => !ct.or_replace && ct.query.is_none(),
+        Statement::CreateIndex(ci) => {
+            matches!(dialect, Some(Dialect::PostgreSql)) && ci.concurrently
+        }
+        Statement::CreateView(cv) => !cv.or_replace,
+        Statement::AlterTable(at) => {
+            matches!(dialect, Some(Dialect::PostgreSql))
+                && at
+                    .operations
+                    .iter()
+                    .all(|op| matches!(op, AlterTableOperation::AddColumn { .. }))
+        }
+        _ => false,
+    }
+}
+use crate::services::sql_parser::{self, ParseError};
 use crate::values::Operation;
 use sqlparser::ast::{Set, SetExpr, Statement};
-use sqlparser::dialect::{MySqlDialect, PostgreSqlDialect};
-use sqlparser::parser::Parser;
 
-const MAX_SQL_BYTES: usize = 1_048_576;
-const MAX_STATEMENTS: usize = 100;
+/// Classify SQL using pre-parsed statements.
+pub fn classify_statements(statements: &[Statement]) -> Result<Classification, ClassifyError> {
+    let stmt_strings: Vec<String> = statements.iter().map(|s| s.to_string()).collect();
+
+    let mut worst = InternalClass::Select;
+    for stmt in statements {
+        let c = classify_statement(stmt);
+        worst = worst.escalate(c);
+    }
+
+    // For multi-statement ExecuteSelect, enforce exactly one result-producing
+    if matches!(worst, InternalClass::Select) && statements.len() > 1 {
+        let mut found_result_producing = false;
+        for stmt in statements {
+            if is_result_producing(stmt) {
+                if found_result_producing {
+                    return Err(ClassifyError::Rejected {
+                        reason: "multi-statement queries with multiple result sets are not \
+                                 supported; submit each query separately"
+                            .into(),
+                    });
+                }
+                found_result_producing = true;
+            } else if found_result_producing {
+                return Err(ClassifyError::Rejected {
+                    reason: "in a multi-statement batch, only SET statements are allowed \
+                             before the query; no statements may follow it"
+                        .into(),
+                });
+            }
+        }
+    }
+
+    match worst {
+        InternalClass::Select => Ok(Classification {
+            operation: Operation::ExecuteSelect,
+            dml_reason: None,
+            statement_count: stmt_strings.len(),
+            statements: stmt_strings,
+            is_ddl_only: false,
+        }),
+        InternalClass::Dml(reason) => {
+            let is_ddl_only = matches!(reason, DmlReason::Ddl);
+            Ok(Classification {
+                operation: Operation::ExecuteDml,
+                dml_reason: Some(reason),
+                statement_count: stmt_strings.len(),
+                statements: stmt_strings,
+                is_ddl_only,
+            })
+        }
+        InternalClass::Rejected(reason) => Err(ClassifyError::Rejected { reason }),
+    }
+}
+
+pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyError> {
+    match sql_parser::parse_statements(sql, dialect) {
+        Ok(statements) => classify_statements(&statements),
+        Err(ParseError::Empty) => Err(ClassifyError::Empty),
+        Err(ParseError::NullBytes) => Err(ClassifyError::Rejected {
+            reason: "query contains null bytes".into(),
+        }),
+        Err(ParseError::TooLarge) => Err(ClassifyError::Rejected {
+            reason: format!("query exceeds maximum size of {} bytes", 1_048_576),
+        }),
+        Err(ParseError::TooManyStatements) => Err(ClassifyError::Rejected {
+            reason: format!("query exceeds maximum of {} statements", 100),
+        }),
+        Err(ParseError::Rejected { reason }) => Err(ClassifyError::Rejected { reason }),
+        Err(ParseError::ParseFailed) => {
+            let trimmed = sql.trim();
+            Ok(Classification {
+                operation: Operation::ExecuteDml,
+                dml_reason: Some(DmlReason::ParseFailure),
+                statement_count: 1,
+                statements: vec![trimmed.to_string()],
+                is_ddl_only: false,
+            })
+        }
+    }
+}
 
 /// Dangerous functions that can cause side effects when called inside SELECT.
 const DANGEROUS_FUNCTIONS: &[&str] = &[
@@ -51,172 +149,6 @@ const SAFE_SET_VARIABLES: &[&str] = &[
     "wait_timeout",
 ];
 
-/// Check if the first significant keyword (skipping comments and whitespace) matches `target`.
-fn first_keyword_is(sql: &str, target: &str) -> bool {
-    let bytes = sql.as_bytes();
-    let len = bytes.len();
-    let mut i = 0;
-    while i < len {
-        let b = bytes[i];
-        if b.is_ascii_whitespace() {
-            i += 1;
-            continue;
-        }
-        // Skip line comment (-- or #)
-        if (b == b'-' && i + 1 < len && bytes[i + 1] == b'-') || b == b'#' {
-            i += 1;
-            while i < len && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        // Skip block comment
-        if b == b'/' && i + 1 < len && bytes[i + 1] == b'*' {
-            i += 2;
-            while i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                i += 1;
-            }
-            i += 2; // skip */
-            continue;
-        }
-        // Extract first word
-        let start = i;
-        while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-            i += 1;
-        }
-        return sql[start..i].eq_ignore_ascii_case(target);
-    }
-    false
-}
-
-/// Check if SQL contains a DO keyword that likely starts a statement (for parse-failure path).
-fn contains_opaque_keyword(sql: &str) -> bool {
-    for part in sql.split(';') {
-        if first_keyword_is(part, "DO") {
-            return true;
-        }
-    }
-    false
-}
-
-pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyError> {
-    if sql.contains('\0') {
-        return Err(ClassifyError::Rejected {
-            reason: "query contains null bytes".into(),
-        });
-    }
-
-    let trimmed = sql.trim();
-    if trimmed.is_empty() {
-        return Err(ClassifyError::Empty);
-    }
-
-    if trimmed.len() > MAX_SQL_BYTES {
-        return Err(ClassifyError::Rejected {
-            reason: format!("query exceeds maximum size of {MAX_SQL_BYTES} bytes"),
-        });
-    }
-
-    // Pre-parse: reject statements whose body is opaque to sqlparser
-    if first_keyword_is(trimmed, "DO") {
-        return Err(ClassifyError::Rejected {
-            reason: "DO statements are not allowed; body content cannot be inspected".into(),
-        });
-    }
-    if first_keyword_is(trimmed, "LOAD") {
-        return Err(ClassifyError::Rejected {
-            reason: "LOAD DATA is not allowed".into(),
-        });
-    }
-
-    // Parse directly — MAX_SQL_BYTES (1MB) limit above prevents pathological inputs
-    let statements = {
-        let d: &dyn sqlparser::dialect::Dialect = match dialect {
-            Dialect::PostgreSql => &PostgreSqlDialect {},
-            Dialect::MySql => &MySqlDialect {},
-        };
-        match Parser::parse_sql(d, trimmed) {
-            Ok(stmts) => stmts,
-            Err(_) => {
-                // Parse failure with opaque statements → reject outright
-                if contains_opaque_keyword(trimmed) {
-                    return Err(ClassifyError::Rejected {
-                        reason: "DO statements are not allowed; body content cannot be inspected"
-                            .into(),
-                    });
-                }
-                // Parse failure → fail-closed: treat as DML (requires approval)
-                return Ok(Classification {
-                    operation: Operation::ExecuteDml,
-                    dml_reason: Some(DmlReason::ParseFailure),
-                    statement_count: 1,
-                    statements: vec![trimmed.to_string()],
-                });
-            }
-        }
-    };
-
-    if statements.is_empty() {
-        return Err(ClassifyError::Empty);
-    }
-
-    if statements.len() > MAX_STATEMENTS {
-        return Err(ClassifyError::Rejected {
-            reason: format!("query exceeds maximum of {MAX_STATEMENTS} statements"),
-        });
-    }
-
-    let stmt_strings: Vec<String> = statements.iter().map(|s| s.to_string()).collect();
-
-    // Classify each statement, escalating to the most restrictive
-    let mut worst = InternalClass::Select;
-    for stmt in &statements {
-        let c = classify_statement(stmt);
-        worst = worst.escalate(c);
-    }
-
-    // For multi-statement ExecuteSelect, enforce exactly one result-producing
-    // statement with only allowed SET preludes before it.
-    if matches!(worst, InternalClass::Select) && statements.len() > 1 {
-        let mut found_result_producing = false;
-        for stmt in &statements {
-            if is_result_producing(stmt) {
-                if found_result_producing {
-                    return Err(ClassifyError::Rejected {
-                        reason: "multi-statement queries with multiple result sets are not \
-                                 supported; submit each query separately"
-                            .into(),
-                    });
-                }
-                found_result_producing = true;
-            } else if found_result_producing {
-                // Non-result statement after the result-producing one
-                return Err(ClassifyError::Rejected {
-                    reason: "in a multi-statement batch, only SET statements are allowed \
-                             before the query; no statements may follow it"
-                        .into(),
-                });
-            }
-        }
-    }
-
-    match worst {
-        InternalClass::Select => Ok(Classification {
-            operation: Operation::ExecuteSelect,
-            dml_reason: None,
-            statement_count: stmt_strings.len(),
-            statements: stmt_strings,
-        }),
-        InternalClass::Dml(reason) => Ok(Classification {
-            operation: Operation::ExecuteDml,
-            dml_reason: Some(reason),
-            statement_count: stmt_strings.len(),
-            statements: stmt_strings,
-        }),
-        InternalClass::Rejected(reason) => Err(ClassifyError::Rejected { reason }),
-    }
-}
-
 #[derive(Debug)]
 enum InternalClass {
     Select,
@@ -229,6 +161,8 @@ impl InternalClass {
         match (&self, &other) {
             (InternalClass::Rejected(_), _) => self,
             (_, InternalClass::Rejected(_)) => other,
+            (InternalClass::Dml(_), InternalClass::Dml(DmlReason::Ddl)) => self, // DML wins over DDL
+            (InternalClass::Dml(DmlReason::Ddl), InternalClass::Dml(_)) => other,
             (InternalClass::Dml(_), _) => self,
             (_, InternalClass::Dml(_)) => other,
             _ => self,
@@ -297,18 +231,20 @@ fn classify_statement(stmt: &Statement) -> InternalClass {
             InternalClass::Rejected("LOCK TABLE is not allowed".into())
         }
 
-        // === Rejected (DDL) ===
+        // === DDL (safe candidates — reviewed by sql_reviewer) ===
         Statement::CreateTable(_)
         | Statement::CreateView(_)
         | Statement::CreateIndex(_)
-        | Statement::CreateSchema { .. }
+        | Statement::AlterTable(_) => InternalClass::Dml(DmlReason::Ddl),
+
+        // === Rejected (DDL — infrastructure/permission/code execution) ===
+        Statement::CreateSchema { .. }
         | Statement::CreateDatabase { .. }
         | Statement::CreateFunction(_)
         | Statement::CreateProcedure { .. }
         | Statement::CreateSequence { .. }
         | Statement::CreateType { .. }
         | Statement::CreateRole(_)
-        | Statement::AlterTable(_)
         | Statement::AlterIndex { .. }
         | Statement::AlterView { .. }
         | Statement::AlterRole { .. }
@@ -316,7 +252,7 @@ fn classify_statement(stmt: &Statement) -> InternalClass {
         | Statement::Drop { .. }
         | Statement::Grant(_)
         | Statement::Revoke(_) => InternalClass::Rejected(
-            "DDL statements (CREATE, ALTER, DROP, GRANT, REVOKE) are not allowed. \
+            "DDL statements (DROP, GRANT, REVOKE, CREATE ROLE/FUNCTION/DATABASE) are not allowed. \
              Use 'dbward migrate create <name>' to generate a migration file, then 'dbward migrate up'."
                 .into(),
         ),
@@ -501,6 +437,7 @@ fn classify_set(set: &Set) -> InternalClass {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::sql_parser::{MAX_SQL_BYTES, MAX_STATEMENTS};
 
     fn pg(sql: &str) -> Result<Classification, ClassifyError> {
         classify(sql, Dialect::PostgreSql)
@@ -605,14 +542,16 @@ mod tests {
 
     #[test]
     fn rejects_create_table() {
-        let r = pg("CREATE TABLE t (id int)");
-        assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+        let c = pg("CREATE TABLE t (id int)").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteDml);
+        assert!(c.is_ddl_only);
     }
 
     #[test]
     fn rejects_alter_table() {
-        let r = pg("ALTER TABLE t ADD COLUMN x int");
-        assert!(matches!(r, Err(ClassifyError::Rejected { .. })));
+        let c = pg("ALTER TABLE t ADD COLUMN x int").unwrap();
+        assert_eq!(c.operation, Operation::ExecuteDml);
+        assert!(c.is_ddl_only);
     }
 
     #[test]
@@ -967,5 +906,66 @@ mod tests {
         let c = pg("SELECT * FROM (SELECT pg_sleep(10)) t").unwrap();
         assert_eq!(c.operation, Operation::ExecuteDml);
         assert_eq!(c.dml_reason, Some(DmlReason::DangerousFunction));
+    }
+
+    #[test]
+    fn is_safe_ddl_create_table() {
+        let stmts = sql_parser::parse_statements(
+            "CREATE TABLE t (id INT PRIMARY KEY)",
+            Dialect::PostgreSql,
+        )
+        .unwrap();
+        assert!(is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
+    }
+
+    #[test]
+    fn is_safe_ddl_create_table_or_replace_not_safe() {
+        let stmts =
+            sql_parser::parse_statements("CREATE OR REPLACE TABLE t (id INT)", Dialect::PostgreSql);
+        // May not parse on PG; if it does, it should not be safe
+        if let Ok(stmts) = stmts {
+            assert!(!is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
+        }
+    }
+
+    #[test]
+    fn is_safe_ddl_create_index_concurrently() {
+        let stmts = sql_parser::parse_statements(
+            "CREATE INDEX CONCURRENTLY idx ON t(col)",
+            Dialect::PostgreSql,
+        )
+        .unwrap();
+        assert!(is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
+    }
+
+    #[test]
+    fn is_safe_ddl_create_index_without_concurrently_not_safe() {
+        let stmts = sql_parser::parse_statements("CREATE INDEX idx ON t(col)", Dialect::PostgreSql)
+            .unwrap();
+        assert!(!is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
+    }
+
+    #[test]
+    fn is_safe_ddl_mysql_create_index_not_safe() {
+        let stmts =
+            sql_parser::parse_statements("CREATE INDEX idx ON t(col)", Dialect::MySql).unwrap();
+        assert!(!is_safe_ddl_statement(&stmts[0], Some(Dialect::MySql)));
+    }
+
+    #[test]
+    fn is_safe_ddl_alter_table_add_column_pg() {
+        let stmts =
+            sql_parser::parse_statements("ALTER TABLE t ADD COLUMN name TEXT", Dialect::PostgreSql)
+                .unwrap();
+        assert!(is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
+    }
+
+    #[test]
+    fn is_safe_ddl_drop_table_not_safe() {
+        let stmts = sql_parser::parse_statements("DROP TABLE t", Dialect::PostgreSql);
+        // DROP is rejected by classifier, but if it reaches here
+        if let Ok(stmts) = stmts {
+            assert!(!is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
+        }
     }
 }

@@ -24,6 +24,10 @@ pub struct ServerConfig {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub trusted_proxies: Vec<String>,
+    #[serde(default)]
+    pub sql_review: SqlReviewConfig,
+    #[serde(default)]
+    pub auto_approve: Vec<AutoApproveServerConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -208,6 +212,7 @@ pub struct DatabaseDef {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkflowDef {
     #[serde(default = "star")]
     pub database: String,
@@ -219,8 +224,6 @@ pub struct WorkflowDef {
     pub steps: Vec<serde_json::Value>,
     #[serde(default)]
     pub require_reason: bool,
-    #[serde(default)]
-    pub skip_approval_for: Vec<String>,
     #[serde(default)]
     pub allow_self_approve: bool,
     #[serde(default = "default_true")]
@@ -270,6 +273,54 @@ impl ServerConfig {
                 "retention.approval_ttl_secs must be > 0 (immediate expiry makes approval impossible)".into(),
             );
         }
+
+        // Validate workflow operations overlap within same (db, env) scope
+        use std::collections::{HashMap, HashSet};
+        type ScopeEntries = Vec<(usize, Vec<String>)>;
+        let mut scope_ops: HashMap<(&str, &str), ScopeEntries> = HashMap::new();
+        for (i, wf) in self.workflows.iter().enumerate() {
+            // Parse to canonical operation names for overlap detection
+            let canonical: Vec<String> = wf.operations.iter().map(|op| {
+                op.parse::<dbward_domain::values::Operation>()
+                    .map(|o| format!("{o:?}"))
+                    .unwrap_or_else(|_| op.clone())
+            }).collect();
+            scope_ops
+                .entry((wf.database.as_str(), wf.environment.as_str()))
+                .or_default()
+                .push((i, canonical));
+        }
+        for ((db, env), entries) in &scope_ops {
+            let has_catchall = entries.iter().any(|(_, ops)| ops.is_empty());
+            if has_catchall && entries.len() > 1 {
+                return Err(format!(
+                    "workflow validation: database={db}, environment={env} has both catchall (operations omitted) and specific operations workflows — ambiguous"
+                ));
+            }
+            // Check operations overlap using canonical names
+            let mut seen: HashSet<&str> = HashSet::new();
+            for (idx, ops) in entries {
+                for op in ops {
+                    if !seen.insert(op.as_str()) {
+                        return Err(format!(
+                            "workflow validation: operation '{op}' appears in multiple workflows for database={db}, environment={env} (workflow index {idx})"
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Validate auto_approve specificity uniqueness
+        let mut aa_scopes: HashSet<(&str, &str)> = HashSet::new();
+        for a in &self.auto_approve {
+            if !aa_scopes.insert((a.database.as_str(), a.environment.as_str())) {
+                return Err(format!(
+                    "auto_approve validation: duplicate scope (database={}, environment={})",
+                    a.database, a.environment
+                ));
+            }
+        }
+
         Ok(())
     }
 }
@@ -334,5 +385,121 @@ approval_ttl_secs = 0
         let cfg: ServerConfig = toml::from_str(toml).unwrap();
         let err = cfg.validate().unwrap_err();
         assert!(err.contains("approval_ttl_secs must be > 0"));
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SqlReviewConfig {
+    #[serde(default = "default_warn")]
+    pub no_where_delete: String,
+    #[serde(default = "default_warn")]
+    pub no_where_update: String,
+    #[serde(default = "default_warn")]
+    pub drop_table: String,
+    #[serde(default = "default_warn")]
+    pub drop_column: String,
+    #[serde(default = "default_warn")]
+    pub not_null_without_default: String,
+    #[serde(default = "default_warn")]
+    pub create_index_not_concurrently: String,
+    #[serde(default = "default_warn")]
+    pub alter_column_type: String,
+    #[serde(default = "default_warn")]
+    pub truncate: String,
+    #[serde(default = "default_warn")]
+    pub mixed_ddl_dml: String,
+    #[serde(default = "default_warn")]
+    pub large_in_list: String,
+}
+
+fn default_warn() -> String {
+    "warn".into()
+}
+
+impl SqlReviewConfig {
+    pub fn to_review_rules(&self) -> Result<dbward_domain::services::sql_reviewer::ReviewRules, String> {
+        use dbward_domain::services::sql_reviewer::{ReviewRules, RuleAction};
+        fn parse_action(s: &str, field: &str) -> Result<RuleAction, String> {
+            match s {
+                "block" => Ok(RuleAction::Block),
+                "warn" => Ok(RuleAction::Warn),
+                "off" => Ok(RuleAction::Off),
+                other => Err(format!("sql_review.{field}: invalid action '{other}' (expected block/warn/off)")),
+            }
+        }
+        Ok(ReviewRules {
+            no_where_delete: parse_action(&self.no_where_delete, "no_where_delete")?,
+            no_where_update: parse_action(&self.no_where_update, "no_where_update")?,
+            drop_table: parse_action(&self.drop_table, "drop_table")?,
+            drop_column: parse_action(&self.drop_column, "drop_column")?,
+            not_null_without_default: parse_action(&self.not_null_without_default, "not_null_without_default")?,
+            create_index_not_concurrently: parse_action(&self.create_index_not_concurrently, "create_index_not_concurrently")?,
+            alter_column_type: parse_action(&self.alter_column_type, "alter_column_type")?,
+            truncate: parse_action(&self.truncate, "truncate")?,
+            mixed_ddl_dml: parse_action(&self.mixed_ddl_dml, "mixed_ddl_dml")?,
+            large_in_list: parse_action(&self.large_in_list, "large_in_list")?,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutoApproveServerConfig {
+    #[serde(default = "star")]
+    pub database: String,
+    #[serde(default = "star")]
+    pub environment: String,
+    #[serde(default = "default_risk_none")]
+    pub risk: String,
+    #[serde(default = "default_allow_read_only")]
+    pub allow_read_only: bool,
+    #[serde(default = "default_allow_safe_ddl")]
+    pub allow_safe_ddl: bool,
+    #[serde(default = "default_max_estimated_rows")]
+    pub max_estimated_rows: u64,
+}
+
+fn default_risk_none() -> String {
+    "none".into()
+}
+
+fn default_allow_read_only() -> bool {
+    true
+}
+
+fn default_allow_safe_ddl() -> bool {
+    true
+}
+
+fn default_max_estimated_rows() -> u64 {
+    1000
+}
+
+impl AutoApproveServerConfig {
+    pub fn to_entry(&self) -> Result<dbward_domain::services::workflow_matcher::AutoApproveEntry, String> {
+        use dbward_domain::services::risk_scorer::RiskLevel;
+        use dbward_domain::services::workflow_matcher::AutoApproveEntry;
+        use dbward_domain::values::{DatabaseName, Environment};
+
+        let database = DatabaseName::new(&self.database)
+            .map_err(|e| format!("auto_approve: invalid database '{}': {e}", self.database))?;
+        let environment = Environment::new(&self.environment)
+            .map_err(|e| format!("auto_approve: invalid environment '{}': {e}", self.environment))?;
+        let max_risk_level = match self.risk.as_str() {
+            "none" => None,
+            "low" => Some(RiskLevel::Low),
+            "medium" => Some(RiskLevel::Medium),
+            "high" => Some(RiskLevel::High),
+            other => return Err(format!("auto_approve: invalid risk '{}' (expected none/low/medium/high)", other)),
+        };
+        Ok(AutoApproveEntry {
+            database,
+            environment,
+            max_risk_level,
+            allow_safe_ddl: self.allow_safe_ddl,
+            allow_read_only: self.allow_read_only,
+            max_estimated_rows: self.max_estimated_rows,
+        })
     }
 }

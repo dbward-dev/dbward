@@ -154,6 +154,15 @@ mod tests {
         async fn cancel_query(&self, _connection_id: &str) -> Result<bool, DriverError> {
             Ok(true)
         }
+        async fn collect_schema(&self) -> Result<dbward_driver::SchemaSnapshot, DriverError> {
+            Ok(dbward_driver::SchemaSnapshot { tables: vec![] })
+        }
+        async fn explain(&self, _: &str, _: u64) -> Result<serde_json::Value, DriverError> {
+            Ok(serde_json::json!({}))
+        }
+        fn dialect(&self) -> &'static str {
+            "postgresql"
+        }
     }
 
     fn make_detail(direction: &str, migrations: Vec<(&str, &str)>) -> String {

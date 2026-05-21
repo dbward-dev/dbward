@@ -681,7 +681,6 @@ mod tests {
             environment: Environment::wildcard(),
             operations: vec![],
             steps: vec![],
-            skip_approval_for: vec![],
             require_reason: false,
             allow_self_approve: false,
             allow_same_approver_across_steps: false,

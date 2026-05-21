@@ -78,9 +78,14 @@ cp dbward.db.bak.v7 dbward.db
 - All components within the same minor version (0.1.x) are compatible
 - The server rejects poll requests from agents with a version older than `min_agent_version`
 - The CLI shows a one-time warning when the server's minor version differs
-- SQLite schema changes are always forward-compatible (columns are added, never removed)
-- Existing config files continue to work (new fields always have defaults)
+- SQLite schema changes are forward-compatible within a minor version
 - Downgrade is not supported for SQLite schema; use Litestream PITR or file backup
+
+### Breaking changes in v0.1.3
+
+- `skip_approval_for` and `require_approval` workflow fields have been removed. If present in your config, the server will refuse to start with a clear error message explaining the migration.
+- Auto-approve configuration moved from `[auto_approve]` (single global) to `[[auto_approve]]` (scoped array). See [Configuration Reference](../reference/configuration.md).
+- SQLite schema V8 drops two columns from the `workflows` table. This migration runs automatically on startup. **Downgrade to v0.1.2 after this migration is not possible** without a backup.
 
 ## Rollback
 

@@ -47,15 +47,15 @@ value = "dba-team"
 role = "admin"
 
 # --- Workflows ---
-# Approval rules. Evaluated in order; most specific match wins.
+# Approval rules. Most specific scope match wins.
+# No match = request rejected (fail-closed).
 [[workflows]]
 database = "app"                   # "*" = all databases (default)
 environment = "production"         # "*" = all environments (default)
-operations = ["execute_dml"]       # [] = all operations (default)
+operations = ["execute_dml"]       # omitted = all operations (default)
 require_reason = true
 allow_self_approve = false
 allow_same_approver_across_steps = true  # default: true
-skip_approval_for = ["role:admin"]       # Auto-approve for these selectors
 pending_ttl_secs = 86400                 # Request expires if not approved (optional)
 statement_timeout_secs = 60              # Override agent timeout (optional)
 
@@ -66,6 +66,42 @@ approvers = [{ selector = "role:dba", min = 1 }]
 [[workflows]]
 database = "*"
 environment = "staging"
+
+# --- Auto-Approve ---
+# Risk-based auto-approval. Scoped by (database, environment).
+# Priority: (db, env) > (*, env) > (db, *) > (*, *)
+# Unmatched scope = no auto-approve (human approval required).
+[[auto_approve]]
+database = "*"
+environment = "*"
+risk = "low"                   # "none" | "low" | "medium" | "high"
+allow_read_only = true         # SELECT → Low risk (default: true)
+allow_safe_ddl = true          # CREATE TABLE/INDEX/VIEW → Low risk (default: true)
+max_estimated_rows = 1000      # Tables above this → risk increase (default: 1000)
+
+[[auto_approve]]
+database = "*"
+environment = "staging"
+risk = "medium"                # Staging: auto-approve up to Medium
+
+[[auto_approve]]
+database = "*"
+environment = "production"
+risk = "none"                  # Production: always require human approval
+
+# --- SQL Review ---
+# Block or warn on dangerous SQL patterns.
+[sql_review]
+no_where_delete = "block"      # "block" | "warn" | "off" (default: "warn")
+no_where_update = "block"      # "block" | "warn" | "off" (default: "warn")
+drop_table = "warn"            # "block" | "warn" | "off" (default: "warn")
+drop_column = "warn"
+not_null_without_default = "warn"
+create_index_not_concurrently = "warn"
+alter_column_type = "warn"
+truncate = "warn"
+mixed_ddl_dml = "warn"
+large_in_list = "warn"
 
 # --- Webhooks ---
 [[webhooks]]
@@ -106,6 +142,11 @@ redaction = "literals"     # "literals" | "none" (default: "literals")
 | Setting | Default |
 |---------|---------|
 | `auth.mode` | `"both"` |
+| `auto_approve.risk` | `"none"` (no auto-approve) |
+| `auto_approve.allow_read_only` | `true` |
+| `auto_approve.allow_safe_ddl` | `true` |
+| `auto_approve.max_estimated_rows` | `1000` |
+| `sql_review.*` | `"warn"` |
 | `result_storage.backend` | `"local"` |
 | `result_storage.root_dir` | `"./data/results"` |
 | `result_storage.max_persist_bytes` | 10485760 (10MB) |

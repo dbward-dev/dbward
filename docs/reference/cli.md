@@ -73,7 +73,37 @@ dbward request list --status pending --user alice
 
 ```bash
 dbward request show <ID>
+dbward request show <ID> --json   # Full JSON output (includes raw EXPLAIN plan)
 ```
+
+Shows request details including automatically collected context:
+
+```
+Request 0da70e0e-...
+  Status:      pending
+  Operation:   execute_dml
+  Detail:      DELETE FROM orders WHERE status = 'pending' AND created_at < '2025-01-01'
+  Environment: production
+  Database:    app
+  Reason:      Quarterly cleanup
+  Created by:  alice
+
+  Risk:        High (CascadeDelete { targets: ["users"] })
+  SQL Review:  passed
+  Tables:      orders
+  Explain:     ModifyTable on orders (rows=0, cost=1342)
+                 Seq Scan on orders (rows=1, cost=1342)  Filter: ((created_at < ...))
+
+  Approval (0/2 complete):
+    [wait] Step 1 [all]: group:backend-team
+    [wait] Step 2 [all]: group:dba-team
+```
+
+Context fields:
+- **Risk** — Auto-assessed risk level + factors (ReadOnly, LargeTable, CascadeDelete, MultiStatement, etc.)
+- **SQL Review** — Rule-based check results (passed / N warnings)
+- **Tables** — Affected tables extracted from SQL
+- **Explain** — EXPLAIN plan tree (PostgreSQL and MySQL supported)
 
 #### dbward request approve
 

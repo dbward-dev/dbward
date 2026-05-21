@@ -116,8 +116,19 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
     }
     fn purge_old_requests(&self, before: &str) -> Result<u32, AppError> {
         let conn = self.conn.lock().unwrap();
+        // Delete child tables first (FK integrity)
+        conn.execute(
+            "DELETE FROM dry_run_jobs WHERE request_id IN (\
+             SELECT id FROM requests WHERE status IN ('executed', 'failed', 'rejected', 'expired', 'cancelled') AND updated_at < ?1)",
+            params![before],
+        ).map_err(map_err)?;
+        conn.execute(
+            "DELETE FROM request_context WHERE request_id IN (\
+             SELECT id FROM requests WHERE status IN ('executed', 'failed', 'rejected', 'expired', 'cancelled') AND updated_at < ?1)",
+            params![before],
+        ).map_err(map_err)?;
         let n = conn.execute(
-            "DELETE FROM requests WHERE status IN ('executed', 'failed', 'expired', 'cancelled') AND updated_at < ?1",
+            "DELETE FROM requests WHERE status IN ('executed', 'failed', 'rejected', 'expired', 'cancelled') AND updated_at < ?1",
             params![before],
         ).map_err(map_err)?;
         Ok(n as u32)

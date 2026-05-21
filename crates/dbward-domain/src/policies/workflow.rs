@@ -32,8 +32,6 @@ pub struct Workflow {
     #[serde(default)]
     pub steps: Vec<WorkflowStep>,
     #[serde(default)]
-    pub skip_approval_for: Vec<Selector>,
-    #[serde(default)]
     pub require_reason: bool,
     #[serde(default)]
     pub allow_self_approve: bool,
@@ -75,7 +73,6 @@ mod tests {
             environment: Environment::wildcard(),
             operations,
             steps,
-            skip_approval_for: vec![],
             require_reason: false,
             allow_self_approve: false,
             allow_same_approver_across_steps: false,

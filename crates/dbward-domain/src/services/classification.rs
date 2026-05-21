@@ -10,6 +10,7 @@ pub enum Dialect {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DmlReason {
     Statement,
+    Ddl,
     DangerousFunction,
     SemanticEscalation,
     UnknownStatement,
@@ -22,6 +23,7 @@ pub struct Classification {
     pub dml_reason: Option<DmlReason>,
     pub statement_count: usize,
     pub statements: Vec<String>,
+    pub is_ddl_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

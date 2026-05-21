@@ -468,7 +468,7 @@ impl EventDispatcher for CompositeEventDispatcher {
                 _ => None,
             },
             redacted_detail: match &event.metadata {
-                EventMetadata::Created { detail, .. } => Some(redact_sql_literals(detail)),
+                EventMetadata::Created { detail, .. } => Some(detail.clone()),
                 _ => None,
             },
             error_summary: match &event.metadata {

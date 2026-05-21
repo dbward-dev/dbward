@@ -1,6 +1,11 @@
 pub mod approval_checker;
 pub mod approval_progress;
 pub mod classification;
+pub mod risk_scorer;
 pub mod sql_classifier;
+pub mod sql_parser;
+pub mod sql_reviewer;
+pub mod status_constants;
 pub mod status_machine;
+pub mod table_extractor;
 pub mod workflow_matcher;

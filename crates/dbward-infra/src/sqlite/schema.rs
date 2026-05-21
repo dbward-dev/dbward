@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 8;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -28,6 +28,62 @@ ALTER TABLE execution_policies ADD COLUMN max_rows INTEGER;
 const MIGRATION_V4: &str = "
 ALTER TABLE agents ADD COLUMN uptime_secs INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE agents ADD COLUMN active_jobs_json TEXT NOT NULL DEFAULT '[]';
+";
+
+const MIGRATION_V5: &str = "
+ALTER TABLE workflows ADD COLUMN require_approval INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE databases ADD COLUMN dialect TEXT DEFAULT NULL;
+";
+
+const MIGRATION_V6: &str = "
+CREATE TABLE IF NOT EXISTS schema_snapshots (
+    database_name TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ready',
+    snapshot_json TEXT,
+    error_message TEXT,
+    dialect TEXT NOT NULL,
+    collected_at TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    PRIMARY KEY (database_name, environment)
+);
+";
+
+const MIGRATION_V7: &str = "
+CREATE TABLE IF NOT EXISTS dry_run_jobs (
+    id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    database_name TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    sql_text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    claimed_by TEXT,
+    claimed_at TEXT,
+    claim_token TEXT,
+    result_json TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    FOREIGN KEY (request_id) REFERENCES requests(id)
+);
+CREATE TABLE IF NOT EXISTS request_context (
+    request_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'collecting',
+    schema_snapshot_collected_at TEXT,
+    tables_json TEXT,
+    explain_json TEXT,
+    sql_review_json TEXT,
+    risk_json TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (request_id) REFERENCES requests(id)
+);
+";
+
+const MIGRATION_V8: &str = "
+-- Remove skip_approval_for_json and require_approval from workflows (breaking simplification)
+ALTER TABLE workflows DROP COLUMN skip_approval_for_json;
+ALTER TABLE workflows DROP COLUMN require_approval;
 ";
 
 /// Initialize the database: set pragmas and create schema.
@@ -63,6 +119,10 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(MIGRATION_V2)?;
         conn.execute_batch(MIGRATION_V3)?;
         conn.execute_batch(MIGRATION_V4)?;
+        conn.execute_batch(MIGRATION_V5)?;
+        conn.execute_batch(MIGRATION_V6)?;
+        conn.execute_batch(MIGRATION_V7)?;
+        conn.execute_batch(MIGRATION_V8)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -73,6 +133,18 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 4 {
             conn.execute_batch(MIGRATION_V4)?;
+        }
+        if current < 5 {
+            conn.execute_batch(MIGRATION_V5)?;
+        }
+        if current < 6 {
+            conn.execute_batch(MIGRATION_V6)?;
+        }
+        if current < 7 {
+            conn.execute_batch(MIGRATION_V7)?;
+        }
+        if current < 8 {
+            conn.execute_batch(MIGRATION_V8)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }

@@ -527,6 +527,81 @@ impl DatabaseRegistry for StubDatabaseRegistry {
     }
 }
 
+struct StubSchemaRepo;
+impl dbward_app::ports::SchemaRepo for StubSchemaRepo {
+    fn upsert_snapshot(&self, _: &dbward_app::ports::SchemaSnapshotRecord) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get_snapshot(
+        &self,
+        _: &str,
+        _: &str,
+    ) -> Result<Option<dbward_app::ports::SchemaSnapshotRecord>, AppError> {
+        Ok(None)
+    }
+    fn get_dialect(&self, _: &str, _: &str) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
+    fn get_tables_for(
+        &self,
+        _: &str,
+        _: &str,
+        _: &[dbward_domain::services::table_extractor::TableRef],
+    ) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
+}
+
+struct StubDryRunRepo;
+impl dbward_app::ports::DryRunRepo for StubDryRunRepo {
+    fn create_jobs(&self, _: &[dbward_app::ports::DryRunJobRecord]) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn find_pending_for_agent(
+        &self,
+        _: &[(String, String)],
+    ) -> Result<Vec<dbward_app::ports::DryRunJobRecord>, AppError> {
+        Ok(vec![])
+    }
+    fn claim(&self, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn complete(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn fail(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn reclaim_stale(&self, _: &str) -> Result<u32, AppError> {
+        Ok(0)
+    }
+    fn find_for_request(
+        &self,
+        _: &str,
+    ) -> Result<Vec<dbward_app::ports::DryRunJobRecord>, AppError> {
+        Ok(vec![])
+    }
+    fn get_request_id(&self, _: &str) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
+}
+
+struct StubContextRepo;
+impl dbward_app::ports::ContextRepo for StubContextRepo {
+    fn create(&self, _: &dbward_app::ports::RequestContextRecord) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get(&self, _: &str) -> Result<Option<dbward_app::ports::RequestContextRecord>, AppError> {
+        Ok(None)
+    }
+    fn update_explain(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn timeout_collecting(&self, _: &str, _: &str) -> Result<u32, AppError> {
+        Ok(0)
+    }
+}
+
 struct StubAuditLogger;
 impl AuditLogger for StubAuditLogger {
     fn record(&self, _: &AuditEvent) -> Result<(), AppError> {
@@ -690,6 +765,9 @@ fn test_state() -> AppState {
         webhook_repo: Arc::new(StubWebhookRepo),
         policy_repo: Arc::new(StubPolicyRepo),
         database_registry: Arc::new(StubDatabaseRegistry),
+        schema_repo: Arc::new(StubSchemaRepo),
+        dry_run_repo: Arc::new(StubDryRunRepo),
+        context_repo: Arc::new(StubContextRepo),
         audit_logger: Arc::new(StubAuditLogger),
         audit_repo: Arc::new(StubAuditRepo),
         policy_evaluator: Arc::new(StubPolicyEvaluator),
@@ -711,6 +789,9 @@ fn test_state() -> AppState {
         max_persist_bytes: 10 * 1024 * 1024,
         auth_mode: "both".to_string(),
         storage_backend: "local".into(),
+        sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+        auto_approve_entries: vec![
+        ],
     }
 }
 

@@ -55,6 +55,54 @@ GET /api/requests?status=pending&limit=20&user=alice
 GET /api/requests/{id}
 ```
 
+Response includes a `context` field with automatically collected information:
+
+```json
+{
+  "id": "0da70e0e-...",
+  "status": "pending",
+  "database": "app",
+  "environment": "production",
+  "operation": "execute_dml",
+  "detail": "DELETE FROM orders WHERE status = 'pending'",
+  "reason": "Cleanup",
+  "requester": "alice",
+  "context": {
+    "status": "ready",
+    "risk": {
+      "level": "High",
+      "factors": ["CascadeDelete { targets: [\"users\"] }"]
+    },
+    "sql_review": {
+      "findings": [],
+      "blocked": false
+    },
+    "tables": ["orders"],
+    "explain": [
+      {
+        "sql": "DELETE FROM orders WHERE status = 'pending'",
+        "plan": [{"Plan": {"Node Type": "ModifyTable", "..."}}]
+      }
+    ]
+  },
+  "approval_progress": {
+    "current_step": 0,
+    "total_steps": 2,
+    "steps": [...]
+  }
+}
+```
+
+Context fields:
+| Field | Description |
+|-------|-------------|
+| `context.status` | `"collecting"`, `"ready"`, `"partial"`, `"unavailable"` |
+| `context.risk.level` | `"Low"`, `"Medium"`, `"High"`, `"Critical"`, `"Unknown"` |
+| `context.risk.factors` | Array of risk factor descriptions |
+| `context.sql_review` | SQL review findings and block status |
+| `context.tables` | Affected table names |
+| `context.explain` | Per-statement EXPLAIN plans (JSON format, PG/MySQL) |
+
 ### Approve
 
 ```

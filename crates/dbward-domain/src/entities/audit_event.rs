@@ -13,6 +13,7 @@ pub enum EventCategory {
     Token,
     Identity,
     Policy,
+    Request,
 }
 
 impl EventCategory {
@@ -24,6 +25,7 @@ impl EventCategory {
             "auth" => Self::Auth,
             "token" => Self::Token,
             "identity" => Self::Identity,
+            "request" => Self::Request,
             _ => Self::Policy,
         }
     }
@@ -84,13 +86,15 @@ impl AuditEvent {
         timestamp: DateTime<Utc>,
         ctx: &AuditContext,
     ) -> Self {
-        let (peer_ip, client_ip, client_ip_source) = match ctx {
+        let (peer_ip, client_ip, client_ip_source, actor_type) = match ctx {
             AuditContext::Request(info) => (
                 Some(info.peer_ip.to_string()),
                 Some(info.client_ip.to_string()),
                 Some(info.source.as_str().to_string()),
+                ActorType::User,
             ),
-            AuditContext::System => (None, None, None),
+            AuditContext::Agent { .. } => (None, None, None, ActorType::Agent),
+            AuditContext::System => (None, None, None, ActorType::System),
         };
         Self {
             id: String::new(), // filled by infra
@@ -99,7 +103,7 @@ impl AuditEvent {
             event_version: 1,
             outcome: EventOutcome::Success,
             actor_id: actor_id.to_string(),
-            actor_type: ActorType::User,
+            actor_type,
             resource_type: None,
             resource_id: resource_id.map(|s| s.to_string()),
             peer_ip,

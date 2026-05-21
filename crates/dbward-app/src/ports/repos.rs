@@ -257,6 +257,114 @@ pub trait DatabaseRegistry: Send + Sync {
     fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError>;
 }
 
+// --- SchemaRepo ---
+
+#[derive(Debug, Clone)]
+pub struct SchemaSnapshotRecord {
+    pub database_name: String,
+    pub environment: String,
+    pub status: String,
+    pub snapshot_json: Option<String>,
+    pub error_message: Option<String>,
+    pub dialect: String,
+    pub collected_at: String,
+    pub agent_id: String,
+}
+
+pub trait SchemaRepo: Send + Sync {
+    fn upsert_snapshot(&self, record: &SchemaSnapshotRecord) -> Result<(), AppError>;
+    fn get_snapshot(&self, db: &str, env: &str) -> Result<Option<SchemaSnapshotRecord>, AppError>;
+    fn get_dialect(&self, db: &str, env: &str) -> Result<Option<String>, AppError>;
+    // TODO(v0.2): Return domain DTO (Vec<TableRiskInfo>) instead of raw JSON string
+    fn get_tables_for(
+        &self,
+        db: &str,
+        env: &str,
+        tables: &[dbward_domain::services::table_extractor::TableRef],
+    ) -> Result<Option<String>, AppError>;
+}
+
+// --- DryRunRepo ---
+
+#[derive(Debug, Clone)]
+pub struct DryRunJobRecord {
+    pub id: String,
+    pub request_id: String,
+    pub database_name: String,
+    pub environment: String,
+    pub sql_text: String,
+    pub status: String,
+    pub claimed_by: Option<String>,
+    pub claimed_at: Option<String>,
+    pub claim_token: Option<String>,
+    pub result_json: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at: String,
+    pub completed_at: Option<String>,
+}
+
+pub trait DryRunRepo: Send + Sync {
+    fn create_jobs(&self, jobs: &[DryRunJobRecord]) -> Result<(), AppError>;
+    fn find_pending_for_agent(
+        &self,
+        databases: &[(String, String)],
+    ) -> Result<Vec<DryRunJobRecord>, AppError>;
+    fn claim(
+        &self,
+        job_id: &str,
+        agent_id: &str,
+        claim_token: &str,
+        now: &str,
+    ) -> Result<bool, AppError>;
+    fn complete(
+        &self,
+        job_id: &str,
+        agent_id: &str,
+        claim_token: &str,
+        result_json: &str,
+        now: &str,
+    ) -> Result<bool, AppError>;
+    fn fail(
+        &self,
+        job_id: &str,
+        agent_id: &str,
+        claim_token: &str,
+        error: &str,
+        now: &str,
+    ) -> Result<bool, AppError>;
+    fn reclaim_stale(&self, cutoff: &str) -> Result<u32, AppError>;
+    fn find_for_request(&self, request_id: &str) -> Result<Vec<DryRunJobRecord>, AppError>;
+    fn get_request_id(&self, job_id: &str) -> Result<Option<String>, AppError>;
+}
+
+// --- ContextRepo ---
+
+#[derive(Debug, Clone)]
+pub struct RequestContextRecord {
+    pub request_id: String,
+    pub status: String,
+    pub schema_snapshot_collected_at: Option<String>,
+    pub tables_json: Option<String>,
+    pub sql_review_json: Option<String>,
+    pub risk_json: Option<String>,
+    pub explain_json: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+pub trait ContextRepo: Send + Sync {
+    fn create(&self, ctx: &RequestContextRecord) -> Result<(), AppError>;
+    fn get(&self, request_id: &str) -> Result<Option<RequestContextRecord>, AppError>;
+    fn update_explain(
+        &self,
+        request_id: &str,
+        explain_json: &str,
+        status: &str,
+        now: &str,
+    ) -> Result<(), AppError>;
+    fn timeout_collecting(&self, cutoff: &str, now: &str) -> Result<u32, AppError>;
+}
+
 // --- AuditLogger ---
 
 pub trait AuditLogger: Send + Sync {

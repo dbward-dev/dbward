@@ -106,3 +106,37 @@ result_ttl_days = 1
 approval_ttl_secs = 60
 
 
+
+[sql_review]
+no_where_delete = "block"
+no_where_update = "block"
+
+# Auto-approve configuration (scoped by database/environment)
+# Priority: (db, env) > (*, env) > (db, *) > (*, *)
+
+# Global default: auto-approve Low risk
+[[auto_approve]]
+database = "*"
+environment = "*"
+risk = "low"
+allow_read_only = true
+allow_safe_ddl = true
+max_estimated_rows = 1000
+
+# Staging: auto-approve up to Medium
+[[auto_approve]]
+database = "*"
+environment = "staging"
+risk = "medium"
+
+# Development: auto-approve up to High (nearly everything)
+[[auto_approve]]
+database = "*"
+environment = "development"
+risk = "high"
+
+# Production: no auto-approve (explicit human approval required)
+[[auto_approve]]
+database = "*"
+environment = "production"
+risk = "none"
