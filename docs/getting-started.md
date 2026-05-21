@@ -81,15 +81,25 @@ Migration files are created as a directory under `./db/migrations/` with `up.sql
 In production (when auto-approve is off), a request that requires approval exits with code **2**:
 
 ```bash
-$ dbward execute "DROP TABLE old_data"
+$ dbward execute "DELETE FROM orders WHERE created_at < '2025-01-01'"
 Request rq_abc123 is pending approval.
 Approvers: @dba-team
 
+# Check details (risk, EXPLAIN plan, etc.)
+$ dbward request show rq_abc123
+Request rq_abc123
+  Status:      pending
+  Detail:      DELETE FROM orders WHERE created_at < '2025-01-01'
+  Risk:        Medium (LargeTable { rows: 50000 })
+  SQL Review:  passed
+  Tables:      orders
+  Explain:     ModifyTable on orders via Seq Scan (rows=12000, cost=890)
+
 # After someone approves:
-$ dbward resume rq_abc123
+$ dbward request resume rq_abc123
 ```
 
-Exit code 2 signals "pending" — useful for CI/CD pipelines that need to wait for human approval.
+dbward automatically assesses risk, runs EXPLAIN (read-only), and shows this context to approvers.
 
 ## What's next
 
