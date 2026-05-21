@@ -59,8 +59,12 @@ impl SyncConfig {
         }
 
         // Only delete after successful validation
-        for i in 0..100 {
-            let _ = self.policy_repo.delete_workflow(&format!("config-wf-{i}"));
+        // Delete all config-managed workflows (prefix "config-wf-")
+        let existing = self.policy_repo.list_workflows()?;
+        for wf in &existing {
+            if wf.id.starts_with("config-wf-") {
+                let _ = self.policy_repo.delete_workflow(&wf.id);
+            }
         }
 
         for workflow in &parsed {
@@ -118,6 +122,12 @@ impl SyncConfig {
                     selector,
                     min: a.min,
                 });
+            }
+            if approvers.is_empty() {
+                return Err(AppError::Validation(format!(
+                    "workflow {}/{}: step has no valid approvers",
+                    wf.database, wf.environment
+                )));
             }
             steps.push(WorkflowStep { approvers, mode });
         }

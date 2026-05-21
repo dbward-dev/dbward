@@ -389,6 +389,7 @@ approval_ttl_secs = 0
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SqlReviewConfig {
     #[serde(default = "default_warn")]
     pub no_where_delete: String,
@@ -417,27 +418,28 @@ fn default_warn() -> String {
 }
 
 impl SqlReviewConfig {
-    pub fn to_review_rules(&self) -> dbward_domain::services::sql_reviewer::ReviewRules {
+    pub fn to_review_rules(&self) -> Result<dbward_domain::services::sql_reviewer::ReviewRules, String> {
         use dbward_domain::services::sql_reviewer::{ReviewRules, RuleAction};
-        fn parse_action(s: &str) -> RuleAction {
+        fn parse_action(s: &str, field: &str) -> Result<RuleAction, String> {
             match s {
-                "block" => RuleAction::Block,
-                "off" => RuleAction::Off,
-                _ => RuleAction::Warn,
+                "block" => Ok(RuleAction::Block),
+                "warn" => Ok(RuleAction::Warn),
+                "off" => Ok(RuleAction::Off),
+                other => Err(format!("sql_review.{field}: invalid action '{other}' (expected block/warn/off)")),
             }
         }
-        ReviewRules {
-            no_where_delete: parse_action(&self.no_where_delete),
-            no_where_update: parse_action(&self.no_where_update),
-            drop_table: parse_action(&self.drop_table),
-            drop_column: parse_action(&self.drop_column),
-            not_null_without_default: parse_action(&self.not_null_without_default),
-            create_index_not_concurrently: parse_action(&self.create_index_not_concurrently),
-            alter_column_type: parse_action(&self.alter_column_type),
-            truncate: parse_action(&self.truncate),
-            mixed_ddl_dml: parse_action(&self.mixed_ddl_dml),
-            large_in_list: parse_action(&self.large_in_list),
-        }
+        Ok(ReviewRules {
+            no_where_delete: parse_action(&self.no_where_delete, "no_where_delete")?,
+            no_where_update: parse_action(&self.no_where_update, "no_where_update")?,
+            drop_table: parse_action(&self.drop_table, "drop_table")?,
+            drop_column: parse_action(&self.drop_column, "drop_column")?,
+            not_null_without_default: parse_action(&self.not_null_without_default, "not_null_without_default")?,
+            create_index_not_concurrently: parse_action(&self.create_index_not_concurrently, "create_index_not_concurrently")?,
+            alter_column_type: parse_action(&self.alter_column_type, "alter_column_type")?,
+            truncate: parse_action(&self.truncate, "truncate")?,
+            mixed_ddl_dml: parse_action(&self.mixed_ddl_dml, "mixed_ddl_dml")?,
+            large_in_list: parse_action(&self.large_in_list, "large_in_list")?,
+        })
     }
 }
 
