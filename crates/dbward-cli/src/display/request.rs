@@ -223,12 +223,22 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
                     if arr.is_empty() {
                         println!("  Explain:     (no plan available)");
                     } else {
+                        let multi = arr.len() > 1;
                         for (i, entry) in arr.iter().enumerate() {
-                            let summary = summarize_explain_entry(entry);
-                            if i == 0 {
-                                println!("  Explain:     {summary}");
-                            } else {
-                                println!("               {summary}");
+                            if let Some(err) = entry["error"].as_str() {
+                                let prefix = if multi { format!("[{}] ", i + 1) } else { String::new() };
+                                println!("  Explain:     {prefix}(error: {err})");
+                                continue;
+                            }
+                            let lines = format_explain_tree(entry);
+                            for (li, line) in lines.iter().enumerate() {
+                                let label = if li == 0 && i == 0 {
+                                    "  Explain:     "
+                                } else {
+                                    "               "
+                                };
+                                let prefix = if multi && li == 0 { format!("[{}] ", i + 1) } else if multi { "    ".to_string() } else { String::new() };
+                                println!("{label}{prefix}{line}");
                             }
                         }
                     }
@@ -317,35 +327,52 @@ pub(crate) fn print_approve_result(body: &serde_json::Value, id: &str) {
     }
 }
 
-/// Extract a one-line summary from an explain entry's JSON plan.
-/// Format: "NodeType on Table (rows=N, cost=X)"
-fn summarize_explain_entry(entry: &serde_json::Value) -> String {
-    // plan can be a string (text format) or array (JSON format from EXPLAIN JSON)
+/// Format an explain entry's plan as an indented tree of nodes.
+fn format_explain_tree(entry: &serde_json::Value) -> Vec<String> {
+    // Text format: return as-is (one line per line)
     if let Some(plan_str) = entry["plan"].as_str() {
-        let preview: String = plan_str.chars().take(80).collect();
-        return preview;
+        return plan_str.lines().take(10).map(|l| l.to_string()).collect();
     }
-    // JSON format: plan is an array of plan objects
-    if let Some(first) = entry["plan"].as_array().and_then(|a| a.first()) {
-        let plan_node = &first["Plan"];
-        if !plan_node.is_null() {
-            let node_type = plan_node["Node Type"].as_str().unwrap_or("?");
-            let relation = plan_node["Relation Name"].as_str().unwrap_or("");
-            let rows = plan_node["Plan Rows"].as_u64()
-                .or_else(|| plan_node["Plans"].as_array()
-                    .and_then(|p| p.first())
-                    .and_then(|p| p["Plan Rows"].as_u64()))
-                .unwrap_or(0);
-            let cost = plan_node["Total Cost"].as_f64().unwrap_or(0.0);
-            let child_node = plan_node["Plans"].as_array()
-                .and_then(|p| p.first())
-                .map(|p| p["Node Type"].as_str().unwrap_or(""))
-                .unwrap_or("");
+    // JSON format: recursive walk
+    if let Some(plan_node) = entry["plan"]
+        .as_array()
+        .and_then(|a| a.first())
+        .map(|f| &f["Plan"])
+        .filter(|p| !p.is_null())
+    {
+        let mut lines = Vec::new();
+        walk_plan_node(plan_node, 0, &mut lines);
+        return lines;
+    }
+    vec!["(plan format unknown)".to_string()]
+}
 
-            let on_part = if relation.is_empty() { String::new() } else { format!(" on {relation}") };
-            let via_part = if child_node.is_empty() { String::new() } else { format!(" via {child_node}") };
-            return format!("{node_type}{on_part}{via_part} (rows={rows}, cost={cost:.0})");
+const MAX_EXPLAIN_DEPTH: usize = 6;
+
+fn walk_plan_node(node: &serde_json::Value, depth: usize, out: &mut Vec<String>) {
+    if depth > MAX_EXPLAIN_DEPTH {
+        let indent = "  ".repeat(depth);
+        out.push(format!("{indent}..."));
+        return;
+    }
+    let node_type = node["Node Type"].as_str().unwrap_or("?");
+    let relation = node["Relation Name"].as_str().unwrap_or("");
+    let rows = node["Plan Rows"].as_u64().unwrap_or(0);
+    let cost = node["Total Cost"].as_f64().unwrap_or(0.0);
+    let filter = node["Filter"].as_str();
+
+    let indent = "  ".repeat(depth);
+    let on_part = if relation.is_empty() { String::new() } else { format!(" on {relation}") };
+    let mut line = format!("{indent}{node_type}{on_part} (rows={rows}, cost={cost:.0})");
+    if let Some(f) = filter {
+        let short_filter: String = f.chars().take(60).collect();
+        line.push_str(&format!("  Filter: {short_filter}"));
+    }
+    out.push(line);
+
+    if let Some(plans) = node["Plans"].as_array() {
+        for child in plans {
+            walk_plan_node(child, depth + 1, out);
         }
     }
-    "(plan format unknown)".to_string()
 }
