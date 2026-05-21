@@ -126,6 +126,15 @@ mod tests {
                 Err(DriverError::ConnectionFailed("refused".into()))
             }
         }
+        async fn collect_schema(&self) -> Result<dbward_driver::SchemaSnapshot, DriverError> {
+            unimplemented!()
+        }
+        async fn explain(&self, _: &str, _: u64) -> Result<serde_json::Value, DriverError> {
+            unimplemented!()
+        }
+        fn dialect(&self) -> &'static str {
+            "postgresql"
+        }
     }
 
     #[test]

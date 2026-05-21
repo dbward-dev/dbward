@@ -334,7 +334,6 @@ mod tests {
                 }],
                 mode: WorkflowStepMode::Any,
             }],
-            skip_approval_for: vec![],
             require_reason: false,
             allow_self_approve: false,
             allow_same_approver_across_steps: true,

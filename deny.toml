@@ -32,6 +32,7 @@ ignore = [
     # astral-tokio-tar: dev-dependency only (testcontainers)
     "RUSTSEC-2026-0066",
     "RUSTSEC-2026-0112",
+    "RUSTSEC-2026-0145",
     # tar unpack_in symlink: dev-dependency only (testcontainers)
     "RUSTSEC-2026-0113",
     # rsa Marvin Attack: transitive via rustls (no RSA key exchange in our usage)

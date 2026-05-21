@@ -85,6 +85,39 @@ impl JobExecutor {
 
         // Stage 5: Submit
         self.submit_with_retry(&claim.execution_id, &body).await;
+
+        // Stage 6: Schema re-sync after successful migration
+        if body.success && matches!(claim.operation.as_str(), "migrate_up" | "migrate_down") {
+            let pool_key = (claim.database.clone(), claim.environment.clone());
+            if let Some(entry) = self.pools.get(&pool_key) {
+                let driver = entry.driver.read().await;
+                let (dialect, status, snapshot, error_message) = match driver.collect_schema().await
+                {
+                    Ok(snap) => {
+                        let json = serde_json::to_value(&snap).ok();
+                        (driver.dialect(), "ready", json, None)
+                    }
+                    Err(e) => (driver.dialect(), "failed", None, Some(e.to_string())),
+                };
+                let _ = self
+                    .client
+                    .schema_sync(
+                        &claim.database,
+                        &claim.environment,
+                        dialect,
+                        status,
+                        snapshot.as_ref(),
+                        error_message.as_deref(),
+                    )
+                    .await;
+                info!(
+                    database = %claim.database,
+                    environment = %claim.environment,
+                    "schema re-sync after migration"
+                );
+            }
+        }
+
         Ok(())
     }
 

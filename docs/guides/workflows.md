@@ -4,9 +4,11 @@ Workflows define who must approve a database operation before it executes. Confi
 
 ## Basic concepts
 
-- **No workflow match = request rejected (fail-closed). Use steps=[] for auto-approve** (the operation executes immediately)
-- **Workflow match = approval required** (one or more people must approve)
+- **No workflow match = request rejected (fail-closed)**
+- **Workflow with steps = approval required** (one or more people must approve)
+- **Workflow without steps = auto-approve** (executes immediately)
 - Workflows are scoped by **database × environment × operation**
+- Auto-approve thresholds are configured separately in `[[auto_approve]]`
 
 ## Quick examples
 
@@ -33,21 +35,98 @@ environment = "development"
 # No steps = auto-approve
 ```
 
-### Require DBA team approval (group-based)
+### Risk-based auto-approve for staging
 
 ```toml
+# Workflow with steps (approval required if risk exceeds threshold)
 [[workflows]]
-database = "primary"
-environment = "production"
+database = "*"
+environment = "staging"
 
 [[workflows.steps]]
 type = "approval"
+mode = "any"
 [[workflows.steps.approvers]]
-group = "dba-team"
+role = "team-lead"
 min = 1
+[[workflows.steps.approvers]]
+role = "dba"
+min = 1
+
+# Auto-approve Low-risk requests on staging
+[[auto_approve]]
+database = "*"
+environment = "staging"
+risk = "medium"    # Auto-approve up to Medium risk
 ```
 
-Anyone in the IdP `dba-team` group can approve. See [Authentication](../deployment/authentication.md) for group setup.
+With this config:
+- Low-risk SELECT → auto-approved
+- Safe DDL (CREATE TABLE) → auto-approved (Low risk)
+- Large table UPDATE → requires human approval (Medium/High risk)
+
+---
+
+## Auto-Approve
+
+Auto-approve evaluates the risk level of each request and skips human approval if the risk is at or below the configured threshold.
+
+### Configuration
+
+```toml
+[[auto_approve]]
+database = "*"          # Scope: "*" = all databases
+environment = "*"       # Scope: "*" = all environments
+risk = "low"            # Threshold: "none" | "low" | "medium" | "high"
+allow_read_only = true  # SELECT → Low risk
+allow_safe_ddl = true   # CREATE TABLE/INDEX/VIEW → Low risk
+max_estimated_rows = 1000  # Tables above this increase risk
+```
+
+### How it works
+
+1. A request matches a workflow with steps (approval required)
+2. dbward looks up the most specific `[[auto_approve]]` entry for that (database, environment)
+3. If the request's risk level ≤ threshold → auto-approved
+4. Otherwise → human approval required
+
+**Priority order:** `(db, env)` > `(*, env)` > `(db, *)` > `(*, *)`
+
+**Important rules:**
+- `risk = "none"` → never auto-approve (always require human)
+- No matching entry → same as `risk = "none"`
+- Risk level `Unknown` (schema not synced) → never auto-approved
+
+### Risk levels
+
+| Level | Triggers |
+|-------|----------|
+| Low | SELECT (with `allow_read_only`), safe DDL (with `allow_safe_ddl`) |
+| Medium | Large tables (above `max_estimated_rows`), ALTER TABLE |
+| High | CASCADE FK detected, multi-statement, DROP/TRUNCATE, many warnings |
+| Unknown | Schema not synced yet |
+
+### Example: different thresholds per environment
+
+```toml
+# Global default: only Low is auto-approved
+[[auto_approve]]
+database = "*"
+environment = "*"
+risk = "low"
+
+# Staging: auto-approve up to Medium
+[[auto_approve]]
+database = "*"
+environment = "staging"
+risk = "medium"
+
+# Production: no auto-approve
+[[auto_approve]]
+database = "*"
+environment = "production"
+risk = "none"
+```
 
 ---
 
@@ -115,16 +194,6 @@ min = 1
 
 Requires **either** a team-lead OR a dba-team member to approve.
 
-### Require multiple people
-
-```toml
-[[workflows.steps]]
-type = "approval"
-[[workflows.steps.approvers]]
-role = "dba"
-min = 2    # Two DBAs must approve
-```
-
 ---
 
 ## Workflow options
@@ -133,39 +202,65 @@ min = 2    # Two DBAs must approve
 [[workflows]]
 database = "primary"
 environment = "production"
-operations = ["execute_select", "execute_dml"]  # Filter by operation (empty = all)
+operations = ["execute_select", "execute_dml"]  # Filter by operation (omitted = all)
 require_reason = true                # Force users to provide --reason (default: false)
 allow_self_approve = false           # Requester cannot approve own request (default: false)
-allow_same_approver_across_steps = false  # Same person can't approve in multiple steps (default: false)
+allow_same_approver_across_steps = false  # Same person can't approve in multiple steps (default: true)
 ```
 
 ### `operations` filter
 
 | Value | Matches |
 |-------|---------|
-| `[]` (empty/omitted) | All operations |
+| omitted | All operations |
 | `["execute_select"]` | SELECT queries only |
 | `["execute_dml"]` | DML (INSERT/UPDATE/DELETE) only |
 | `["migrate_up", "migrate_down"]` | Migrations only |
 
-### `allow_self_approve`
+---
 
-- `false` (default): The person who submitted the request cannot approve it.
-- `true`: Useful for small teams where the same person may need to submit and approve.
+## Context information
 
-### `allow_same_approver_across_steps`
+When a request is pending, dbward automatically collects context to help approvers make informed decisions:
 
-- `false` (default): A person who approved step 1 cannot approve step 2.
-- `true`: Useful for small teams with limited personnel.
+```
+$ dbward request show req_a1b2
+Request req_a1b2
+  Status:      pending
+  Operation:   execute_dml
+  Detail:      DELETE FROM orders WHERE status = 'pending' AND created_at < '2025-01-01'
+  Environment: production
+  Database:    app
+  Reason:      Quarterly cleanup
+  Created by:  alice
+
+  Risk:        High (CascadeDelete { targets: ["users"] })
+  SQL Review:  passed
+  Tables:      orders
+  Explain:     ModifyTable on orders (rows=0, cost=1342)
+                 Seq Scan on orders (rows=1, cost=1342)  Filter: ((created_at < ...))
+
+  Approval (0/2 complete):
+    [wait] Step 1 [all]: group:backend-team
+    [wait] Step 2 [all]: group:dba-team
+```
+
+Context includes:
+- **Risk level** — automatically assessed from SQL structure and schema
+- **SQL Review** — rule-based checks (DELETE without WHERE, etc.)
+- **Tables** — affected tables extracted from SQL
+- **EXPLAIN** — execution plan from a dry-run (read-only, no side effects)
+
+This context is available to both the requester and approvers.
 
 ---
 
 ## Break-glass (emergency bypass)
 
-For urgent situations, users can bypass the approval workflow entirely:
+For urgent situations, users can bypass the approval workflow:
 
 ```bash
-dbward execute --emergency --reason "incident #1234: DB connection pool exhausted" \
+dbward execute --emergency --reason "incident #1234" \
   "UPDATE pg_settings SET setting = '200' WHERE name = 'max_connections'"
 ```
 
@@ -174,12 +269,6 @@ Break-glass:
 - Executes immediately
 - Is **fully audited** (who, what, when, reason)
 - Triggers a webhook notification (`break_glass` event)
-- Is restricted to specific roles:
-
-```toml
-[auth]
-break_glass_roles = ["admin", "developer"]  # Default: ["admin", "developer"]
-```
 
 ---
 
@@ -187,117 +276,28 @@ break_glass_roles = ["admin", "developer"]  # Default: ["admin", "developer"]
 
 When a request comes in, dbward finds the most specific matching workflow:
 
-**Priority order (most specific wins):**
+**Priority (most specific wins):**
 
-1. `database + environment` (with matching `operations`)
-2. `database + environment` (catchall operations)
-3. `* + environment`
-4. `database + *`
-5. `* + *`
+1. Exact database + exact environment + specific operations
+2. Exact database + exact environment + catchall operations
+3. Wildcard database + exact environment
+4. Exact database + wildcard environment
+5. Wildcard database + wildcard environment
 
-**No match = rejected (fail-closed). Define steps=[] for auto-approve.**
-
-### Example
-
-```toml
-# Rule A: DML on production primary needs DBA
-[[workflows]]
-database = "primary"
-environment = "production"
-operations = ["execute_dml"]
-# ... steps ...
-
-# Rule B: All production operations need admin
-[[workflows]]
-database = "*"
-environment = "production"
-# ... steps ...
-
-# Rule C: Development is auto-approve
-[[workflows]]
-database = "*"
-environment = "development"
-```
-
-| Request | Matches | Why |
-|---------|---------|-----|
-| `execute_dml` on `primary` / `production` | Rule A | Most specific (database + env + operation) |
-| `migrate_up` on `primary` / `production` | Rule B | Wildcard database, matching env |
-| `execute_select` on `analytics` / `production` | Rule B | Wildcard database, matching env |
-| `execute_select` on `primary` / `development` | Rule C | Development auto-approve |
-| `execute_select` on `primary` / `staging` | None → rejected | No matching rule (fail-closed) |
-
----
-
-## Approval flow in practice
-
-### CLI experience
-
-```bash
-# Submit
-$ dbward execute "DELETE FROM sessions WHERE expired_at < now()"
-⚠ Request req_a1b2 requires approval.
-  Approvers: dba-team
-Run: dbward request resume req_a1b2
-
-# Check status
-$ dbward request show req_a1b2
-Request req_a1b2
-  Status: pending
-  Step: 1/2 (waiting for: dba-team × 1)
-  Submitted by: alice@example.com
-  SQL: DELETE FROM sessions WHERE expired_at < now()
-
-# Approve (by someone in dba-team)
-$ dbward request approve req_a1b2 --comment "Checked row count: ~500"
-
-# Get result (by the submitter)
-$ dbward request resume req_a1b2
-✓ Dispatching req_a1b2...
-  rows_affected: 487
-```
-
-### Webhook notifications
-
-Configure Slack notifications to alert approvers:
-
-```toml
-[[webhooks]]
-url = "https://hooks.slack.com/services/T.../B.../xxx"
-events = ["request_created", "request_approved", "request_rejected", "request_completed", "break_glass"]
-format = "slack"
-```
-
-When a request is created, the configured webhook fires with the request details, SQL preview, and approver information.
-
----
-
-## Access policies
-
-Restrict who can even submit requests to specific databases:
-
-```toml
-[[access_policies]]
-database = "primary"
-environment = "production"
-allowed_roles = ["admin", "dba"]
-allowed_groups = ["backend-team"]
-```
-
-Users not matching `allowed_roles` or `allowed_groups` will get a 403 when trying to create a request for this database/environment.
+**No match = rejected (fail-closed).**
 
 ---
 
 ## Tips
 
 - **Start simple:** One workflow rule for production, auto-approve for development.
-- **Use groups over roles:** Groups come from your IdP and don't require dbward-specific configuration per user.
+- **Use `[[auto_approve]]` for risk-based automation:** Don't manually approve every low-risk SELECT.
+- **Use groups over roles:** Groups come from your IdP and don't require dbward-specific configuration.
 - **Require reason for production:** `require_reason = true` creates better audit trails.
-- **Use `mode = "any"` for small teams:** Avoids blocking when specific approvers are unavailable.
 - **Monitor with webhooks:** Get Slack notifications so approvers don't miss requests.
 
 ## Next steps
 
+- [Configuration Reference](../reference/configuration.md) — All workflow and auto_approve options
 - [Authentication](../deployment/authentication.md) — Set up groups and role mappings
-- [CI/CD](ci-cd.md) — Automate approvals in pipelines
-- [Configuration Reference](../reference/configuration.md) — All workflow options
+- [CLI Reference](../reference/cli.md) — Request and approval commands

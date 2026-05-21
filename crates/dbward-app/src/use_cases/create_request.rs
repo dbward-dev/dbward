@@ -19,11 +19,20 @@ pub struct CreateRequest {
     pub request_reader: Arc<dyn RequestReader>,
     pub request_writer: Arc<dyn RequestWriter>,
     pub db_registry: Arc<dyn DatabaseRegistry>,
+    pub schema_repo: Arc<dyn SchemaRepo>,
+    pub dry_run_repo: Arc<dyn DryRunRepo>,
+    pub context_repo: Arc<dyn ContextRepo>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
+    pub audit_logger: Arc<dyn AuditLogger>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
     pub default_approval_ttl_secs: Option<u64>,
+    pub review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
+    pub auto_approve_entries: Vec<workflow_matcher::AutoApproveEntry>,
 }
+
+const MAX_QUERY_BYTES: usize = 100_000;
+const MAX_REASON_BYTES: usize = 1024;
 
 #[derive(Clone)]
 pub struct CreateRequestInput {
@@ -65,14 +74,26 @@ impl CreateRequest {
         user: &AuthUser,
         ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<CreateRequestOutput, AppError> {
-        if input.detail.len() > 100_000 {
+        if input.detail.len() > MAX_QUERY_BYTES {
             return Err(AppError::Validation("query too long (max 100KB)".into()));
         }
         if let Some(ref reason) = input.reason {
-            if reason.len() > 1024 {
+            if reason.len() > MAX_REASON_BYTES {
                 return Err(AppError::Validation("reason too long (max 1KB)".into()));
             }
         }
+
+        // Resolve dialect once (used for classify, parse, review, risk)
+        let dialect_str = self
+            .schema_repo
+            .get_dialect(input.database.as_str(), input.environment.as_str())
+            .unwrap_or(None);
+        let dialect = match dialect_str.as_deref() {
+            Some(d) if d == dbward_domain::services::status_constants::dialect::MYSQL => {
+                Dialect::MySql
+            }
+            _ => Dialect::PostgreSql,
+        };
 
         // 1. Determine operation: migration types are explicit, others classified from SQL
         let operation = match input.operation {
@@ -80,12 +101,175 @@ impl CreateRequest {
                 input.operation
             }
             _ => {
-                let classification = sql_classifier::classify(&input.detail, Dialect::PostgreSql)
-                    .map_err(|e| match e {
-                    ClassifyError::Empty => AppError::Validation("empty query".into()),
-                    ClassifyError::Rejected { reason } => AppError::Validation(reason),
-                })?;
+                let classification =
+                    sql_classifier::classify(&input.detail, dialect).map_err(|e| match e {
+                        ClassifyError::Empty => AppError::Validation("empty query".into()),
+                        ClassifyError::Rejected { reason } => AppError::Validation(reason),
+                    })?;
                 classification.operation
+            }
+        };
+
+        // 1a. SQL Review + Risk assessment (best-effort, never blocks request creation)
+        let (risk_level, review_json, risk_json, parsed_stmts, tables_json, schema_collected_at) = {
+            use dbward_domain::services::{risk_scorer, sql_parser, sql_reviewer, table_extractor};
+            let parse_result = sql_parser::parse_statements(&input.detail, dialect);
+            if let Ok(stmts) = parse_result {
+                let review =
+                    sql_reviewer::review_statements(&stmts, Some(dialect), &self.review_rules);
+                if review.blocked {
+                    let reasons: Vec<&str> = review
+                        .findings
+                        .iter()
+                        .filter(|f| f.action == sql_reviewer::RuleAction::Block)
+                        .map(|f| f.message.as_str())
+                        .collect();
+                    // Audit: record blocked request
+                    let mut audit_event = dbward_domain::entities::AuditEvent::simple(
+                        "request_blocked_by_review",
+                        "request",
+                        &user.subject_id,
+                        None,
+                        self.clock.now(),
+                        ctx,
+                    );
+                    audit_event.database_name = Some(input.database.to_string());
+                    audit_event.environment = Some(input.environment.to_string());
+                    audit_event.metadata_json = serde_json::json!({
+                        "blocked_rules": reasons,
+                    })
+                    .to_string();
+                    let _ = self.audit_logger.record(&audit_event);
+                    return Err(AppError::Validation(format!(
+                        "SQL blocked by review: {}",
+                        reasons.join("; ")
+                    )));
+                }
+                let tables = table_extractor::extract_tables(&stmts);
+                let t_json = serde_json::to_string(
+                    &tables
+                        .iter()
+                        .map(|t| {
+                            if let Some(ref s) = t.schema {
+                                format!("{}.{}", s, t.name)
+                            } else {
+                                t.name.clone()
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .ok();
+                let (schema_status, schema_collected_at) = match self
+                    .schema_repo
+                    .get_snapshot(input.database.as_str(), input.environment.as_str())
+                {
+                    Ok(Some(s))
+                        if s.status == dbward_domain::services::status_constants::schema::READY =>
+                    {
+                        (risk_scorer::SchemaStatus::Ready, Some(s.collected_at))
+                    }
+                    Ok(Some(s)) => (risk_scorer::SchemaStatus::Failed, Some(s.collected_at)),
+                    _ => (risk_scorer::SchemaStatus::NotSynced, None),
+                };
+                let auto_entry = workflow_matcher::find_auto_approve(
+                    &self.auto_approve_entries,
+                    &input.database,
+                    &input.environment,
+                );
+                let allow_read_only = operation == Operation::ExecuteSelect
+                    && auto_entry.map(|e| e.allow_read_only).unwrap_or(true);
+                let safe_ddl = auto_entry.map(|e| e.allow_safe_ddl).unwrap_or(true)
+                    && stmts.len() == 1
+                    && stmts
+                        .iter()
+                        .all(|s| sql_classifier::is_safe_ddl_statement(s, Some(dialect)))
+                    && review.findings.is_empty();
+                let table_risk_info: Vec<risk_scorer::TableRiskInfo> = self
+                    .schema_repo
+                    .get_tables_for(input.database.as_str(), input.environment.as_str(), &tables)
+                    .unwrap_or(None)
+                    .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(&json).ok())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|t| {
+                                let has_cascade = t
+                                    .get("constraints")
+                                    .and_then(|c| c.as_array())
+                                    .map(|cs| {
+                                        cs.iter().any(|c| {
+                                            c.get("on_delete")
+                                                .and_then(|d| d.as_str())
+                                                .map(|d| d == "CASCADE")
+                                                .unwrap_or(false)
+                                        })
+                                    })
+                                    .unwrap_or(false);
+                                risk_scorer::TableRiskInfo {
+                                    name: t
+                                        .get("name")
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    estimated_rows: t
+                                        .get("estimated_rows")
+                                        .and_then(|r| r.as_i64())
+                                        .unwrap_or(0),
+                                    has_cascade_fk: has_cascade,
+                                    cascade_targets: t
+                                        .get("constraints")
+                                        .and_then(|c| c.as_array())
+                                        .map(|cs| {
+                                            cs.iter()
+                                                .filter(|c| {
+                                                    c.get("on_delete").and_then(|d| d.as_str())
+                                                        == Some("CASCADE")
+                                                })
+                                                .filter_map(|c| {
+                                                    c.get("referenced_table")
+                                                        .and_then(|t| t.as_str())
+                                                        .map(String::from)
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let assessment = risk_scorer::evaluate(&risk_scorer::RiskInput {
+                    operation,
+                    findings: &review.findings,
+                    schema_status,
+                    tables: &table_risk_info,
+                    statement_count: stmts.len(),
+                    has_dml: matches!(operation, Operation::ExecuteDml),
+                    allow_read_only,
+                    safe_ddl,
+                    max_estimated_rows: auto_entry
+                        .map(|e| e.max_estimated_rows as i64)
+                        .unwrap_or(1000),
+                });
+                let r_json = serde_json::json!({
+                    "level": format!("{:?}", assessment.level),
+                    "factors": assessment.factors.iter().map(|f| format!("{:?}", f)).collect::<Vec<_>>(),
+                });
+                let rev_json = serde_json::json!({
+                    "findings": review.findings.iter().map(|f| {
+                        serde_json::json!({"rule": format!("{:?}", f.rule), "message": &f.message})
+                    }).collect::<Vec<_>>(),
+                    "blocked": review.blocked,
+                });
+                (
+                    Some(assessment.level),
+                    Some(rev_json.to_string()),
+                    Some(r_json.to_string()),
+                    Some(stmts),
+                    t_json,
+                    schema_collected_at,
+                )
+            } else {
+                (None, None, None, None, None, None)
             }
         };
 
@@ -175,11 +359,12 @@ impl CreateRequest {
         let workflow =
             self.policy
                 .evaluate_workflow(&input.database, &input.environment, operation)?;
-        let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
         // Fail-closed: no workflow configured = reject (unless break-glass)
         let decision = if workflow.is_none() {
             if input.emergency {
-                workflow_matcher::ApprovalDecision::AutoApproved
+                workflow_matcher::ApprovalDecision::AutoApproved {
+                    reason: workflow_matcher::AutoApproveReason::EmptySteps,
+                }
             } else {
                 return Err(AppError::Validation(format!(
                     "no workflow configured for {}/{}",
@@ -187,17 +372,16 @@ impl CreateRequest {
                 )));
             }
         } else {
-            workflow_matcher::evaluate(
-                workflow.as_ref(),
-                &role_names,
-                &user.groups,
-                &user.subject_id,
-                true,
-            )
+            let auto_approve_entry = workflow_matcher::find_auto_approve(
+                &self.auto_approve_entries,
+                &input.database,
+                &input.environment,
+            );
+            workflow_matcher::evaluate(workflow.as_ref(), risk_level, auto_approve_entry)
         };
 
         // 5. Determine initial status
-        let needs_approval = !matches!(decision, workflow_matcher::ApprovalDecision::AutoApproved);
+        let needs_approval = decision.needs_approval();
         let status = status_machine::initial_status(needs_approval, input.emergency);
 
         // 5b. Workflow require_reason check
@@ -323,6 +507,65 @@ impl CreateRequest {
             status
         };
 
+        // 9. Create dry-run EXPLAIN jobs (best-effort, never blocks request)
+        if matches!(operation, Operation::ExecuteSelect | Operation::ExecuteDml)
+            && !request.no_store
+        {
+            let now_str = now.to_rfc3339();
+            // Per-statement jobs (or single job if parse failed)
+            let sql_texts: Vec<String> = if let Some(ref stmts) = parsed_stmts {
+                stmts.iter().map(|s| s.to_string()).collect()
+            } else {
+                vec![request.detail.clone()]
+            };
+            let jobs: Vec<DryRunJobRecord> = sql_texts
+                .iter()
+                .map(|sql| DryRunJobRecord {
+                    id: self.id_gen.generate(),
+                    request_id: id.clone(),
+                    database_name: request.database.as_str().to_string(),
+                    environment: request.environment.as_str().to_string(),
+                    sql_text: sql.clone(),
+                    status: "pending".into(),
+                    claimed_by: None,
+                    claimed_at: None,
+                    claim_token: None,
+                    result_json: None,
+                    error_message: None,
+                    created_at: now_str.clone(),
+                    completed_at: None,
+                })
+                .collect();
+            if let Err(e) = self.dry_run_repo.create_jobs(&jobs) {
+                tracing::warn!(%e, "failed to create dry-run jobs");
+            }
+        }
+
+        // 10. Create request_context record (best-effort)
+        if !request.no_store {
+            let now_str = now.to_rfc3339();
+            let has_dry_run = matches!(operation, Operation::ExecuteSelect | Operation::ExecuteDml);
+            let ctx_status = if has_dry_run {
+                dbward_domain::services::status_constants::context::COLLECTING
+            } else {
+                dbward_domain::services::status_constants::context::READY
+            };
+            let ctx_record = RequestContextRecord {
+                request_id: id.clone(),
+                status: ctx_status.into(),
+                schema_snapshot_collected_at: schema_collected_at,
+                tables_json,
+                sql_review_json: review_json,
+                risk_json,
+                explain_json: None,
+                created_at: now_str.clone(),
+                updated_at: now_str,
+            };
+            if let Err(e) = self.context_repo.create(&ctx_record) {
+                tracing::warn!(%e, "failed to create request context");
+            }
+        }
+
         Ok(CreateRequestOutput {
             id,
             status: final_status,
@@ -360,10 +603,16 @@ mod tests {
             request_reader: Arc::new(FakeRequestReader::new()),
             request_writer: Arc::new(FakeRequestWriter::new()),
             db_registry: Arc::new(FakeDatabaseRegistry),
+            schema_repo: Arc::new(FakeSchemaRepo),
+            dry_run_repo: Arc::new(FakeDryRunRepo),
+            context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
+            audit_logger: Arc::new(NoopAuditLogger),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
+            review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+            auto_approve_entries: vec![],
         }
     }
 
@@ -504,7 +753,6 @@ mod tests {
                 environment: Environment::wildcard(),
                 operations: vec![],
                 steps: vec![],
-                skip_approval_for: vec![],
                 require_reason: true,
                 allow_self_approve: false,
                 allow_same_approver_across_steps: false,
@@ -558,7 +806,7 @@ mod tests {
     fn ddl_rejected_returns_validation() {
         let uc = make_uc(Arc::new(AllowAll));
         let mut input = make_input();
-        input.detail = "CREATE TABLE foo (id INT)".into();
+        input.detail = "GRANT ALL ON users TO admin".into();
         let err = uc
             .execute(
                 input,
@@ -577,10 +825,16 @@ mod tests {
             request_reader: Arc::new(FakeRequestReader::new()),
             request_writer: Arc::new(FakeRequestWriter::new()),
             db_registry: Arc::new(FakeDatabaseRegistryNotFound),
+            schema_repo: Arc::new(FakeSchemaRepo),
+            dry_run_repo: Arc::new(FakeDryRunRepo),
+            context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
+            audit_logger: Arc::new(NoopAuditLogger),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
+            review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+            auto_approve_entries: vec![],
         };
         let err = uc
             .execute(
@@ -602,10 +856,16 @@ mod tests {
             request_reader: Arc::new(FakeRequestReader::new()),
             request_writer: Arc::new(FakeRequestWriter::new()),
             db_registry: Arc::new(FakeDatabaseRegistry),
+            schema_repo: Arc::new(FakeSchemaRepo),
+            dry_run_repo: Arc::new(FakeDryRunRepo),
+            context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
+            audit_logger: Arc::new(NoopAuditLogger),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
+            review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+            auto_approve_entries: vec![],
         };
         let mut input = make_input();
         input.reason = None;
@@ -638,5 +898,23 @@ mod tests {
         assert!(
             matches!(err, AppError::Validation(ref m) if m.contains("emergency requests are not allowed via MCP"))
         );
+    }
+
+    #[test]
+    fn risk_level_computed_for_dml() {
+        // Verify CreateRequest computes risk_level and passes it to workflow_matcher
+        // With auto-approve disabled, it doesn't change the outcome but the code path runs
+        let uc = make_uc(Arc::new(AllowAll));
+        let mut input = make_input();
+        input.detail = "DELETE FROM users".into(); // no WHERE → risk_scorer should find this risky
+        let result = uc
+            .execute(
+                input,
+                &make_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap();
+        // With empty steps workflow → auto-approved (risk doesn't block because config disabled)
+        assert_eq!(result.status, RequestStatus::Dispatched);
     }
 }

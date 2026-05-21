@@ -12,6 +12,7 @@ pub struct GetRequest {
     pub request_reader: Arc<dyn RequestReader>,
     pub approval_repo: Arc<dyn ApprovalRepo>,
     pub authorizer: Arc<dyn Authorizer>,
+    pub context_repo: Arc<dyn ContextRepo>,
 }
 
 #[derive(Debug)]
@@ -20,6 +21,7 @@ pub struct GetRequestOutput {
     pub detail: String,
     pub is_approver_view: bool,
     pub approval_progress: Option<ApprovalProgress>,
+    pub context: Option<RequestContextRecord>,
 }
 
 impl GetRequest {
@@ -56,11 +58,7 @@ impl GetRequest {
             false
         };
 
-        let detail = if is_approver_view && user.subject_id != req.requester {
-            "[redacted - approve to view]".to_string()
-        } else {
-            req.detail.clone()
-        };
+        let detail = req.detail.clone();
 
         // Build approval progress from workflow snapshot + approvals
         let approval_progress = req
@@ -74,18 +72,21 @@ impl GetRequest {
                     .map(|approvals| build_progress(&wf.steps, &approvals))
             });
 
+        let context = self.context_repo.get(&req.id).unwrap_or(None);
+
         Ok(GetRequestOutput {
             request: req,
             detail,
             is_approver_view,
             approval_progress,
+            context,
         })
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::FakeApprovalRepo;
+    use crate::test_support::{FakeApprovalRepo, FakeContextRepo};
     use dbward_domain::auth::{AuthUser, SubjectType};
     use dbward_domain::entities::Request;
     use dbward_domain::values::{DatabaseName, Environment, Operation};
@@ -250,6 +251,7 @@ mod tests {
             }),
             approval_repo: Arc::new(FakeApprovalRepo::new()),
             authorizer: Arc::new(AllowAuthorizer),
+            context_repo: Arc::new(FakeContextRepo),
         };
         assert!(matches!(
             uc.execute("req-1", &test_user("u1")).unwrap_err(),
@@ -266,6 +268,7 @@ mod tests {
             }),
             approval_repo: Arc::new(FakeApprovalRepo::new()),
             authorizer: Arc::new(AllowAuthorizer),
+            context_repo: Arc::new(FakeContextRepo),
         };
         let out = uc.execute("req-1", &test_user("u1")).unwrap();
         assert_eq!(out.detail, "SELECT 1");
@@ -281,6 +284,7 @@ mod tests {
             }),
             approval_repo: Arc::new(FakeApprovalRepo::new()),
             authorizer: Arc::new(DenyAuthorizer),
+            context_repo: Arc::new(FakeContextRepo),
         };
         assert!(matches!(
             uc.execute("req-1", &test_user("u2")).unwrap_err(),
@@ -297,10 +301,12 @@ mod tests {
             }),
             approval_repo: Arc::new(FakeApprovalRepo::new()),
             authorizer: Arc::new(DenyAuthorizer),
+            context_repo: Arc::new(FakeContextRepo),
         };
         let out = uc.execute("req-1", &test_user("u2")).unwrap();
         assert!(out.is_approver_view);
-        assert_eq!(out.detail, "[redacted - approve to view]");
+        // Approvers can see SQL detail (needed for informed approval decisions)
+        assert_eq!(out.detail, "SELECT 1");
     }
 
     #[test]
@@ -312,6 +318,7 @@ mod tests {
             }),
             approval_repo: Arc::new(FakeApprovalRepo::new()),
             authorizer: Arc::new(DenyAuthorizer),
+            context_repo: Arc::new(FakeContextRepo),
         };
         assert!(matches!(
             uc.execute("req-1", &test_user("u2")).unwrap_err(),
@@ -328,6 +335,7 @@ mod tests {
             }),
             approval_repo: Arc::new(FakeApprovalRepo::new()),
             authorizer: Arc::new(DenyAuthorizer),
+            context_repo: Arc::new(FakeContextRepo),
         };
         assert!(matches!(
             uc.execute("req-1", &test_user("u2")).unwrap_err(),

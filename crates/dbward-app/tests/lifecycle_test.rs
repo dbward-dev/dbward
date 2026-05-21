@@ -423,7 +423,6 @@ fn single_step_workflow() -> Workflow {
             }],
             mode: WorkflowStepMode::Any,
         }],
-        skip_approval_for: vec![],
         require_reason: false,
         allow_self_approve: false,
         allow_same_approver_across_steps: true,
@@ -457,7 +456,6 @@ fn two_step_workflow() -> Workflow {
                 mode: WorkflowStepMode::Any,
             },
         ],
-        skip_approval_for: vec![],
         require_reason: false,
         allow_self_approve: false,
         allow_same_approver_across_steps: true,
@@ -698,16 +696,98 @@ impl TestHarness {
     }
 
     fn create_uc(&self) -> CreateRequest {
+        struct FakeSchemaRepo;
+        impl SchemaRepo for FakeSchemaRepo {
+            fn upsert_snapshot(&self, _: &SchemaSnapshotRecord) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get_snapshot(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<Option<SchemaSnapshotRecord>, AppError> {
+                Ok(None)
+            }
+            fn get_dialect(&self, _: &str, _: &str) -> Result<Option<String>, AppError> {
+                Ok(None)
+            }
+            fn get_tables_for(
+                &self,
+                _: &str,
+                _: &str,
+                _: &[dbward_domain::services::table_extractor::TableRef],
+            ) -> Result<Option<String>, AppError> {
+                Ok(None)
+            }
+        }
+        struct FakeDryRunRepo;
+        impl DryRunRepo for FakeDryRunRepo {
+            fn create_jobs(&self, _: &[DryRunJobRecord]) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn find_pending_for_agent(
+                &self,
+                _: &[(String, String)],
+            ) -> Result<Vec<DryRunJobRecord>, AppError> {
+                Ok(vec![])
+            }
+            fn claim(&self, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn complete(
+                &self,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+                _: &str,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn fail(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn reclaim_stale(&self, _: &str) -> Result<u32, AppError> {
+                Ok(0)
+            }
+            fn find_for_request(&self, _: &str) -> Result<Vec<DryRunJobRecord>, AppError> {
+                Ok(vec![])
+            }
+            fn get_request_id(&self, _: &str) -> Result<Option<String>, AppError> {
+                Ok(None)
+            }
+        }
+        struct FakeContextRepo;
+        impl ContextRepo for FakeContextRepo {
+            fn create(&self, _: &RequestContextRecord) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get(&self, _: &str) -> Result<Option<RequestContextRecord>, AppError> {
+                Ok(None)
+            }
+            fn update_explain(&self, _: &str, _: &str, _: &str, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn timeout_collecting(&self, _: &str, _: &str) -> Result<u32, AppError> {
+                Ok(0)
+            }
+        }
         CreateRequest {
             authorizer: self.authorizer.clone(),
             policy: self.policy.clone(),
             request_reader: self.repo.clone(),
             request_writer: self.repo.clone(),
             db_registry: self.db_registry.clone(),
+            schema_repo: Arc::new(FakeSchemaRepo),
+            dry_run_repo: Arc::new(FakeDryRunRepo),
+            context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: self.event_dispatcher.clone(),
+            audit_logger: self.audit_logger.clone(),
             clock: self.clock.clone(),
             id_gen: self.id_gen.clone(),
             default_approval_ttl_secs: Some(3600),
+            review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+            auto_approve_entries: vec![],
         }
     }
 
@@ -985,7 +1065,6 @@ fn auto_approved_request_dispatches_directly() {
         environment: Environment::new("*").unwrap(),
         operations: vec![],
         steps: vec![],
-        skip_approval_for: vec![],
         require_reason: false,
         allow_self_approve: false,
         allow_same_approver_across_steps: true,
@@ -1668,7 +1747,6 @@ fn event_dispatcher_records_auto_approved_two_events() {
         environment: Environment::new("*").unwrap(),
         operations: vec![],
         steps: vec![],
-        skip_approval_for: vec![],
         require_reason: false,
         allow_self_approve: false,
         allow_same_approver_across_steps: true,

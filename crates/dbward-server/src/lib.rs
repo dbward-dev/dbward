@@ -73,6 +73,9 @@ pub async fn run_from_args(
     let database_registry = Arc::new(dbward_infra::sqlite::SqliteDatabaseRegistry::new(
         conn.clone(),
     ));
+    let schema_repo = Arc::new(dbward_infra::sqlite::SqliteSchemaRepo::new(conn.clone()));
+    let dry_run_repo = Arc::new(dbward_infra::sqlite::SqliteDryRunRepo::new(conn.clone()));
+    let context_repo = Arc::new(dbward_infra::sqlite::SqliteContextRepo::new(conn.clone()));
     let audit_logger: Arc<dyn dbward_app::ports::AuditLogger> =
         Arc::new(dbward_infra::sqlite::SqliteAuditLogger::new(conn.clone()));
     let audit_repo = Arc::new(dbward_infra::sqlite::SqliteAuditRepo::new(conn.clone()));
@@ -269,6 +272,9 @@ pub async fn run_from_args(
         webhook_repo,
         policy_repo,
         database_registry,
+        schema_repo,
+        dry_run_repo,
+        context_repo,
         audit_logger,
         audit_repo,
         policy_evaluator,
@@ -289,6 +295,20 @@ pub async fn run_from_args(
         max_persist_bytes: cfg.result_storage.max_persist_bytes,
         auth_mode: cfg.auth.mode.clone(),
         storage_backend: cfg.result_storage.backend.clone(),
+        sql_review_rules: cfg
+            .sql_review
+            .to_review_rules()
+            .map_err(|e| format!("config: {e}"))?,
+        auto_approve_entries: {
+            let mut entries = Vec::new();
+            for (i, a) in cfg.auto_approve.iter().enumerate() {
+                entries.push(
+                    a.to_entry()
+                        .map_err(|e| format!("auto_approve[{i}]: {e}"))?,
+                );
+            }
+            entries
+        },
         draining: draining.clone(),
     };
 
@@ -443,7 +463,6 @@ fn sync_workflows(
                     WorkflowStepInput { mode, approvers }
                 })
                 .collect(),
-            skip_approval_for: wf.skip_approval_for.clone(),
             require_reason: wf.require_reason,
             allow_self_approve: wf.allow_self_approve,
             allow_same_approver_across_steps: wf.allow_same_approver_across_steps,

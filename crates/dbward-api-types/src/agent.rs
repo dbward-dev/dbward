@@ -33,11 +33,23 @@ fn default_limit() -> u32 {
 pub struct PollResponse {
     pub jobs: Vec<Job>,
     #[serde(default)]
+    pub dry_run_jobs: Vec<DryRunJob>,
+    #[serde(default)]
     pub server_version: Option<String>,
     #[serde(default)]
     pub min_agent_version: Option<String>,
     #[serde(default)]
     pub upgrade_required: bool,
+}
+
+/// A dry-run EXPLAIN job for the agent to execute.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DryRunJob {
+    pub id: String,
+    pub request_id: String,
+    pub database: String,
+    pub environment: String,
+    pub sql: String,
 }
 
 /// A job returned from poll.
@@ -112,4 +124,28 @@ pub struct ActiveJob {
     pub operation: String,
     #[serde(default)]
     pub elapsed_secs: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poll_response_backward_compat_no_dry_run_jobs() {
+        // Old server response without dry_run_jobs field
+        let json = r#"{"jobs":[],"server_version":"0.1.2"}"#;
+        let resp: PollResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.jobs.is_empty());
+        assert!(resp.dry_run_jobs.is_empty());
+        assert_eq!(resp.server_version.as_deref(), Some("0.1.2"));
+    }
+
+    #[test]
+    fn poll_response_with_dry_run_jobs() {
+        let json = r#"{"jobs":[],"dry_run_jobs":[{"id":"j1","request_id":"r1","database":"app","environment":"prod","sql":"SELECT 1"}]}"#;
+        let resp: PollResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.dry_run_jobs.len(), 1);
+        assert_eq!(resp.dry_run_jobs[0].id, "j1");
+        assert_eq!(resp.dry_run_jobs[0].sql, "SELECT 1");
+    }
 }

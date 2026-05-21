@@ -253,18 +253,18 @@ fn workflow_state() -> AppState {
 
         // 2-step production workflow (backend-team → dba-team)
         c.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 "wf-prod", "app", "production", "[]",
                 r#"[{"approvers":[{"selector":"group:backend-team","min":1}],"mode":"all"},{"approvers":[{"selector":"group:dba-team","min":1}],"mode":"all"}]"#,
-                "[]", 1, 0, 0
+                1, 0, 0
             ],
         ).unwrap();
 
         // Auto-approve development workflow (empty steps)
         c.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            rusqlite::params!["wf-dev", "app", "development", "[]", "[]", "[]", 0, 0, 1],
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params!["wf-dev", "app", "development", "[]", "[]", 0, 0, 1],
         ).unwrap();
     }
 
@@ -282,6 +282,9 @@ fn workflow_state() -> AppState {
         webhook_repo: Arc::new(SqliteWebhookRepo::new(conn.clone())),
         policy_repo: Arc::new(SqlitePolicyRepo::new(conn.clone())),
         database_registry: Arc::new(SqliteDatabaseRegistry::new(conn.clone())),
+        schema_repo: Arc::new(dbward_infra::sqlite::SqliteSchemaRepo::new(conn.clone())),
+        dry_run_repo: Arc::new(dbward_infra::sqlite::SqliteDryRunRepo::new(conn.clone())),
+        context_repo: Arc::new(dbward_infra::sqlite::SqliteContextRepo::new(conn.clone())),
         audit_logger: Arc::new(SqliteAuditLogger::new(conn.clone())),
         audit_repo: Arc::new(SqliteAuditRepo::new(conn.clone())),
         policy_evaluator: Arc::new(SqlitePolicyEvaluator::new(conn.clone())),
@@ -303,6 +306,8 @@ fn workflow_state() -> AppState {
         default_approval_ttl_secs: Some(3600),
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),
+        sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+        auto_approve_entries: vec![],
     }
 }
 

@@ -166,10 +166,43 @@ pub async fn poll(
             .collect()
     };
 
+    // Fetch pending dry-run jobs for this agent's databases
+    let db_pairs: Vec<(String, String)> = databases
+        .iter()
+        .flat_map(|db| {
+            envs.iter()
+                .filter(|env| env.as_str() != "*")
+                .map(move |env| (db.as_str().to_string(), env.as_str().to_string()))
+        })
+        .collect();
+    let dry_run_jobs: Vec<serde_json::Value> = if upgrade_required || db_pairs.is_empty() {
+        vec![]
+    } else {
+        match state.dry_run_repo.find_pending_for_agent(&db_pairs) {
+            Ok(jobs) => jobs
+                .iter()
+                .map(|j| {
+                    serde_json::json!({
+                        "id": j.id,
+                        "request_id": j.request_id,
+                        "database": j.database_name,
+                        "environment": j.environment,
+                        "sql": j.sql_text,
+                    })
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!(%e, "failed to fetch dry-run jobs");
+                vec![]
+            }
+        }
+    };
+
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
             "jobs": jobs,
+            "dry_run_jobs": dry_run_jobs,
             "server_version": env!("CARGO_PKG_VERSION"),
             "min_agent_version": min_agent_version,
             "upgrade_required": upgrade_required,
@@ -405,6 +438,250 @@ fn version_lt(a: &str, b: &str) -> bool {
     parse(a) < parse(b)
 }
 
+#[derive(Deserialize)]
+pub struct SchemaSyncBody {
+    pub database: String,
+    pub environment: String,
+    pub dialect: String,
+    pub status: String,
+    pub snapshot: Option<serde_json::Value>,
+    pub error_message: Option<String>,
+}
+
+// TODO(v0.2): Extract schema_sync + dry_run_claim/result to dbward-app use cases for Clean Architecture alignment
+pub async fn schema_sync(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<SchemaSyncBody>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    require_agent(&user)?;
+
+    // Validate dialect
+    if !matches!(body.dialect.as_str(), "postgresql" | "mysql") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "invalid dialect", "code": "validation_error"})),
+        ));
+    }
+    // Validate status
+    if !matches!(body.status.as_str(), "ready" | "failed" | "partial") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "invalid status", "code": "validation_error"})),
+        ));
+    }
+    // Validate consistency: ready requires snapshot, failed requires error_message
+    if body.status == "ready" && body.snapshot.is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(
+                serde_json::json!({"error": "snapshot required when status=ready", "code": "validation_error"}),
+            ),
+        ));
+    }
+
+    // Scope check: agent must have capability for this database+environment
+    let agent = state.agent_repo.get(&user.subject_id).map_err(map_error)?;
+    let agent = agent.ok_or_else(|| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "agent not registered", "code": "forbidden"})),
+        )
+    })?;
+    let scope_match = agent.databases.iter().any(|d| {
+        d.database.as_str() == body.database && d.environment.as_str() == body.environment
+    });
+    if !scope_match {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(
+                serde_json::json!({"error": "agent not authorized for this database/environment", "code": "forbidden"}),
+            ),
+        ));
+    }
+    // Verify database+environment is registered
+    {
+        use dbward_domain::values::{DatabaseName, Environment};
+        if let (Ok(db), Ok(env)) = (
+            DatabaseName::new(&body.database),
+            Environment::new(&body.environment),
+        ) && !state.database_registry.exists(&db, &env).unwrap_or(false)
+        {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(
+                    serde_json::json!({"error": "database/environment not registered", "code": "validation_error"}),
+                ),
+            ));
+        }
+    }
+
+    let now = state.clock.now().to_rfc3339();
+    let record = dbward_app::ports::SchemaSnapshotRecord {
+        database_name: body.database,
+        environment: body.environment,
+        status: body.status,
+        snapshot_json: body.snapshot.map(|v| v.to_string()),
+        error_message: body.error_message,
+        dialect: body.dialect,
+        collected_at: now,
+        agent_id: user.subject_id.clone(),
+    };
+    state
+        .schema_repo
+        .upsert_snapshot(&record)
+        .map_err(map_error)?;
+
+    // Audit event
+    let event_type = if record.status == "ready" {
+        "schema_snapshot_updated"
+    } else {
+        "schema_snapshot_failed"
+    };
+    let audit_ctx = dbward_domain::entities::AuditContext::Agent {
+        agent_id: user.subject_id.clone(),
+    };
+    let mut event = dbward_domain::entities::AuditEvent::simple(
+        event_type,
+        "agent",
+        &user.subject_id,
+        None,
+        state.clock.now(),
+        &audit_ctx,
+    );
+    event.database_name = Some(record.database_name.clone());
+    event.environment = Some(record.environment.clone());
+    let _ = state.audit_logger.record(&event);
+
+    Ok(StatusCode::OK)
+}
+
+pub async fn dry_run_claim(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    require_agent(&user)?;
+
+    // Scope check: verify job belongs to agent's registered databases
+    if let Ok(Some(request_id)) = state.dry_run_repo.get_request_id(&id)
+        && let Ok(jobs) = state.dry_run_repo.find_for_request(&request_id)
+        && let Some(job) = jobs.iter().find(|j| j.id == id)
+    {
+        let agent = state.agent_repo.get(&user.subject_id).map_err(map_error)?;
+        if let Some(agent) = agent {
+            let scope_ok = agent.databases.iter().any(|d| {
+                d.database.as_str() == job.database_name
+                    && d.environment.as_str() == job.environment
+            });
+            if !scope_ok {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(
+                        serde_json::json!({"error": "agent not authorized for this job", "code": "forbidden"}),
+                    ),
+                ));
+            }
+        }
+    }
+
+    let claim_token = uuid::Uuid::new_v4().to_string();
+    let now = state.clock.now().to_rfc3339();
+    let claimed = state
+        .dry_run_repo
+        .claim(&id, &user.subject_id, &claim_token, &now)
+        .map_err(map_error)?;
+    if !claimed {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "already_claimed", "code": "conflict"})),
+        ));
+    }
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({"claim_token": claim_token})),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct DryRunResultBody {
+    pub claim_token: String,
+    pub result: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+pub async fn dry_run_result(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    Json(body): Json<DryRunResultBody>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    require_agent(&user)?;
+    let now = state.clock.now().to_rfc3339();
+    let success = if let Some(error) = body.error {
+        state
+            .dry_run_repo
+            .fail(&id, &user.subject_id, &body.claim_token, &error, &now)
+            .map_err(map_error)?
+    } else {
+        let result_json = body
+            .result
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "{}".to_string());
+        state
+            .dry_run_repo
+            .complete(&id, &user.subject_id, &body.claim_token, &result_json, &now)
+            .map_err(map_error)?
+    };
+    if !success {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "fencing_violation", "code": "conflict"})),
+        ));
+    }
+
+    // on_dry_run_complete: check if all jobs for this request are done, update context
+    if let Ok(Some(request_id)) = state.dry_run_repo.get_request_id(&id)
+        && let Ok(jobs) = state.dry_run_repo.find_for_request(&request_id)
+    {
+        let all_done = jobs
+            .iter()
+            .all(|j| j.status != "pending" && j.status != "claimed");
+        if all_done {
+            let results: Vec<serde_json::Value> = jobs
+                .iter()
+                .map(|j| {
+                    if j.status == "completed" {
+                        let plan = j
+                            .result_json
+                            .as_deref()
+                            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                            .unwrap_or(serde_json::Value::Null);
+                        serde_json::json!({"sql": &j.sql_text, "plan": plan})
+                    } else {
+                        let hint = j.error_message.as_deref()
+                            .filter(|m| m.contains("permission denied") || m.contains("Access denied"))
+                            .map(|_| "Grant EXPLAIN privilege to agent DB user");
+                        serde_json::json!({"sql": &j.sql_text, "error": &j.error_message, "hint": hint})
+                    }
+                })
+                .collect();
+            let explain_json = serde_json::to_string(&results).unwrap_or_default();
+            let ctx_status = if jobs.iter().all(|j| j.status == "completed") {
+                "ready"
+            } else {
+                "partial"
+            };
+            let now_str = state.clock.now().to_rfc3339();
+            let _ =
+                state
+                    .context_repo
+                    .update_explain(&request_id, &explain_json, ctx_status, &now_str);
+        }
+    }
+
+    Ok(StatusCode::OK)
+}
 #[cfg(test)]
 mod tests {
     use super::version_lt;

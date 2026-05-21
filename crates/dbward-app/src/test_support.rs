@@ -337,7 +337,6 @@ impl PolicyEvaluator for FakePolicyEvaluator {
             environment: Environment::wildcard(),
             operations: vec![],
             steps: vec![],
-            skip_approval_for: vec![],
             require_reason: false,
             allow_self_approve: false,
             allow_same_approver_across_steps: false,
@@ -369,5 +368,109 @@ impl DatabaseRegistry for FakeDatabaseRegistry {
     }
     fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
         Ok(vec![])
+    }
+}
+
+pub struct FakeSchemaRepo;
+impl crate::ports::SchemaRepo for FakeSchemaRepo {
+    fn upsert_snapshot(
+        &self,
+        _: &crate::ports::SchemaSnapshotRecord,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn get_snapshot(
+        &self,
+        _: &str,
+        _: &str,
+    ) -> Result<Option<crate::ports::SchemaSnapshotRecord>, crate::error::AppError> {
+        Ok(None)
+    }
+    fn get_dialect(&self, _: &str, _: &str) -> Result<Option<String>, crate::error::AppError> {
+        Ok(None)
+    }
+    fn get_tables_for(
+        &self,
+        _: &str,
+        _: &str,
+        _: &[dbward_domain::services::table_extractor::TableRef],
+    ) -> Result<Option<String>, crate::error::AppError> {
+        Ok(None)
+    }
+}
+
+pub struct FakeDryRunRepo;
+impl crate::ports::DryRunRepo for FakeDryRunRepo {
+    fn create_jobs(
+        &self,
+        _: &[crate::ports::DryRunJobRecord],
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn find_pending_for_agent(
+        &self,
+        _: &[(String, String)],
+    ) -> Result<Vec<crate::ports::DryRunJobRecord>, crate::error::AppError> {
+        Ok(vec![])
+    }
+    fn claim(&self, _: &str, _: &str, _: &str, _: &str) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn complete(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn fail(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn reclaim_stale(&self, _: &str) -> Result<u32, crate::error::AppError> {
+        Ok(0)
+    }
+    fn find_for_request(
+        &self,
+        _: &str,
+    ) -> Result<Vec<crate::ports::DryRunJobRecord>, crate::error::AppError> {
+        Ok(vec![])
+    }
+    fn get_request_id(&self, _: &str) -> Result<Option<String>, crate::error::AppError> {
+        Ok(None)
+    }
+}
+
+pub struct FakeContextRepo;
+impl crate::ports::ContextRepo for FakeContextRepo {
+    fn create(&self, _: &crate::ports::RequestContextRecord) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn get(
+        &self,
+        _: &str,
+    ) -> Result<Option<crate::ports::RequestContextRecord>, crate::error::AppError> {
+        Ok(None)
+    }
+    fn update_explain(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn timeout_collecting(&self, _: &str, _: &str) -> Result<u32, crate::error::AppError> {
+        Ok(0)
     }
 }

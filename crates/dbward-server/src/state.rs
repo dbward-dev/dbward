@@ -3,9 +3,10 @@ use std::sync::atomic::AtomicBool;
 
 use dbward_app::ports::{
     AgentRepo, ApprovalRepo, AuditLogger, AuditRepo, Authorizer, BackgroundTaskRepo, Clock,
-    DatabaseRegistry, EventDispatcher, IdGenerator, LicenseChecker, Notifier, PolicyEvaluator,
-    PolicyRepo, RequestReader, RequestWriter, ResultChannel, ResultStore, RoleResolver,
-    SsrfValidator, TokenRepo, TokenSigner, TokenVerifier, UserRepo, WebhookRepo,
+    ContextRepo, DatabaseRegistry, DryRunRepo, EventDispatcher, IdGenerator, LicenseChecker,
+    Notifier, PolicyEvaluator, PolicyRepo, RequestReader, RequestWriter, ResultChannel,
+    ResultStore, RoleResolver, SchemaRepo, SsrfValidator, TokenRepo, TokenSigner, TokenVerifier,
+    UserRepo, WebhookRepo,
 };
 
 use crate::metrics::Metrics;
@@ -27,6 +28,9 @@ pub struct AppState {
     pub webhook_repo: Arc<dyn WebhookRepo>,
     pub policy_repo: Arc<dyn PolicyRepo>,
     pub database_registry: Arc<dyn DatabaseRegistry>,
+    pub schema_repo: Arc<dyn SchemaRepo>,
+    pub dry_run_repo: Arc<dyn DryRunRepo>,
+    pub context_repo: Arc<dyn ContextRepo>,
     pub audit_logger: Arc<dyn AuditLogger>,
     pub audit_repo: Arc<dyn AuditRepo>,
     // Services
@@ -51,6 +55,8 @@ pub struct AppState {
     pub max_persist_bytes: usize,
     pub auth_mode: String,
     pub storage_backend: String,
+    pub sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
+    pub auto_approve_entries: Vec<dbward_domain::services::workflow_matcher::AutoApproveEntry>,
     // Shutdown
     pub draining: Arc<AtomicBool>,
 }

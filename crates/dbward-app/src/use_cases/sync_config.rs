@@ -21,7 +21,6 @@ pub struct WorkflowInput {
     pub environment: String,
     pub operations: Vec<String>,
     pub steps: Vec<WorkflowStepInput>,
-    pub skip_approval_for: Vec<String>,
     pub require_reason: bool,
     pub allow_self_approve: bool,
     pub allow_same_approver_across_steps: bool,
@@ -55,12 +54,17 @@ impl SyncConfig {
         let mut parsed = Vec::with_capacity(workflows.len());
         for (i, wf) in workflows.iter().enumerate() {
             let id = format!("config-wf-{i}");
-            parsed.push(Self::parse_workflow(&id, wf)?);
+            let workflow = Self::parse_workflow(&id, wf)?;
+            parsed.push(workflow);
         }
 
         // Only delete after successful validation
-        for i in 0..100 {
-            let _ = self.policy_repo.delete_workflow(&format!("config-wf-{i}"));
+        // Delete all config-managed workflows (prefix "config-wf-")
+        let existing = self.policy_repo.list_workflows()?;
+        for wf in &existing {
+            if wf.id.starts_with("config-wf-") {
+                let _ = self.policy_repo.delete_workflow(&wf.id);
+            }
         }
 
         for workflow in &parsed {
@@ -119,6 +123,12 @@ impl SyncConfig {
                     min: a.min,
                 });
             }
+            if approvers.is_empty() {
+                return Err(AppError::Validation(format!(
+                    "workflow {}/{}: step has no valid approvers",
+                    wf.database, wf.environment
+                )));
+            }
             steps.push(WorkflowStep { approvers, mode });
         }
 
@@ -128,11 +138,6 @@ impl SyncConfig {
             environment: env,
             operations,
             steps,
-            skip_approval_for: wf
-                .skip_approval_for
-                .iter()
-                .filter_map(|s| Selector::parse(s).ok())
-                .collect(),
             require_reason: wf.require_reason,
             allow_self_approve: wf.allow_self_approve,
             allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
@@ -321,7 +326,6 @@ mod tests {
                     min: 1,
                 }],
             }],
-            skip_approval_for: vec![],
             require_reason: false,
             allow_self_approve: false,
             allow_same_approver_across_steps: false,

@@ -170,6 +170,9 @@ fn state_with_license(license: License) -> AppState {
         webhook_repo: Arc::new(SqliteWebhookRepo::new(conn.clone())),
         policy_repo: Arc::new(SqlitePolicyRepo::new(conn.clone())),
         database_registry: Arc::new(SqliteDatabaseRegistry::new(conn.clone())),
+        schema_repo: Arc::new(dbward_infra::sqlite::SqliteSchemaRepo::new(conn.clone())),
+        dry_run_repo: Arc::new(dbward_infra::sqlite::SqliteDryRunRepo::new(conn.clone())),
+        context_repo: Arc::new(dbward_infra::sqlite::SqliteContextRepo::new(conn.clone())),
         audit_logger: Arc::new(SqliteAuditLogger::new(conn.clone())),
         audit_repo: Arc::new(SqliteAuditRepo::new(conn.clone())),
         policy_evaluator: Arc::new(SqlitePolicyEvaluator::new(conn.clone())),
@@ -191,6 +194,8 @@ fn state_with_license(license: License) -> AppState {
         default_approval_ttl_secs: Some(3600),
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),
+        sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+        auto_approve_entries: vec![],
     }
 }
 

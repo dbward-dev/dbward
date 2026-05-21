@@ -116,10 +116,16 @@ pub async fn create(
         request_reader: state.request_reader.clone(),
         request_writer: state.request_writer.clone(),
         db_registry: state.database_registry.clone(),
+        schema_repo: state.schema_repo.clone(),
+        dry_run_repo: state.dry_run_repo.clone(),
+        context_repo: state.context_repo.clone(),
         event_dispatcher: state.event_dispatcher.clone(),
+        audit_logger: state.audit_logger.clone(),
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
         default_approval_ttl_secs: state.default_approval_ttl_secs,
+        review_rules: state.sql_review_rules.clone(),
+        auto_approve_entries: state.auto_approve_entries.clone(),
     };
 
     match uc.execute(input, &user, &audit_ctx) {
@@ -226,6 +232,7 @@ pub async fn get(
         request_reader: state.request_reader.clone(),
         approval_repo: state.approval_repo.clone(),
         authorizer: state.authorizer.clone(),
+        context_repo: state.context_repo.clone(),
     };
 
     // Authorize BEFORE any waiting
@@ -261,7 +268,7 @@ pub async fn get(
                     _ => break,
                 }
             }
-            // Re-fetch with authorization and redaction
+            // Re-fetch with authorization
             uc.execute(&id, &user).map_err(map_error)?
         } else {
             output
@@ -289,6 +296,13 @@ pub async fn get(
             "updated_at": output.request.updated_at,
             "expires_at": output.request.expires_at,
             "approval_progress": output.approval_progress,
+            "context": output.context.as_ref().map(|c| serde_json::json!({
+                "status": c.status,
+                "tables": c.tables_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
+                "sql_review": c.sql_review_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
+                "risk": c.risk_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
+                "explain": c.explain_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
+            })),
         })),
     ))
 }

@@ -146,10 +146,7 @@ See [Workflows guide](../guides/workflows.md) for full configuration.
 [[workflows]]
 database = "*"
 environment = "production"
-operations = []                   # Empty = all operations (default)
-require_reason = true             # Force --reason flag (default: false)
-allow_self_approve = false        # Requester cannot approve own request (default)
-allow_same_approver_across_steps = false  # Same person can't approve multiple steps (default)
+require_reason = true
 
 [[workflows.steps]]
 type = "approval"
@@ -161,6 +158,24 @@ min = 1
 [[workflows]]
 database = "*"
 environment = "development"
+```
+
+### Auto-Approve
+
+```toml
+# Auto-approve low-risk requests globally
+[[auto_approve]]
+database = "*"
+environment = "*"
+risk = "low"
+allow_read_only = true
+allow_safe_ddl = true
+
+# Production: never auto-approve
+[[auto_approve]]
+database = "*"
+environment = "production"
+risk = "none"
 ```
 
 ### Execution policies
