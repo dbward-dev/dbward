@@ -56,7 +56,7 @@ pub struct AppState {
     pub auth_mode: String,
     pub storage_backend: String,
     pub sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
-    pub auto_approve_config: dbward_domain::services::workflow_matcher::AutoApproveConfig,
+    pub auto_approve_entries: Vec<dbward_domain::services::workflow_matcher::AutoApproveEntry>,
     // Shutdown
     pub draining: Arc<AtomicBool>,
 }

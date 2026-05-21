@@ -203,8 +203,8 @@ fn real_state() -> AppState {
     // Insert auto-approve workflow (empty steps)
     conn.lock().unwrap()
         .execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, skip_approval_for_json, require_reason, allow_self_approve, allow_same_approver_across_steps) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, 0)",
-            rusqlite::params!["wf-auto", "app", "production", "[]", "[]", "[]"],
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps) VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, 0)",
+            rusqlite::params!["wf-auto", "app", "production", "[]", "[]"],
         )
         .unwrap();
 
@@ -249,8 +249,8 @@ fn real_state() -> AppState {
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),
         sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-        auto_approve_config: dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(
-        ),
+        auto_approve_entries: vec![
+        ],
     }
 }
 

@@ -296,7 +296,7 @@ pub async fn run_from_args(
         auth_mode: cfg.auth.mode.clone(),
         storage_backend: cfg.result_storage.backend.clone(),
         sql_review_rules: cfg.sql_review.to_review_rules(),
-        auto_approve_config: cfg.auto_approve.to_auto_approve_config(),
+        auto_approve_entries: cfg.auto_approve.iter().map(|a| a.to_entry()).collect(),
         draining: draining.clone(),
     };
 
@@ -451,11 +451,9 @@ fn sync_workflows(
                     WorkflowStepInput { mode, approvers }
                 })
                 .collect(),
-            skip_approval_for: wf.skip_approval_for.clone(),
             require_reason: wf.require_reason,
             allow_self_approve: wf.allow_self_approve,
             allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
-            require_approval: wf.require_approval,
             pending_ttl_secs: wf.pending_ttl_secs,
             statement_timeout_secs: wf.statement_timeout_secs,
         })

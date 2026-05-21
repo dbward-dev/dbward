@@ -32,16 +32,11 @@ pub struct Workflow {
     #[serde(default)]
     pub steps: Vec<WorkflowStep>,
     #[serde(default)]
-    pub skip_approval_for: Vec<Selector>,
-    #[serde(default)]
     pub require_reason: bool,
     #[serde(default)]
     pub allow_self_approve: bool,
     #[serde(default)]
     pub allow_same_approver_across_steps: bool,
-    /// When true, auto-approve and skip_approval_for are both disabled.
-    #[serde(default)]
-    pub require_approval: bool,
     /// How long a request can stay pending before expiring.
     pub pending_ttl_secs: Option<u64>,
     /// Per-workflow statement execution timeout override.
@@ -78,11 +73,9 @@ mod tests {
             environment: Environment::wildcard(),
             operations,
             steps,
-            skip_approval_for: vec![],
             require_reason: false,
             allow_self_approve: false,
             allow_same_approver_across_steps: false,
-            require_approval: false,
             pending_ttl_secs: None,
             statement_timeout_secs: None,
             approval_ttl_secs: None,

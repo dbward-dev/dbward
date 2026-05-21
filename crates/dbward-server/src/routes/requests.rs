@@ -125,7 +125,7 @@ pub async fn create(
         id_gen: state.id_generator.clone(),
         default_approval_ttl_secs: state.default_approval_ttl_secs,
         review_rules: state.sql_review_rules.clone(),
-        auto_approve_config: state.auto_approve_config.clone(),
+        auto_approve_entries: state.auto_approve_entries.clone(),
     };
 
     match uc.execute(input, &user, &audit_ctx) {

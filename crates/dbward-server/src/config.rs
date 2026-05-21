@@ -27,7 +27,7 @@ pub struct ServerConfig {
     #[serde(default)]
     pub sql_review: SqlReviewConfig,
     #[serde(default)]
-    pub auto_approve: AutoApproveServerConfig,
+    pub auto_approve: Vec<AutoApproveServerConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -224,13 +224,9 @@ pub struct WorkflowDef {
     #[serde(default)]
     pub require_reason: bool,
     #[serde(default)]
-    pub skip_approval_for: Vec<String>,
-    #[serde(default)]
     pub allow_self_approve: bool,
     #[serde(default = "default_true")]
     pub allow_same_approver_across_steps: bool,
-    #[serde(default)]
-    pub require_approval: bool,
     #[serde(default)]
     pub pending_ttl_secs: Option<u64>,
     #[serde(default)]
@@ -398,10 +394,12 @@ impl SqlReviewConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct AutoApproveServerConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default = "default_max_risk")]
-    pub max_risk_level: String,
+    #[serde(default = "star")]
+    pub database: String,
+    #[serde(default = "star")]
+    pub environment: String,
+    #[serde(default = "default_risk_none")]
+    pub risk: String,
     #[serde(default = "default_allow_read_only")]
     pub allow_read_only: bool,
     #[serde(default = "default_allow_safe_ddl")]
@@ -410,8 +408,8 @@ pub struct AutoApproveServerConfig {
     pub max_estimated_rows: u64,
 }
 
-fn default_max_risk() -> String {
-    "low".into()
+fn default_risk_none() -> String {
+    "none".into()
 }
 
 fn default_allow_read_only() -> bool {
@@ -426,32 +424,24 @@ fn default_max_estimated_rows() -> u64 {
     1000
 }
 
-impl Default for AutoApproveServerConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            max_risk_level: default_max_risk(),
-            allow_read_only: default_allow_read_only(),
-            allow_safe_ddl: default_allow_safe_ddl(),
-            max_estimated_rows: default_max_estimated_rows(),
-        }
-    }
-}
-
 impl AutoApproveServerConfig {
-    pub fn to_auto_approve_config(
-        &self,
-    ) -> dbward_domain::services::workflow_matcher::AutoApproveConfig {
+    pub fn to_entry(&self) -> dbward_domain::services::workflow_matcher::AutoApproveEntry {
         use dbward_domain::services::risk_scorer::RiskLevel;
-        use dbward_domain::services::workflow_matcher::AutoApproveConfig;
-        let max = match self.max_risk_level.as_str() {
-            "medium" => RiskLevel::Medium,
-            "high" => RiskLevel::High,
-            _ => RiskLevel::Low,
+        use dbward_domain::services::workflow_matcher::AutoApproveEntry;
+        use dbward_domain::values::{DatabaseName, Environment};
+
+        let max_risk_level = match self.risk.as_str() {
+            "low" => Some(RiskLevel::Low),
+            "medium" => Some(RiskLevel::Medium),
+            "high" => Some(RiskLevel::High),
+            _ => None, // "none" or unknown
         };
-        AutoApproveConfig {
-            enabled: self.enabled,
-            max_risk_level: max,
+        AutoApproveEntry {
+            database: DatabaseName::new(&self.database)
+                .unwrap_or_else(|_| DatabaseName::wildcard()),
+            environment: Environment::new(&self.environment)
+                .unwrap_or_else(|_| Environment::wildcard()),
+            max_risk_level,
             allow_safe_ddl: self.allow_safe_ddl,
             allow_read_only: self.allow_read_only,
             max_estimated_rows: self.max_estimated_rows,

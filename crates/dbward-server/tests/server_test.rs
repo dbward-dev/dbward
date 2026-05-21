@@ -790,8 +790,8 @@ fn test_state() -> AppState {
         auth_mode: "both".to_string(),
         storage_backend: "local".into(),
         sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-        auto_approve_config: dbward_domain::services::workflow_matcher::AutoApproveConfig::disabled(
-        ),
+        auto_approve_entries: vec![
+        ],
     }
 }
 

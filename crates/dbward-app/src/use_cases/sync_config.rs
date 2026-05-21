@@ -21,11 +21,9 @@ pub struct WorkflowInput {
     pub environment: String,
     pub operations: Vec<String>,
     pub steps: Vec<WorkflowStepInput>,
-    pub skip_approval_for: Vec<String>,
     pub require_reason: bool,
     pub allow_self_approve: bool,
     pub allow_same_approver_across_steps: bool,
-    pub require_approval: bool,
     pub pending_ttl_secs: Option<u64>,
     pub statement_timeout_secs: Option<u64>,
 }
@@ -57,12 +55,6 @@ impl SyncConfig {
         for (i, wf) in workflows.iter().enumerate() {
             let id = format!("config-wf-{i}");
             let workflow = Self::parse_workflow(&id, wf)?;
-            if workflow.require_approval && workflow.steps.is_empty() {
-                return Err(AppError::Validation(format!(
-                    "workflow {}/{}: require_approval=true requires at least one approval step",
-                    wf.database, wf.environment
-                )));
-            }
             parsed.push(workflow);
         }
 
@@ -136,15 +128,9 @@ impl SyncConfig {
             environment: env,
             operations,
             steps,
-            skip_approval_for: wf
-                .skip_approval_for
-                .iter()
-                .filter_map(|s| Selector::parse(s).ok())
-                .collect(),
             require_reason: wf.require_reason,
             allow_self_approve: wf.allow_self_approve,
             allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
-            require_approval: wf.require_approval,
             pending_ttl_secs: wf.pending_ttl_secs,
             statement_timeout_secs: wf.statement_timeout_secs,
             approval_ttl_secs: None,
@@ -330,11 +316,9 @@ mod tests {
                     min: 1,
                 }],
             }],
-            skip_approval_for: vec![],
             require_reason: false,
             allow_self_approve: false,
             allow_same_approver_across_steps: false,
-            require_approval: false,
             pending_ttl_secs: None,
             statement_timeout_secs: None,
         }
