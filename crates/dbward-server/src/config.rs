@@ -212,6 +212,7 @@ pub struct DatabaseDef {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkflowDef {
     #[serde(default = "star")]
     pub database: String,
@@ -272,6 +273,48 @@ impl ServerConfig {
                 "retention.approval_ttl_secs must be > 0 (immediate expiry makes approval impossible)".into(),
             );
         }
+
+        // Validate workflow operations overlap within same (db, env) scope
+        use std::collections::{HashMap, HashSet};
+        type ScopeEntries<'a> = Vec<(usize, &'a [String])>;
+        let mut scope_ops: HashMap<(&str, &str), ScopeEntries<'_>> = HashMap::new();
+        for (i, wf) in self.workflows.iter().enumerate() {
+            scope_ops
+                .entry((wf.database.as_str(), wf.environment.as_str()))
+                .or_default()
+                .push((i, &wf.operations));
+        }
+        for ((db, env), entries) in &scope_ops {
+            let has_catchall = entries.iter().any(|(_, ops)| ops.is_empty());
+            if has_catchall && entries.len() > 1 {
+                return Err(format!(
+                    "workflow validation: database={db}, environment={env} has both catchall (operations omitted) and specific operations workflows — ambiguous"
+                ));
+            }
+            // Check operations overlap
+            let mut seen: HashSet<&str> = HashSet::new();
+            for (idx, ops) in entries {
+                for op in *ops {
+                    if !seen.insert(op.as_str()) {
+                        return Err(format!(
+                            "workflow validation: operation '{op}' appears in multiple workflows for database={db}, environment={env} (workflow index {idx})"
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Validate auto_approve specificity uniqueness
+        let mut aa_scopes: HashSet<(&str, &str)> = HashSet::new();
+        for a in &self.auto_approve {
+            if !aa_scopes.insert((a.database.as_str(), a.environment.as_str())) {
+                return Err(format!(
+                    "auto_approve validation: duplicate scope (database={}, environment={})",
+                    a.database, a.environment
+                ));
+            }
+        }
+
         Ok(())
     }
 }
@@ -393,6 +436,7 @@ impl SqlReviewConfig {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AutoApproveServerConfig {
     #[serde(default = "star")]
     pub database: String,
@@ -425,26 +469,29 @@ fn default_max_estimated_rows() -> u64 {
 }
 
 impl AutoApproveServerConfig {
-    pub fn to_entry(&self) -> dbward_domain::services::workflow_matcher::AutoApproveEntry {
+    pub fn to_entry(&self) -> Result<dbward_domain::services::workflow_matcher::AutoApproveEntry, String> {
         use dbward_domain::services::risk_scorer::RiskLevel;
         use dbward_domain::services::workflow_matcher::AutoApproveEntry;
         use dbward_domain::values::{DatabaseName, Environment};
 
+        let database = DatabaseName::new(&self.database)
+            .map_err(|e| format!("auto_approve: invalid database '{}': {e}", self.database))?;
+        let environment = Environment::new(&self.environment)
+            .map_err(|e| format!("auto_approve: invalid environment '{}': {e}", self.environment))?;
         let max_risk_level = match self.risk.as_str() {
+            "none" => None,
             "low" => Some(RiskLevel::Low),
             "medium" => Some(RiskLevel::Medium),
             "high" => Some(RiskLevel::High),
-            _ => None, // "none" or unknown
+            other => return Err(format!("auto_approve: invalid risk '{}' (expected none/low/medium/high)", other)),
         };
-        AutoApproveEntry {
-            database: DatabaseName::new(&self.database)
-                .unwrap_or_else(|_| DatabaseName::wildcard()),
-            environment: Environment::new(&self.environment)
-                .unwrap_or_else(|_| Environment::wildcard()),
+        Ok(AutoApproveEntry {
+            database,
+            environment,
             max_risk_level,
             allow_safe_ddl: self.allow_safe_ddl,
             allow_read_only: self.allow_read_only,
             max_estimated_rows: self.max_estimated_rows,
-        }
+        })
     }
 }

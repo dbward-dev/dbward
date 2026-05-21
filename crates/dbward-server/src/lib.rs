@@ -296,7 +296,15 @@ pub async fn run_from_args(
         auth_mode: cfg.auth.mode.clone(),
         storage_backend: cfg.result_storage.backend.clone(),
         sql_review_rules: cfg.sql_review.to_review_rules(),
-        auto_approve_entries: cfg.auto_approve.iter().map(|a| a.to_entry()).collect(),
+        auto_approve_entries: {
+            let mut entries = Vec::new();
+            for (i, a) in cfg.auto_approve.iter().enumerate() {
+                entries.push(a.to_entry().map_err(|e| {
+                    format!("auto_approve[{i}]: {e}")
+                })?);
+            }
+            entries
+        },
         draining: draining.clone(),
     };
 
