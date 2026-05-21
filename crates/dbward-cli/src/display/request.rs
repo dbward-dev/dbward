@@ -227,7 +227,8 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
                         for (i, entry) in arr.iter().enumerate() {
                             if let Some(err) = entry["error"].as_str() {
                                 let prefix = if multi { format!("[{}] ", i + 1) } else { String::new() };
-                                println!("  Explain:     {prefix}(error: {err})");
+                                let hint = entry["hint"].as_str().map(|h| format!(" ({h})")).unwrap_or_default();
+                                println!("  Explain:     {prefix}(error: {err}{hint})");
                                 continue;
                             }
                             let lines = format_explain_tree(entry);
