@@ -169,6 +169,77 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
         );
     }
 
+    // Context (risk, sql_review, explain)
+    if let Some(ctx) = body.get("context").filter(|v| !v.is_null()) {
+        let ctx_status = ctx["status"].as_str().unwrap_or("");
+        if ctx_status == "collecting" {
+            println!();
+            println!("  Context:     (collecting...)");
+        } else {
+            println!();
+            // Risk
+            if let Some(risk) = ctx.get("risk").filter(|v| !v.is_null()) {
+                let level = risk["level"].as_str().unwrap_or("?");
+                let factors: Vec<&str> = risk["factors"]
+                    .as_array()
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+                if factors.is_empty() {
+                    println!("  Risk:        {level}");
+                } else if factors.len() <= 3 {
+                    println!("  Risk:        {level} ({})", factors.join(", "));
+                } else {
+                    println!(
+                        "  Risk:        {level} ({}, ...+{})",
+                        factors[..3].join(", "),
+                        factors.len() - 3
+                    );
+                }
+            }
+            // SQL Review
+            if let Some(review) = ctx.get("sql_review").filter(|v| !v.is_null()) {
+                let findings = review["findings"].as_array().map(|a| a.len()).unwrap_or(0);
+                if findings == 0 {
+                    println!("  SQL Review:  passed");
+                } else {
+                    println!("  SQL Review:  {findings} warning{}", if findings > 1 { "s" } else { "" });
+                }
+            }
+            // Tables
+            if let Some(tables) = ctx["tables"].as_array() {
+                let names: Vec<&str> = tables.iter().filter_map(|v| v.as_str()).collect();
+                if !names.is_empty() {
+                    println!("  Tables:      {}", names.join(", "));
+                }
+            }
+            // Schema snapshot
+            if let Some(ts) = ctx["schema_snapshot_collected_at"].as_str() {
+                let short_ts = if ts.len() >= 19 { &ts[..19] } else { ts };
+                println!("  Schema:      synced at {short_ts}");
+            }
+            // Explain
+            if let Some(explain) = ctx.get("explain").filter(|v| !v.is_null()) {
+                if let Some(arr) = explain.as_array() {
+                    if arr.is_empty() {
+                        println!("  Explain:     (no plan available)");
+                    } else {
+                        for (i, entry) in arr.iter().enumerate() {
+                            let plan = entry["plan"].as_str().unwrap_or("?");
+                            let preview: String = plan.chars().take(80).collect();
+                            if i == 0 {
+                                println!("  Explain:     {preview}");
+                            } else {
+                                println!("               {preview}");
+                            }
+                        }
+                    }
+                }
+            } else if ctx_status == "ready" {
+                println!("  Explain:     (no plan available)");
+            }
+        }
+    }
+
     // Approval progress
     if let Some(progress) = body.get("approval_progress").filter(|v| !v.is_null()) {
         let current = progress["current_step"].as_u64().unwrap_or(0);
