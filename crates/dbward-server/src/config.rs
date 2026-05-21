@@ -280,11 +280,15 @@ impl ServerConfig {
         let mut scope_ops: HashMap<(&str, &str), ScopeEntries> = HashMap::new();
         for (i, wf) in self.workflows.iter().enumerate() {
             // Parse to canonical operation names for overlap detection
-            let canonical: Vec<String> = wf.operations.iter().map(|op| {
-                op.parse::<dbward_domain::values::Operation>()
-                    .map(|o| format!("{o:?}"))
-                    .unwrap_or_else(|_| op.clone())
-            }).collect();
+            let canonical: Vec<String> = wf
+                .operations
+                .iter()
+                .map(|op| {
+                    op.parse::<dbward_domain::values::Operation>()
+                        .map(|o| format!("{o:?}"))
+                        .unwrap_or_else(|_| op.clone())
+                })
+                .collect();
             scope_ops
                 .entry((wf.database.as_str(), wf.environment.as_str()))
                 .or_default()
@@ -418,14 +422,18 @@ fn default_warn() -> String {
 }
 
 impl SqlReviewConfig {
-    pub fn to_review_rules(&self) -> Result<dbward_domain::services::sql_reviewer::ReviewRules, String> {
+    pub fn to_review_rules(
+        &self,
+    ) -> Result<dbward_domain::services::sql_reviewer::ReviewRules, String> {
         use dbward_domain::services::sql_reviewer::{ReviewRules, RuleAction};
         fn parse_action(s: &str, field: &str) -> Result<RuleAction, String> {
             match s {
                 "block" => Ok(RuleAction::Block),
                 "warn" => Ok(RuleAction::Warn),
                 "off" => Ok(RuleAction::Off),
-                other => Err(format!("sql_review.{field}: invalid action '{other}' (expected block/warn/off)")),
+                other => Err(format!(
+                    "sql_review.{field}: invalid action '{other}' (expected block/warn/off)"
+                )),
             }
         }
         Ok(ReviewRules {
@@ -433,8 +441,14 @@ impl SqlReviewConfig {
             no_where_update: parse_action(&self.no_where_update, "no_where_update")?,
             drop_table: parse_action(&self.drop_table, "drop_table")?,
             drop_column: parse_action(&self.drop_column, "drop_column")?,
-            not_null_without_default: parse_action(&self.not_null_without_default, "not_null_without_default")?,
-            create_index_not_concurrently: parse_action(&self.create_index_not_concurrently, "create_index_not_concurrently")?,
+            not_null_without_default: parse_action(
+                &self.not_null_without_default,
+                "not_null_without_default",
+            )?,
+            create_index_not_concurrently: parse_action(
+                &self.create_index_not_concurrently,
+                "create_index_not_concurrently",
+            )?,
             alter_column_type: parse_action(&self.alter_column_type, "alter_column_type")?,
             truncate: parse_action(&self.truncate, "truncate")?,
             mixed_ddl_dml: parse_action(&self.mixed_ddl_dml, "mixed_ddl_dml")?,
@@ -477,21 +491,32 @@ fn default_max_estimated_rows() -> u64 {
 }
 
 impl AutoApproveServerConfig {
-    pub fn to_entry(&self) -> Result<dbward_domain::services::workflow_matcher::AutoApproveEntry, String> {
+    pub fn to_entry(
+        &self,
+    ) -> Result<dbward_domain::services::workflow_matcher::AutoApproveEntry, String> {
         use dbward_domain::services::risk_scorer::RiskLevel;
         use dbward_domain::services::workflow_matcher::AutoApproveEntry;
         use dbward_domain::values::{DatabaseName, Environment};
 
         let database = DatabaseName::new(&self.database)
             .map_err(|e| format!("auto_approve: invalid database '{}': {e}", self.database))?;
-        let environment = Environment::new(&self.environment)
-            .map_err(|e| format!("auto_approve: invalid environment '{}': {e}", self.environment))?;
+        let environment = Environment::new(&self.environment).map_err(|e| {
+            format!(
+                "auto_approve: invalid environment '{}': {e}",
+                self.environment
+            )
+        })?;
         let max_risk_level = match self.risk.as_str() {
             "none" => None,
             "low" => Some(RiskLevel::Low),
             "medium" => Some(RiskLevel::Medium),
             "high" => Some(RiskLevel::High),
-            other => return Err(format!("auto_approve: invalid risk '{}' (expected none/low/medium/high)", other)),
+            other => {
+                return Err(format!(
+                    "auto_approve: invalid risk '{}' (expected none/low/medium/high)",
+                    other
+                ));
+            }
         };
         Ok(AutoApproveEntry {
             database,

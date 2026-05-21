@@ -246,7 +246,9 @@ impl CreateRequest {
                     has_dml: matches!(operation, Operation::ExecuteDml),
                     allow_read_only,
                     safe_ddl,
-                    max_estimated_rows: auto_entry.map(|e| e.max_estimated_rows as i64).unwrap_or(1000),
+                    max_estimated_rows: auto_entry
+                        .map(|e| e.max_estimated_rows as i64)
+                        .unwrap_or(1000),
                 });
                 let r_json = serde_json::json!({
                     "level": format!("{:?}", assessment.level),

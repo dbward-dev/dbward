@@ -298,7 +298,12 @@ mod tests {
     fn specific_operations_wins_over_catchall() {
         let workflows = vec![
             wf("app", "production", vec![], vec![]),
-            wf("app", "production", vec![Operation::ExecuteDml], vec![step()]),
+            wf(
+                "app",
+                "production",
+                vec![Operation::ExecuteDml],
+                vec![step()],
+            ),
         ];
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("production").unwrap();

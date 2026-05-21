@@ -202,7 +202,10 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
                 if findings == 0 {
                     println!("  SQL Review:  passed");
                 } else {
-                    println!("  SQL Review:  {findings} warning{}", if findings > 1 { "s" } else { "" });
+                    println!(
+                        "  SQL Review:  {findings} warning{}",
+                        if findings > 1 { "s" } else { "" }
+                    );
                 }
             }
             // Tables
@@ -226,8 +229,15 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
                         let multi = arr.len() > 1;
                         for (i, entry) in arr.iter().enumerate() {
                             if let Some(err) = entry["error"].as_str() {
-                                let prefix = if multi { format!("[{}] ", i + 1) } else { String::new() };
-                                let hint = entry["hint"].as_str().map(|h| format!(" ({h})")).unwrap_or_default();
+                                let prefix = if multi {
+                                    format!("[{}] ", i + 1)
+                                } else {
+                                    String::new()
+                                };
+                                let hint = entry["hint"]
+                                    .as_str()
+                                    .map(|h| format!(" ({h})"))
+                                    .unwrap_or_default();
                                 println!("  Explain:     {prefix}(error: {err}{hint})");
                                 continue;
                             }
@@ -238,7 +248,13 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
                                 } else {
                                     "               "
                                 };
-                                let prefix = if multi && li == 0 { format!("[{}] ", i + 1) } else if multi { "    ".to_string() } else { String::new() };
+                                let prefix = if multi && li == 0 {
+                                    format!("[{}] ", i + 1)
+                                } else if multi {
+                                    "    ".to_string()
+                                } else {
+                                    String::new()
+                                };
                                 println!("{label}{prefix}{line}");
                             }
                         }
@@ -369,7 +385,11 @@ fn walk_plan_node(node: &serde_json::Value, depth: usize, out: &mut Vec<String>)
     let filter = node["Filter"].as_str();
 
     let indent = "  ".repeat(depth);
-    let on_part = if relation.is_empty() { String::new() } else { format!(" on {relation}") };
+    let on_part = if relation.is_empty() {
+        String::new()
+    } else {
+        format!(" on {relation}")
+    };
     let mut line = format!("{indent}{node_type}{on_part} (rows={rows}, cost={cost:.0})");
     if let Some(f) = filter {
         let short_filter: String = f.chars().take(60).collect();
@@ -392,9 +412,7 @@ fn walk_mysql_query_block(qb: &serde_json::Value, depth: usize, out: &mut Vec<St
         return;
     }
     let indent = "  ".repeat(depth);
-    let cost = qb["cost_info"]["query_cost"]
-        .as_str()
-        .unwrap_or("?");
+    let cost = qb["cost_info"]["query_cost"].as_str().unwrap_or("?");
     out.push(format!("{indent}query_block (cost={cost})"));
 
     // Single table access
@@ -447,7 +465,8 @@ fn walk_mysql_table(table: &serde_json::Value, depth: usize, out: &mut Vec<Strin
     let indent = "  ".repeat(depth);
     let name = table["table_name"].as_str().unwrap_or("?");
     let access = table["access_type"].as_str().unwrap_or("?");
-    let rows = table["rows_examined_per_scan"].as_u64()
+    let rows = table["rows_examined_per_scan"]
+        .as_u64()
         .or_else(|| table["rows_produced_per_join"].as_u64())
         .unwrap_or(0);
     let filtered = table["filtered"].as_f64().unwrap_or(100.0);
