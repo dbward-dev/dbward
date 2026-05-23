@@ -399,6 +399,23 @@ PUT    /api/notification-policies/{id}
 DELETE /api/notification-policies/{id}
 ```
 
+### Policy resolution
+
+Resolve the effective policy for a database/environment combination. Shows which workflow matches, auto-approve rules, execution policy, and predicted decision.
+
+```
+GET /api/policy-resolution?database=<name>&environment=<env>[&operation=<op>]
+```
+
+Query parameters:
+- `database` (required): Database name
+- `environment` (required): Environment name  
+- `operation` (optional): Specific operation (`execute_select`, `execute_dml`, `migrate_up`, `migrate_down`, `migrate_status`). Omit for all operations.
+
+Auth: scoped `RequestView` permission.
+
+Returns `decision_preview`: `auto_approved`, `needs_approval`, or `deny`.
+
 ### Access policies
 
 ```

@@ -300,6 +300,27 @@ dbward doctor — CLI configuration
 
 ---
 
+### dbward policy resolve
+
+Show the effective policy for a database/environment. Reveals which workflow matches, auto-approve configuration, execution policy, and predicted decision for each operation.
+
+```bash
+dbward policy resolve <database> <environment>                # All operations
+dbward policy resolve <database> <environment> --operation execute_dml  # Single operation
+```
+
+| Option | Description |
+|--------|-------------|
+| `--operation <OP>` | Resolve for a specific operation only |
+| `--format json` | Machine-readable JSON output (global flag) |
+
+**Decision preview values:**
+- `auto_approved` — request would be auto-approved (read-only + allow_read_only, or empty workflow steps)
+- `needs_approval` — request would need human approval (risk unknown without SQL)
+- `deny` — request would be rejected (no workflow or DB not registered)
+
+---
+
 ### dbward agent
 
 Start the dbward agent process.
