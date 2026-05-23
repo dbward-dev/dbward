@@ -52,6 +52,7 @@ pub fn spawn_background_tasks(
     set.spawn(webhook_retry_loop(state.clone(), shutdown.clone()));
     set.spawn(dry_run_reclaim_loop(state.clone(), shutdown.clone()));
     set.spawn(context_timeout_loop(state.clone(), shutdown.clone()));
+    set.spawn(license_expiry_loop(state.clone(), shutdown.clone()));
 
     // Bridge: when draining is set externally, also cancel background tasks
     let shutdown_bridge = shutdown.clone();
@@ -562,6 +563,21 @@ async fn context_timeout_loop(state: AppState, shutdown: CancellationToken) {
                     }
                 }
             }
+        }
+    }
+}
+
+const LICENSE_CHECK_INTERVAL: TokioDuration = TokioDuration::from_secs(3600);
+
+async fn license_expiry_loop(state: AppState, shutdown: CancellationToken) {
+    let start = Instant::now() + LICENSE_CHECK_INTERVAL;
+    let mut ticker = interval_at(start, LICENSE_CHECK_INTERVAL);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                state.license_checker.check_expiry(state.clock.now());
+            }
+            _ = shutdown.cancelled() => break,
         }
     }
 }

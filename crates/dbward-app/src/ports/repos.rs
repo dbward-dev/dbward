@@ -510,6 +510,10 @@ pub trait LicenseChecker: Send + Sync {
     fn max_tokens(&self) -> u32;
     fn max_roles(&self) -> u32;
     fn is_enterprise(&self) -> bool;
+    fn configured_plan(&self) -> &str;
+    fn effective_plan(&self) -> &str;
+    fn is_expired(&self) -> bool;
+    fn check_expiry(&self, now: chrono::DateTime<chrono::Utc>);
 }
 
 // --- ResultChannel (UC-6 long-poll) ---

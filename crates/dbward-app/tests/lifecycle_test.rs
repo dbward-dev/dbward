@@ -564,6 +564,16 @@ impl LicenseChecker for FakeLicenseChecker {
     fn is_enterprise(&self) -> bool {
         false
     }
+    fn configured_plan(&self) -> &str {
+        "free"
+    }
+    fn effective_plan(&self) -> &str {
+        "free"
+    }
+    fn is_expired(&self) -> bool {
+        false
+    }
+    fn check_expiry(&self, _now: chrono::DateTime<chrono::Utc>) {}
 }
 
 struct FakePolicyRepoForDispatch;
