@@ -55,7 +55,7 @@ struct TaskDef {
 }
 
 fn build_task_defs(retention: Arc<RetentionConfig>) -> Vec<TaskDef> {
-    vec![
+    let mut defs = vec![
         TaskDef {
             name: "lease_reclaim",
             spawn_fn: Box::new(|state, shutdown| Box::pin(lease_reclaim_loop(state, shutdown))),
@@ -91,7 +91,26 @@ fn build_task_defs(retention: Arc<RetentionConfig>) -> Vec<TaskDef> {
             name: "license_expiry",
             spawn_fn: Box::new(|state, shutdown| Box::pin(license_expiry_loop(state, shutdown))),
         },
-    ]
+    ];
+
+    // Panic injection for E2E testing (only when env var is set)
+    if std::env::var("DBWARD_PANIC_INJECT_DELAY_SECS").is_ok() {
+        defs.push(TaskDef {
+            name: "panic_inject",
+            spawn_fn: Box::new(|_state, _shutdown| {
+                Box::pin(async {
+                    let delay: u64 = std::env::var("DBWARD_PANIC_INJECT_DELAY_SECS")
+                        .unwrap_or_else(|_| "5".into())
+                        .parse()
+                        .unwrap_or(5);
+                    tokio::time::sleep(TokioDuration::from_secs(delay)).await;
+                    panic!("panic injection triggered for E2E testing");
+                })
+            }),
+        });
+    }
+
+    defs
 }
 
 // --- Public entry point ---
