@@ -684,7 +684,7 @@ fn resolve_single(
             if w.steps.is_empty() {
                 ("auto_approved", "empty_steps", build_workflow_json(w))
             } else if op == Operation::ExecuteSelect
-                && auto_entry.is_some_and(|e| e.allow_read_only)
+                && auto_entry.is_some_and(|e| e.allow_read_only && e.max_risk_level.is_some())
             {
                 (
                     "auto_approved",
