@@ -94,8 +94,11 @@ pub trait RequestWriter: Send + Sync {
     fn cancel_all_for_user(
         &self,
         user_id: &str,
+        actor_id: &str,
+        reason: &str,
         now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<u32, AppError>;
+        audit_context: &AuditContext,
+    ) -> Result<Vec<String>, AppError>;
     fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError>;
     fn mark_approved_from_dispatched_and_record(
         &self,

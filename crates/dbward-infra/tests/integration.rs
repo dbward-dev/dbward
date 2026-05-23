@@ -632,8 +632,8 @@ fn user_suspend_and_request_cancel() {
     let now = Utc::now();
     assert!(user_repo.suspend("alice", now).unwrap());
     assert!(user_repo.is_suspended("alice").unwrap());
-    let cancelled = request_repo.cancel_all_for_user("alice", now).unwrap();
-    assert_eq!(cancelled, 1);
+    let cancelled = request_repo.cancel_all_for_user("alice", "admin", "user suspended", now, &dbward_domain::entities::AuditContext::System).unwrap();
+    assert_eq!(cancelled.len(), 1);
 
     let fetched = request_repo.get("req-suspend").unwrap().unwrap();
     assert_eq!(fetched.status, RequestStatus::Cancelled);

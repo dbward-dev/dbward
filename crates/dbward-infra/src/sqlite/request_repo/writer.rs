@@ -166,16 +166,82 @@ impl RequestWriter for SqliteRequestRepo {
             .map_err(map_err)?;
         Ok(affected > 0)
     }
-    fn cancel_all_for_user(&self, user_id: &str, now: DateTime<Utc>) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
-        let affected = conn
-            .execute(
-                "UPDATE requests SET status = 'cancelled', updated_at = ?2, resolved_at = ?2
-                 WHERE requester = ?1 AND status IN ('pending', 'approved', 'auto_approved', 'break_glass', 'dispatched', 'running', 'execution_lost')",
-                params![user_id, now.to_rfc3339()],
-            )
+    fn cancel_all_for_user(
+        &self,
+        user_id: &str,
+        actor_id: &str,
+        reason: &str,
+        now: DateTime<Utc>,
+        _audit_context: &dbward_domain::entities::AuditContext,
+    ) -> Result<Vec<String>, AppError> {
+        use sha2::{Digest, Sha256};
+
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(map_err)?;
-        Ok(affected as u32)
+
+        let now_str = now.to_rfc3339();
+        // 1. Find cancellable request IDs
+        let ids: Vec<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT id FROM requests WHERE requester = ?1 AND status IN ('pending','approved','auto_approved','break_glass','dispatched','running','execution_lost')"
+            ).map_err(map_err)?;
+            stmt.query_map(params![user_id], |r| r.get(0))
+                .map_err(map_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(map_err)?
+        };
+
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // 2. Batch UPDATE
+        tx.execute(
+            "UPDATE requests SET status = 'cancelled', cancel_reason = ?2, cancelled_by = ?3, updated_at = ?4, resolved_at = ?4 WHERE requester = ?1 AND status IN ('pending','approved','auto_approved','break_glass','dispatched','running','execution_lost')",
+            params![user_id, reason, actor_id, now_str],
+        ).map_err(map_err)?;
+
+        // 3. Individual audit events in same TX
+        for id in &ids {
+            let outcome = "success";
+            let category = "approval";
+            let actor_type = "system";
+            let prev_hash: Option<String> = tx
+                .query_row(
+                    "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )
+                .ok();
+            let audit_id = uuid::Uuid::new_v4().to_string();
+            let hash_input = format!(
+                "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+                audit_id, "request_cancelled", actor_id, now_str,
+                prev_hash.as_deref().unwrap_or(""), outcome,
+                id, "", "", "", reason, "", "{}",
+            );
+            let event_hash = hex::encode(Sha256::digest(hash_input.as_bytes()));
+            tx.execute(
+                "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
+                params![
+                    audit_id, "request_cancelled", category,
+                    1, outcome,
+                    actor_id, actor_type,
+                    "request", id,
+                    "", "", "",
+                    id as &str, Option::<&str>::None,
+                    Option::<&str>::None, Option::<&str>::None,
+                    Option::<&str>::None, Option::<&str>::None, reason,
+                    "{}", prev_hash, event_hash,
+                    now_str,
+                ],
+            ).map_err(map_err)?;
+        }
+
+        tx.commit().map_err(map_err)?;
+        Ok(ids)
     }
     fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError> {
         let conn = self.conn.lock().unwrap();

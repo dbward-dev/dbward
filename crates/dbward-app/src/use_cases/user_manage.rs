@@ -26,7 +26,7 @@ pub struct UserSuspendInput {
 pub struct UserSuspendOutput {
     pub id: String,
     pub revoked_tokens: u32,
-    pub cancelled_requests: u32,
+    pub cancelled_requests: Vec<String>,
 }
 
 impl UserManage {
@@ -64,7 +64,7 @@ impl UserManage {
         // Cancel pending/approved/dispatched requests
         let cancelled_requests = self
             .request_writer
-            .cancel_all_for_user(&input.user_id, now)?;
+            .cancel_all_for_user(&input.user_id, &user.subject_id, "user suspended", now, &dbward_domain::entities::AuditContext::System)?;
 
         // Audit
         self.audit.record(&dbward_domain::entities::AuditEvent::simple(
@@ -304,9 +304,12 @@ mod tests {
         fn cancel_all_for_user(
             &self,
             _: &str,
+            _: &str,
+            _: &str,
             _: chrono::DateTime<chrono::Utc>,
-        ) -> Result<u32, AppError> {
-            Ok(3)
+            _: &dbward_domain::entities::AuditContext,
+        ) -> Result<Vec<String>, AppError> {
+            Ok(vec!["r1".into(), "r2".into(), "r3".into()])
         }
         fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
             Ok(true)
@@ -377,7 +380,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out.revoked_tokens, 2);
-        assert_eq!(out.cancelled_requests, 3);
+        assert_eq!(out.cancelled_requests.len(), 3);
     }
 
     #[test]

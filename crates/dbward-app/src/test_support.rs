@@ -249,8 +249,8 @@ impl RequestWriter for FakeRequestWriter {
     fn mark_failed(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
         Ok(true)
     }
-    fn cancel_all_for_user(&self, _: &str, _: DateTime<Utc>) -> Result<u32, AppError> {
-        Ok(0)
+    fn cancel_all_for_user(&self, _: &str, _: &str, _: &str, _: DateTime<Utc>, _: &dbward_domain::entities::AuditContext) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
     }
     fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
         Ok(true)
