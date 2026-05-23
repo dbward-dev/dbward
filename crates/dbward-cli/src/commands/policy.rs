@@ -37,8 +37,15 @@ pub async fn run_resolve(
         println!("Database:    {db}");
         println!("Environment: {env}");
         println!();
+        // Compute column widths based on data
+        let wf_width = resolutions
+            .iter()
+            .map(|r| r["workflow_id"].as_str().unwrap_or("-").len())
+            .max()
+            .unwrap_or(8)
+            .max(8);
         println!(
-            "  {:<16} {:<14} {:<16} DECISION",
+            "  {:<16} {:<wf_width$} {:<16} DECISION",
             "OPERATION", "WORKFLOW", "MATCHED BY"
         );
         for r in resolutions {
@@ -52,7 +59,7 @@ pub async fn run_resolve(
             } else {
                 format!("{decision} ({reason})")
             };
-            println!("  {op:<16} {wf_id:<14} {matched:<16} {decision_display}");
+            println!("  {op:<16} {wf_id:<wf_width$} {matched:<16} {decision_display}");
         }
         return Ok(());
     }
@@ -88,42 +95,44 @@ pub async fn run_resolve(
                 println!("  Step {}:    {} ({mode}, min {min})", i + 1, approvers);
             }
         }
-    } else if decision == "deny" {
+
+        // Only show auto_approve / execution_policy when workflow matched
+        if let Some(aa) = resp["auto_approve"].as_object() {
+            let max_risk = aa.get("max_risk").and_then(|v| v.as_str());
+            let display = match max_risk {
+                Some(level) => format!("risk ≤ {level}"),
+                None => "disabled".to_string(),
+            };
+            let flags: Vec<&str> = [
+                aa.get("allow_read_only")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    .then_some("allow_read_only"),
+                aa.get("allow_safe_ddl")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                    .then_some("allow_safe_ddl"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            let flags_str = if flags.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", flags.join(", "))
+            };
+            println!("Auto-approve: {display}{flags_str}");
+        }
+
+        if let Some(ep) = resp["execution_policy"].as_object() {
+            let timeout = ep
+                .get("statement_timeout_secs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(30);
+            println!("Timeout:     {timeout}s");
+        }
+    } else {
         println!("Workflow:    none");
-    }
-
-    if let Some(aa) = resp["auto_approve"].as_object() {
-        let max_risk = aa
-            .get("max_risk")
-            .and_then(|v| v.as_str())
-            .unwrap_or("none");
-        let flags: Vec<&str> = [
-            aa.get("allow_read_only")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-                .then_some("allow_read_only"),
-            aa.get("allow_safe_ddl")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-                .then_some("allow_safe_ddl"),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        let flags_str = if flags.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", flags.join(", "))
-        };
-        println!("Auto-approve: risk ≤ {max_risk}{flags_str}");
-    }
-
-    if let Some(ep) = resp["execution_policy"].as_object() {
-        let timeout = ep
-            .get("statement_timeout_secs")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(30);
-        println!("Timeout:     {timeout}s");
     }
 
     let reason_display = match reason {
