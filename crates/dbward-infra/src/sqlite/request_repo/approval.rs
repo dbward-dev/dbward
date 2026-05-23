@@ -10,7 +10,10 @@ use super::{
     populate_pending_approvers,
 };
 
-fn compute_current_step(snapshot: &Option<String>, approvals: &[Approval]) -> Result<u32, AppError> {
+fn compute_current_step(
+    snapshot: &Option<String>,
+    approvals: &[Approval],
+) -> Result<u32, AppError> {
     let json = match snapshot.as_deref() {
         Some(j) => j,
         None => return Ok(0),
@@ -44,28 +47,31 @@ impl ApprovalRepo for SqliteRequestRepo {
             let mut stmt = tx
                 .prepare("SELECT id, request_id, action, actor_id, matched_selector, step_index, comment, created_at FROM approvals WHERE request_id = ?1 ORDER BY created_at ASC")
                 .map_err(map_err)?;
-            stmt
-                .query_map(params![approval.request_id], |row| {
-                    let action_str: String = row.get(2)?;
-                    let action = parse_approval_action(&action_str).map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
-                    })?;
-                    let created_str: String = row.get(7)?;
-                    let created_at = crate::sqlite::parse_datetime(&created_str)?;
-                    Ok(Approval {
-                        id: row.get(0)?,
-                        request_id: row.get(1)?,
-                        action,
-                        actor_id: row.get(3)?,
-                        matched_selector: row.get(4)?,
-                        step_index: row.get(5)?,
-                        comment: row.get(6)?,
-                        created_at,
-                    })
+            stmt.query_map(params![approval.request_id], |row| {
+                let action_str: String = row.get(2)?;
+                let action = parse_approval_action(&action_str).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
+                let created_str: String = row.get(7)?;
+                let created_at = crate::sqlite::parse_datetime(&created_str)?;
+                Ok(Approval {
+                    id: row.get(0)?,
+                    request_id: row.get(1)?,
+                    action,
+                    actor_id: row.get(3)?,
+                    matched_selector: row.get(4)?,
+                    step_index: row.get(5)?,
+                    comment: row.get(6)?,
+                    created_at,
                 })
-                .map_err(map_err)?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(map_err)?
+            })
+            .map_err(map_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_err)?
         };
 
         // Compute current step using domain logic

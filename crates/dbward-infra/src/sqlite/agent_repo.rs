@@ -348,11 +348,13 @@ impl AgentRepo for SqliteAgentRepo {
 
         if updated == 0 {
             // Check if request was cancelled (allowed) or unexpected state (rollback)
-            let current_status: String = tx.query_row(
-                "SELECT status FROM requests WHERE id = ?1",
-                params![request_id],
-                |r| r.get(0),
-            ).map_err(|e| AppError::Internal(e.to_string()))?;
+            let current_status: String = tx
+                .query_row(
+                    "SELECT status FROM requests WHERE id = ?1",
+                    params![request_id],
+                    |r| r.get(0),
+                )
+                .map_err(|e| AppError::Internal(e.to_string()))?;
 
             if current_status != "cancelled" {
                 // Unexpected state change — rollback entire TX
@@ -387,7 +389,11 @@ impl AgentRepo for SqliteAgentRepo {
         insert_audit_in_agent_tx(&tx, audit_event)?;
 
         tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
-        Ok(if updated > 0 { CompletionOutcome::Normal } else { CompletionOutcome::RequestCancelled })
+        Ok(if updated > 0 {
+            CompletionOutcome::Normal
+        } else {
+            CompletionOutcome::RequestCancelled
+        })
     }
 
     fn find_expired_leases(&self, now: &str) -> Result<Vec<(String, String)>, AppError> {

@@ -1,6 +1,6 @@
 use chrono::Utc;
-use dbward_app::ports::*;
 use dbward_app::error::AppError;
+use dbward_app::ports::*;
 use dbward_domain::auth::*;
 use dbward_domain::entities::*;
 use dbward_domain::policies::*;
@@ -920,7 +920,10 @@ fn complete_execution_cancelled_request() {
             &[],
         )
         .unwrap();
-    assert_eq!(result, dbward_app::ports::CompletionOutcome::RequestCancelled);
+    assert_eq!(
+        result,
+        dbward_app::ports::CompletionOutcome::RequestCancelled
+    );
 
     // Execution is still updated
     let fetched_exec = agent_repo.get_execution("exec-ce-cancel").unwrap().unwrap();
@@ -981,23 +984,22 @@ fn complete_execution_already_completed() {
     agent_repo.create_execution(&execution).unwrap();
 
     let now = Utc::now();
-    let result = agent_repo
-        .complete_execution(
-            "exec-ce-done",
-            "req-ce-done",
-            true,
+    let result = agent_repo.complete_execution(
+        "exec-ce-done",
+        "req-ce-done",
+        true,
+        now,
+        &AuditEvent::simple(
+            "execution.completed",
+            "execution",
+            "agent-1",
+            Some("exec-ce-done"),
             now,
-            &AuditEvent::simple(
-                "execution.completed",
-                "execution",
-                "agent-1",
-                Some("exec-ce-done"),
-                now,
-                &AuditContext::System,
-            ),
-            None,
-            &[],
-        );
+            &AuditContext::System,
+        ),
+        None,
+        &[],
+    );
     assert!(result.is_err());
     assert!(matches!(result, Err(AppError::Conflict(_))));
 

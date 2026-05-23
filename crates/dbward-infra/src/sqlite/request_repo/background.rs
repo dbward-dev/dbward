@@ -21,11 +21,13 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
     }
     fn find_expired_pending(&self, now: &str) -> Result<Vec<String>, AppError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id FROM requests WHERE status = 'pending' \
+        let mut stmt = conn
+            .prepare(
+                "SELECT id FROM requests WHERE status = 'pending' \
              AND expires_at IS NOT NULL \
-             AND datetime(expires_at) < datetime(?1)"
-        ).map_err(map_err)?;
+             AND datetime(expires_at) < datetime(?1)",
+            )
+            .map_err(map_err)?;
         let rows = stmt
             .query_map(params![now], |row| row.get(0))
             .map_err(map_err)?;
@@ -128,35 +130,44 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
         tx.execute(
             &format!("DELETE FROM results WHERE request_id IN ({subquery})"),
             params![before],
-        ).map_err(map_err)?;
+        )
+        .map_err(map_err)?;
         tx.execute(
             &format!("DELETE FROM executions WHERE request_id IN ({subquery})"),
             params![before],
-        ).map_err(map_err)?;
+        )
+        .map_err(map_err)?;
         tx.execute(
             &format!("DELETE FROM approvals WHERE request_id IN ({subquery})"),
             params![before],
-        ).map_err(map_err)?;
+        )
+        .map_err(map_err)?;
         tx.execute(
             &format!("DELETE FROM request_pending_approvers WHERE request_id IN ({subquery})"),
             params![before],
-        ).map_err(map_err)?;
+        )
+        .map_err(map_err)?;
         tx.execute(
             &format!("DELETE FROM dry_run_jobs WHERE request_id IN ({subquery})"),
             params![before],
-        ).map_err(map_err)?;
+        )
+        .map_err(map_err)?;
         tx.execute(
             &format!("DELETE FROM request_context WHERE request_id IN ({subquery})"),
             params![before],
-        ).map_err(map_err)?;
+        )
+        .map_err(map_err)?;
         tx.execute(
             &format!("DELETE FROM slack_messages WHERE request_id IN ({subquery})"),
             params![before],
-        ).map_err(map_err)?;
-        let n = tx.execute(
-            &format!("DELETE FROM requests WHERE id IN ({subquery})"),
-            params![before],
-        ).map_err(map_err)?;
+        )
+        .map_err(map_err)?;
+        let n = tx
+            .execute(
+                &format!("DELETE FROM requests WHERE id IN ({subquery})"),
+                params![before],
+            )
+            .map_err(map_err)?;
         tx.commit().map_err(map_err)?;
         Ok(n as u32)
     }

@@ -15,7 +15,6 @@ pub enum CompletionOutcome {
     RequestCancelled,
 }
 
-
 // --- RequestReader ---
 
 pub trait RequestReader: Send + Sync {

@@ -20,11 +20,7 @@ async fn resolve_slack_auth_user(
         .map_err(|e| format!("DB error: {e}"))?
         .ok_or_else(|| "not_linked".to_string())?;
 
-    if state
-        .user_repo
-        .is_suspended(&subject_id)
-        .unwrap_or(true)
-    {
+    if state.user_repo.is_suspended(&subject_id).unwrap_or(true) {
         return Err("suspended".to_string());
     }
 
@@ -127,7 +123,9 @@ async fn handle_block_actions(
         Err(e) => {
             if let Some(ref slack_client) = state.slack_client {
                 let msg = if e == "not_linked" {
-                    format!("⚠️ Your Slack account is not linked to dbward.\nRun: `dbward user link-slack {slack_user_id}`")
+                    format!(
+                        "⚠️ Your Slack account is not linked to dbward.\nRun: `dbward user link-slack {slack_user_id}`"
+                    )
                 } else {
                     "⚠️ Account suspended or not found".to_string()
                 };
