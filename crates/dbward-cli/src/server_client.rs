@@ -519,6 +519,46 @@ impl ServerClient {
             .map_err(|e| CliError::Server(format!("PATCH {path}: {e}")))?;
         self.parse_response(resp, path).await
     }
+    pub async fn create_token(&self, body: &Value) -> Result<Value, CliError> {
+        let resp = self
+            .client
+            .post(format!("{}/api/tokens", self.base_url))
+            .bearer_auth(&self.api_token)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| CliError::Server(format!("request failed: {e}")))?;
+        let status = resp.status().as_u16();
+        let text = resp.text().await.unwrap_or_default();
+        if status == 201 {
+            serde_json::from_str(&text)
+                .map_err(|e| CliError::Server(format!("invalid response: {e}")))
+        } else {
+            Err(ServerError::from_response(status, text).into_cli_error("token create"))
+        }
+    }
+
+    pub async fn list_tokens(&self) -> Result<Value, CliError> {
+        self.get_json("/api/tokens").await
+    }
+
+    pub async fn revoke_token(&self, id: &str) -> Result<Value, CliError> {
+        let resp = self
+            .client
+            .delete(format!("{}/api/tokens/{id}", self.base_url))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| CliError::Server(format!("request failed: {e}")))?;
+        let status = resp.status().as_u16();
+        let text = resp.text().await.unwrap_or_default();
+        if status == 200 {
+            serde_json::from_str(&text)
+                .map_err(|e| CliError::Server(format!("invalid response: {e}")))
+        } else {
+            Err(ServerError::from_response(status, text).into_cli_error("token revoke"))
+        }
+    }
 }
 
 #[cfg(test)]

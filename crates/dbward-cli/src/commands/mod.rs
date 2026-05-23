@@ -9,6 +9,7 @@ mod misc;
 mod request;
 mod result;
 mod server;
+mod token;
 mod user;
 pub(crate) mod workflow;
 
@@ -174,6 +175,11 @@ pub enum Command {
     User {
         #[command(subcommand)]
         action: user::UserAction,
+    },
+    /// Manage API tokens
+    Token {
+        #[command(subcommand)]
+        action: token::TokenAction,
     },
     /// Update dbward to the latest version
     SelfUpdate,
@@ -417,6 +423,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         }
         Command::Agents => misc::run_agents(&sc, json_output).await,
         Command::User { action } => user::run_user(&sc, action).await,
+        Command::Token { action } => token::run_token_command(&action, &sc, json_output).await,
         // Handled above
         Command::Init { .. }
         | Command::Login { .. }

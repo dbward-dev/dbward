@@ -91,9 +91,28 @@ pub async fn list(
         token_gen: state.token_value_generator.clone(),
     };
     let output = uc.list(&user).map_err(map_error)?;
+    let tokens: Vec<serde_json::Value> = output
+        .tokens
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "id": t.id,
+                "subject_type": t.subject_type,
+                "subject_id": t.subject_id,
+                "token_prefix": t.token_prefix,
+                "roles": t.roles,
+                "groups": t.groups,
+                "name": t.name,
+                "status": t.status,
+                "expires_at": t.expires_at,
+                "created_at": t.created_at,
+                "revoked_at": t.revoked_at,
+            })
+        })
+        .collect();
     Ok((
         StatusCode::OK,
-        Json(serde_json::json!({ "tokens": output.tokens })),
+        Json(serde_json::json!({ "tokens": tokens })),
     ))
 }
 
