@@ -945,14 +945,22 @@ fn check_workflow_coverage(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
             total_pairs += 1;
             // Check if any workflow matches this (db, env) pair
             let covered = cfg.workflows.iter().any(|wf| {
-                matches_scope(wf.database.as_str(), db.name.as_str())
-                    && matches_scope(wf.environment.as_str(), env.as_str())
+                workflow_covers_scope(
+                    wf.database.as_str(),
+                    wf.environment.as_str(),
+                    db.name.as_str(),
+                    env.as_str(),
+                )
             });
             if !covered {
                 // Check if there's an inert auto_approve for this scope
                 let has_inert_aa = cfg.auto_approve.iter().any(|aa| {
-                    matches_scope(aa.database.as_str(), db.name.as_str())
-                        && matches_scope(aa.environment.as_str(), env.as_str())
+                    workflow_covers_scope(
+                        aa.database.as_str(),
+                        aa.environment.as_str(),
+                        db.name.as_str(),
+                        env.as_str(),
+                    )
                 });
                 let mut msg = format!("{}:{} → no workflow (fail-closed)", db.name, env);
                 if has_inert_aa {
@@ -1054,8 +1062,12 @@ fn check_auto_approve_consistency(ctx: &mut DoctorContext, cfg: &ServerConfigMin
     for aa in &cfg.auto_approve {
         // Check if any workflow covers this auto_approve scope
         let has_matching_workflow = cfg.workflows.iter().any(|wf| {
-            matches_scope(wf.database.as_str(), aa.database.as_str())
-                && matches_scope(wf.environment.as_str(), aa.environment.as_str())
+            workflow_covers_scope(
+                wf.database.as_str(),
+                wf.environment.as_str(),
+                aa.database.as_str(),
+                aa.environment.as_str(),
+            )
         });
         if !has_matching_workflow {
             orphaned.push(format!("{}:{}", aa.database, aa.environment));
@@ -1119,10 +1131,23 @@ fn redact_url(url: &str) -> String {
     }
 }
 
-/// Mirrors runtime's matches_scope: policy wildcard covers any request value.
-/// Used for S4 (reverse lint) and S6 (auto_approve consistency).
-fn matches_scope(policy_val: &str, request_val: &str) -> bool {
-    policy_val == "*" || policy_val == request_val
+/// Scope matching using domain types (same as runtime's workflow_matcher).
+fn workflow_covers_scope(wf_db: &str, wf_env: &str, req_db: &str, req_env: &str) -> bool {
+    use dbward_domain::values::{DatabaseName, Environment};
+    let Ok(policy_db) = DatabaseName::new(wf_db) else {
+        return false;
+    };
+    let Ok(policy_env) = Environment::new(wf_env) else {
+        return false;
+    };
+    let Ok(request_db) = DatabaseName::new(req_db) else {
+        return false;
+    };
+    let Ok(request_env) = Environment::new(req_env) else {
+        return false;
+    };
+    (policy_db.is_wildcard() || policy_db == request_db)
+        && (policy_env.is_wildcard() || policy_env == request_env)
 }
 
 async fn check_server_health(url: &str, timeout: Duration) -> Result<(String, String), String> {
