@@ -431,6 +431,10 @@ fn emit_webhook(state: &AppState, event_type: &str, request_id: &str) {
         error_summary: None,
         approval_hint: None,
         operation: None,
+        step_index: None,
+        total_steps: None,
+        expires_at: None,
+        approvers: None,
     });
 }
 

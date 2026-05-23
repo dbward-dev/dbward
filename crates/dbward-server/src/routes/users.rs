@@ -109,3 +109,71 @@ pub async fn activate(
     uc.activate(&id, &user, &ctx).map_err(map_error)?;
     Ok((StatusCode::OK, Json(serde_json::json!({ "id": id }))))
 }
+
+pub async fn patch(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    use dbward_domain::auth::Permission;
+
+    // Forbid dangerous fields
+    for field in ["role", "roles", "groups", "subject_type", "status"] {
+        if body.get(field).is_some() {
+            return Err(map_error(dbward_app::error::AppError::Validation(format!(
+                "cannot update field '{field}' via this endpoint"
+            ))));
+        }
+    }
+
+    // Auth: self or UserManage
+    if user.subject_id != id {
+        state
+            .authorizer
+            .authorize_global(&user, Permission::UserManage)
+            .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
+    }
+
+    // Extract and validate slack_user_id
+    let slack_user_id = match body.get("slack_user_id") {
+        Some(serde_json::Value::String(s)) => {
+            // Validate: ^[UW][A-Z0-9]+$
+            let valid = s.len() >= 2
+                && matches!(s.as_bytes()[0], b'U' | b'W')
+                && s[1..]
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
+            if !valid {
+                return Err(map_error(dbward_app::error::AppError::Validation(
+                    "invalid slack_user_id format (expected ^[UW][A-Z0-9]+$)".into(),
+                )));
+            }
+            Some(s.as_str().to_string())
+        }
+        Some(serde_json::Value::Null) => None,
+        Some(_) => {
+            return Err(map_error(dbward_app::error::AppError::Validation(
+                "slack_user_id must be a string or null".into(),
+            )));
+        }
+        None => {
+            return Err(map_error(dbward_app::error::AppError::Validation(
+                "no updateable fields provided".into(),
+            )));
+        }
+    };
+
+    state
+        .user_repo
+        .update_slack_user_id(&id, slack_user_id.as_deref())
+        .map_err(map_error)?;
+
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": id,
+            "slack_user_id": slack_user_id,
+        })),
+    ))
+}

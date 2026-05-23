@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use dbward_app::error::AppError;
 use dbward_app::ports::UserRepo;
 use dbward_domain::entities::{User, UserStatus};
+use rusqlite::OptionalExtension;
 
 pub struct SqliteUserRepo {
     conn: DbConn,
@@ -126,6 +127,47 @@ impl UserRepo for SqliteUserRepo {
             rusqlite::params![subject_id, now],
         ).map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(())
+    }
+
+    fn update_slack_user_id(
+        &self,
+        subject_id: &str,
+        slack_user_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        // Upsert user if not exists
+        conn.execute(
+            "INSERT OR IGNORE INTO users (id, groups_json, status, created_at, updated_at) VALUES (?1, '[]', 'active', ?2, ?2)",
+            rusqlite::params![subject_id, now],
+        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        // Update slack_user_id
+        let result = conn.execute(
+            "UPDATE users SET slack_user_id = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![slack_user_id, now, subject_id],
+        );
+        match result {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(err, _))
+                if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation =>
+            {
+                Err(AppError::Conflict(
+                    "slack_user_id already linked to another user".into(),
+                ))
+            }
+            Err(e) => Err(AppError::Internal(e.to_string())),
+        }
+    }
+
+    fn find_by_slack_user_id(&self, slack_user_id: &str) -> Result<Option<String>, AppError> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn
+            .prepare("SELECT id FROM users WHERE slack_user_id = ?1")
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .query_row(rusqlite::params![slack_user_id], |row| row.get(0))
+            .optional()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(result)
     }
 }
 

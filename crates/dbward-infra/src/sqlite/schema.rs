@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 8;
+const SCHEMA_VERSION: u32 = 9;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -86,6 +86,17 @@ ALTER TABLE workflows DROP COLUMN skip_approval_for_json;
 ALTER TABLE workflows DROP COLUMN require_approval;
 ";
 
+const MIGRATION_V9: &str = "
+CREATE TABLE IF NOT EXISTS slack_messages (
+    request_id TEXT PRIMARY KEY,
+    channel TEXT NOT NULL,
+    message_ts TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+ALTER TABLE users ADD COLUMN slack_user_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slack_user_id ON users(slack_user_id) WHERE slack_user_id IS NOT NULL;
+";
+
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
@@ -123,6 +134,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(MIGRATION_V6)?;
         conn.execute_batch(MIGRATION_V7)?;
         conn.execute_batch(MIGRATION_V8)?;
+        conn.execute_batch(MIGRATION_V9)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -145,6 +157,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 8 {
             conn.execute_batch(MIGRATION_V8)?;
+        }
+        if current < 9 {
+            conn.execute_batch(MIGRATION_V9)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }

@@ -235,12 +235,48 @@ pub async fn run_from_args(
     if let Err(e) = notifier.reload() {
         tracing::warn!("failed to load webhooks on startup: {e}");
     }
+    // Slack integration (opt-in: only if [slack] config section exists)
+    let slack_config = cfg
+        .slack
+        .as_ref()
+        .map(|s| dbward_infra::slack::SlackConfig {
+            bot_token: s.bot_token.clone(),
+            signing_secret: s.signing_secret.clone(),
+            default_channel: s.channel.clone(),
+            channel_overrides: s.channels.clone(),
+        });
+
+    let slack_notifier: Option<Arc<dyn dbward_app::ports::Notifier>> =
+        slack_config.as_ref().map(|sc| {
+            let slack_client = Arc::new(dbward_infra::slack::SlackHttpClient::new(
+                sc.bot_token.clone(),
+            ));
+            let slack_msg_repo = Arc::new(dbward_infra::sqlite::SqliteSlackMessageRepo::new(
+                conn.clone(),
+            ));
+            Arc::new(dbward_infra::slack::SlackNotifier::new(
+                slack_client,
+                slack_msg_repo,
+                context_repo.clone(),
+                request_repo.clone(),
+                request_repo.clone(),
+                sc.clone(),
+            )) as Arc<dyn dbward_app::ports::Notifier>
+        });
+
+    let slack_client_for_state: Option<Arc<dyn dbward_infra::slack::SlackClient>> =
+        slack_config.as_ref().map(|sc| {
+            Arc::new(dbward_infra::slack::SlackHttpClient::new(
+                sc.bot_token.clone(),
+            )) as Arc<dyn dbward_infra::slack::SlackClient>
+        });
+
     let event_dispatcher: Arc<dyn dbward_app::ports::EventDispatcher> =
         Arc::new(dbward_infra::webhook::CompositeEventDispatcher {
             audit: audit_logger.clone(),
             notifier: notifier.clone(),
             result_channel: Some(result_channel.clone()),
-            request_notifier: None,
+            request_notifier: slack_notifier,
             redaction_mode: match cfg.audit.redaction.as_str() {
                 "none" => dbward_infra::webhook::RedactionMode::None,
                 "full" => dbward_infra::webhook::RedactionMode::Full,
@@ -310,6 +346,8 @@ pub async fn run_from_args(
             entries
         },
         draining: draining.clone(),
+        slack_config,
+        slack_client: slack_client_for_state,
     };
 
     // Dev bootstrap: create tokens and output to stdout

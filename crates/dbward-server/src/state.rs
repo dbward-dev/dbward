@@ -59,4 +59,7 @@ pub struct AppState {
     pub auto_approve_entries: Vec<dbward_domain::services::workflow_matcher::AutoApproveEntry>,
     // Shutdown
     pub draining: Arc<AtomicBool>,
+    // Slack
+    pub slack_config: Option<dbward_infra::slack::SlackConfig>,
+    pub slack_client: Option<std::sync::Arc<dyn dbward_infra::slack::SlackClient>>,
 }

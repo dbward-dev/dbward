@@ -190,6 +190,8 @@ fn state_with_license(license: License) -> AppState {
         webhook_delivery_repo: None,
         webhook_sender: Arc::new(NoopWebhookSender),
         draining: Arc::new(AtomicBool::new(false)),
+        slack_config: None,
+        slack_client: None,
         auth_mode: "token".into(),
         default_approval_ttl_secs: Some(3600),
         max_persist_bytes: 10 * 1024 * 1024,

@@ -492,6 +492,33 @@ impl ServerClient {
             .map_err(|e| CliError::Server(format!("list results: {e}")))?;
         self.parse_response(resp, "list results").await
     }
+
+    pub async fn get(&self, path: &str) -> Result<Value, CliError> {
+        let resp = self
+            .client
+            .get(format!("{}{path}", self.base_url))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| CliError::Server(format!("GET {path}: {e}")))?;
+        self.parse_response(resp, path).await
+    }
+
+    pub async fn patch(
+        &self,
+        path: &str,
+        body: &serde_json::Map<String, Value>,
+    ) -> Result<Value, CliError> {
+        let resp = self
+            .client
+            .patch(format!("{}{path}", self.base_url))
+            .bearer_auth(&self.api_token)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| CliError::Server(format!("PATCH {path}: {e}")))?;
+        self.parse_response(resp, path).await
+    }
 }
 
 #[cfg(test)]

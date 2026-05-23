@@ -220,6 +220,18 @@ pub trait UserRepo: Send + Sync {
     fn is_suspended(&self, user_id: &str) -> Result<bool, AppError>;
     /// Auto-create user record on first auth if not exists.
     fn ensure_exists(&self, subject_id: &str) -> Result<(), AppError>;
+    /// Update slack_user_id for a user (upserts if user doesn't exist).
+    fn update_slack_user_id(
+        &self,
+        _subject_id: &str,
+        _slack_user_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+    /// Find subject_id by slack_user_id (for Slack interaction resolution).
+    fn find_by_slack_user_id(&self, _slack_user_id: &str) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
 }
 
 // --- TokenRepo ---
