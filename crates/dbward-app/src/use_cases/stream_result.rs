@@ -130,6 +130,7 @@ mod tests {
                     idempotency_key: None,
                     emergency: false,
                     workflow_snapshot_json: None,
+                    decision_trace_json: None,
                     metadata_json: "{}".into(),
                     no_store: false,
                     cancel_reason: None,

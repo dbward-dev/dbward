@@ -6,6 +6,7 @@ pub mod approve_request;
 pub mod audit_query;
 pub mod cancel_request;
 pub mod create_request;
+pub mod decision_trace;
 pub mod dispatch_request;
 pub mod get_request;
 pub mod get_result;

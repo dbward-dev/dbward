@@ -181,7 +181,7 @@ impl AgentRepo for SqliteAgentRepo {
             .map(|(i, _)| format!("?{}", i + 2))
             .collect();
         let sql = format!(
-            "SELECT id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at
+            "SELECT id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, decision_trace_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at
              FROM requests WHERE status = ?1 AND database_id IN ({})",
             placeholders.join(",")
         );
@@ -218,12 +218,13 @@ impl AgentRepo for SqliteAgentRepo {
                     share_with_json: row.get(10)?,
                     no_store: row.get(11)?,
                     workflow_snapshot_json: row.get(12)?,
-                    cancelled_by: row.get(13)?,
-                    cancel_reason: row.get(14)?,
-                    created_at: row.get(15)?,
-                    updated_at: row.get(16)?,
-                    resolved_at: row.get(17)?,
-                    expires_at: row.get(18)?,
+                    decision_trace_json: row.get(13)?,
+                    cancelled_by: row.get(14)?,
+                    cancel_reason: row.get(15)?,
+                    created_at: row.get(16)?,
+                    updated_at: row.get(17)?,
+                    resolved_at: row.get(18)?,
+                    expires_at: row.get(19)?,
                 })
             })
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -721,6 +722,7 @@ struct RequestRow {
     share_with_json: String,
     no_store: bool,
     workflow_snapshot_json: Option<String>,
+    decision_trace_json: Option<String>,
     cancelled_by: Option<String>,
     cancel_reason: Option<String>,
     created_at: String,
@@ -759,6 +761,7 @@ fn row_to_request(r: RequestRow) -> Result<Request, AppError> {
         share_with,
         no_store: r.no_store,
         workflow_snapshot_json: r.workflow_snapshot_json,
+        decision_trace_json: r.decision_trace_json,
         cancelled_by: r.cancelled_by,
         cancel_reason: r.cancel_reason,
         created_at: parse_dt(&r.created_at)?,

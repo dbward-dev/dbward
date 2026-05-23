@@ -307,6 +307,10 @@ pub async fn get(
                     "explain": c.explain_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
                 })
             }),
+            "decision_trace": output.request.decision_trace_json.as_deref()
+                .and_then(|j| serde_json::from_str::<serde_json::Value>(j)
+                    .map_err(|e| { tracing::warn!(%e, "failed to parse decision_trace_json"); e })
+                    .ok()),
         })),
     ))
 }

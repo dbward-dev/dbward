@@ -322,6 +322,78 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
             }
         }
     }
+
+    // Decision trace
+    if let Some(trace) = body.get("decision_trace").filter(|v| !v.is_null()) {
+        println!();
+        println!("  Decision:");
+        if let Some(op) = trace["classification"]["resolved_operation"].as_str() {
+            println!("    Operation:  {op}");
+        }
+        // SQL Review
+        let parse_failed = trace["sql_review"]["parse_failed"]
+            .as_bool()
+            .unwrap_or(false);
+        let findings = trace["sql_review"]["findings_count"].as_u64().unwrap_or(0);
+        if parse_failed {
+            println!("    SQL Review: skipped (parse failed)");
+        } else if findings == 0 {
+            println!("    SQL Review: passed");
+        } else {
+            println!(
+                "    SQL Review: {findings} warning{}",
+                if findings > 1 { "s" } else { "" }
+            );
+        }
+        // Risk
+        let level = trace["risk"]["level"].as_str().unwrap_or("?");
+        let factors: Vec<&str> = trace["risk"]["factors"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        let threshold = trace["decision"]["auto_approve_threshold"].as_str();
+        if factors.is_empty() {
+            if let Some(t) = threshold {
+                println!("    Risk:       {level} (threshold: {t})");
+            } else {
+                println!("    Risk:       {level}");
+            }
+        } else {
+            let factors_str = factors.join(", ");
+            if let Some(t) = threshold {
+                println!("    Risk:       {level} [{factors_str}] (threshold: {t})");
+            } else {
+                println!("    Risk:       {level} [{factors_str}]");
+            }
+        }
+        // Workflow
+        if let Some(wf) = trace["workflow"]["matched"].as_object() {
+            let id = wf.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            let db = wf.get("database").and_then(|v| v.as_str()).unwrap_or("*");
+            let env = wf
+                .get("environment")
+                .and_then(|v| v.as_str())
+                .unwrap_or("*");
+            let steps = wf.get("step_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            println!(
+                "    Workflow:   {id} ({db}:{env}, {steps} step{})",
+                if steps != 1 { "s" } else { "" }
+            );
+        } else {
+            println!("    Workflow:   none");
+        }
+        // Outcome
+        let outcome = trace["decision"]["outcome"].as_str().unwrap_or("?");
+        let reasons: Vec<&str> = trace["decision"]["reasons"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+        if reasons.is_empty() {
+            println!("    Outcome:    {outcome}");
+        } else {
+            println!("    Outcome:    {outcome} [{}]", reasons.join(", "));
+        }
+    }
 }
 
 pub(crate) fn print_approve_result(body: &serde_json::Value, id: &str) {

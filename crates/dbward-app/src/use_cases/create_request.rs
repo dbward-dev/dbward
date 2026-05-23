@@ -3,6 +3,7 @@ use std::sync::Arc;
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Request, RequestStatus};
 use dbward_domain::services::classification::{ClassifyError, Dialect};
+use dbward_domain::services::risk_scorer;
 use dbward_domain::services::sql_classifier;
 use dbward_domain::services::status_machine::{
     self, EventMetadata, RequestTrigger, TransitionContext,
@@ -12,6 +13,7 @@ use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::error::AppError;
 use crate::ports::*;
+use crate::use_cases::decision_trace::{self as dt};
 
 pub struct CreateRequest {
     pub authorizer: Arc<dyn Authorizer>,
@@ -111,7 +113,17 @@ impl CreateRequest {
         };
 
         // 1a. SQL Review + Risk assessment (best-effort, never blocks request creation)
-        let (risk_level, review_json, risk_json, parsed_stmts, tables_json, schema_collected_at) = {
+        let (
+            risk_level,
+            review_json,
+            risk_json,
+            parsed_stmts,
+            tables_json,
+            schema_collected_at,
+            trace_findings_count,
+            trace_risk_factors,
+            trace_schema_status,
+        ) = {
             use dbward_domain::services::{risk_scorer, sql_parser, sql_reviewer, table_extractor};
             let parse_result = sql_parser::parse_statements(&input.detail, dialect);
             if let Ok(stmts) = parse_result {
@@ -260,6 +272,16 @@ impl CreateRequest {
                     }).collect::<Vec<_>>(),
                     "blocked": review.blocked,
                 });
+                let trace_factors: Vec<String> = assessment
+                    .factors
+                    .iter()
+                    .map(|f| format!("{:?}", f))
+                    .collect();
+                let trace_ss = match schema_status {
+                    risk_scorer::SchemaStatus::Ready => dt::SchemaStatus::Ready,
+                    risk_scorer::SchemaStatus::Failed => dt::SchemaStatus::Failed,
+                    risk_scorer::SchemaStatus::NotSynced => dt::SchemaStatus::NotSynced,
+                };
                 (
                     Some(assessment.level),
                     Some(rev_json.to_string()),
@@ -267,9 +289,22 @@ impl CreateRequest {
                     Some(stmts),
                     t_json,
                     schema_collected_at,
+                    review.findings.len(),
+                    trace_factors,
+                    trace_ss,
                 )
             } else {
-                (None, None, None, None, None, None)
+                (
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                    vec![],
+                    dt::SchemaStatus::Unavailable,
+                )
             }
         };
 
@@ -434,6 +469,109 @@ impl CreateRequest {
         } else {
             None
         };
+        // 6b. Build decision trace
+        let parse_failed = parsed_stmts.is_none();
+        let auto_approve_entry_for_trace = workflow_matcher::find_auto_approve(
+            &self.auto_approve_entries,
+            &input.database,
+            &input.environment,
+        );
+        let trace_risk_level = match risk_level {
+            None => dt::RiskLevel::Unavailable,
+            Some(risk_scorer::RiskLevel::Low) => dt::RiskLevel::Low,
+            Some(risk_scorer::RiskLevel::Medium) => dt::RiskLevel::Medium,
+            Some(risk_scorer::RiskLevel::High) => dt::RiskLevel::High,
+            Some(risk_scorer::RiskLevel::Critical) => dt::RiskLevel::Critical,
+            Some(risk_scorer::RiskLevel::Unknown) => dt::RiskLevel::Unknown,
+        };
+        let trace_reasons = match &decision {
+            workflow_matcher::ApprovalDecision::AutoApproved { reason } => match reason {
+                workflow_matcher::AutoApproveReason::EmptySteps => {
+                    vec![dt::DecisionReason::EmptySteps]
+                }
+                workflow_matcher::AutoApproveReason::RiskBased => {
+                    vec![dt::DecisionReason::RiskBelowThreshold]
+                }
+            },
+            workflow_matcher::ApprovalDecision::NeedsApproval => {
+                if auto_approve_entry_for_trace.is_none() {
+                    vec![dt::DecisionReason::NoAutoApproveRule]
+                } else if auto_approve_entry_for_trace
+                    .and_then(|e| e.max_risk_level)
+                    .is_none()
+                {
+                    vec![dt::DecisionReason::AutoApproveDisabled]
+                } else if risk_level.is_none() {
+                    vec![dt::DecisionReason::RiskUnavailable]
+                } else {
+                    vec![dt::DecisionReason::RiskAboveThreshold]
+                }
+            }
+            workflow_matcher::ApprovalDecision::Pending => {
+                vec![]
+            }
+        };
+        let trace_outcome = if !needs_approval {
+            dt::Outcome::AutoApproved
+        } else {
+            dt::Outcome::NeedsApproval
+        };
+        // Override for break-glass: status_machine forces BreakGlass when emergency=true
+        let (trace_outcome, trace_reasons) = if input.emergency {
+            (
+                dt::Outcome::AutoApproved,
+                vec![dt::DecisionReason::BreakGlass],
+            )
+        } else {
+            (trace_outcome, trace_reasons)
+        };
+        let trace_threshold = auto_approve_entry_for_trace
+            .and_then(|e| e.max_risk_level)
+            .map(|l| match l {
+                risk_scorer::RiskLevel::Low => dt::RiskLevel::Low,
+                risk_scorer::RiskLevel::Medium => dt::RiskLevel::Medium,
+                risk_scorer::RiskLevel::High => dt::RiskLevel::High,
+                risk_scorer::RiskLevel::Critical => dt::RiskLevel::Critical,
+                risk_scorer::RiskLevel::Unknown => dt::RiskLevel::Unknown,
+            });
+        let decision_trace = dt::DecisionTrace {
+            version: 1,
+            classification: dt::Classification {
+                resolved_operation: operation.into(),
+            },
+            sql_review: dt::SqlReview {
+                findings_count: trace_findings_count,
+                parse_failed,
+            },
+            risk: dt::Risk {
+                level: trace_risk_level,
+                factors: if parse_failed {
+                    vec![]
+                } else {
+                    trace_risk_factors
+                },
+                schema_status: if parse_failed {
+                    dt::SchemaStatus::Unavailable
+                } else {
+                    trace_schema_status
+                },
+            },
+            workflow: dt::WorkflowMatch {
+                matched: workflow.as_ref().map(|wf| dt::WorkflowRef {
+                    id: wf.id.clone(),
+                    database: wf.database.to_string(),
+                    environment: wf.environment.to_string(),
+                    step_count: wf.steps.len(),
+                }),
+            },
+            decision: dt::Decision {
+                outcome: trace_outcome,
+                reasons: trace_reasons,
+                auto_approve_threshold: trace_threshold,
+            },
+        };
+        let decision_trace_json = serde_json::to_string(&decision_trace).unwrap_or_default();
+
         let request = Request {
             id: id.clone(),
             requester: user.subject_id.clone(),
@@ -449,6 +587,7 @@ impl CreateRequest {
             share_with: input.share_with,
             no_store: input.no_store,
             workflow_snapshot_json,
+            decision_trace_json: Some(decision_trace_json),
             cancel_reason: None,
             cancelled_by: None,
             created_at: now,
