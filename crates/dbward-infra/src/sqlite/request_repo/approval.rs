@@ -10,10 +10,21 @@ use super::{
     populate_pending_approvers,
 };
 
+fn compute_current_step(snapshot: &Option<String>, approvals: &[Approval]) -> Result<u32, AppError> {
+    let json = match snapshot.as_deref() {
+        Some(j) => j,
+        None => return Ok(0),
+    };
+    let wf: dbward_domain::policies::Workflow = serde_json::from_str(json)
+        .map_err(|e| AppError::Internal(format!("invalid workflow snapshot: {e}")))?;
+    Ok(dbward_domain::services::workflow_matcher::find_current_step(&wf.steps, approvals))
+}
+
 impl ApprovalRepo for SqliteRequestRepo {
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError> {
         let conn = self.conn.lock().unwrap();
-        conn.execute(
+        let tx = conn.unchecked_transaction().map_err(map_err)?;
+        tx.execute(
             "INSERT INTO approvals (id, request_id, action, actor_id, matched_selector, step_index, comment, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
@@ -27,8 +38,38 @@ impl ApprovalRepo for SqliteRequestRepo {
                 approval.created_at.to_rfc3339(),
             ],
         ).map_err(map_err)?;
-        // Update pending_approvers to next step
-        let snapshot: Option<String> = conn
+
+        // Get all approvals to compute correct current step
+        let all_approvals: Vec<Approval> = {
+            let mut stmt = tx
+                .prepare("SELECT id, request_id, action, actor_id, matched_selector, step_index, comment, created_at FROM approvals WHERE request_id = ?1 ORDER BY created_at ASC")
+                .map_err(map_err)?;
+            stmt
+                .query_map(params![approval.request_id], |row| {
+                    let action_str: String = row.get(2)?;
+                    let action = parse_approval_action(&action_str).map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+                    })?;
+                    let created_str: String = row.get(7)?;
+                    let created_at = crate::sqlite::parse_datetime(&created_str)?;
+                    Ok(Approval {
+                        id: row.get(0)?,
+                        request_id: row.get(1)?,
+                        action,
+                        actor_id: row.get(3)?,
+                        matched_selector: row.get(4)?,
+                        step_index: row.get(5)?,
+                        comment: row.get(6)?,
+                        created_at,
+                    })
+                })
+                .map_err(map_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(map_err)?
+        };
+
+        // Compute current step using domain logic
+        let snapshot: Option<String> = tx
             .query_row(
                 "SELECT workflow_snapshot_json FROM requests WHERE id = ?1",
                 params![approval.request_id],
@@ -36,12 +77,10 @@ impl ApprovalRepo for SqliteRequestRepo {
             )
             .ok()
             .flatten();
-        populate_pending_approvers(
-            &conn,
-            &approval.request_id,
-            &snapshot,
-            approval.step_index + 1,
-        )?;
+        let current_step = compute_current_step(&snapshot, &all_approvals)?;
+        populate_pending_approvers(&tx, &approval.request_id, &snapshot, current_step)?;
+
+        tx.commit().map_err(map_err)?;
         Ok(())
     }
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError> {
