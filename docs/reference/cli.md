@@ -252,6 +252,54 @@ dbward agents
 
 ---
 
+### dbward doctor
+
+Diagnose configuration and connectivity issues. Three modes:
+
+```bash
+dbward doctor                              # Check CLI config + server connectivity
+dbward doctor --agent dbward-agent.toml    # Validate agent config
+dbward doctor --server dbward-server.toml  # Validate server config
+```
+
+| Option | Description |
+|--------|-------------|
+| `--agent <PATH>` | Validate agent config file instead of CLI config |
+| `--server <PATH>` | Validate server config file instead of CLI config |
+| `--timeout <SECS>` | Network timeout per check (default: 5) |
+| `--format json` | Machine-readable JSON output (global flag) |
+
+**Exit codes:**
+- `0` — all checks passed (warnings are OK)
+- `1` — one or more checks failed
+- `2` — cannot start (flag conflict)
+
+**CLI mode checks:** config parse, env vars, server reachable, version info, auth configured, auth valid, databases exist, workflows exist.
+
+**Agent mode checks:** env var audit (detects silent empty expansion), config parse + validate, server reachable, agent token type validation (via `/api/public-key`), DB URL scheme.
+
+**Server mode checks:** env vars, config parse + validate (mirrors server startup: approval_ttl, execution_policy timeout, auto_approve duplicates, workflow operation overlap), workflow validity (db + env), workflow coverage (reverse: registered DB×env with no workflow), role resolution, auto_approve consistency.
+
+Example output:
+
+```
+$ dbward doctor
+dbward doctor — CLI configuration
+
+  ✓ config_parse             dbward.toml
+  ✓ env_vars                 all resolved
+  ✓ server_reachable         http://localhost:3000 (v0.1.3)
+  ✓ version_info             CLI v0.1.3, Server v0.1.3
+  ✓ auth_configured          token
+  ✓ auth_valid               admin (admin)
+  ✓ databases_exist          2 registered
+  ✓ workflows_exist          3 defined
+
+  8 passed, 0 warnings, 0 failed, 0 skipped
+```
+
+---
+
 ### dbward agent
 
 Start the dbward agent process.
