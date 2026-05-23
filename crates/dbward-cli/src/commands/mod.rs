@@ -2,6 +2,7 @@ mod agent;
 mod audit;
 mod auth;
 mod dev;
+mod doctor;
 mod execute;
 pub(crate) mod helpers;
 mod migrate;
@@ -185,6 +186,18 @@ pub enum Command {
     SelfUpdate,
     /// Show agent status (admin only)
     Agents,
+    /// Diagnose configuration and connectivity issues
+    Doctor {
+        /// Validate agent config file instead of CLI config
+        #[arg(long)]
+        agent: Option<PathBuf>,
+        /// Validate server config file instead of CLI config
+        #[arg(long)]
+        server: Option<PathBuf>,
+        /// Network timeout per check in seconds
+        #[arg(long, default_value = "5")]
+        timeout: u64,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -272,6 +285,20 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         }
         Command::SelfUpdate => {
             return self_update::run_self_update().await;
+        }
+        Command::Doctor {
+            agent,
+            server,
+            timeout,
+        } => {
+            return doctor::run(
+                &cli.config,
+                agent.clone(),
+                server.clone(),
+                cli.format == "json",
+                *timeout,
+            )
+            .await;
         }
         _ => {}
     }
@@ -432,7 +459,8 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         | Command::Server { .. }
         | Command::Agent { .. }
         | Command::Dev { .. }
-        | Command::SelfUpdate => unreachable!(),
+        | Command::SelfUpdate
+        | Command::Doctor { .. } => unreachable!(),
     }
 }
 
