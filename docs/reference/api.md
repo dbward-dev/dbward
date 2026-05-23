@@ -103,6 +103,23 @@ Context fields:
 | `context.tables` | Affected table names |
 | `context.explain` | Per-statement EXPLAIN plans (JSON format, PG/MySQL) |
 
+Decision trace fields (present for requests created after v0.1.3):
+| Field | Description |
+|-------|-------------|
+| `decision_trace.version` | Trace schema version (currently 1) |
+| `decision_trace.classification.resolved_operation` | Final classified operation (`execute_select`, `execute_dml`, `migrate_up`, etc.) |
+| `decision_trace.sql_review.findings_count` | Number of SQL review warnings |
+| `decision_trace.sql_review.parse_failed` | `true` if SQL could not be parsed |
+| `decision_trace.risk.level` | `"low"`, `"medium"`, `"high"`, `"critical"`, `"unknown"`, `"unavailable"` |
+| `decision_trace.risk.factors` | Array of risk factor descriptions |
+| `decision_trace.risk.schema_status` | `"ready"`, `"not_synced"`, `"failed"`, `"unavailable"` |
+| `decision_trace.workflow.matched` | Matched workflow info (`null` if none matched) |
+| `decision_trace.workflow.matched.id` | Workflow ID |
+| `decision_trace.workflow.matched.step_count` | Number of approval steps |
+| `decision_trace.decision.outcome` | `"auto_approved"` or `"needs_approval"` |
+| `decision_trace.decision.reasons` | Array: `"empty_steps"`, `"risk_below_threshold"`, `"break_glass"`, `"auto_approve_disabled"`, `"risk_above_threshold"`, `"no_auto_approve_rule"`, `"risk_unavailable"` |
+| `decision_trace.decision.auto_approve_threshold` | Matched auto-approve rule's max risk level (`null` if no rule) |
+
 ### Approve
 
 ```

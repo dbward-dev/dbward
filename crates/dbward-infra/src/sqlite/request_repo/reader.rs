@@ -58,6 +58,9 @@ impl RequestReader for SqliteRequestRepo {
             )
             .map_err(map_err)?;
 
+        // NOTE: SELECT * includes decision_trace_json which is unused in list responses.
+        // Acceptable for now (SQLite reads full row regardless), but could be optimised
+        // with an explicit column list if the column grows large.
         let query_sql = format!(
             "SELECT * FROM requests{} ORDER BY created_at DESC LIMIT ? OFFSET ?",
             where_clause

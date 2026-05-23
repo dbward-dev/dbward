@@ -181,7 +181,7 @@ impl AgentRepo for SqliteAgentRepo {
             .map(|(i, _)| format!("?{}", i + 2))
             .collect();
         let sql = format!(
-            "SELECT id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, decision_trace_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at
+            "SELECT id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at
              FROM requests WHERE status = ?1 AND database_id IN ({})",
             placeholders.join(",")
         );
@@ -218,13 +218,13 @@ impl AgentRepo for SqliteAgentRepo {
                     share_with_json: row.get(10)?,
                     no_store: row.get(11)?,
                     workflow_snapshot_json: row.get(12)?,
-                    decision_trace_json: row.get(13)?,
-                    cancelled_by: row.get(14)?,
-                    cancel_reason: row.get(15)?,
-                    created_at: row.get(16)?,
-                    updated_at: row.get(17)?,
-                    resolved_at: row.get(18)?,
-                    expires_at: row.get(19)?,
+                    decision_trace_json: None,
+                    cancelled_by: row.get(13)?,
+                    cancel_reason: row.get(14)?,
+                    created_at: row.get(15)?,
+                    updated_at: row.get(16)?,
+                    resolved_at: row.get(17)?,
+                    expires_at: row.get(18)?,
                 })
             })
             .map_err(|e| AppError::Internal(e.to_string()))?;

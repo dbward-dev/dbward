@@ -409,3 +409,62 @@ async fn unregistered_database_rejected() {
     // Should be 400 or 422 (validation error)
     assert!(resp.status().is_client_error());
 }
+
+#[tokio::test]
+async fn get_request_includes_decision_trace() {
+    let state = real_state();
+    let app = build_app(state.clone(), vec![]);
+
+    let body = serde_json::json!({
+        "database": "app",
+        "environment": "production",
+        "operation": "execute",
+        "detail": "SELECT 1"
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/requests")
+                .header("content-type", "application/json")
+                .header(auth_header("admin-token").0, auth_header("admin-token").1)
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let created: serde_json::Value =
+        serde_json::from_slice(&axum::body::to_bytes(resp.into_body(), 4096).await.unwrap())
+            .unwrap();
+    let id = created["id"].as_str().unwrap();
+
+    let app2 = build_app(state, vec![]);
+    let resp = app2
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/requests/{id}"))
+                .header(auth_header("admin-token").0, auth_header("admin-token").1)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    let trace = &json["decision_trace"];
+    assert_eq!(trace["version"], 1);
+    assert_eq!(
+        trace["classification"]["resolved_operation"],
+        "execute_select"
+    );
+    assert_eq!(trace["decision"]["outcome"], "auto_approved");
+    assert!(
+        trace["decision"]["reasons"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("empty_steps"))
+    );
+    assert!(trace["workflow"]["matched"].is_object());
+}
