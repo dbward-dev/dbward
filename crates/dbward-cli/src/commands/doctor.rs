@@ -593,6 +593,8 @@ struct ServerExecutionPolicyDef {
 #[derive(serde::Deserialize)]
 struct ServerDatabaseDef {
     name: String,
+    #[serde(default)]
+    environments: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -601,6 +603,8 @@ struct ServerWorkflowDef {
     database: String,
     #[serde(default = "default_star")]
     environment: String,
+    #[serde(default)]
+    operations: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -721,10 +725,13 @@ fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
     // S3: workflow_validity
     check_workflow_validity(ctx, &cfg);
 
-    // S4: role_resolution
+    // S4: workflow_coverage (reverse check)
+    check_workflow_coverage(ctx, &cfg);
+
+    // S5: role_resolution
     check_role_resolution(ctx, &cfg);
 
-    // S5: auto_approve_consistency
+    // S6: auto_approve_consistency
     check_auto_approve_consistency(ctx, &cfg);
 }
 
@@ -754,6 +761,22 @@ fn validate_server_config(cfg: &ServerConfigMinimal) -> Option<String> {
                 a.database, a.environment
             ));
         }
+    }
+    // Workflow operation overlap within same (db, env) scope
+    let mut scope_has_catchall: std::collections::HashMap<(&str, &str), bool> =
+        std::collections::HashMap::new();
+    for wf in &cfg.workflows {
+        let key = (wf.database.as_str(), wf.environment.as_str());
+        let is_catchall = wf.operations.is_empty();
+        if let Some(&prev_catchall) = scope_has_catchall.get(&key)
+            && (is_catchall || prev_catchall)
+        {
+            return Some(format!(
+                "workflow validation: database={}, environment={} has ambiguous operation overlap",
+                wf.database, wf.environment
+            ));
+        }
+        scope_has_catchall.entry(key).or_insert(is_catchall);
     }
     None
 }
@@ -794,16 +817,53 @@ fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
         return;
     }
 
-    let registered: std::collections::HashSet<&str> =
+    // Build set of all registered (db, env) pairs
+    let mut registered_pairs: std::collections::HashSet<(&str, &str)> =
+        std::collections::HashSet::new();
+    for db in &cfg.databases {
+        for env in &db.environments {
+            registered_pairs.insert((db.name.as_str(), env.as_str()));
+        }
+    }
+    let registered_dbs: std::collections::HashSet<&str> =
         cfg.databases.iter().map(|d| d.name.as_str()).collect();
 
     let mut dead = Vec::new();
     for (i, wf) in cfg.workflows.iter().enumerate() {
-        if wf.database != "*" && !registered.contains(wf.database.as_str()) {
+        // Wildcard db/env always valid
+        if wf.database == "*" && wf.environment == "*" {
+            continue;
+        }
+        // Check database
+        if wf.database != "*" && !registered_dbs.contains(wf.database.as_str()) {
             dead.push(format!(
                 "workflows[{i}]: database '{}' not registered",
                 wf.database
             ));
+            continue;
+        }
+        // Check environment (if both are concrete)
+        if wf.database != "*"
+            && wf.environment != "*"
+            && !registered_pairs.contains(&(wf.database.as_str(), wf.environment.as_str()))
+        {
+            dead.push(format!(
+                "workflows[{i}]: environment '{}' not in database '{}'",
+                wf.environment, wf.database
+            ));
+        }
+        // workflow with db=* but env=concrete: check if ANY db has that env
+        if wf.database == "*" && wf.environment != "*" {
+            let env_exists = cfg
+                .databases
+                .iter()
+                .any(|db| db.environments.iter().any(|e| e == &wf.environment));
+            if !env_exists {
+                dead.push(format!(
+                    "workflows[{i}]: environment '{}' not found in any database",
+                    wf.environment
+                ));
+            }
         }
     }
 
@@ -819,7 +879,7 @@ fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
             id: "workflow_validity",
             status: Status::Fail,
             message: format!(
-                "all {} workflows reference unregistered databases",
+                "all {} workflows reference unregistered databases/environments",
                 dead.len()
             ),
             hint: Some("Add [[databases]] for referenced databases".into()),
@@ -830,6 +890,70 @@ fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
             status: Status::Warn,
             message: format!("{} dead: {}", dead.len(), dead.join("; ")),
             hint: None,
+        });
+    }
+}
+
+/// S4: Reverse lint — check if each registered DB×env has at least one matching workflow.
+fn check_workflow_coverage(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
+    if cfg.databases.is_empty() || cfg.workflows.is_empty() {
+        return; // S3 already covers these cases
+    }
+
+    let mut gaps = Vec::new();
+    let mut total_pairs = 0usize;
+
+    for db in &cfg.databases {
+        // Skip wildcard database names (can't enumerate concrete pairs)
+        if db.name == "*" {
+            continue;
+        }
+        for env in &db.environments {
+            // Skip wildcard environments (can't expand)
+            if env == "*" {
+                continue;
+            }
+            total_pairs += 1;
+            // Check if any workflow matches this (db, env) pair
+            let covered = cfg.workflows.iter().any(|wf| {
+                matches_scope(wf.database.as_str(), db.name.as_str())
+                    && matches_scope(wf.environment.as_str(), env.as_str())
+            });
+            if !covered {
+                // Check if there's an inert auto_approve for this scope
+                let has_inert_aa = cfg.auto_approve.iter().any(|aa| {
+                    matches_scope(aa.database.as_str(), db.name.as_str())
+                        && matches_scope(aa.environment.as_str(), env.as_str())
+                });
+                let mut msg = format!("{}:{} → no workflow (fail-closed)", db.name, env);
+                if has_inert_aa {
+                    msg.push_str(" [auto_approve rule is inert here]");
+                }
+                gaps.push(msg);
+            }
+        }
+    }
+
+    if gaps.is_empty() {
+        ctx.record(CheckResult {
+            id: "workflow_coverage",
+            status: Status::Pass,
+            message: format!("{total_pairs} DB×env pairs, all covered"),
+            hint: None,
+        });
+    } else if gaps.len() == total_pairs && total_pairs > 0 {
+        ctx.record(CheckResult {
+            id: "workflow_coverage",
+            status: Status::Fail,
+            message: format!("all {} DB×env pairs have no workflow", gaps.len()),
+            hint: Some("Add [[workflows]] matching your databases".into()),
+        });
+    } else {
+        ctx.record(CheckResult {
+            id: "workflow_coverage",
+            status: Status::Warn,
+            message: format!("{} gap(s): {}", gaps.len(), gaps.join("; ")),
+            hint: Some("These DB×env pairs will reject all requests (fail-closed)".into()),
         });
     }
 }
@@ -893,8 +1017,8 @@ fn check_auto_approve_consistency(ctx: &mut DoctorContext, cfg: &ServerConfigMin
     for aa in &cfg.auto_approve {
         // Check if any workflow covers this auto_approve scope
         let has_matching_workflow = cfg.workflows.iter().any(|wf| {
-            scope_covers(wf.database.as_str(), aa.database.as_str())
-                && scope_covers(wf.environment.as_str(), aa.environment.as_str())
+            matches_scope(wf.database.as_str(), aa.database.as_str())
+                && matches_scope(wf.environment.as_str(), aa.environment.as_str())
         });
         if !has_matching_workflow {
             orphaned.push(format!("{}:{}", aa.database, aa.environment));
@@ -958,10 +1082,10 @@ fn redact_url(url: &str) -> String {
     }
 }
 
-/// Check if a workflow scope value covers an auto_approve scope value.
-/// "*" covers everything; exact match covers itself.
-fn scope_covers(workflow_val: &str, auto_approve_val: &str) -> bool {
-    workflow_val == "*" || workflow_val == auto_approve_val || auto_approve_val == "*"
+/// Mirrors runtime's matches_scope: policy wildcard covers any request value.
+/// Used for S4 (reverse lint) and S6 (auto_approve consistency).
+fn matches_scope(policy_val: &str, request_val: &str) -> bool {
+    policy_val == "*" || policy_val == request_val
 }
 
 async fn check_server_health(url: &str, timeout: Duration) -> Result<(String, String), String> {
@@ -1201,10 +1325,14 @@ mod tests {
             timeout: Duration::from_secs(5),
         };
         let cfg = ServerConfigMinimal {
-            databases: vec![ServerDatabaseDef { name: "app".into() }],
+            databases: vec![ServerDatabaseDef {
+                name: "app".into(),
+                environments: vec!["production".into()],
+            }],
             workflows: vec![ServerWorkflowDef {
                 database: "nonexistent".into(),
                 environment: "*".into(),
+                operations: vec![],
             }],
             auto_approve: vec![],
             retention: ServerRetentionConfig::default(),
@@ -1223,15 +1351,20 @@ mod tests {
             timeout: Duration::from_secs(5),
         };
         let cfg = ServerConfigMinimal {
-            databases: vec![ServerDatabaseDef { name: "app".into() }],
+            databases: vec![ServerDatabaseDef {
+                name: "app".into(),
+                environments: vec!["production".into()],
+            }],
             workflows: vec![
                 ServerWorkflowDef {
                     database: "app".into(),
                     environment: "*".into(),
+                    operations: vec![],
                 },
                 ServerWorkflowDef {
                     database: "ghost".into(),
                     environment: "*".into(),
+                    operations: vec![],
                 },
             ],
             auto_approve: vec![],
@@ -1251,10 +1384,14 @@ mod tests {
             timeout: Duration::from_secs(5),
         };
         let cfg = ServerConfigMinimal {
-            databases: vec![ServerDatabaseDef { name: "app".into() }],
+            databases: vec![ServerDatabaseDef {
+                name: "app".into(),
+                environments: vec!["production".into()],
+            }],
             workflows: vec![ServerWorkflowDef {
                 database: "*".into(),
                 environment: "*".into(),
+                operations: vec![],
             }],
             auto_approve: vec![],
             retention: ServerRetentionConfig::default(),
