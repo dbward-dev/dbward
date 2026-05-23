@@ -9,6 +9,7 @@ mod misc;
 mod request;
 mod result;
 mod server;
+mod user;
 pub(crate) mod workflow;
 
 use std::path::PathBuf;
@@ -165,6 +166,11 @@ pub enum Command {
     Result {
         #[command(subcommand)]
         action: result::ResultAction,
+    },
+    /// Update user profile
+    User {
+        #[command(subcommand)]
+        action: user::UserAction,
     },
     /// Update dbward to the latest version
     SelfUpdate,
@@ -405,6 +411,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             .await
         }
         Command::Agents => misc::run_agents(&sc, json_output).await,
+        Command::User { action } => user::run_user(&sc, action).await,
         // Handled above
         Command::Init { .. }
         | Command::Login { .. }

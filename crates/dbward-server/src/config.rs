@@ -28,6 +28,8 @@ pub struct ServerConfig {
     pub sql_review: SqlReviewConfig,
     #[serde(default)]
     pub auto_approve: Vec<AutoApproveServerConfig>,
+    #[serde(default)]
+    pub slack: Option<SlackServerConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -527,4 +529,18 @@ impl AutoApproveServerConfig {
             max_estimated_rows: self.max_estimated_rows,
         })
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SlackServerConfig {
+    pub bot_token: String,
+    pub signing_secret: String,
+    #[serde(default = "default_slack_channel")]
+    pub channel: String,
+    #[serde(default)]
+    pub channels: std::collections::HashMap<String, String>,
+}
+
+fn default_slack_channel() -> String {
+    "#db-approvals".into()
 }
