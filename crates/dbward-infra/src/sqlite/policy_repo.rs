@@ -28,8 +28,8 @@ impl PolicyRepo for SqlitePolicyRepo {
         let steps_json =
             serde_json::to_string(&wf.steps).map_err(|e| AppError::Internal(e.to_string()))?;
         conn.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 wf.id,
                 wf.database.as_str(),
@@ -39,6 +39,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 wf.require_reason,
                 wf.allow_self_approve,
                 wf.allow_same_approver_across_steps,
+                wf.explain,
                 wf.pending_ttl_secs.map(|v| v as i64),
                 wf.approval_ttl_secs.map(|v| v as i64),
                 wf.statement_timeout_secs.map(|v| v as i64),
@@ -56,7 +57,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn get_workflow(&self, id: &str) -> Result<Option<Workflow>, AppError> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs
+            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs
              FROM workflows WHERE id = ?1",
             params![id],
             row_to_workflow,
@@ -69,7 +70,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn list_workflows(&self) -> Result<Vec<Workflow>, AppError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows",
+            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
         let rows = stmt
             .query_map([], row_to_workflow)
@@ -656,7 +657,7 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
         let workflows = {
             let conn = self.conn.lock().unwrap();
             let mut stmt = conn.prepare(
-                "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows",
+                "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows",
             ).map_err(|e| AppError::Internal(e.to_string()))?;
             let rows = stmt
                 .query_map([], row_to_workflow)
@@ -748,9 +749,10 @@ fn row_to_workflow(row: &rusqlite::Row) -> rusqlite::Result<Result<Workflow, App
     let require_reason: bool = row.get(5)?;
     let allow_self_approve: bool = row.get(6)?;
     let allow_same: bool = row.get(7)?;
-    let pending_ttl: Option<i64> = row.get(8)?;
-    let approval_ttl: Option<i64> = row.get(9)?;
-    let stmt_timeout: Option<i64> = row.get(10)?;
+    let explain: bool = row.get::<_, bool>(8).unwrap_or(true);
+    let pending_ttl: Option<i64> = row.get(9)?;
+    let approval_ttl: Option<i64> = row.get(10)?;
+    let stmt_timeout: Option<i64> = row.get(11)?;
 
     Ok((|| {
         let database = DatabaseName::new(db_str).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -769,6 +771,7 @@ fn row_to_workflow(row: &rusqlite::Row) -> rusqlite::Result<Result<Workflow, App
             require_reason,
             allow_self_approve,
             allow_same_approver_across_steps: allow_same,
+            explain,
             pending_ttl_secs: pending_ttl.map(|v| v as u64),
             statement_timeout_secs: stmt_timeout.map(|v| v as u64),
             approval_ttl_secs: approval_ttl.map(|v| v as u64),

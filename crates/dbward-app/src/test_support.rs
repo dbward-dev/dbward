@@ -340,6 +340,7 @@ impl PolicyEvaluator for FakePolicyEvaluator {
             require_reason: false,
             allow_self_approve: false,
             allow_same_approver_across_steps: false,
+            explain: true,
             pending_ttl_secs: None,
             statement_timeout_secs: None,
             approval_ttl_secs: None,

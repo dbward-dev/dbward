@@ -296,13 +296,17 @@ pub async fn get(
             "updated_at": output.request.updated_at,
             "expires_at": output.request.expires_at,
             "approval_progress": output.approval_progress,
-            "context": output.context.as_ref().map(|c| serde_json::json!({
-                "status": c.status,
-                "tables": c.tables_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
-                "sql_review": c.sql_review_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
-                "risk": c.risk_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
-                "explain": c.explain_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
-            })),
+            "context": output.context.as_ref().map(|c| {
+                let explain_enabled = c.status != "ready" || c.explain_json.is_some();
+                serde_json::json!({
+                    "status": c.status,
+                    "explain_enabled": explain_enabled,
+                    "tables": c.tables_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
+                    "sql_review": c.sql_review_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
+                    "risk": c.risk_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
+                    "explain": c.explain_json.as_deref().and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok()),
+                })
+            }),
         })),
     ))
 }
