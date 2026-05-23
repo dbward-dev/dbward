@@ -286,9 +286,11 @@ pub async fn run_from_args(
         });
     let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> =
         Arc::new(dbward_infra::webhook::SsrfGuard);
-    let license_checker: Arc<dyn dbward_app::ports::LicenseChecker> = Arc::new(
-        dbward_infra::LicenseCheckerImpl::new(resolve_license(license_key, license_file)),
-    );
+    let license_checker: Arc<dyn dbward_app::ports::LicenseChecker> =
+        Arc::new(dbward_infra::LicenseCheckerImpl::new(
+            resolve_license(license_key, license_file),
+            clock.now(),
+        ));
     let token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator> =
         Arc::new(dbward_infra::SecureTokenGenerator);
 
@@ -690,23 +692,13 @@ pub(crate) fn resolve_license(
 
     match dbward_infra::license_key::verify_license_key(&raw) {
         Ok(license) => {
-            if license.is_expired_at(chrono::Utc::now()) {
-                tracing::warn!(
-                    plan = ?license.plan,
-                    issued_to = ?license.issued_to,
-                    expires_at = ?license.expires_at,
-                    "License expired, falling back to Free plan"
-                );
-                dbward_domain::license::License::default()
-            } else {
-                tracing::info!(
-                    plan = ?license.plan,
-                    issued_to = ?license.issued_to,
-                    expires_at = ?license.expires_at,
-                    "License loaded"
-                );
-                license
-            }
+            tracing::info!(
+                plan = ?license.plan,
+                issued_to = ?license.issued_to,
+                expires_at = ?license.expires_at,
+                "License loaded"
+            );
+            license
         }
         Err(e) => {
             eprintln!("fatal: license key verification failed: {e}");

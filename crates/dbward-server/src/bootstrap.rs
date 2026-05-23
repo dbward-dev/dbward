@@ -80,7 +80,10 @@ pub fn create_token_standalone(
         token_repo,
         user_repo,
         policy_repo,
-        license: Arc::new(dbward_infra::LicenseCheckerImpl::new(license)),
+        license: Arc::new(dbward_infra::LicenseCheckerImpl::new(
+            license,
+            chrono::Utc::now(),
+        )),
         audit: audit_logger,
         clock: Arc::new(dbward_infra::UtcClock),
         id_gen: Arc::new(dbward_infra::UuidGenerator),
@@ -133,6 +136,7 @@ pub fn revoke_token_standalone(
         policy_repo,
         license: Arc::new(dbward_infra::LicenseCheckerImpl::new(
             dbward_domain::license::License::default(),
+            chrono::Utc::now(),
         )),
         audit: audit_logger,
         clock: Arc::new(dbward_infra::UtcClock),

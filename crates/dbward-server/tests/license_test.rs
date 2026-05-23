@@ -182,7 +182,7 @@ fn state_with_license(license: License) -> AppState {
         notifier: Arc::new(NoopNotifier),
         event_dispatcher: Arc::new(NoopEventDispatcher),
         ssrf_validator: Arc::new(NoopSsrf),
-        license_checker: Arc::new(LicenseCheckerImpl::new(license)),
+        license_checker: Arc::new(LicenseCheckerImpl::new(license, chrono::Utc::now())),
         clock: Arc::new(RealClock),
         id_generator: Arc::new(SeqId(std::sync::atomic::AtomicU64::new(1))),
         token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
