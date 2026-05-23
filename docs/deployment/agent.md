@@ -38,7 +38,10 @@ poll_interval_ms = 1000           # How often to poll for jobs (default: 1000)
 lease_duration_secs = 300         # Job lease timeout (default: 300)
 drain_timeout_secs = 60           # Graceful shutdown timeout (default: 60)
 max_concurrent_tasks = 2          # Parallel job execution (default: 2)
+statement_timeout_secs = 30       # Default SQL statement timeout (default: 30)
 ```
+
+> **Note**: `statement_timeout_secs` is the agent-level default. If a server-side `[[execution_policies]]` is configured for the target database/environment, the policy's `statement_timeout_secs` takes precedence.
 
 ### Server connection
 

@@ -9,7 +9,9 @@ File: `dbward-server.toml` (passed via `--config`)
 ```toml
 # --- Databases ---
 # Register databases that agents can connect to.
-# Requests for unregistered databases are rejected.
+# Requests for unregistered database×environment pairs are rejected with:
+#   "database 'X' not registered in environment 'Y'. Available environments: ..."
+# Fix: add the environment to the list below, or use --environment to target the correct one.
 [[databases]]
 name = "app"
 environments = ["production", "staging"]
