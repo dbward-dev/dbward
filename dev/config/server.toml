@@ -49,6 +49,7 @@ environments = ["production"]
 [[workflows]]
 database = "*"
 environment = "development"
+explain = false
 steps = []
 
 # Staging: team-lead OR dba (either one)

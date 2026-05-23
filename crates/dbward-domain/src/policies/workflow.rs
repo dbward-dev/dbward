@@ -37,6 +37,9 @@ pub struct Workflow {
     pub allow_self_approve: bool,
     #[serde(default)]
     pub allow_same_approver_across_steps: bool,
+    /// Whether to run EXPLAIN dry-run for requests matching this workflow.
+    #[serde(default = "default_true_fn")]
+    pub explain: bool,
     /// How long a request can stay pending before expiring.
     pub pending_ttl_secs: Option<u64>,
     /// Per-workflow statement execution timeout override.
@@ -47,6 +50,10 @@ pub struct Workflow {
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+fn default_true_fn() -> bool {
+    true
 }
 
 impl Workflow {
@@ -76,6 +83,7 @@ mod tests {
             require_reason: false,
             allow_self_approve: false,
             allow_same_approver_across_steps: false,
+            explain: true,
             pending_ttl_secs: None,
             statement_timeout_secs: None,
             approval_ttl_secs: None,
