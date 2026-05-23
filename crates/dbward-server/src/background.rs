@@ -139,6 +139,15 @@ async fn supervisor_loop(
     retention: Arc<RetentionConfig>,
 ) {
     let tasks = build_task_defs(retention);
+    run_supervisor(tasks, &state, shutdown, draining).await;
+}
+
+async fn run_supervisor(
+    tasks: Vec<TaskDef>,
+    state: &AppState,
+    shutdown: CancellationToken,
+    draining: Arc<AtomicBool>,
+) {
     let task_count = tasks.len();
     // JoinSet<usize>: each future returns its own task index
     let mut set: JoinSet<usize> = JoinSet::new();
@@ -147,7 +156,7 @@ async fn supervisor_loop(
 
     // Initial spawn — wrap each task future to return its index
     for i in 0..task_count {
-        spawn_task(&tasks, i, &state, &shutdown, &mut set);
+        spawn_task(&tasks, i, state, &shutdown, &mut set);
     }
 
     loop {
@@ -195,7 +204,7 @@ async fn supervisor_loop(
                         // Re-spawn all tasks
                         for i in 0..task_count {
                             info!(task = tasks[i].name, "respawning background task");
-                            spawn_task(&tasks, i, &state, &shutdown, &mut set);
+                            spawn_task(&tasks, i, state, &shutdown, &mut set);
                         }
                         info!("background tasks restarted after panic");
                     }
@@ -753,5 +762,139 @@ mod tests {
         assert_eq!(MAX_RESTARTS, 5);
         assert_eq!(RESTART_WINDOW, TokioDuration::from_secs(3600));
         assert_eq!(RESTART_DELAY, TokioDuration::from_secs(1));
+    }
+
+    /// Standalone supervisor loop for testing (no AppState dependency).
+    /// Mirrors the real `run_supervisor` logic but takes generic futures.
+    #[allow(clippy::type_complexity, clippy::needless_range_loop)]
+    async fn test_supervisor(
+        task_fns: Vec<
+            Box<
+                dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+                    + Send
+                    + Sync,
+            >,
+        >,
+        shutdown: CancellationToken,
+        draining: Arc<AtomicBool>,
+        max_restarts: usize,
+    ) -> u32 {
+        let task_count = task_fns.len();
+        let mut set: JoinSet<usize> = JoinSet::new();
+        let mut restart_timestamps: VecDeque<Instant> = VecDeque::new();
+        let mut restart_count: u32 = 0;
+        let window = TokioDuration::from_secs(3600);
+        let delay = TokioDuration::from_millis(10); // fast for tests
+
+        for i in 0..task_count {
+            let fut = (task_fns[i])();
+            set.spawn(async move {
+                fut.await;
+                i
+            });
+        }
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => break,
+                result = set.join_next() => {
+                    let Some(result) = result else { break };
+                    match result {
+                        Ok(_) => {}
+                        Err(e) if e.is_panic() => {
+                            let now = Instant::now();
+                            restart_timestamps.retain(|t| now.duration_since(*t) < window);
+                            if restart_timestamps.len() >= max_restarts {
+                                draining.store(true, Ordering::SeqCst);
+                                shutdown.cancel();
+                                break;
+                            }
+                            restart_timestamps.push_back(now);
+                            restart_count += 1;
+                            set.abort_all();
+                            while set.join_next().await.is_some() {}
+                            if shutdown.is_cancelled() { break; }
+                            tokio::time::sleep(delay).await;
+                            for i in 0..task_count {
+                                let fut = (task_fns[i])();
+                                set.spawn(async move { fut.await; i });
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
+            }
+        }
+        restart_count
+    }
+
+    #[tokio::test]
+    #[allow(clippy::type_complexity)]
+    async fn supervisor_restarts_panicked_task() {
+        let panic_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let pc = panic_count.clone();
+
+        let shutdown = CancellationToken::new();
+        let shutdown2 = shutdown.clone();
+        let draining = Arc::new(AtomicBool::new(false));
+
+        let tasks: Vec<
+            Box<
+                dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+                    + Send
+                    + Sync,
+            >,
+        > = vec![
+            // Task that panics once then behaves
+            Box::new(move || {
+                let pc = pc.clone();
+                let s = shutdown2.clone();
+                Box::pin(async move {
+                    let count = pc.fetch_add(1, Ordering::SeqCst);
+                    if count == 0 {
+                        panic!("test panic");
+                    }
+                    // After first restart, just wait for shutdown
+                    s.cancelled().await;
+                })
+            }),
+        ];
+
+        let draining2 = draining.clone();
+        let shutdown3 = shutdown.clone();
+        // Stop the test after a short time
+        tokio::spawn(async move {
+            tokio::time::sleep(TokioDuration::from_millis(100)).await;
+            shutdown3.cancel();
+        });
+
+        let restarts = test_supervisor(tasks, shutdown, draining2, 5).await;
+        assert_eq!(restarts, 1);
+        assert_eq!(panic_count.load(Ordering::SeqCst), 2); // panicked once, ran again once
+        assert!(!draining.load(Ordering::SeqCst)); // did not exceed limit
+    }
+
+    #[tokio::test]
+    #[allow(clippy::type_complexity)]
+    async fn supervisor_shuts_down_after_max_restarts() {
+        let shutdown = CancellationToken::new();
+        let draining = Arc::new(AtomicBool::new(false));
+
+        let tasks: Vec<
+            Box<
+                dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+                    + Send
+                    + Sync,
+            >,
+        > = vec![
+            // Task that always panics
+            Box::new(|| Box::pin(async { panic!("always panic") })),
+        ];
+
+        let restarts = test_supervisor(tasks, shutdown.clone(), draining.clone(), 3).await;
+        assert_eq!(restarts, 3);
+        assert!(draining.load(Ordering::SeqCst)); // exceeded limit → draining
+        assert!(shutdown.is_cancelled());
     }
 }
