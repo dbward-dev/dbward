@@ -207,7 +207,7 @@ impl RequestWriter for SqliteRequestRepo {
         for id in &ids {
             let outcome = "success";
             let category = "approval";
-            let actor_type = "system";
+            let actor_type = "user";
             let prev_hash: Option<String> = tx
                 .query_row(
                     "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
@@ -218,9 +218,19 @@ impl RequestWriter for SqliteRequestRepo {
             let audit_id = uuid::Uuid::new_v4().to_string();
             let hash_input = format!(
                 "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-                audit_id, "request_cancelled", actor_id, now_str,
-                prev_hash.as_deref().unwrap_or(""), outcome,
-                id, "", "", "", reason, "", "{}",
+                audit_id,
+                "request_cancelled",
+                actor_id,
+                now_str,
+                prev_hash.as_deref().unwrap_or(""),
+                outcome,
+                id,
+                "",
+                "",
+                "",
+                reason,
+                "",
+                "{}",
             );
             let event_hash = hex::encode(Sha256::digest(hash_input.as_bytes()));
             tx.execute(
@@ -285,8 +295,11 @@ impl RequestWriter for SqliteRequestRepo {
         let audit_id = uuid::Uuid::new_v4().to_string();
         let hash_input = format!(
             "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-            audit_id, audit_event.event_type, audit_event.actor_id,
-            audit_event.created_at.to_rfc3339(), prev_hash.as_deref().unwrap_or(""),
+            audit_id,
+            audit_event.event_type,
+            audit_event.actor_id,
+            audit_event.created_at.to_rfc3339(),
+            prev_hash.as_deref().unwrap_or(""),
             outcome,
             audit_event.request_id.as_deref().unwrap_or(""),
             audit_event.operation.as_deref().unwrap_or(""),

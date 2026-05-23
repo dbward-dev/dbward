@@ -397,6 +397,18 @@ pub async fn run_from_args(
     // Sync execution policies from config
     sync_execution_policies(&state, &cfg.execution_policies)?;
 
+    // A7: Record config sync in audit log
+    let _ = state
+        .audit_logger
+        .record(&dbward_domain::entities::AuditEvent::simple(
+            "config_synced",
+            "policy",
+            "system",
+            None,
+            state.clock.now(),
+            &dbward_domain::entities::AuditContext::System,
+        ));
+
     // BUG-31: OIDC verifier initialized above (injected into ApiTokenVerifier)
 
     let addr: std::net::SocketAddr = listen.parse()?;

@@ -327,7 +327,15 @@ mod tests {
         req.idempotency_key = Some("idem-2".to_string());
         repo.insert(&req).unwrap();
 
-        let count = repo.cancel_all_for_user("user-1", "admin", "test", Utc::now(), &dbward_domain::entities::AuditContext::System).unwrap();
+        let count = repo
+            .cancel_all_for_user(
+                "user-1",
+                "admin",
+                "test",
+                Utc::now(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .unwrap();
         assert_eq!(count.len(), 2);
     }
 

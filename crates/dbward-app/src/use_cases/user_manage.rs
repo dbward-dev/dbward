@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission};
-use dbward_domain::entities::{AuditContext};
+use dbward_domain::entities::AuditContext;
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -62,19 +62,24 @@ impl UserManage {
         let revoked_tokens = self.token_repo.revoke_all_for_user(&input.user_id, now)?;
 
         // Cancel pending/approved/dispatched requests
-        let cancelled_requests = self
-            .request_writer
-            .cancel_all_for_user(&input.user_id, &user.subject_id, "user suspended", now, &dbward_domain::entities::AuditContext::System)?;
+        let cancelled_requests = self.request_writer.cancel_all_for_user(
+            &input.user_id,
+            &user.subject_id,
+            "user suspended",
+            now,
+            &dbward_domain::entities::AuditContext::System,
+        )?;
 
         // Audit
-        self.audit.record(&dbward_domain::entities::AuditEvent::simple(
-            "user_disabled",
-            "identity",
-            &user.subject_id,
-            Some(&input.user_id),
-            self.clock.now(),
-            ctx,
-        ))?;
+        self.audit
+            .record(&dbward_domain::entities::AuditEvent::simple(
+                "user_disabled",
+                "identity",
+                &user.subject_id,
+                Some(&input.user_id),
+                self.clock.now(),
+                ctx,
+            ))?;
 
         Ok(UserSuspendOutput {
             id: input.user_id,
@@ -100,14 +105,15 @@ impl UserManage {
         let now = self.clock.now();
         self.user_repo.activate(user_id, now)?;
 
-        self.audit.record(&dbward_domain::entities::AuditEvent::simple(
-            "user_activated",
-            "identity",
-            &user.subject_id,
-            Some(user_id),
-            self.clock.now(),
-            ctx,
-        ))?;
+        self.audit
+            .record(&dbward_domain::entities::AuditEvent::simple(
+                "user_activated",
+                "identity",
+                &user.subject_id,
+                Some(user_id),
+                self.clock.now(),
+                ctx,
+            ))?;
 
         Ok(())
     }
@@ -119,7 +125,7 @@ mod tests {
     use crate::error::AuthzError;
     use chrono::{DateTime, Utc};
     use dbward_domain::auth::{Permission as P, ResolvedRole, ResourceContext, SubjectType};
-    use dbward_domain::entities::{AuditContext, AuditEvent, Token, User};
+    use dbward_domain::entities::{AuditContext, Token, User};
     use dbward_domain::values::{DatabaseName, Environment};
 
     struct AllowAll;
@@ -314,7 +320,14 @@ mod tests {
         fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
             Ok(true)
         }
-    fn mark_approved_from_dispatched_and_record(&self, _: &str, _: &dbward_domain::entities::AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
+        fn mark_approved_from_dispatched_and_record(
+            &self,
+            _: &str,
+            _: &dbward_domain::entities::AuditEvent,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
     }
 
     fn admin_user() -> AuthUser {

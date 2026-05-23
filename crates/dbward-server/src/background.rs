@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use dbward_app::ports::WebhookEvent;
-use dbward_domain::entities::{AuditContext, ActorType, AuditEvent, EventCategory, EventOutcome};
+use dbward_domain::entities::{ActorType, AuditContext, AuditEvent, EventCategory, EventOutcome};
 
 use crate::config::RetentionConfig;
 use crate::state::AppState;
@@ -235,7 +235,7 @@ pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
     };
 
     for id in ids {
-        let audit_event = AuditEvent::simple(
+        let mut audit_event = AuditEvent::simple(
             "dispatch_timeout",
             "approval",
             "system",
@@ -243,6 +243,7 @@ pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
             now,
             &AuditContext::System,
         );
+        audit_event.request_id = Some(id.clone());
         match state
             .request_writer
             .mark_approved_from_dispatched_and_record(&id, &audit_event, &now_str)
@@ -310,6 +311,15 @@ pub(crate) async fn run_record_purge_once(
             if n > 0 {
                 result.processed += n;
                 info!(task = "record_purge", count = n, "purged old audit events");
+                // A8: Record the purge action itself
+                let _ = state.audit_logger.record(&AuditEvent::simple(
+                    "audit_purged",
+                    "policy",
+                    "system",
+                    None,
+                    state.clock.now(),
+                    &AuditContext::System,
+                ));
             }
         }
         Err(e) => {
