@@ -530,7 +530,9 @@ impl CreateRequest {
         };
 
         // 9. Create dry-run EXPLAIN jobs (best-effort, never blocks request)
-        if matches!(operation, Operation::ExecuteSelect | Operation::ExecuteDml)
+        let should_explain = workflow.as_ref().map(|w| w.explain).unwrap_or(true);
+        if should_explain
+            && matches!(operation, Operation::ExecuteSelect | Operation::ExecuteDml)
             && !request.no_store
         {
             let now_str = now.to_rfc3339();
@@ -566,7 +568,8 @@ impl CreateRequest {
         // 10. Create request_context record (best-effort)
         if !request.no_store {
             let now_str = now.to_rfc3339();
-            let has_dry_run = matches!(operation, Operation::ExecuteSelect | Operation::ExecuteDml);
+            let has_dry_run = should_explain
+                && matches!(operation, Operation::ExecuteSelect | Operation::ExecuteDml);
             let ctx_status = if has_dry_run {
                 dbward_domain::services::status_constants::context::COLLECTING
             } else {
@@ -778,6 +781,7 @@ mod tests {
                 require_reason: true,
                 allow_self_approve: false,
                 allow_same_approver_across_steps: false,
+            explain: true,
                 pending_ttl_secs: None,
                 statement_timeout_secs: None,
                 approval_ttl_secs: None,

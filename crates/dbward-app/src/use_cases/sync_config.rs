@@ -26,6 +26,7 @@ pub struct WorkflowInput {
     pub require_reason: bool,
     pub allow_self_approve: bool,
     pub allow_same_approver_across_steps: bool,
+    pub explain: bool,
     pub pending_ttl_secs: Option<u64>,
     pub statement_timeout_secs: Option<u64>,
 }
@@ -156,6 +157,7 @@ impl SyncConfig {
             require_reason: wf.require_reason,
             allow_self_approve: wf.allow_self_approve,
             allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
+            explain: wf.explain,
             pending_ttl_secs: wf.pending_ttl_secs,
             statement_timeout_secs: wf.statement_timeout_secs,
             approval_ttl_secs: None,
@@ -399,6 +401,7 @@ mod tests {
             require_reason: false,
             allow_self_approve: false,
             allow_same_approver_across_steps: false,
+            explain: true,
             pending_ttl_secs: None,
             statement_timeout_secs: None,
         }
