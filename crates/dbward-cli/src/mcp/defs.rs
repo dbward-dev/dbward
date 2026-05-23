@@ -144,6 +144,18 @@ pub(crate) fn resource_templates_definitions() -> Value {
             "name": "Request Details",
             "description": "Details for a specific request",
             "mimeType": "application/json"
+        },
+        {
+            "uriTemplate": "dbward://schema/{database}",
+            "name": "Database Schema",
+            "description": "Table list with row counts (from agent-collected snapshot)",
+            "mimeType": "application/json"
+        },
+        {
+            "uriTemplate": "dbward://schema/{database}/{table}",
+            "name": "Table Schema",
+            "description": "Column, constraint, and index details for a specific table",
+            "mimeType": "application/json"
         }
     ])
 }
@@ -164,6 +176,9 @@ pub(crate) async fn handle_resources_read(
         Err(ResourceReadError::NotFound(message)) => {
             return super::server::jsonrpc_error(id, -32002, message);
         }
+        Err(ResourceReadError::Forbidden(message)) => {
+            return super::server::jsonrpc_error(id, -32002, message);
+        }
         Err(ResourceReadError::Internal(message)) => {
             return super::server::jsonrpc_error(id, -32603, message);
         }
@@ -180,6 +195,7 @@ pub(crate) async fn handle_resources_read(
 
 pub(crate) enum ResourceReadError {
     NotFound(String),
+    Forbidden(String),
     Internal(String),
 }
 
@@ -221,6 +237,49 @@ pub(crate) async fn read_resource(
                 _ => {
                     return Err(ResourceReadError::NotFound(format!(
                         "Resource not found: {uri}"
+                    )));
+                }
+            }
+        }
+        _ if uri.starts_with("dbward://schema/") => {
+            let path = uri.strip_prefix("dbward://schema/").unwrap_or("");
+            let (db, table) = match path.split_once('/') {
+                Some((d, t)) => (d, Some(t)),
+                None => (path, None),
+            };
+            if db.is_empty() {
+                return Err(ResourceReadError::NotFound(format!(
+                    "Resource not found: {uri}"
+                )));
+            }
+            let api_path = if let Some(t) = table {
+                let decoded = percent_decode(t);
+                if decoded.is_empty() || decoded.contains(['&', '#', '=', '?', '\n', '\r', '\0']) {
+                    return Err(ResourceReadError::NotFound(format!(
+                        "Invalid table name: {decoded}"
+                    )));
+                }
+                format!("/api/schemas/{db}?table={}", encode_query_value(&decoded))
+            } else {
+                format!("/api/schemas/{db}")
+            };
+            let resp = client.get_json(&api_path).await;
+            match resp {
+                Ok(v) => v,
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("403") || msg.contains("forbidden") {
+                        return Err(ResourceReadError::Forbidden(format!(
+                            "Access denied to schema for '{db}'"
+                        )));
+                    } else if msg.contains("404")
+                        || msg.contains("not_found")
+                        || msg.contains("not found")
+                    {
+                        return Err(ResourceReadError::NotFound(msg));
+                    }
+                    return Err(ResourceReadError::Internal(format!(
+                        "Failed to read schema: {e}"
                     )));
                 }
             }
@@ -563,6 +622,53 @@ pub(crate) fn resolve_migration_path(
     Ok(resolved)
 }
 
+/// Encode a value for safe inclusion in a URL query string.
+fn encode_query_value(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                out.push('%');
+                out.push(char::from(HEX[(b >> 4) as usize]));
+                out.push(char::from(HEX[(b & 0xf) as usize]));
+            }
+        }
+    }
+    out
+}
+
+const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+/// Decode percent-encoded URI segment. Only handles ASCII; non-ASCII bytes are passed through.
+fn percent_decode(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = hex_val(bytes[i + 1]);
+            let lo = hex_val(bytes[i + 2]);
+            out.push((hi * 16 + lo) as char);
+            i += 3;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
+}
+
+fn hex_val(b: u8) -> u8 {
+    match b {
+        b'0'..=b'9' => b - b'0',
+        b'a'..=b'f' => b - b'a' + 10,
+        b'A'..=b'F' => b - b'A' + 10,
+        _ => 0,
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

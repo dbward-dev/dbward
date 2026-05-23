@@ -143,6 +143,22 @@ The MCP server exposes read-only resources:
 | `dbward://requests/pending` | Pending approval requests |
 | `dbward://audit/recent` | Recent audit events |
 | `dbward://requests/{id}` | Specific request details (template) |
+| `dbward://schema/{database}` | Table list with row counts (from agent snapshot) |
+| `dbward://schema/{database}/{table}` | Column, constraint, and index details for a table |
+
+### Schema resources
+
+Schema resources return data from agent-collected snapshots (no live DB query needed).
+
+```
+dbward://schema/app          → all tables (name, schema, rows, column count)
+dbward://schema/app/users    → full details for 'users' table
+dbward://schema/app/public.orders → schema-qualified lookup
+```
+
+The server automatically resolves the best environment (production > staging > development) based on snapshot availability and your permissions. The response includes `environment` and `collected_at` so you know which snapshot you're seeing.
+
+If no snapshot is available yet, start an agent for the database — it collects schema on startup.
 
 ## Prompts
 
