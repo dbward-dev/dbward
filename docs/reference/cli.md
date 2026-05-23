@@ -43,6 +43,7 @@ dbward execute "DROP TABLE temp" --emergency --reason "Production incident"
 |--------|-------------|
 | `--reason <TEXT>` | Reason for this request |
 | `--emergency` | Break-glass bypass (requires `--reason`) |
+| `--timeout <SECS>` | Timeout in seconds (no timeout if not specified). Exit code 124 on timeout |
 | `--output <PATH>` | Save result to file |
 | `--no-save` | Do not save result locally |
 | `--no-store` | Do not persist result to server storage |
@@ -50,6 +51,7 @@ dbward execute "DROP TABLE temp" --emergency --reason "Production incident"
 | `--ticket <ID>` | Attach ticket metadata |
 | `--repo <NAME>` | Attach repository metadata |
 | `--idempotency-key <KEY>` | Deduplication key |
+| `--result-format <FORMAT>` | Result display format: `table` (default), `json`, `csv` |
 
 ---
 

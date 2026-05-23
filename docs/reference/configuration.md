@@ -9,7 +9,9 @@ File: `dbward-server.toml` (passed via `--config`)
 ```toml
 # --- Databases ---
 # Register databases that agents can connect to.
-# Requests for unregistered databases are rejected.
+# Requests for unregistered database×environment pairs are rejected with:
+#   "database 'X' not registered in environment 'Y'. Available environments: ..."
+# Fix: add the environment to the list below, or use --environment to target the correct one.
 [[databases]]
 name = "app"
 environments = ["production", "staging"]
@@ -110,6 +112,20 @@ events = ["request_approved", "request_rejected", "execution_completed"]
 format = "slack"           # "slack" | "generic" (default: "generic")
 secret = "${WEBHOOK_SECRET}"  # HMAC-SHA256 signing (optional)
 
+# --- Execution Policies ---
+# Controls re-execution limits and statement timeout per database×environment.
+# Most specific match wins (exact db+env > wildcard).
+# If no policy matches, defaults apply (max_executions=1, timeout=30s).
+[[execution_policies]]
+database = "*"                     # "*" = all databases (default)
+environment = "production"         # "*" = all environments (default)
+max_executions = 1                 # Max re-executions per request (default: 1)
+execution_window_secs = 3600       # Time window for re-execution (default: 86400)
+retry_on_failure = false           # Allow retry after failure (default: false)
+statement_timeout_secs = 30        # SQL statement timeout (default: 30)
+max_statement_timeout_secs = 300   # Cap for timeout (default: 600)
+max_rows = 10000                   # Max rows in result (optional, no limit if unset)
+
 # --- Result Storage ---
 [result_storage]
 backend = "local"          # "local" | "s3" (default: "local")
@@ -158,6 +174,11 @@ redaction = "literals"     # "literals" | "none" (default: "literals")
 | `retention.approval_ttl_secs` | 86400 |
 | `audit.redaction` | `"literals"` |
 | `allow_same_approver_across_steps` | `true` |
+| `execution_policies[].max_executions` | 1 |
+| `execution_policies[].execution_window_secs` | 86400 |
+| `execution_policies[].retry_on_failure` | `false` |
+| `execution_policies[].statement_timeout_secs` | 30 |
+| `execution_policies[].max_statement_timeout_secs` | 600 |
 
 ---
 

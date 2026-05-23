@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use dbward_domain::entities::{Webhook, WebhookFormat, WebhookStatus};
-use dbward_domain::policies::{ApproverGroup, Workflow, WorkflowStep, WorkflowStepMode};
+use dbward_domain::policies::{
+    ApproverGroup, ExecutionPolicy, Workflow, WorkflowStep, WorkflowStepMode,
+};
 use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
 
 use crate::error::AppError;
@@ -46,6 +48,19 @@ pub struct WebhookInput {
     pub events: Vec<String>,
     pub format: String,
     pub secret: Option<String>,
+}
+
+// --- ExecutionPolicy input DTO ---
+
+pub struct ExecutionPolicyInput {
+    pub database: String,
+    pub environment: String,
+    pub max_executions: Option<u32>,
+    pub execution_window_secs: Option<u64>,
+    pub retry_on_failure: Option<bool>,
+    pub statement_timeout_secs: Option<u32>,
+    pub max_statement_timeout_secs: Option<u32>,
+    pub max_rows: Option<u32>,
 }
 
 impl SyncConfig {
@@ -182,6 +197,61 @@ impl SyncConfig {
 
         for webhook in &parsed {
             self.webhook_repo.create(webhook)?;
+        }
+        Ok(())
+    }
+
+    pub fn sync_execution_policies(
+        &self,
+        policies: Vec<ExecutionPolicyInput>,
+    ) -> Result<(), AppError> {
+        // Validate all BEFORE deleting
+        let mut parsed = Vec::with_capacity(policies.len());
+        for (i, ep) in policies.iter().enumerate() {
+            let database = if ep.database == "*" {
+                DatabaseName::wildcard()
+            } else {
+                DatabaseName::new(&ep.database)
+                    .map_err(|e| AppError::Validation(format!("execution_policy[{i}] db: {e}")))?
+            };
+            let environment = if ep.environment == "*" {
+                Environment::wildcard()
+            } else {
+                Environment::new(&ep.environment)
+                    .map_err(|e| AppError::Validation(format!("execution_policy[{i}] env: {e}")))?
+            };
+
+            let defaults = ExecutionPolicy::default();
+            parsed.push(ExecutionPolicy {
+                id: format!("config-ep-{i}"),
+                database,
+                environment,
+                max_executions: ep.max_executions.unwrap_or(defaults.max_executions),
+                execution_window_secs: ep
+                    .execution_window_secs
+                    .unwrap_or(defaults.execution_window_secs),
+                retry_on_failure: ep.retry_on_failure.unwrap_or(defaults.retry_on_failure),
+                statement_timeout_secs: ep
+                    .statement_timeout_secs
+                    .unwrap_or(defaults.statement_timeout_secs),
+                max_statement_timeout_secs: ep
+                    .max_statement_timeout_secs
+                    .unwrap_or(defaults.max_statement_timeout_secs),
+                max_rows: ep.max_rows,
+                created_at: None,
+                updated_at: None,
+            });
+        }
+
+        // Delete existing config-managed policies
+        for i in 0..100 {
+            let _ = self
+                .policy_repo
+                .delete_execution_policy(&format!("config-ep-{i}"));
+        }
+
+        for policy in &parsed {
+            self.policy_repo.create_execution_policy(policy)?;
         }
         Ok(())
     }

@@ -107,6 +107,9 @@ pub enum Command {
         /// Result display format
         #[arg(long, value_enum, default_value = "table")]
         result_format: crate::display::ResultFormat,
+        /// Timeout in seconds (no timeout if not specified)
+        #[arg(long)]
+        timeout: Option<u64>,
     },
     /// Search audit log
     Audit {
@@ -334,6 +337,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             ref share_with,
             no_store,
             result_format,
+            timeout,
         } => {
             execute::run_execute(
                 &sc,
@@ -351,6 +355,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                 share_with,
                 no_store,
                 result_format,
+                timeout,
             )
             .await
         }

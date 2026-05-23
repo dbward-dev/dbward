@@ -298,6 +298,15 @@ When a request comes in, dbward finds the most specific matching workflow:
 
 ## Next steps
 
-- [Configuration Reference](../reference/configuration.md) — All workflow and auto_approve options
+- [Configuration Reference](../reference/configuration.md) — All workflow, auto_approve, and execution_policies options
 - [Authentication](../deployment/authentication.md) — Set up groups and role mappings
 - [CLI Reference](../reference/cli.md) — Request and approval commands
+
+## Related: Execution Policies
+
+After a request is approved, **execution policies** control how it runs:
+- `statement_timeout_secs` — SQL statement timeout
+- `max_executions` — How many times a request can be re-executed
+- `max_rows` — Maximum rows returned
+
+Configure in `[[execution_policies]]` in `dbward-server.toml`. See [Configuration Reference](../reference/configuration.md).

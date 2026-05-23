@@ -15,6 +15,8 @@ pub struct ServerConfig {
     #[serde(default)]
     pub webhooks: Vec<WebhookDef>,
     #[serde(default)]
+    pub execution_policies: Vec<ExecutionPolicyDef>,
+    #[serde(default)]
     pub retention: RetentionConfig,
     #[serde(default)]
     pub auth: AuthConfig,
@@ -258,6 +260,26 @@ fn default_webhook_format() -> String {
     "generic".into()
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ExecutionPolicyDef {
+    #[serde(default = "star")]
+    pub database: String,
+    #[serde(default = "star")]
+    pub environment: String,
+    #[serde(default)]
+    pub max_executions: Option<u32>,
+    #[serde(default)]
+    pub execution_window_secs: Option<u64>,
+    #[serde(default)]
+    pub retry_on_failure: Option<bool>,
+    #[serde(default)]
+    pub statement_timeout_secs: Option<u32>,
+    #[serde(default)]
+    pub max_statement_timeout_secs: Option<u32>,
+    #[serde(default)]
+    pub max_rows: Option<u32>,
+}
+
 impl ServerConfig {
     pub fn load(path: &Path) -> Result<Self, String> {
         let content =
@@ -281,7 +303,6 @@ impl ServerConfig {
         type ScopeEntries = Vec<(usize, Vec<String>)>;
         let mut scope_ops: HashMap<(&str, &str), ScopeEntries> = HashMap::new();
         for (i, wf) in self.workflows.iter().enumerate() {
-            // Parse to canonical operation names for overlap detection
             let canonical: Vec<String> = wf
                 .operations
                 .iter()
@@ -303,7 +324,6 @@ impl ServerConfig {
                     "workflow validation: database={db}, environment={env} has both catchall (operations omitted) and specific operations workflows — ambiguous"
                 ));
             }
-            // Check operations overlap using canonical names
             let mut seen: HashSet<&str> = HashSet::new();
             for (idx, ops) in entries {
                 for op in ops {
@@ -327,6 +347,16 @@ impl ServerConfig {
             }
         }
 
+        for (i, ep) in self.execution_policies.iter().enumerate() {
+            if matches!(
+                (ep.statement_timeout_secs, ep.max_statement_timeout_secs),
+                (Some(st), Some(max_st)) if st > max_st
+            ) {
+                return Err(format!(
+                    "execution_policies[{i}]: statement_timeout_secs must not exceed max_statement_timeout_secs"
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -391,6 +421,53 @@ approval_ttl_secs = 0
         let cfg: ServerConfig = toml::from_str(toml).unwrap();
         let err = cfg.validate().unwrap_err();
         assert!(err.contains("approval_ttl_secs must be > 0"));
+    }
+
+    #[test]
+    fn unknown_toml_sections_are_silently_ignored() {
+        let toml = r#"
+[[databases]]
+name = "app"
+environments = ["dev"]
+
+[[result_policies]]
+database = "*"
+delivery_mode = "direct"
+
+[[notification_policies]]
+database = "*"
+"#;
+        let cfg: ServerConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.databases.len(), 1);
+    }
+
+    #[test]
+    fn execution_policies_parsed_from_toml() {
+        let toml = r#"
+[[execution_policies]]
+database = "app"
+environment = "production"
+max_executions = 3
+statement_timeout_secs = 60
+max_statement_timeout_secs = 300
+"#;
+        let cfg: ServerConfig = toml::from_str(toml).unwrap();
+        assert!(cfg.validate().is_ok());
+        assert_eq!(cfg.execution_policies.len(), 1);
+        assert_eq!(cfg.execution_policies[0].database, "app");
+        assert_eq!(cfg.execution_policies[0].max_executions, Some(3));
+    }
+
+    #[test]
+    fn validate_rejects_timeout_exceeding_max() {
+        let toml = r#"
+[[execution_policies]]
+statement_timeout_secs = 500
+max_statement_timeout_secs = 300
+"#;
+        let cfg: ServerConfig = toml::from_str(toml).unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("statement_timeout_secs must not exceed"));
     }
 }
 
