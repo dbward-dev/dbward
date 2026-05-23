@@ -763,20 +763,46 @@ fn validate_server_config(cfg: &ServerConfigMinimal) -> Option<String> {
         }
     }
     // Workflow operation overlap within same (db, env) scope
-    let mut scope_has_catchall: std::collections::HashMap<(&str, &str), bool> =
-        std::collections::HashMap::new();
+    // Mirrors server's validate(): catchall + specific is ambiguous, duplicate operations rejected
+    let mut scope_entries: std::collections::HashMap<
+        (&str, &str),
+        (bool, std::collections::HashSet<String>),
+    > = std::collections::HashMap::new();
     for wf in &cfg.workflows {
         let key = (wf.database.as_str(), wf.environment.as_str());
         let is_catchall = wf.operations.is_empty();
-        if let Some(&prev_catchall) = scope_has_catchall.get(&key)
-            && (is_catchall || prev_catchall)
-        {
-            return Some(format!(
-                "workflow validation: database={}, environment={} has ambiguous operation overlap",
-                wf.database, wf.environment
-            ));
+        let entry = scope_entries
+            .entry(key)
+            .or_insert((false, std::collections::HashSet::new()));
+        if is_catchall {
+            if entry.0 || !entry.1.is_empty() {
+                return Some(format!(
+                    "workflow validation: database={}, environment={} has ambiguous operation overlap",
+                    wf.database, wf.environment
+                ));
+            }
+            entry.0 = true;
+        } else {
+            if entry.0 {
+                return Some(format!(
+                    "workflow validation: database={}, environment={} has ambiguous operation overlap",
+                    wf.database, wf.environment
+                ));
+            }
+            for op in &wf.operations {
+                // Canonicalize aliases (execute_query → execute_select)
+                let canonical = match op.as_str() {
+                    "execute_query" | "execute" | "query" => "execute_select",
+                    other => other,
+                };
+                if !entry.1.insert(canonical.to_string()) {
+                    return Some(format!(
+                        "workflow validation: operation '{}' appears in multiple workflows for database={}, environment={}",
+                        op, wf.database, wf.environment
+                    ));
+                }
+            }
         }
-        scope_has_catchall.entry(key).or_insert(is_catchall);
     }
     None
 }
@@ -902,15 +928,18 @@ fn check_workflow_coverage(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
 
     let mut gaps = Vec::new();
     let mut total_pairs = 0usize;
+    let mut wildcard_skipped = false;
 
     for db in &cfg.databases {
         // Skip wildcard database names (can't enumerate concrete pairs)
         if db.name == "*" {
+            wildcard_skipped = true;
             continue;
         }
         for env in &db.environments {
-            // Skip wildcard environments (can't expand)
+            // Skip wildcard environments (can't expand) but note it
             if env == "*" {
+                wildcard_skipped = true;
                 continue;
             }
             total_pairs += 1;
@@ -935,10 +964,18 @@ fn check_workflow_coverage(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
     }
 
     if gaps.is_empty() {
+        let mut msg = format!("{total_pairs} DB×env pairs, all covered");
+        if wildcard_skipped {
+            msg.push_str(" (wildcard registrations skipped — verify with 'dbward policy resolve')");
+        }
         ctx.record(CheckResult {
             id: "workflow_coverage",
-            status: Status::Pass,
-            message: format!("{total_pairs} DB×env pairs, all covered"),
+            status: if wildcard_skipped {
+                Status::Warn
+            } else {
+                Status::Pass
+            },
+            message: msg,
             hint: None,
         });
     } else if gaps.len() == total_pairs && total_pairs > 0 {
