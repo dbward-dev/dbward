@@ -1,4 +1,5 @@
 use chrono::Utc;
+use dbward_app::error::AppError;
 use dbward_app::ports::*;
 use dbward_domain::auth::*;
 use dbward_domain::entities::*;
@@ -764,7 +765,7 @@ fn complete_execution_success() {
             &[],
         )
         .unwrap();
-    assert!(result);
+    assert_eq!(result, dbward_app::ports::CompletionOutcome::Normal);
 
     let fetched_exec = agent_repo.get_execution("exec-ce-ok").unwrap().unwrap();
     assert_eq!(fetched_exec.status, ExecutionStatus::Completed);
@@ -842,7 +843,7 @@ fn complete_execution_failure() {
             &[],
         )
         .unwrap();
-    assert!(result);
+    assert_eq!(result, dbward_app::ports::CompletionOutcome::Normal);
 
     let fetched_exec = agent_repo.get_execution("exec-ce-fail").unwrap().unwrap();
     assert_eq!(fetched_exec.status, ExecutionStatus::Failed);
@@ -919,7 +920,10 @@ fn complete_execution_cancelled_request() {
             &[],
         )
         .unwrap();
-    assert!(!result);
+    assert_eq!(
+        result,
+        dbward_app::ports::CompletionOutcome::RequestCancelled
+    );
 
     // Execution is still updated
     let fetched_exec = agent_repo.get_execution("exec-ce-cancel").unwrap().unwrap();
@@ -980,29 +984,28 @@ fn complete_execution_already_completed() {
     agent_repo.create_execution(&execution).unwrap();
 
     let now = Utc::now();
-    let result = agent_repo
-        .complete_execution(
-            "exec-ce-done",
-            "req-ce-done",
-            true,
+    let result = agent_repo.complete_execution(
+        "exec-ce-done",
+        "req-ce-done",
+        true,
+        now,
+        &AuditEvent::simple(
+            "execution.completed",
+            "execution",
+            "agent-1",
+            Some("exec-ce-done"),
             now,
-            &AuditEvent::simple(
-                "execution.completed",
-                "execution",
-                "agent-1",
-                Some("exec-ce-done"),
-                now,
-                &AuditContext::System,
-            ),
-            None,
-            &[],
-        )
-        .unwrap();
-    assert!(!result);
+            &AuditContext::System,
+        ),
+        None,
+        &[],
+    );
+    assert!(result.is_err());
+    assert!(matches!(result, Err(AppError::Conflict(_))));
 
-    // Execution still updated
+    // Execution NOT updated (TX rolled back)
     let fetched_exec = agent_repo.get_execution("exec-ce-done").unwrap().unwrap();
-    assert_eq!(fetched_exec.status, ExecutionStatus::Completed);
+    assert_eq!(fetched_exec.status, ExecutionStatus::Running);
 }
 
 // --- 17. create_and_dispatch: success ---
@@ -1315,7 +1318,7 @@ fn find_expired_approved_with_workflow_ttl() {
         cancelled_by: None,
         created_at: two_min_ago,
         updated_at: two_min_ago,
-        resolved_at: None,
+        resolved_at: Some(two_min_ago),
         expires_at: None,
     };
     repo.insert(&req).unwrap();
@@ -1355,7 +1358,7 @@ fn find_expired_pending_with_workflow_ttl() {
         created_at: two_min_ago,
         updated_at: two_min_ago,
         resolved_at: None,
-        expires_at: None,
+        expires_at: Some(two_min_ago + chrono::Duration::seconds(60)),
     };
     repo.insert(&req).unwrap();
 

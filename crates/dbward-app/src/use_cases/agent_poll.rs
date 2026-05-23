@@ -228,8 +228,8 @@ mod tests {
             _: &AuditEvent,
             _: Option<&ExecutionResult>,
             _: &[ResultAccess],
-        ) -> Result<bool, AppError> {
-            Ok(true)
+        ) -> Result<crate::ports::CompletionOutcome, AppError> {
+            Ok(crate::ports::CompletionOutcome::Normal)
         }
         fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
             Ok(vec![])

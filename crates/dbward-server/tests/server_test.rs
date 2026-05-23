@@ -309,8 +309,8 @@ impl AgentRepo for StubAgentRepo {
         _: &AuditEvent,
         _: Option<&dbward_domain::entities::ExecutionResult>,
         _: &[dbward_domain::entities::ResultAccess],
-    ) -> Result<bool, AppError> {
-        Ok(true)
+    ) -> Result<dbward_app::ports::CompletionOutcome, AppError> {
+        Ok(dbward_app::ports::CompletionOutcome::Normal)
     }
     fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
         Ok(vec![])

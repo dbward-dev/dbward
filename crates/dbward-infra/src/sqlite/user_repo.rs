@@ -33,12 +33,8 @@ impl UserRepo for SqliteUserRepo {
                         .ok()
                         .map(|d| d.with_timezone(&Utc))
                 }),
-                created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-                    .unwrap()
-                    .with_timezone(&Utc),
-                updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                    .unwrap()
-                    .with_timezone(&Utc),
+                created_at: super::parse_datetime(&row.get::<_, String>(6)?)?,
+                updated_at: super::parse_datetime(&row.get::<_, String>(7)?)?,
             })
         });
         match result {
@@ -82,12 +78,8 @@ impl UserRepo for SqliteUserRepo {
                             .ok()
                             .map(|d| d.with_timezone(&Utc))
                     }),
-                    created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(6)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
-                    updated_at: DateTime::parse_from_rfc3339(&row.get::<_, String>(7)?)
-                        .unwrap()
-                        .with_timezone(&Utc),
+                    created_at: super::parse_datetime(&row.get::<_, String>(6)?)?,
+                    updated_at: super::parse_datetime(&row.get::<_, String>(7)?)?,
                 })
             })
             .map_err(|e| AppError::Internal(e.to_string()))?;

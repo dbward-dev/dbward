@@ -11,7 +11,8 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id FROM requests WHERE status = 'approved' \
-             AND datetime(updated_at, '+' || COALESCE(json_extract(workflow_snapshot_json, '$.approval_ttl_secs'), 86400) || ' seconds') < datetime(?1)"
+             AND resolved_at IS NOT NULL \
+             AND datetime(resolved_at, '+' || COALESCE(json_extract(workflow_snapshot_json, '$.approval_ttl_secs'), 86400) || ' seconds') < datetime(?1)"
         ).map_err(map_err)?;
         let rows = stmt
             .query_map(params![now], |row| row.get(0))
@@ -20,12 +21,13 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
     }
     fn find_expired_pending(&self, now: &str) -> Result<Vec<String>, AppError> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id FROM requests WHERE status = 'pending' \
-             AND workflow_snapshot_json IS NOT NULL \
-             AND json_extract(workflow_snapshot_json, '$.pending_ttl_secs') IS NOT NULL \
-             AND datetime(created_at, '+' || json_extract(workflow_snapshot_json, '$.pending_ttl_secs') || ' seconds') < datetime(?1)"
-        ).map_err(map_err)?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT id FROM requests WHERE status = 'pending' \
+             AND expires_at IS NOT NULL \
+             AND datetime(expires_at) < datetime(?1)",
+            )
+            .map_err(map_err)?;
         let rows = stmt
             .query_map(params![now], |row| row.get(0))
             .map_err(map_err)?;
@@ -115,22 +117,58 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
         Ok(true)
     }
     fn purge_old_requests(&self, before: &str) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
-        // Delete child tables first (FK integrity)
-        conn.execute(
-            "DELETE FROM dry_run_jobs WHERE request_id IN (\
-             SELECT id FROM requests WHERE status IN ('executed', 'failed', 'rejected', 'expired', 'cancelled') AND updated_at < ?1)",
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(map_err)?;
+        let subquery = "SELECT id FROM requests WHERE status IN ('executed', 'failed', 'rejected', 'expired', 'cancelled') AND updated_at < ?1";
+        // Delete FK children in safe order
+        tx.execute(
+            &format!("DELETE FROM result_access WHERE result_id IN (SELECT id FROM results WHERE request_id IN ({subquery}))"),
             params![before],
         ).map_err(map_err)?;
-        conn.execute(
-            "DELETE FROM request_context WHERE request_id IN (\
-             SELECT id FROM requests WHERE status IN ('executed', 'failed', 'rejected', 'expired', 'cancelled') AND updated_at < ?1)",
+        tx.execute(
+            &format!("DELETE FROM results WHERE request_id IN ({subquery})"),
             params![before],
-        ).map_err(map_err)?;
-        let n = conn.execute(
-            "DELETE FROM requests WHERE status IN ('executed', 'failed', 'rejected', 'expired', 'cancelled') AND updated_at < ?1",
+        )
+        .map_err(map_err)?;
+        tx.execute(
+            &format!("DELETE FROM executions WHERE request_id IN ({subquery})"),
             params![before],
-        ).map_err(map_err)?;
+        )
+        .map_err(map_err)?;
+        tx.execute(
+            &format!("DELETE FROM approvals WHERE request_id IN ({subquery})"),
+            params![before],
+        )
+        .map_err(map_err)?;
+        tx.execute(
+            &format!("DELETE FROM request_pending_approvers WHERE request_id IN ({subquery})"),
+            params![before],
+        )
+        .map_err(map_err)?;
+        tx.execute(
+            &format!("DELETE FROM dry_run_jobs WHERE request_id IN ({subquery})"),
+            params![before],
+        )
+        .map_err(map_err)?;
+        tx.execute(
+            &format!("DELETE FROM request_context WHERE request_id IN ({subquery})"),
+            params![before],
+        )
+        .map_err(map_err)?;
+        tx.execute(
+            &format!("DELETE FROM slack_messages WHERE request_id IN ({subquery})"),
+            params![before],
+        )
+        .map_err(map_err)?;
+        let n = tx
+            .execute(
+                &format!("DELETE FROM requests WHERE id IN ({subquery})"),
+                params![before],
+            )
+            .map_err(map_err)?;
+        tx.commit().map_err(map_err)?;
         Ok(n as u32)
     }
 }

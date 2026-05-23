@@ -5,6 +5,16 @@ use dbward_domain::values::{DatabaseName, Environment, ResultSummary};
 
 use crate::error::AppError;
 
+/// Outcome of `complete_execution` — distinguishes normal completion from
+/// late completion of a cancelled request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionOutcome {
+    /// Request status was updated to executed/failed.
+    Normal,
+    /// Request was already cancelled; result is stored but status unchanged.
+    RequestCancelled,
+}
+
 // --- RequestReader ---
 
 pub trait RequestReader: Send + Sync {
@@ -174,7 +184,7 @@ pub trait AgentRepo: Send + Sync {
         audit_event: &AuditEvent,
         result_manifest: Option<&ExecutionResult>,
         share_with: &[ResultAccess],
-    ) -> Result<bool, AppError>;
+    ) -> Result<CompletionOutcome, AppError>;
 
     // Background task methods
     fn find_expired_leases(&self, now: &str) -> Result<Vec<(String, String)>, AppError>;

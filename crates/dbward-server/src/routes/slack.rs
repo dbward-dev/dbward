@@ -3,10 +3,46 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 
-use dbward_domain::auth::SubjectType;
+use dbward_domain::auth::{AuthUser, SubjectType};
 use dbward_domain::entities::AuditContext;
 
 use crate::state::AppState;
+
+/// Resolve a Slack user into a fully-populated AuthUser with suspended check.
+/// Shared by button callback and modal submission to prevent auth bypass.
+async fn resolve_slack_auth_user(
+    state: &AppState,
+    slack_user_id: &str,
+) -> Result<AuthUser, String> {
+    let subject_id = state
+        .user_repo
+        .find_by_slack_user_id(slack_user_id)
+        .map_err(|e| format!("DB error: {e}"))?
+        .ok_or_else(|| "not_linked".to_string())?;
+
+    if state.user_repo.is_suspended(&subject_id).unwrap_or(true) {
+        return Err("suspended".to_string());
+    }
+
+    let user = state
+        .user_repo
+        .get(&subject_id)
+        .map_err(|e| format!("DB error: {e}"))?
+        .ok_or_else(|| "user not found".to_string())?;
+
+    let roles = state
+        .role_resolver
+        .resolve(&subject_id, SubjectType::User, &user.groups)
+        .map_err(|e| format!("{e}"))?;
+
+    Ok(AuthUser {
+        subject_id,
+        subject_type: SubjectType::User,
+        roles,
+        groups: user.groups,
+        token_id: None,
+    })
+}
 
 /// Slack interaction endpoint. Receives button clicks (approve/reject).
 /// No auth middleware — uses Slack signature verification instead.
@@ -81,46 +117,20 @@ async fn handle_block_actions(
         return StatusCode::OK;
     }
 
-    // Check if user is linked + has view permission
-    let dbward_subject = match state.user_repo.find_by_slack_user_id(&slack_user_id) {
-        Ok(Some(s)) => s,
-        Ok(None) => {
+    // Resolve user with suspended check
+    let auth_user = match resolve_slack_auth_user(state, &slack_user_id).await {
+        Ok(u) => u,
+        Err(e) => {
             if let Some(ref slack_client) = state.slack_client {
-                let msg = format!(
-                    "⚠️ Your Slack account is not linked to dbward.\nRun: `dbward user link-slack {slack_user_id}`"
-                );
+                let msg = if e == "not_linked" {
+                    format!(
+                        "⚠️ Your Slack account is not linked to dbward.\nRun: `dbward user link-slack {slack_user_id}`"
+                    )
+                } else {
+                    "⚠️ Account suspended or not found".to_string()
+                };
                 let _ = slack_client
                     .post_ephemeral(&channel_id, &slack_user_id, &msg)
-                    .await;
-            }
-            return StatusCode::OK;
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "DB error checking slack user link");
-            return StatusCode::OK;
-        }
-    };
-
-    // Authorization check: must be able to approve this request
-    let auth_user = match state
-        .role_resolver
-        .resolve(&dbward_subject, SubjectType::User, &[])
-    {
-        Ok(roles) => dbward_domain::auth::AuthUser {
-            subject_id: dbward_subject,
-            subject_type: SubjectType::User,
-            roles,
-            groups: vec![],
-            token_id: None,
-        },
-        Err(_) => {
-            if let Some(ref slack_client) = state.slack_client {
-                let _ = slack_client
-                    .post_ephemeral(
-                        &channel_id,
-                        &slack_user_id,
-                        "⚠️ Account suspended or not found",
-                    )
                     .await;
             }
             return StatusCode::OK;
@@ -249,30 +259,18 @@ async fn handle_view_submission(
         return modal_error("comment_block", "Comment is required for rejection");
     }
 
-    // Resolve user
-    let dbward_subject = match state.user_repo.find_by_slack_user_id(slack_user_id) {
-        Ok(Some(s)) => s,
-        Ok(None) => return modal_error("decision_block", "Slack account not linked"),
+    // Resolve user with suspended check
+    let auth_user = match resolve_slack_auth_user(state, slack_user_id).await {
+        Ok(u) => u,
         Err(e) => {
-            tracing::error!(error = %e, "DB error resolving slack user");
-            return modal_error("decision_block", "Internal error. Try again.");
-        }
-    };
-
-    let auth_user = match state
-        .role_resolver
-        .resolve(&dbward_subject, SubjectType::User, &[])
-    {
-        Ok(roles) => dbward_domain::auth::AuthUser {
-            subject_id: dbward_subject,
-            subject_type: SubjectType::User,
-            roles,
-            groups: vec![],
-            token_id: None,
-        },
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to resolve roles");
-            return modal_error("decision_block", "Permission denied or account suspended");
+            let msg = if e == "not_linked" {
+                "Slack account not linked"
+            } else if e == "suspended" {
+                "Account suspended"
+            } else {
+                "Permission denied or account suspended"
+            };
+            return modal_error("decision_block", msg);
         }
     };
 

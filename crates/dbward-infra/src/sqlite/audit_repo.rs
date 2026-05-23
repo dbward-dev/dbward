@@ -1,5 +1,4 @@
 use crate::sqlite::DbConn;
-use chrono::{DateTime, Utc};
 use dbward_app::error::AppError;
 use dbward_app::ports::{AuditFilter, AuditLogger, AuditRepo, AuditVerifyResult};
 use dbward_domain::entities::{ActorType, AuditEvent, EventCategory, EventOutcome};
@@ -347,8 +346,6 @@ fn row_to_audit_event(row: &rusqlite::Row) -> rusqlite::Result<AuditEvent> {
         metadata_json: row.get(19)?,
         prev_hash: row.get(20)?,
         event_hash: row.get(21)?,
-        created_at: DateTime::parse_from_rfc3339(&created_str)
-            .unwrap()
-            .with_timezone(&Utc),
+        created_at: super::parse_datetime(&created_str)?,
     })
 }
