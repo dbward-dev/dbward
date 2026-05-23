@@ -662,6 +662,7 @@ dependencies = [
  "dbward-domain",
  "futures-core",
  "hex",
+ "serde",
  "serde_json",
  "sha2",
  "thiserror",

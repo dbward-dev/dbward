@@ -84,6 +84,7 @@ pub struct Request {
     pub share_with: Vec<String>,
     pub no_store: bool,
     pub workflow_snapshot_json: Option<String>,
+    pub decision_trace_json: Option<String>,
     pub cancel_reason: Option<String>,
     pub cancelled_by: Option<String>,
     pub created_at: DateTime<Utc>,
