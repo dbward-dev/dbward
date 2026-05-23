@@ -325,7 +325,9 @@ impl AgentRepo for SqliteAgentRepo {
         audit_event: &AuditEvent,
         result_manifest: Option<&ExecutionResult>,
         share_with: &[ResultAccess],
-    ) -> Result<bool, AppError> {
+    ) -> Result<dbward_app::ports::CompletionOutcome, AppError> {
+        use dbward_app::ports::CompletionOutcome;
+
         let mut conn = self.conn.lock().unwrap();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -344,7 +346,24 @@ impl AgentRepo for SqliteAgentRepo {
             params![req_status, now.to_rfc3339(), request_id],
         ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-        // H-22: Insert result manifest
+        if updated == 0 {
+            // Check if request was cancelled (allowed) or unexpected state (rollback)
+            let current_status: String = tx.query_row(
+                "SELECT status FROM requests WHERE id = ?1",
+                params![request_id],
+                |r| r.get(0),
+            ).map_err(|e| AppError::Internal(e.to_string()))?;
+
+            if current_status != "cancelled" {
+                // Unexpected state change — rollback entire TX
+                return Err(AppError::Conflict(format!(
+                    "request status changed to '{current_status}' during execution"
+                )));
+            }
+            // Cancelled: still save result/audit but don't update request status
+        }
+
+        // Insert result manifest
         if let Some(rm) = result_manifest {
             tx.execute(
                 "INSERT INTO results (id, request_id, execution_id, storage_backend, storage_key, content_length, checksum_sha256, retention_days, status, truncated, truncation_reason, stored_at, expires_at)
@@ -357,7 +376,6 @@ impl AgentRepo for SqliteAgentRepo {
                 ],
             ).map_err(|e| AppError::Internal(e.to_string()))?;
 
-            // C-2: Insert result_access records
             for ra in share_with {
                 tx.execute(
                     "INSERT INTO result_access (id, result_id, selector_type, selector_value) VALUES (?1, ?2, ?3, ?4)",
@@ -366,11 +384,10 @@ impl AgentRepo for SqliteAgentRepo {
             }
         }
 
-        // H-21: Insert audit event in same TX
         insert_audit_in_agent_tx(&tx, audit_event)?;
 
         tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
-        Ok(updated > 0)
+        Ok(if updated > 0 { CompletionOutcome::Normal } else { CompletionOutcome::RequestCancelled })
     }
 
     fn find_expired_leases(&self, now: &str) -> Result<Vec<(String, String)>, AppError> {

@@ -122,7 +122,7 @@ async fn handle_block_actions(
     }
 
     // Resolve user with suspended check
-    let auth_user = match resolve_slack_auth_user(&state, &slack_user_id).await {
+    let auth_user = match resolve_slack_auth_user(state, &slack_user_id).await {
         Ok(u) => u,
         Err(e) => {
             if let Some(ref slack_client) = state.slack_client {
@@ -262,7 +262,7 @@ async fn handle_view_submission(
     }
 
     // Resolve user with suspended check
-    let auth_user = match resolve_slack_auth_user(&state, slack_user_id).await {
+    let auth_user = match resolve_slack_auth_user(state, slack_user_id).await {
         Ok(u) => u,
         Err(e) => {
             let msg = if e == "not_linked" {

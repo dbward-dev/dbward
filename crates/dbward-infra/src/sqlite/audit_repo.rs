@@ -1,5 +1,4 @@
 use crate::sqlite::DbConn;
-use chrono::{DateTime, Utc};
 use dbward_app::error::AppError;
 use dbward_app::ports::{AuditFilter, AuditLogger, AuditRepo, AuditVerifyResult};
 use dbward_domain::entities::{ActorType, AuditEvent, EventCategory, EventOutcome};

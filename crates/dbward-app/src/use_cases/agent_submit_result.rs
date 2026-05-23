@@ -275,7 +275,7 @@ impl AgentSubmitResult {
             }
             audit_event.metadata_json = meta.to_string();
         }
-        let request_updated = match self.agent_repo.complete_execution(
+        let outcome = match self.agent_repo.complete_execution(
             &execution.id,
             &execution.request_id,
             input.success,
@@ -301,45 +301,48 @@ impl AgentSubmitResult {
             }
         };
 
-        // 9. Publish result to long-poll channel (if delivery_mode allows streaming)
-        if should_stream {
-            let summary = ResultSummary {
-                execution_id: execution.id.clone(),
-                success: input.success,
-                rows_affected: if input.success {
-                    input.rows_affected
-                } else {
-                    None
-                },
-                truncated: false,
-                error_message: input.error_message.clone(),
-                result_data: if input.success {
-                    input
-                        .result_data
-                        .as_ref()
-                        .map(|d| String::from_utf8_lossy(d).into_owned())
-                } else {
-                    None
-                },
-            };
-            self.result_channel
-                .publish(&execution.request_id, summary)
-                .await;
+        use crate::ports::CompletionOutcome;
+        match outcome {
+            CompletionOutcome::Normal => {
+                // 9. Publish result to long-poll channel
+                if should_stream {
+                    let summary = ResultSummary {
+                        execution_id: execution.id.clone(),
+                        success: input.success,
+                        rows_affected: if input.success {
+                            input.rows_affected
+                        } else {
+                            None
+                        },
+                        truncated: false,
+                        error_message: input.error_message.clone(),
+                        result_data: if input.success {
+                            input
+                                .result_data
+                                .as_ref()
+                                .map(|d| String::from_utf8_lossy(d).into_owned())
+                        } else {
+                            None
+                        },
+                    };
+                    self.result_channel
+                        .publish(&execution.request_id, summary)
+                        .await;
+                }
+                result.commit(&*self.event_dispatcher);
+                Ok(AgentSubmitResultOutput {
+                    request_id: execution.request_id,
+                    status: new_request_status,
+                })
+            }
+            CompletionOutcome::RequestCancelled => {
+                // Result stored but don't publish or emit transition event
+                Ok(AgentSubmitResultOutput {
+                    request_id: execution.request_id,
+                    status: RequestStatus::Cancelled,
+                })
+            }
         }
-
-        // If request was cancelled, new_request_status reflects that
-        let final_status = if !request_updated && new_request_status != RequestStatus::Cancelled {
-            return Err(AppError::Conflict("concurrent status change".into()));
-        } else {
-            new_request_status
-        };
-
-        result.commit(&*self.event_dispatcher);
-
-        Ok(AgentSubmitResultOutput {
-            request_id: execution.request_id,
-            status: final_status,
-        })
     }
 }
 
@@ -468,8 +471,8 @@ mod tests {
             _: &AuditEvent,
             _: Option<&ExecutionResult>,
             _: &[ResultAccess],
-        ) -> Result<bool, AppError> {
-            Ok(true)
+        ) -> Result<crate::ports::CompletionOutcome, AppError> {
+            Ok(crate::ports::CompletionOutcome::Normal)
         }
         fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
             Ok(vec![])

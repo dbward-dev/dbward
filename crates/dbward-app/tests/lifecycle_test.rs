@@ -1323,7 +1323,8 @@ impl AgentRepo for SharedAgentRepo {
         _audit_event: &AuditEvent,
         _result_manifest: Option<&ExecutionResult>,
         _share_with: &[ResultAccess],
-    ) -> Result<bool, AppError> {
+    ) -> Result<dbward_app::ports::CompletionOutcome, AppError> {
+        use dbward_app::ports::CompletionOutcome;
         let mut execs = self.executions.lock().unwrap();
         if let Some(e) = execs.iter_mut().find(|e| e.id == execution_id) {
             e.status = if success {
@@ -1344,9 +1345,9 @@ impl AgentRepo for SharedAgentRepo {
                 RequestStatus::Failed
             };
             r.updated_at = now;
-            Ok(true)
+            Ok(CompletionOutcome::Normal)
         } else {
-            Ok(false)
+            Ok(CompletionOutcome::RequestCancelled)
         }
     }
     fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
