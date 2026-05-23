@@ -1573,7 +1573,7 @@ fn workflow_crud_lifecycle() {
         require_reason: true,
         allow_self_approve: false,
         allow_same_approver_across_steps: false,
-            explain: true,
+        explain: true,
         pending_ttl_secs: None,
         approval_ttl_secs: Some(3600),
         statement_timeout_secs: None,

@@ -97,8 +97,6 @@ ALTER TABLE users ADD COLUMN slack_user_id TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slack_user_id ON users(slack_user_id) WHERE slack_user_id IS NOT NULL;
 ";
 
-
-
 const MIGRATION_V10: &str = "
 ALTER TABLE workflows ADD COLUMN explain INTEGER NOT NULL DEFAULT 1;
 ";

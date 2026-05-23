@@ -52,7 +52,9 @@ pub struct Workflow {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
-fn default_true_fn() -> bool { true }
+fn default_true_fn() -> bool {
+    true
+}
 impl Workflow {
     /// A workflow with no steps means auto-approval.
     pub fn is_auto_approve(&self) -> bool {
