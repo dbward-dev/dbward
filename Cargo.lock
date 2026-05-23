@@ -599,6 +599,7 @@ dependencies = [
  "chrono",
  "clap",
  "dbward-api-types",
+ "dbward-config",
  "dbward-domain",
  "dbward-migrate",
  "dirs",
@@ -626,6 +627,7 @@ dependencies = [
  "chrono",
  "clap",
  "dbward-api-types",
+ "dbward-config",
  "dbward-domain",
  "dbward-driver",
  "dbward-migrate",
@@ -669,6 +671,18 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "dbward-config"
+version = "0.1.1"
+dependencies = [
+ "hostname",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "toml",
 ]
 
 [[package]]
@@ -756,6 +770,7 @@ dependencies = [
  "clap",
  "dbward-api-types",
  "dbward-app",
+ "dbward-config",
  "dbward-domain",
  "dbward-infra",
  "form_urlencoded",

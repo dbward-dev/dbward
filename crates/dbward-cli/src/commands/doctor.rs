@@ -381,10 +381,18 @@ async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
         });
     }
 
-    // Try to parse config (after env audit, since agent silently uses empty)
-    let raw_expanded = expand_agent_env_vars(&raw_content);
-    let cfg: AgentConfigMinimal = match toml::from_str(&raw_expanded) {
-        Ok(c) => c,
+    // Try to parse config (strict: undefined env vars = error)
+    let cfg = match dbward_config::AgentConfig::from_str(&raw_content, &path.display().to_string())
+    {
+        Ok(c) => {
+            ctx.record(CheckResult {
+                id: "config_parse",
+                status: Status::Pass,
+                message: path.display().to_string(),
+                hint: None,
+            });
+            c
+        }
         Err(e) => {
             ctx.record(CheckResult {
                 id: "config_parse",
@@ -395,32 +403,6 @@ async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
             return;
         }
     };
-
-    // Validate (mirrors agent's own validate())
-    if !cfg.server.url.starts_with("http://") && !cfg.server.url.starts_with("https://") {
-        ctx.record(CheckResult {
-            id: "config_parse",
-            status: Status::Fail,
-            message: "server.url must have http or https scheme".into(),
-            hint: None,
-        });
-        return;
-    }
-    if cfg.databases.is_empty() {
-        ctx.record(CheckResult {
-            id: "config_parse",
-            status: Status::Fail,
-            message: "at least 1 database must be configured".into(),
-            hint: None,
-        });
-        return;
-    }
-    ctx.record(CheckResult {
-        id: "config_parse",
-        status: Status::Pass,
-        message: path.display().to_string(),
-        hint: None,
-    });
 
     // A3: server_reachable
     let server_url = redact_url(&cfg.server.url);
@@ -507,146 +489,6 @@ async fn run_agent_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
 }
 
 // ---------------------------------------------------------------------------
-// Minimal config structs (avoid depending on dbward-agent / dbward-server)
-// ---------------------------------------------------------------------------
-
-#[derive(serde::Deserialize)]
-struct AgentConfigMinimal {
-    server: AgentServerSection,
-    #[serde(default)]
-    databases: std::collections::HashMap<String, std::collections::HashMap<String, AgentDbEntry>>,
-}
-
-#[derive(serde::Deserialize)]
-struct AgentServerSection {
-    url: String,
-    agent_token: String,
-}
-
-#[derive(serde::Deserialize)]
-struct AgentDbEntry {
-    url: String,
-}
-
-/// Mimics agent's expand_env_vars (silent empty on undefined).
-fn expand_agent_env_vars(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '$' && chars.peek() == Some(&'{') {
-            chars.next();
-            let mut var_name = String::new();
-            for ch in chars.by_ref() {
-                if ch == '}' {
-                    break;
-                }
-                var_name.push(ch);
-            }
-            result.push_str(&std::env::var(&var_name).unwrap_or_default());
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
-#[derive(serde::Deserialize)]
-struct ServerConfigMinimal {
-    #[serde(default)]
-    databases: Vec<ServerDatabaseDef>,
-    #[serde(default)]
-    workflows: Vec<ServerWorkflowDef>,
-    #[serde(default)]
-    auto_approve: Vec<ServerAutoApproveDef>,
-    #[serde(default)]
-    auth: ServerAuthConfig,
-    #[serde(default)]
-    retention: ServerRetentionConfig,
-    #[serde(default)]
-    execution_policies: Vec<ServerExecutionPolicyDef>,
-}
-
-#[derive(serde::Deserialize)]
-struct ServerRetentionConfig {
-    #[serde(default = "default_approval_ttl")]
-    approval_ttl_secs: u64,
-}
-impl Default for ServerRetentionConfig {
-    fn default() -> Self {
-        Self {
-            approval_ttl_secs: 86400,
-        }
-    }
-}
-fn default_approval_ttl() -> u64 {
-    86400
-}
-
-#[derive(serde::Deserialize)]
-struct ServerExecutionPolicyDef {
-    #[serde(default)]
-    statement_timeout_secs: Option<u32>,
-    #[serde(default)]
-    max_statement_timeout_secs: Option<u32>,
-}
-
-#[derive(serde::Deserialize)]
-struct ServerDatabaseDef {
-    name: String,
-    #[serde(default)]
-    environments: Vec<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct ServerWorkflowDef {
-    #[serde(default = "default_star")]
-    database: String,
-    #[serde(default = "default_star")]
-    environment: String,
-    #[serde(default)]
-    operations: Vec<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct ServerAutoApproveDef {
-    #[serde(default = "default_star")]
-    database: String,
-    #[serde(default = "default_star")]
-    environment: String,
-}
-
-#[derive(serde::Deserialize, Default)]
-#[allow(dead_code)]
-struct ServerAuthConfig {
-    #[serde(default)]
-    mode: String,
-    #[serde(default)]
-    role_bindings: Vec<ServerRoleBinding>,
-    default_role: Option<String>,
-    oidc: Option<ServerOidcConfig>,
-}
-
-#[derive(serde::Deserialize)]
-struct ServerRoleBinding {
-    role: String,
-}
-
-#[derive(serde::Deserialize)]
-struct ServerOidcConfig {
-    #[serde(default)]
-    role_mappings: Vec<ServerOidcRoleMapping>,
-}
-
-#[derive(serde::Deserialize)]
-struct ServerOidcRoleMapping {
-    role: String,
-}
-
-fn default_star() -> String {
-    "*".into()
-}
-
-// ---------------------------------------------------------------------------
 // Server mode
 // ---------------------------------------------------------------------------
 
@@ -655,21 +497,8 @@ fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
         eprintln!("dbward doctor — Server configuration\n");
     }
 
-    // S1 + S2: Read and expand env vars (server uses error-on-undefined)
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) => {
-            ctx.record(CheckResult {
-                id: "config_parse",
-                status: Status::Fail,
-                message: format!("{}: {e}", path.display()),
-                hint: None,
-            });
-            return;
-        }
-    };
-
-    let expanded = match expand_server_env_vars(&content) {
+    // S1 + S2: Load, expand env vars, parse, and validate in one step
+    let cfg = match dbward_config::ServerConfig::load(path) {
         Ok(c) => {
             ctx.record(CheckResult {
                 id: "env_vars",
@@ -677,21 +506,6 @@ fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
                 message: "all resolved".into(),
                 hint: None,
             });
-            c
-        }
-        Err(var) => {
-            ctx.record(CheckResult {
-                id: "env_vars",
-                status: Status::Fail,
-                message: format!("undefined environment variable: ${{{var}}}"),
-                hint: Some(format!("Set {var} or remove the reference")),
-            });
-            return;
-        }
-    };
-
-    let cfg: ServerConfigMinimal = match toml::from_str(&expanded) {
-        Ok(c) => {
             ctx.record(CheckResult {
                 id: "config_parse",
                 status: Status::Pass,
@@ -700,27 +514,25 @@ fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
             });
             c
         }
+        Err(dbward_config::ConfigError::UndefinedEnvVar { var, .. }) => {
+            ctx.record(CheckResult {
+                id: "env_vars",
+                status: Status::Fail,
+                message: format!("undefined environment variable: ${{{var}}}"),
+                hint: Some(format!("Set {var} or remove the reference")),
+            });
+            return;
+        }
         Err(e) => {
             ctx.record(CheckResult {
                 id: "config_parse",
                 status: Status::Fail,
-                message: format!("{}: {e}", path.display()),
+                message: e.to_string(),
                 hint: None,
             });
             return;
         }
     };
-
-    // Validate server config (mirrors ServerConfig::validate())
-    if let Some(ref err) = validate_server_config(&cfg) {
-        ctx.record(CheckResult {
-            id: "config_parse",
-            status: Status::Fail,
-            message: err.clone(),
-            hint: None,
-        });
-        return;
-    }
 
     // S3: workflow_validity
     check_workflow_validity(ctx, &cfg);
@@ -735,104 +547,7 @@ fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
     check_auto_approve_consistency(ctx, &cfg);
 }
 
-/// Mirrors ServerConfig::validate() — returns None if valid, Some(error) if invalid.
-fn validate_server_config(cfg: &ServerConfigMinimal) -> Option<String> {
-    if cfg.retention.approval_ttl_secs == 0 {
-        return Some(
-            "retention.approval_ttl_secs must be > 0 (immediate expiry makes approval impossible)"
-                .into(),
-        );
-    }
-    for (i, ep) in cfg.execution_policies.iter().enumerate() {
-        if let (Some(st), Some(max_st)) = (ep.statement_timeout_secs, ep.max_statement_timeout_secs)
-            && st > max_st
-        {
-            return Some(format!(
-                "execution_policies[{i}]: statement_timeout_secs must not exceed max_statement_timeout_secs"
-            ));
-        }
-    }
-    // Duplicate auto_approve scope
-    let mut seen = std::collections::HashSet::new();
-    for a in &cfg.auto_approve {
-        if !seen.insert((a.database.as_str(), a.environment.as_str())) {
-            return Some(format!(
-                "auto_approve: duplicate scope ({}:{})",
-                a.database, a.environment
-            ));
-        }
-    }
-    // Workflow operation overlap within same (db, env) scope
-    // Mirrors server's validate(): catchall + specific is ambiguous, duplicate operations rejected
-    let mut scope_entries: std::collections::HashMap<
-        (&str, &str),
-        (bool, std::collections::HashSet<String>),
-    > = std::collections::HashMap::new();
-    for wf in &cfg.workflows {
-        let key = (wf.database.as_str(), wf.environment.as_str());
-        let is_catchall = wf.operations.is_empty();
-        let entry = scope_entries
-            .entry(key)
-            .or_insert((false, std::collections::HashSet::new()));
-        if is_catchall {
-            if entry.0 || !entry.1.is_empty() {
-                return Some(format!(
-                    "workflow validation: database={}, environment={} has ambiguous operation overlap",
-                    wf.database, wf.environment
-                ));
-            }
-            entry.0 = true;
-        } else {
-            if entry.0 {
-                return Some(format!(
-                    "workflow validation: database={}, environment={} has ambiguous operation overlap",
-                    wf.database, wf.environment
-                ));
-            }
-            for op in &wf.operations {
-                // Canonicalize aliases (execute_query → execute_select)
-                let canonical = match op.as_str() {
-                    "execute_query" | "execute" | "query" => "execute_select",
-                    other => other,
-                };
-                if !entry.1.insert(canonical.to_string()) {
-                    return Some(format!(
-                        "workflow validation: operation '{}' appears in multiple workflows for database={}, environment={}",
-                        op, wf.database, wf.environment
-                    ));
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Server-style env expansion: error on undefined.
-fn expand_server_env_vars(input: &str) -> Result<String, String> {
-    let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '$' && chars.peek() == Some(&'{') {
-            chars.next();
-            let mut var_name = String::new();
-            for ch in chars.by_ref() {
-                if ch == '}' {
-                    break;
-                }
-                var_name.push(ch);
-            }
-            match std::env::var(&var_name) {
-                Ok(v) => result.push_str(&v),
-                Err(_) => return Err(var_name),
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    Ok(result)
-}
-
-fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
+fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
     if cfg.workflows.is_empty() {
         ctx.record(CheckResult {
             id: "workflow_validity",
@@ -921,7 +636,7 @@ fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
 }
 
 /// S4: Reverse lint — check if each registered DB×env has at least one matching workflow.
-fn check_workflow_coverage(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
+fn check_workflow_coverage(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
     if cfg.databases.is_empty() || cfg.workflows.is_empty() {
         return; // S3 already covers these cases
     }
@@ -1003,7 +718,7 @@ fn check_workflow_coverage(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
     }
 }
 
-fn check_role_resolution(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
+fn check_role_resolution(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
     let builtin = ["admin", "developer", "readonly", "agent-default"];
     let mut undefined = Vec::new();
 
@@ -1047,7 +762,7 @@ fn check_role_resolution(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
     }
 }
 
-fn check_auto_approve_consistency(ctx: &mut DoctorContext, cfg: &ServerConfigMinimal) {
+fn check_auto_approve_consistency(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
     if cfg.auto_approve.is_empty() {
         ctx.record(CheckResult {
             id: "auto_approve_consistency",
@@ -1209,13 +924,14 @@ async fn check_agent_token(url: &str, token: &str, timeout: Duration) -> Result<
 /// Scan raw TOML for `${VAR}` patterns and check if they're defined/non-empty.
 /// Returns (var_name, is_defined, is_sensitive) tuples for problematic vars.
 fn audit_agent_env_vars(raw: &str) -> Vec<(String, bool, bool)> {
-    let re = regex::Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}").unwrap();
+    let re = regex::Regex::new(dbward_config::ENV_VAR_PATTERN).expect("BUG: invalid regex");
     let mut issues = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
     for caps in re.captures_iter(raw) {
         let name = caps[1].to_string();
-        if !seen.insert(name.clone()) {
+        let has_default = caps.get(2).is_some();
+        if has_default || !seen.insert(name.clone()) {
             continue;
         }
         let is_sensitive = name.to_lowercase().contains("token")
@@ -1357,26 +1073,8 @@ mod tests {
         unsafe { std::env::remove_var("DOCTOR_TEST_GOOD") };
     }
 
-    #[test]
-    fn expand_server_env_vars_errors_on_undefined() {
-        unsafe { std::env::remove_var("DOCTOR_SRV_MISSING") };
-        let result = expand_server_env_vars("url = ${DOCTOR_SRV_MISSING}");
-        assert_eq!(result, Err("DOCTOR_SRV_MISSING".into()));
-    }
-
-    #[test]
-    fn expand_server_env_vars_substitutes() {
-        unsafe { std::env::set_var("DOCTOR_SRV_OK", "hello") };
-        let result = expand_server_env_vars("val = ${DOCTOR_SRV_OK}");
-        assert_eq!(result, Ok("val = hello".into()));
-        unsafe { std::env::remove_var("DOCTOR_SRV_OK") };
-    }
-
-    #[test]
-    fn expand_agent_env_vars_uses_empty_on_undefined() {
-        unsafe { std::env::remove_var("DOCTOR_AGENT_GONE") };
-        let result = expand_agent_env_vars("tok = ${DOCTOR_AGENT_GONE}");
-        assert_eq!(result, "tok = ");
+    fn server_cfg(toml: &str) -> dbward_config::ServerConfig {
+        dbward_config::ServerConfig::from_str(toml, "test").unwrap()
     }
 
     #[test]
@@ -1386,21 +1084,17 @@ mod tests {
             json_output: false,
             timeout: Duration::from_secs(5),
         };
-        let cfg = ServerConfigMinimal {
-            databases: vec![ServerDatabaseDef {
-                name: "app".into(),
-                environments: vec!["production".into()],
-            }],
-            workflows: vec![ServerWorkflowDef {
-                database: "nonexistent".into(),
-                environment: "*".into(),
-                operations: vec![],
-            }],
-            auto_approve: vec![],
-            retention: ServerRetentionConfig::default(),
-            execution_policies: vec![],
-            auth: ServerAuthConfig::default(),
-        };
+        let cfg = server_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["production"]
+
+[[workflows]]
+database = "nonexistent"
+environment = "*"
+"#,
+        );
         check_workflow_validity(&mut ctx, &cfg);
         assert_eq!(ctx.results[0].status, Status::Fail);
     }
@@ -1412,28 +1106,21 @@ mod tests {
             json_output: false,
             timeout: Duration::from_secs(5),
         };
-        let cfg = ServerConfigMinimal {
-            databases: vec![ServerDatabaseDef {
-                name: "app".into(),
-                environments: vec!["production".into()],
-            }],
-            workflows: vec![
-                ServerWorkflowDef {
-                    database: "app".into(),
-                    environment: "*".into(),
-                    operations: vec![],
-                },
-                ServerWorkflowDef {
-                    database: "ghost".into(),
-                    environment: "*".into(),
-                    operations: vec![],
-                },
-            ],
-            auto_approve: vec![],
-            retention: ServerRetentionConfig::default(),
-            execution_policies: vec![],
-            auth: ServerAuthConfig::default(),
-        };
+        let cfg = server_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["production"]
+
+[[workflows]]
+database = "app"
+environment = "*"
+
+[[workflows]]
+database = "ghost"
+environment = "*"
+"#,
+        );
         check_workflow_validity(&mut ctx, &cfg);
         assert_eq!(ctx.results[0].status, Status::Warn);
     }
@@ -1445,21 +1132,17 @@ mod tests {
             json_output: false,
             timeout: Duration::from_secs(5),
         };
-        let cfg = ServerConfigMinimal {
-            databases: vec![ServerDatabaseDef {
-                name: "app".into(),
-                environments: vec!["production".into()],
-            }],
-            workflows: vec![ServerWorkflowDef {
-                database: "*".into(),
-                environment: "*".into(),
-                operations: vec![],
-            }],
-            auto_approve: vec![],
-            retention: ServerRetentionConfig::default(),
-            execution_policies: vec![],
-            auth: ServerAuthConfig::default(),
-        };
+        let cfg = server_cfg(
+            r#"
+[[databases]]
+name = "app"
+environments = ["production"]
+
+[[workflows]]
+database = "*"
+environment = "*"
+"#,
+        );
         check_workflow_validity(&mut ctx, &cfg);
         assert_eq!(ctx.results[0].status, Status::Pass);
     }
@@ -1471,21 +1154,17 @@ mod tests {
             json_output: false,
             timeout: Duration::from_secs(5),
         };
-        let cfg = ServerConfigMinimal {
-            databases: vec![],
-            workflows: vec![],
-            auto_approve: vec![],
-            retention: ServerRetentionConfig::default(),
-            execution_policies: vec![],
-            auth: ServerAuthConfig {
-                mode: "both".into(),
-                role_bindings: vec![ServerRoleBinding {
-                    role: "admin".into(),
-                }],
-                default_role: Some("developer".into()),
-                oidc: None,
-            },
-        };
+        let cfg = server_cfg(
+            r#"
+[auth]
+mode = "both"
+default_role = "developer"
+
+[[auth.role_bindings]]
+role = "admin"
+subjects = ["alice"]
+"#,
+        );
         check_role_resolution(&mut ctx, &cfg);
         assert_eq!(ctx.results[0].status, Status::Pass);
     }
@@ -1497,19 +1176,16 @@ mod tests {
             json_output: false,
             timeout: Duration::from_secs(5),
         };
-        let cfg = ServerConfigMinimal {
-            databases: vec![],
-            workflows: vec![],
-            auto_approve: vec![],
-            retention: ServerRetentionConfig::default(),
-            execution_policies: vec![],
-            auth: ServerAuthConfig {
-                mode: "both".into(),
-                role_bindings: vec![ServerRoleBinding { role: "dba".into() }],
-                default_role: None,
-                oidc: None,
-            },
-        };
+        let cfg = server_cfg(
+            r#"
+[auth]
+mode = "both"
+
+[[auth.role_bindings]]
+role = "dba"
+subjects = ["bob"]
+"#,
+        );
         check_role_resolution(&mut ctx, &cfg);
         assert_eq!(ctx.results[0].status, Status::Warn);
         assert!(ctx.results[0].message.contains("dba"));

@@ -29,3 +29,9 @@ impl From<dbward_migrate::MigrateError> for CliError {
         CliError::Other(e.to_string())
     }
 }
+
+impl From<dbward_config::ConfigError> for CliError {
+    fn from(e: dbward_config::ConfigError) -> Self {
+        CliError::Config(e.to_string())
+    }
+}
