@@ -206,6 +206,22 @@ operations = ["execute_select", "execute_dml"]  # Filter by operation (omitted =
 require_reason = true                # Force users to provide --reason (default: false)
 allow_self_approve = false           # Requester cannot approve own request (default: false)
 allow_same_approver_across_steps = false  # Same person can't approve in multiple steps (default: true)
+explain = true                       # Run EXPLAIN dry-run for context (default: true)
+```
+
+### `explain`
+
+Controls whether dbward runs a dry-run EXPLAIN for requests matching this workflow:
+
+- `true` (default): EXPLAIN is executed by the agent. Results appear in `context.explain`.
+- `false`: No EXPLAIN is run. Useful for development environments or when EXPLAIN is too expensive.
+
+```toml
+# Development: skip EXPLAIN (faster, less noise)
+[[workflows]]
+database = "*"
+environment = "development"
+explain = false
 ```
 
 ### `operations` filter

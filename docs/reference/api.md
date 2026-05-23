@@ -102,6 +102,7 @@ Context fields:
 | `context.sql_review` | SQL review findings and block status |
 | `context.tables` | Affected table names |
 | `context.explain` | Per-statement EXPLAIN plans (JSON format, PG/MySQL) |
+| `context.explain_enabled` | Whether EXPLAIN is enabled for this workflow |
 
 ### Approve
 

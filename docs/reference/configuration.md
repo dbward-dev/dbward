@@ -56,6 +56,7 @@ operations = ["execute_dml"]       # omitted = all operations (default)
 require_reason = true
 allow_self_approve = false
 allow_same_approver_across_steps = true  # default: true
+explain = true                           # Run EXPLAIN dry-run (default: true)
 pending_ttl_secs = 86400                 # Request expires if not approved (optional)
 statement_timeout_secs = 60              # Override agent timeout (optional)
 
