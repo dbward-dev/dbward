@@ -266,7 +266,7 @@ impl AuditRepo for SqliteAuditRepo {
     }
 }
 
-fn category_str(c: EventCategory) -> &'static str {
+pub(crate) fn category_str(c: EventCategory) -> &'static str {
     match c {
         EventCategory::Approval => "approval",
         EventCategory::Execution => "execution",
@@ -283,7 +283,7 @@ fn parse_category(s: &str) -> EventCategory {
     EventCategory::parse(s)
 }
 
-fn outcome_str(o: EventOutcome) -> &'static str {
+pub(crate) fn outcome_str(o: EventOutcome) -> &'static str {
     match o {
         EventOutcome::Success => "success",
         EventOutcome::Denied => "denied",
@@ -301,7 +301,7 @@ fn parse_outcome(s: &str) -> EventOutcome {
     }
 }
 
-fn actor_type_str(a: ActorType) -> &'static str {
+pub(crate) fn actor_type_str(a: ActorType) -> &'static str {
     match a {
         ActorType::User => "user",
         ActorType::Agent => "agent",

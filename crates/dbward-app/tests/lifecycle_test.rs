@@ -217,6 +217,7 @@ impl RequestWriter for SharedRepo {
     fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
         Ok(true)
     }
+    fn mark_approved_from_dispatched_and_record(&self, _: &str, _: &dbward_domain::entities::AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
 }
 
 impl ApprovalRepo for SharedRepo {
@@ -282,7 +283,7 @@ impl BackgroundTaskRepo for SharedRepo {
     fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
         Ok(true)
     }
-    fn mark_expired_and_record(&self, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> {
+    fn mark_expired_and_record(&self, _: &str, _: &dbward_domain::entities::AuditEvent, _: &str) -> Result<bool, AppError> {
         Ok(true)
     }
     fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
@@ -519,7 +520,7 @@ impl ResultChannel for FakeResultChannel {
 
 struct FakeAuditLogger;
 impl AuditLogger for FakeAuditLogger {
-    fn record(&self, _: &AuditEvent) -> Result<(), AppError> {
+    fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> {
         Ok(())
     }
 }
@@ -1320,7 +1321,7 @@ impl AgentRepo for SharedAgentRepo {
         request_id: &str,
         success: bool,
         now: DateTime<Utc>,
-        _audit_event: &AuditEvent,
+        _audit_event: &dbward_domain::entities::AuditEvent,
         _result_manifest: Option<&ExecutionResult>,
         _share_with: &[ResultAccess],
     ) -> Result<dbward_app::ports::CompletionOutcome, AppError> {
@@ -1360,7 +1361,7 @@ impl AgentRepo for SharedAgentRepo {
         &self,
         _: &str,
         _: &str,
-        _: &AuditEvent,
+        _: &dbward_domain::entities::AuditEvent,
         _: &str,
     ) -> Result<bool, AppError> {
         Ok(true)

@@ -95,7 +95,7 @@ impl EventDispatcher for NoopDispatcher {
 
 pub struct NoopAuditLogger;
 impl crate::ports::AuditLogger for NoopAuditLogger {
-    fn record(&self, _: &AuditEvent) -> Result<(), AppError> {
+    fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> {
         Ok(())
     }
 }
@@ -255,6 +255,7 @@ impl RequestWriter for FakeRequestWriter {
     fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
         Ok(true)
     }
+    fn mark_approved_from_dispatched_and_record(&self, _: &str, _: &dbward_domain::entities::AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
 }
 
 // --- ApprovalRepo ---
@@ -313,7 +314,7 @@ impl BackgroundTaskRepo for FakeBackgroundTaskRepo {
     fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
         Ok(true)
     }
-    fn mark_expired_and_record(&self, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> {
+    fn mark_expired_and_record(&self, _: &str, _: &dbward_domain::entities::AuditEvent, _: &str) -> Result<bool, AppError> {
         Ok(true)
     }
     fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {

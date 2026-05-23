@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission};
-use dbward_domain::entities::{AuditContext, AuditEvent};
+use dbward_domain::entities::{AuditContext};
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -67,7 +67,7 @@ impl UserManage {
             .cancel_all_for_user(&input.user_id, now)?;
 
         // Audit
-        self.audit.record(&AuditEvent::simple(
+        self.audit.record(&dbward_domain::entities::AuditEvent::simple(
             "user_disabled",
             "identity",
             &user.subject_id,
@@ -100,7 +100,7 @@ impl UserManage {
         let now = self.clock.now();
         self.user_repo.activate(user_id, now)?;
 
-        self.audit.record(&AuditEvent::simple(
+        self.audit.record(&dbward_domain::entities::AuditEvent::simple(
             "user_activated",
             "identity",
             &user.subject_id,
@@ -169,7 +169,7 @@ mod tests {
     }
     struct FakeAudit;
     impl AuditLogger for FakeAudit {
-        fn record(&self, _: &AuditEvent) -> Result<(), AppError> {
+        fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> {
             Ok(())
         }
     }
@@ -311,6 +311,7 @@ mod tests {
         fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
             Ok(true)
         }
+    fn mark_approved_from_dispatched_and_record(&self, _: &str, _: &dbward_domain::entities::AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
     }
 
     fn admin_user() -> AuthUser {

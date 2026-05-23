@@ -97,6 +97,12 @@ pub trait RequestWriter: Send + Sync {
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<u32, AppError>;
     fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError>;
+    fn mark_approved_from_dispatched_and_record(
+        &self,
+        id: &str,
+        audit_event: &AuditEvent,
+        now: &str,
+    ) -> Result<bool, AppError>;
 }
 
 // --- ApprovalRepo ---

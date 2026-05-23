@@ -425,6 +425,7 @@ mod tests {
         fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
             Ok(true)
         }
+    fn mark_approved_from_dispatched_and_record(&self, _: &str, _: &dbward_domain::entities::AuditEvent, _: &str) -> Result<bool, AppError> { Ok(true) }
     }
 
     fn make_request(status: RequestStatus) -> Request {
