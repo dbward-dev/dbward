@@ -227,6 +227,11 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/audit/verify", axum::routing::get(audit::verify_chain))
         // Databases
         .route("/api/databases", axum::routing::get(databases::list))
+        // Policy resolution
+        .route(
+            "/api/policy-resolution",
+            axum::routing::get(policies::policy_resolution),
+        )
         .route("/api/schemas/{db}", axum::routing::get(schemas::get_schema))
         // Public key
         .route("/api/public-key", axum::routing::get(health::public_key))

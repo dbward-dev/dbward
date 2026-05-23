@@ -7,6 +7,7 @@ mod execute;
 pub(crate) mod helpers;
 mod migrate;
 mod misc;
+mod policy;
 mod request;
 mod result;
 mod server;
@@ -197,6 +198,25 @@ pub enum Command {
         /// Network timeout per check in seconds
         #[arg(long, default_value = "5")]
         timeout: u64,
+    },
+    /// Show effective policy for a database/environment
+    Policy {
+        #[command(subcommand)]
+        action: PolicyAction,
+    },
+}
+
+#[derive(clap::Subcommand)]
+pub enum PolicyAction {
+    /// Resolve effective policy for a database/environment
+    Resolve {
+        /// Database name
+        database: String,
+        /// Environment name
+        environment: String,
+        /// Specific operation to resolve
+        #[arg(long)]
+        operation: Option<String>,
     },
 }
 
@@ -451,6 +471,22 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Agents => misc::run_agents(&sc, json_output).await,
         Command::User { action } => user::run_user(&sc, action).await,
         Command::Token { action } => token::run_token_command(&action, &sc, json_output).await,
+        Command::Policy { action } => match action {
+            PolicyAction::Resolve {
+                database,
+                environment,
+                operation,
+            } => {
+                policy::run_resolve(
+                    &sc,
+                    json_output,
+                    &database,
+                    &environment,
+                    operation.as_deref(),
+                )
+                .await
+            }
+        },
         // Handled above
         Command::Init { .. }
         | Command::Login { .. }

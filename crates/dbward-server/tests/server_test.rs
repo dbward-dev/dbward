@@ -1119,3 +1119,58 @@ async fn response_includes_version_header() {
     let header = resp.headers().get("x-dbward-version").unwrap();
     assert_eq!(header.to_str().unwrap(), env!("CARGO_PKG_VERSION"));
 }
+
+#[tokio::test]
+async fn policy_resolution_unregistered_db_returns_deny() {
+    let app = build_app(test_state(), vec![]);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/policy-resolution?database=app&environment=production")
+                .header("authorization", "Bearer valid-test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["registered"], false);
+    assert_eq!(json["decision_preview"], "deny");
+    assert_eq!(json["reason_code"], "db_not_registered");
+}
+
+#[tokio::test]
+async fn policy_resolution_invalid_operation_returns_400() {
+    let app = build_app(test_state(), vec![]);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/policy-resolution?database=app&environment=production&operation=invalid_op")
+                .header("authorization", "Bearer valid-test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn policy_resolution_missing_params_returns_400() {
+    let app = build_app(test_state(), vec![]);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/policy-resolution?database=app")
+                .header("authorization", "Bearer valid-test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
