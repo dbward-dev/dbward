@@ -193,6 +193,43 @@ GET /api/storage-config
 
 ---
 
+## Schemas
+
+### `GET /api/schemas/{db}`
+
+Returns the agent-collected schema snapshot for a database. The server automatically resolves the best available environment (production > staging > development) from snapshots with `status=ready` that the caller is authorized to view.
+
+**Query parameters:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `summary` | `true` | When true, returns table names and counts only. Set to `false` for full column/constraint/index details. |
+| `table` | — | Filter to a single table. Supports `schema.table` format (e.g., `public.users`). Overrides `summary`. |
+
+**Response (200):**
+
+```json
+{
+  "database": "app",
+  "environment": "production",
+  "dialect": "postgresql",
+  "status": "ready",
+  "collected_at": "2026-05-23T01:00:00Z",
+  "tables": [
+    { "name": "users", "schema_name": "public", "estimated_rows": 50000, "column_count": 12 }
+  ]
+}
+```
+
+**Errors:**
+
+| Code | Condition |
+|------|-----------|
+| 404 | Database not registered, no ready snapshot, or table not found |
+| 403 | No authorized environment available |
+
+---
+
 ## Agents
 
 ### Poll for jobs

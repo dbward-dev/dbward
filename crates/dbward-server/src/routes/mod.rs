@@ -10,6 +10,7 @@ mod health;
 mod metrics;
 mod policies;
 mod requests;
+mod schemas;
 pub(crate) mod slack;
 mod tokens;
 mod users;
@@ -226,6 +227,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/audit/verify", axum::routing::get(audit::verify_chain))
         // Databases
         .route("/api/databases", axum::routing::get(databases::list))
+        .route("/api/schemas/{db}", axum::routing::get(schemas::get_schema))
         // Public key
         .route("/api/public-key", axum::routing::get(health::public_key))
         // Stub endpoints (M-16)
