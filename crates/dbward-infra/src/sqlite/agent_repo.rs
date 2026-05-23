@@ -476,7 +476,7 @@ impl AgentRepo for SqliteAgentRepo {
             audit_event.actor_id,
             audit_event.created_at.to_rfc3339(),
             prev_hash.as_deref().unwrap_or(""),
-            "success",
+            crate::sqlite::audit_repo::outcome_str(audit_event.outcome),
             audit_event.request_id.as_deref().unwrap_or(""),
             audit_event.operation.as_deref().unwrap_or(""),
             audit_event.database_name.as_deref().unwrap_or(""),
@@ -489,9 +489,9 @@ impl AgentRepo for SqliteAgentRepo {
         tx.execute(
             "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
             rusqlite::params![
-                id, audit_event.event_type, "agent",
-                audit_event.event_version, "success",
-                audit_event.actor_id, "system",
+                id, audit_event.event_type, crate::sqlite::audit_repo::category_str(audit_event.event_category),
+                audit_event.event_version, crate::sqlite::audit_repo::outcome_str(audit_event.outcome),
+                audit_event.actor_id, crate::sqlite::audit_repo::actor_type_str(audit_event.actor_type),
                 audit_event.resource_type, audit_event.resource_id,
                 audit_event.peer_ip, audit_event.client_ip, audit_event.client_ip_source,
                 audit_event.request_id, audit_event.operation,
@@ -545,6 +545,9 @@ fn insert_audit_in_agent_tx(
     audit_event: &AuditEvent,
 ) -> Result<(), AppError> {
     use sha2::{Digest, Sha256};
+    let outcome = crate::sqlite::audit_repo::outcome_str(audit_event.outcome);
+    let category = crate::sqlite::audit_repo::category_str(audit_event.event_category);
+    let actor_type = crate::sqlite::audit_repo::actor_type_str(audit_event.actor_type);
 
     let prev_hash: Option<String> = tx
         .query_row(
@@ -561,7 +564,7 @@ fn insert_audit_in_agent_tx(
         audit_event.actor_id,
         audit_event.created_at.to_rfc3339(),
         prev_hash.as_deref().unwrap_or(""),
-        "success",
+        outcome,
         audit_event.request_id.as_deref().unwrap_or(""),
         audit_event.operation.as_deref().unwrap_or(""),
         audit_event.database_name.as_deref().unwrap_or(""),
@@ -574,9 +577,9 @@ fn insert_audit_in_agent_tx(
     tx.execute(
         "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
         params![
-            id, audit_event.event_type, "execution",
-            audit_event.event_version, "success",
-            audit_event.actor_id, "agent",
+            id, audit_event.event_type, category,
+            audit_event.event_version, outcome,
+            audit_event.actor_id, actor_type,
             audit_event.resource_type, audit_event.resource_id,
             audit_event.peer_ip, audit_event.client_ip, audit_event.client_ip_source,
             audit_event.request_id, audit_event.operation,

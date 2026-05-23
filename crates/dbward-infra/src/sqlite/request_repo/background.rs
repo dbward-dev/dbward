@@ -87,7 +87,7 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
             audit_event.actor_id,
             audit_event.created_at.to_rfc3339(),
             prev_hash.as_deref().unwrap_or(""),
-            "success",
+            crate::sqlite::audit_repo::outcome_str(audit_event.outcome),
             audit_event.request_id.as_deref().unwrap_or(""),
             audit_event.operation.as_deref().unwrap_or(""),
             audit_event.database_name.as_deref().unwrap_or(""),
@@ -100,9 +100,9 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
         tx.execute(
             "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
             params![
-                audit_id, audit_event.event_type, "approval",
-                audit_event.event_version, "success",
-                audit_event.actor_id, "system",
+                audit_id, audit_event.event_type, crate::sqlite::audit_repo::category_str(audit_event.event_category),
+                audit_event.event_version, crate::sqlite::audit_repo::outcome_str(audit_event.outcome),
+                audit_event.actor_id, crate::sqlite::audit_repo::actor_type_str(audit_event.actor_type),
                 audit_event.resource_type, audit_event.resource_id,
                 audit_event.peer_ip, audit_event.client_ip, audit_event.client_ip_source,
                 audit_event.request_id, audit_event.operation,

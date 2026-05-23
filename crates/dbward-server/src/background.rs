@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use dbward_app::ports::WebhookEvent;
-use dbward_domain::entities::{ActorType, AuditEvent, EventCategory, EventOutcome};
+use dbward_domain::entities::{ActorType, AuditContext, AuditEvent, EventCategory, EventOutcome};
 
 use crate::config::RetentionConfig;
 use crate::state::AppState;
@@ -235,13 +235,21 @@ pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
     };
 
     for id in ids {
+        let mut audit_event = AuditEvent::simple(
+            "dispatch_timeout",
+            "approval",
+            "system",
+            Some(&id),
+            now,
+            &AuditContext::System,
+        );
+        audit_event.request_id = Some(id.clone());
         match state
             .request_writer
-            .mark_approved_from_dispatched(&id, &now_str)
+            .mark_approved_from_dispatched_and_record(&id, &audit_event, &now_str)
         {
             Ok(true) => {
                 result.processed += 1;
-                emit_audit(state, "dispatch_timeout", EventCategory::Approval, &id);
             }
             Ok(false) => {}
             Err(e) => {
@@ -303,6 +311,15 @@ pub(crate) async fn run_record_purge_once(
             if n > 0 {
                 result.processed += n;
                 info!(task = "record_purge", count = n, "purged old audit events");
+                // A8: Record the purge action itself
+                let _ = state.audit_logger.record(&AuditEvent::simple(
+                    "audit_purged",
+                    "policy",
+                    "system",
+                    None,
+                    state.clock.now(),
+                    &AuditContext::System,
+                ));
             }
         }
         Err(e) => {
@@ -358,26 +375,6 @@ pub(crate) async fn run_record_purge_once(
     }
 
     result
-}
-
-// --- Helpers ---
-
-fn emit_audit(state: &AppState, event_type: &str, category: EventCategory, request_id: &str) {
-    let mut event = AuditEvent::simple(
-        event_type,
-        "approval",
-        "system",
-        Some(request_id),
-        state.clock.now(),
-        &dbward_domain::entities::AuditContext::System,
-    );
-    event.actor_type = ActorType::System;
-    event.request_id = Some(request_id.to_string());
-    event.outcome = EventOutcome::Success;
-    event.event_category = category;
-    if let Err(e) = state.audit_logger.record(&event) {
-        error!(task = "background", request_id = %request_id, error = %e, "audit record failed");
-    }
 }
 
 fn make_audit_event(

@@ -194,6 +194,7 @@ impl AuditRepo for SqliteAuditRepo {
 
         let mut total: u64 = 0;
         let mut expected_prev: Option<String> = None;
+        let mut is_first = true;
 
         for row in rows {
             let (
@@ -214,7 +215,27 @@ impl AuditRepo for SqliteAuditRepo {
             ) = row.map_err(|e| AppError::Internal(e.to_string()))?;
             total += 1;
 
-            if prev_hash.as_deref() != expected_prev.as_deref() {
+            if is_first {
+                is_first = false;
+                // First event: allow purge boundary (prev_hash points to deleted event)
+                if let Some(ref prev) = prev_hash {
+                    let exists: bool = conn
+                        .query_row(
+                            "SELECT EXISTS(SELECT 1 FROM audit_events WHERE event_hash = ?1)",
+                            rusqlite::params![prev],
+                            |r| r.get(0),
+                        )
+                        .unwrap_or(false);
+                    if exists {
+                        // prev_hash target still in DB but not expected → chain broken
+                        return Ok(AuditVerifyResult {
+                            total_events: total,
+                            first_broken_id: Some(id),
+                        });
+                    }
+                    // Target doesn't exist → purge boundary, OK
+                }
+            } else if prev_hash.as_deref() != expected_prev.as_deref() {
                 return Ok(AuditVerifyResult {
                     total_events: total,
                     first_broken_id: Some(id),
@@ -266,7 +287,7 @@ impl AuditRepo for SqliteAuditRepo {
     }
 }
 
-fn category_str(c: EventCategory) -> &'static str {
+pub(crate) fn category_str(c: EventCategory) -> &'static str {
     match c {
         EventCategory::Approval => "approval",
         EventCategory::Execution => "execution",
@@ -283,7 +304,7 @@ fn parse_category(s: &str) -> EventCategory {
     EventCategory::parse(s)
 }
 
-fn outcome_str(o: EventOutcome) -> &'static str {
+pub(crate) fn outcome_str(o: EventOutcome) -> &'static str {
     match o {
         EventOutcome::Success => "success",
         EventOutcome::Denied => "denied",
@@ -301,7 +322,7 @@ fn parse_outcome(s: &str) -> EventOutcome {
     }
 }
 
-fn actor_type_str(a: ActorType) -> &'static str {
+pub(crate) fn actor_type_str(a: ActorType) -> &'static str {
     match a {
         ActorType::User => "user",
         ActorType::Agent => "agent",
