@@ -51,9 +51,7 @@ fn row_to_delivery(row: &rusqlite::Row<'_>) -> Result<WebhookDelivery, rusqlite:
         last_error: row.get("last_error")?,
         created_at: {
             let s: String = row.get("created_at")?;
-            chrono::DateTime::parse_from_rfc3339(&s)
-                .map(|d| d.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now())
+            super::parse_datetime(&s)?
         },
         last_attempted_at: row
             .get::<_, Option<String>>("last_attempted_at")?

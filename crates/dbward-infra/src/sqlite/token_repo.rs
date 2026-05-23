@@ -176,9 +176,7 @@ fn row_to_token(row: &rusqlite::Row) -> rusqlite::Result<Token> {
                 .ok()
                 .map(|d| d.with_timezone(&Utc))
         }),
-        created_at: DateTime::parse_from_rfc3339(&created_str)
-            .unwrap()
-            .with_timezone(&Utc),
+        created_at: super::parse_datetime(&created_str)?,
         revoked_at: revoked_str.and_then(|s| {
             DateTime::parse_from_rfc3339(&s)
                 .ok()

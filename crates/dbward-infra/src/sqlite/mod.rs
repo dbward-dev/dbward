@@ -30,9 +30,23 @@ pub use user_repo::SqliteUserRepo;
 pub use webhook_delivery_repo::SqliteWebhookDeliveryRepo;
 pub use webhook_repo::SqliteWebhookRepo;
 
+use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use std::sync::Arc;
 use std::sync::Mutex;
+
+/// Parse an RFC3339 datetime string from the database without panicking.
+pub(crate) fn parse_datetime(s: &str) -> Result<DateTime<Utc>, rusqlite::Error> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(e),
+            )
+        })
+}
 
 /// Shared SQLite connection handle used by all repos.
 pub type DbConn = Arc<Mutex<Connection>>;
