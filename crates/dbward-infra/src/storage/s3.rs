@@ -55,17 +55,6 @@ impl S3ResultStore {
     fn resolve_path(&self, key: &str) -> Path {
         Path::from(format!("{}{}", self.prefix, key))
     }
-
-    /// Verify connectivity by listing the bucket root.
-    pub async fn health_check(&self) -> Result<(), AppError> {
-        use object_store::path::Path;
-        let prefix = Path::from(format!("{}results/", self.prefix));
-        self.store
-            .list_with_delimiter(Some(&prefix))
-            .await
-            .map_err(|e| AppError::Internal(format!("S3 health check failed: {e}")))?;
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -114,6 +103,17 @@ impl ResultStore for S3ResultStore {
             tracing::error!(key, error = %e, "S3 delete failed");
             AppError::Internal(e.to_string())
         })?;
+        Ok(())
+    }
+
+    async fn health_check(&self) -> Result<(), AppError> {
+        // Write probe to verify actual put/delete capability
+        let probe = self.resolve_path(".health-probe");
+        self.store
+            .put(&probe, b"ok".to_vec().into())
+            .await
+            .map_err(|e| AppError::Internal(format!("S3 health check failed: {e}")))?;
+        let _ = self.store.delete(&probe).await;
         Ok(())
     }
 }

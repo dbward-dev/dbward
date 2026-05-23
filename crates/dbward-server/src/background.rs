@@ -1,8 +1,9 @@
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::Duration;
-use tokio::task::JoinSet;
+use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::{Duration as TokioDuration, Instant, interval, interval_at};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
@@ -23,6 +24,12 @@ const DISPATCH_TIMEOUT_SECS: i64 = 300;
 const WEBHOOK_RETRY_INTERVAL: TokioDuration = TokioDuration::from_secs(30);
 const WEBHOOK_STALE_CLAIM_SECS: i64 = 300;
 
+// --- Supervisor constants ---
+
+const MAX_RESTARTS: usize = 5;
+const RESTART_WINDOW: TokioDuration = TokioDuration::from_secs(3600);
+const RESTART_DELAY: TokioDuration = TokioDuration::from_secs(1);
+
 // --- TickResult ---
 
 #[derive(Default, Debug)]
@@ -31,43 +38,179 @@ pub(crate) struct TickResult {
     pub failed: u32,
 }
 
+// --- Task definitions ---
+
+/// Each supervised task returns (index, panicked) via catch_unwind wrapper.
+#[allow(clippy::type_complexity)]
+struct TaskDef {
+    name: &'static str,
+    spawn_fn: Box<
+        dyn Fn(
+                AppState,
+                CancellationToken,
+            ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>
+            + Send
+            + Sync,
+    >,
+}
+
+fn build_task_defs(retention: Arc<RetentionConfig>) -> Vec<TaskDef> {
+    vec![
+        TaskDef {
+            name: "lease_reclaim",
+            spawn_fn: Box::new(|state, shutdown| Box::pin(lease_reclaim_loop(state, shutdown))),
+        },
+        TaskDef {
+            name: "ttl_expiry",
+            spawn_fn: Box::new(|state, shutdown| Box::pin(ttl_expiry_loop(state, shutdown))),
+        },
+        TaskDef {
+            name: "dispatch_timeout",
+            spawn_fn: Box::new(|state, shutdown| Box::pin(dispatch_timeout_loop(state, shutdown))),
+        },
+        TaskDef {
+            name: "record_purge",
+            spawn_fn: Box::new(move |state, shutdown| {
+                let r = retention.clone();
+                Box::pin(async move { record_purge_loop(state, shutdown, &r).await })
+            }),
+        },
+        TaskDef {
+            name: "webhook_retry",
+            spawn_fn: Box::new(|state, shutdown| Box::pin(webhook_retry_loop(state, shutdown))),
+        },
+        TaskDef {
+            name: "dry_run_reclaim",
+            spawn_fn: Box::new(|state, shutdown| Box::pin(dry_run_reclaim_loop(state, shutdown))),
+        },
+        TaskDef {
+            name: "context_timeout",
+            spawn_fn: Box::new(|state, shutdown| Box::pin(context_timeout_loop(state, shutdown))),
+        },
+        TaskDef {
+            name: "license_expiry",
+            spawn_fn: Box::new(|state, shutdown| Box::pin(license_expiry_loop(state, shutdown))),
+        },
+    ]
+}
+
 // --- Public entry point ---
 
 pub fn spawn_background_tasks(
     state: AppState,
     draining: Arc<AtomicBool>,
     retention: RetentionConfig,
-) -> (CancellationToken, JoinSet<()>) {
+) -> (CancellationToken, JoinHandle<()>) {
     let shutdown = CancellationToken::new();
-    let mut set = JoinSet::new();
-
-    set.spawn(lease_reclaim_loop(state.clone(), shutdown.clone()));
-    set.spawn(ttl_expiry_loop(state.clone(), shutdown.clone()));
-    set.spawn(dispatch_timeout_loop(state.clone(), shutdown.clone()));
-    set.spawn(record_purge_loop(
-        state.clone(),
+    let handle = tokio::spawn(supervisor_loop(
+        state,
         shutdown.clone(),
-        retention,
+        draining,
+        Arc::new(retention),
     ));
-    set.spawn(webhook_retry_loop(state.clone(), shutdown.clone()));
-    set.spawn(dry_run_reclaim_loop(state.clone(), shutdown.clone()));
-    set.spawn(context_timeout_loop(state.clone(), shutdown.clone()));
-    set.spawn(license_expiry_loop(state.clone(), shutdown.clone()));
+    (shutdown, handle)
+}
 
-    // Bridge: when draining is set externally, also cancel background tasks
-    let shutdown_bridge = shutdown.clone();
-    let draining_bridge = draining;
-    set.spawn(async move {
-        loop {
-            tokio::time::sleep(TokioDuration::from_millis(500)).await;
-            if draining_bridge.load(Ordering::SeqCst) {
-                shutdown_bridge.cancel();
+/// Supervisor that restarts panicked background tasks with a sliding-window rate limit.
+/// Each task future is wrapped to return its index, enabling identification on panic.
+async fn supervisor_loop(
+    state: AppState,
+    shutdown: CancellationToken,
+    draining: Arc<AtomicBool>,
+    retention: Arc<RetentionConfig>,
+) {
+    let tasks = build_task_defs(retention);
+    let task_count = tasks.len();
+    // JoinSet<usize>: each future returns its own task index
+    let mut set: JoinSet<usize> = JoinSet::new();
+    // Single sliding window for all restarts (global budget)
+    let mut restart_timestamps: VecDeque<Instant> = VecDeque::new();
+
+    // Initial spawn — wrap each task future to return its index
+    for i in 0..task_count {
+        spawn_task(&tasks, i, &state, &shutdown, &mut set);
+    }
+
+    loop {
+        tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => break,
+            _ = drain_check(&draining) => {
+                shutdown.cancel();
                 break;
             }
-        }
-    });
+            result = set.join_next() => {
+                let Some(result) = result else { break };
+                match result {
+                    Ok(_idx) => {
+                        // Normal exit (task loop ended due to shutdown)
+                    }
+                    Err(e) if e.is_panic() => {
+                        error!("background task panicked: {e}");
 
-    (shutdown, set)
+                        // Sliding window rate limit (global budget)
+                        let now = Instant::now();
+                        restart_timestamps.retain(|t| now.duration_since(*t) < RESTART_WINDOW);
+
+                        if restart_timestamps.len() >= MAX_RESTARTS {
+                            error!(
+                                "background tasks exceeded max restart limit ({} in {}s), initiating shutdown",
+                                MAX_RESTARTS, RESTART_WINDOW.as_secs()
+                            );
+                            draining.store(true, Ordering::SeqCst);
+                            shutdown.cancel();
+                            break;
+                        }
+
+                        restart_timestamps.push_back(now);
+
+                        set.abort_all();
+                        while set.join_next().await.is_some() {}
+
+                        if shutdown.is_cancelled() {
+                            break;
+                        }
+
+                        tokio::time::sleep(RESTART_DELAY).await;
+
+                        // Re-spawn all tasks
+                        for i in 0..task_count {
+                            info!(task = tasks[i].name, "respawning background task");
+                            spawn_task(&tasks, i, &state, &shutdown, &mut set);
+                        }
+                        info!("background tasks restarted after panic");
+                    }
+                    Err(e) => {
+                        error!(error = %e, "background task cancelled unexpectedly");
+                    }
+                }
+            }
+        }
+    }
+    set.abort_all();
+}
+
+fn spawn_task(
+    tasks: &[TaskDef],
+    idx: usize,
+    state: &AppState,
+    shutdown: &CancellationToken,
+    set: &mut JoinSet<usize>,
+) {
+    let fut = (tasks[idx].spawn_fn)(state.clone(), shutdown.clone());
+    set.spawn(async move {
+        fut.await;
+        idx
+    });
+}
+
+async fn drain_check(draining: &Arc<AtomicBool>) {
+    loop {
+        tokio::time::sleep(TokioDuration::from_millis(500)).await;
+        if draining.load(Ordering::SeqCst) {
+            return;
+        }
+    }
 }
 
 // --- Lease Reclaim ---
@@ -267,7 +410,7 @@ pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
 async fn record_purge_loop(
     state: AppState,
     shutdown: CancellationToken,
-    retention: RetentionConfig,
+    retention: &RetentionConfig,
 ) {
     // Delay first execution by one interval
     let start = Instant::now() + RECORD_PURGE_INTERVAL;
@@ -275,7 +418,7 @@ async fn record_purge_loop(
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let r = run_record_purge_once(&state, &retention).await;
+                let r = run_record_purge_once(&state, retention).await;
                 info!(task = "record_purge", processed = r.processed, failed = r.failed, "tick completed");
             }
             _ = shutdown.cancelled() => break,
@@ -579,5 +722,17 @@ async fn license_expiry_loop(state: AppState, shutdown: CancellationToken) {
             }
             _ = shutdown.cancelled() => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restart_window_constants_are_reasonable() {
+        assert_eq!(MAX_RESTARTS, 5);
+        assert_eq!(RESTART_WINDOW, TokioDuration::from_secs(3600));
+        assert_eq!(RESTART_DELAY, TokioDuration::from_secs(1));
     }
 }

@@ -17,15 +17,51 @@ pub async fn health() -> Json<serde_json::Value> {
     }))
 }
 
-pub async fn ready(State(state): State<AppState>) -> StatusCode {
+pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
     if state.draining.load(Ordering::SeqCst) {
-        return StatusCode::SERVICE_UNAVAILABLE;
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"status": "draining"})),
+        );
     }
-    // Verify SQLite is alive
-    if state.database_registry.list().is_err() {
-        return StatusCode::SERVICE_UNAVAILABLE;
+
+    let mut checks = serde_json::Map::new();
+    let mut all_ok = true;
+
+    // SQLite check
+    match state.database_registry.list() {
+        Ok(_) => {
+            checks.insert("sqlite".into(), serde_json::json!("ok"));
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "readiness: sqlite check failed");
+            checks.insert("sqlite".into(), serde_json::json!("unavailable"));
+            all_ok = false;
+        }
     }
-    StatusCode::OK
+
+    // ResultStore check
+    match state.result_store.health_check().await {
+        Ok(()) => {
+            checks.insert("result_store".into(), serde_json::json!("ok"));
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "readiness: result_store check failed");
+            checks.insert("result_store".into(), serde_json::json!("unavailable"));
+            all_ok = false;
+        }
+    }
+
+    let status = if all_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    let status_str = if all_ok { "ok" } else { "degraded" };
+    (
+        status,
+        Json(serde_json::json!({"status": status_str, "checks": checks})),
+    )
 }
 
 pub async fn public_key(

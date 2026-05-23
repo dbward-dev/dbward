@@ -287,6 +287,9 @@ mod tests {
         async fn delete(&self, _: &str) -> Result<(), AppError> {
             Ok(())
         }
+        async fn health_check(&self) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     /// Minimal single-item stream for tests.
