@@ -749,4 +749,59 @@ mod tests {
         assert!(text.contains("Request req_123 status: pending"));
         assert!(text.contains("Step 1 [all]: role:admin"));
     }
+
+    #[test]
+    fn tools_count_is_12() {
+        let defs = tools_definitions();
+        let tools = defs.as_array().unwrap();
+        assert_eq!(tools.len(), 12);
+    }
+
+    #[test]
+    fn old_tool_names_are_removed() {
+        let defs = tools_definitions();
+        let names: Vec<&str> = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(!names.contains(&"dbward_check_request"));
+        assert!(!names.contains(&"dbward_get_result"));
+        assert!(!names.contains(&"dbward_list_schemas"));
+        assert!(!names.contains(&"dbward_describe_table"));
+        assert!(!names.contains(&"dbward_compare_schema"));
+    }
+
+    #[test]
+    fn wait_request_has_include_result_param() {
+        let defs = tools_definitions();
+        let tool = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "dbward_wait_request")
+            .unwrap();
+        let props = &tool["inputSchema"]["properties"];
+        assert!(props.get("include_result").is_some());
+        assert!(props.get("timeout").is_some());
+        assert!(props.get("request_id").is_some());
+    }
+
+    #[test]
+    fn inspect_schema_table_is_optional() {
+        let defs = tools_definitions();
+        let tool = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "dbward_inspect_schema")
+            .unwrap();
+        let required = tool["inputSchema"].get("required");
+        // table should NOT be required
+        if let Some(r) = required {
+            let reqs: Vec<&str> = r.as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+            assert!(!reqs.contains(&"table"));
+        }
+    }
 }
