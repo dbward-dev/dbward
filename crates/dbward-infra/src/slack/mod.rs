@@ -1,8 +1,10 @@
 pub mod block_kit;
 mod client;
+pub mod dm_notifier;
 mod notifier;
 
 pub use client::SlackHttpClient;
+pub use dm_notifier::SlackDmNotifier;
 pub use notifier::SlackNotifier;
 
 use dbward_app::error::AppError;
@@ -44,6 +46,16 @@ pub trait SlackClient: Send + Sync {
 
     async fn post_ephemeral(&self, channel: &str, user: &str, text: &str)
     -> Result<(), SlackError>;
+
+    /// Look up a Slack user ID by email address (requires users:read.email scope).
+    async fn lookup_user_by_email(&self, _email: &str) -> Result<Option<String>, SlackError> {
+        Ok(None)
+    }
+
+    /// Open a DM channel with a user (requires im:write scope).
+    async fn conversations_open(&self, _user_id: &str) -> Result<String, SlackError> {
+        Err(SlackError::Api("not implemented".into()))
+    }
 }
 
 /// Persists request_id → Slack message mapping.

@@ -439,6 +439,25 @@ pub struct SlackConfig {
     pub channel: String,
     #[serde(default)]
     pub channels: HashMap<String, String>,
+    #[serde(default)]
+    pub notifications: SlackNotificationsConfig,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct SlackNotificationsConfig {
+    #[serde(default = "default_true")]
+    pub requester: bool,
+    #[serde(default = "default_true")]
+    pub approver: bool,
+}
+
+impl Default for SlackNotificationsConfig {
+    fn default() -> Self {
+        Self {
+            requester: true,
+            approver: true,
+        }
+    }
 }
 
 fn default_slack_channel() -> String {
