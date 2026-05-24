@@ -20,12 +20,23 @@ Initialize configuration file interactively.
 ```bash
 dbward init
 dbward init --non-interactive --force
+dbward init --preset small-team
+dbward init --preset small-team --output-dir ./config --dry-run
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--non-interactive` | Skip prompts, use defaults |
 | `--force` | Overwrite existing config |
+| `--preset <NAME>` | Generate config files from a preset template |
+| `--output-dir <DIR>` | Output directory (default: `./`) |
+| `--dry-run` | Print generated files to stdout without writing |
+
+**Available presets:**
+
+| Preset | Files generated | Description |
+|--------|----------------|-------------|
+| `small-team` | dbward.toml, server.toml, agent.toml | 5-50 person team, PostgreSQL, 3 environments (dev/staging/prod) |
 
 ---
 
