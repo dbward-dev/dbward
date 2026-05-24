@@ -276,4 +276,4 @@ agent_token = "${DBWARD_AGENT_TOKEN}"
 url = "postgres://user:${DB_PASSWORD}@host/db"
 ```
 
-Server config errors on undefined variables. Agent and CLI config substitute empty strings for undefined variables.
+All config files error on undefined variables. Use `${VAR:-default}` to provide a fallback value (e.g., `${PORT:-3000}`). Use `${VAR:-}` for an intentional empty default.

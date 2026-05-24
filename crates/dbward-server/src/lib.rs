@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::Router;
+use config::{AutoApproveExt, SqlReviewExt};
 use dbward_app::ports::PolicyRepo;
 use dbward_app::use_cases::sync_config::{
     ApproverInput, ExecutionPolicyInput, SyncConfig, WebhookInput, WorkflowInput, WorkflowStepInput,

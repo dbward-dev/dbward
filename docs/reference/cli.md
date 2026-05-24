@@ -276,7 +276,7 @@ dbward doctor --server dbward-server.toml  # Validate server config
 
 **CLI mode checks:** config parse, env vars, server reachable, version info, auth configured, auth valid, databases exist, workflows exist.
 
-**Agent mode checks:** env var audit (detects silent empty expansion), config parse + validate, server reachable, agent token type validation (via `/api/public-key`), DB URL scheme.
+**Agent mode checks:** env var audit (detects undefined/empty sensitive vars), config parse + validate, server reachable, agent token type validation (via `/api/public-key`), DB URL scheme.
 
 **Server mode checks:** env vars, config parse + validate (mirrors server startup: approval_ttl, execution_policy timeout, auto_approve duplicates, workflow operation overlap), workflow validity (db + env), workflow coverage (reverse: registered DB×env with no workflow), role resolution, auto_approve consistency.
 

@@ -14,7 +14,7 @@ async fn main() {
     let args = Args::parse();
     dbward_agent::init_logging();
 
-    let config = match dbward_agent::AgentConfig::load_from_file(&args.config) {
+    let config = match dbward_agent::config::load_from_file(&args.config) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error loading config: {e}");

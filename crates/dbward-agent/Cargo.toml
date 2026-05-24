@@ -10,6 +10,7 @@ name = "dbward-agent"
 path = "src/main.rs"
 
 [dependencies]
+dbward-config = { path = "../dbward-config" }
 dbward-driver = { path = "../dbward-driver", version = "0.1.1" }
 dbward-migrate = { path = "../dbward-migrate" }
 dbward-api-types = { path = "../dbward-api-types" }
