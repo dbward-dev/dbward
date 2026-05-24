@@ -18,6 +18,16 @@ pub enum RedactionMode {
     Full,
 }
 
+/// Compute HMAC-SHA256 signature for webhook payload.
+pub(super) fn compute_webhook_signature(secret: &str, body: &str) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+    mac.update(body.as_bytes());
+    let sig = hex::encode(mac.finalize().into_bytes());
+    format!("sha256={sig}")
+}
+
 struct LiteralRedactor;
 
 impl VisitorMut for LiteralRedactor {
@@ -330,12 +340,8 @@ async fn send_with_retry(
             .header("content-type", "application/json")
             .body(body.to_string());
         if let Some(s) = secret {
-            use hmac::{Hmac, Mac};
-            use sha2::Sha256;
-            let mut mac = Hmac::<Sha256>::new_from_slice(s.as_bytes()).unwrap();
-            mac.update(body.as_bytes());
-            let sig = hex::encode(mac.finalize().into_bytes());
-            req = req.header("x-dbward-signature", format!("sha256={sig}"));
+            let sig = compute_webhook_signature(s, body);
+            req = req.header("x-dbward-signature", sig);
         }
         if let Ok(resp) = req.send().await {
             let status = resp.status().as_u16();
@@ -566,5 +572,56 @@ mod redaction_tests {
     fn redaction_mode_full_clears_detail_raw() {
         // Just verify the enum exists and default is Literals
         assert!(matches!(RedactionMode::default(), RedactionMode::Literals));
+    }
+}
+
+
+#[cfg(test)]
+mod signature_tests {
+    use super::*;
+
+    #[test]
+    fn signature_format_is_sha256_prefixed() {
+        let sig = compute_webhook_signature("secret", "body");
+        assert!(sig.starts_with("sha256="));
+        assert_eq!(sig.len(), "sha256=".len() + 64); // hex-encoded SHA256
+    }
+
+    #[test]
+    fn signature_is_deterministic() {
+        let sig1 = compute_webhook_signature("key", "payload");
+        let sig2 = compute_webhook_signature("key", "payload");
+        assert_eq!(sig1, sig2);
+    }
+
+    #[test]
+    fn different_secret_different_signature() {
+        let sig1 = compute_webhook_signature("secret1", "payload");
+        let sig2 = compute_webhook_signature("secret2", "payload");
+        assert_ne!(sig1, sig2);
+    }
+
+    #[test]
+    fn different_body_different_signature() {
+        let sig1 = compute_webhook_signature("secret", "body1");
+        let sig2 = compute_webhook_signature("secret", "body2");
+        assert_ne!(sig1, sig2);
+    }
+
+    #[test]
+    fn known_vector() {
+        // Pre-computed: HMAC-SHA256("test-secret", "hello")
+        let sig = compute_webhook_signature("test-secret", "hello");
+        assert_eq!(
+            sig,
+            "sha256=bcc889a40667cab715e1dc22ad280692cf4bf1c3a280eeeca60d8dbcd8e4b993"
+        );
+    }
+
+    #[test]
+    fn empty_body_produces_valid_signature() {
+        let sig = compute_webhook_signature("secret", "");
+        assert!(sig.starts_with("sha256="));
+        assert_eq!(sig.len(), "sha256=".len() + 64);
     }
 }

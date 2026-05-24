@@ -7,6 +7,17 @@ use crate::{
     MAX_RESULT_ROWS, QueryOutput, pg_array::parse_pg_array, text_to_json,
 };
 
+/// Reject migration version strings containing characters that could escape
+/// the SQL string literal used in `format!("...VALUES ('{version}')...")`.
+/// Specific to PostgreSQL's raw_sql batch approach.
+fn validate_migration_version(version: &str) -> Result<(), DriverError> {
+    const FORBIDDEN: &[char] = &['\'', ';', '\\', '\n', '\r', '\0'];
+    if version.contains(FORBIDDEN) {
+        return Err(DriverError::QueryFailed("invalid migration version".into()));
+    }
+    Ok(())
+}
+
 pub struct PostgresDriver {
     pool: sqlx::PgPool,
     url: String,
@@ -99,10 +110,7 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), DriverError> {
-        // Version comes from migration filename; reject unsafe characters defensively
-        if version.contains('\'') || version.contains(';') {
-            return Err(DriverError::QueryFailed("invalid migration version".into()));
-        }
+        validate_migration_version(version)?;
         // Combine migration SQL + version record in a single raw_sql batch for atomicity
         let batch =
             format!("{sql}\n;\nINSERT INTO schema_migrations (version) VALUES ('{version}');");
@@ -114,9 +122,7 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn revert_migration(&self, down_sql: &str, version: &str) -> Result<(), DriverError> {
-        if version.contains('\'') || version.contains(';') {
-            return Err(DriverError::QueryFailed("invalid migration version".into()));
-        }
+        validate_migration_version(version)?;
         let batch =
             format!("{down_sql}\n;\nDELETE FROM schema_migrations WHERE version = '{version}';");
         sqlx::raw_sql(&batch)
@@ -520,5 +526,74 @@ fn scalar_json_mapping(name: &str) -> JsonMapping {
         "JSON" | "JSONB" => JsonMapping::Json,
         "BYTEA" => JsonMapping::Binary,
         _ => JsonMapping::Text,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_version_accepted() {
+        assert!(validate_migration_version("20260501120000_create_users").is_ok());
+    }
+
+    #[test]
+    fn numeric_version_accepted() {
+        assert!(validate_migration_version("001").is_ok());
+    }
+
+    #[test]
+    fn single_quote_rejected() {
+        assert!(validate_migration_version("v1'; DROP TABLE x --").is_err());
+    }
+
+    #[test]
+    fn semicolon_rejected() {
+        assert!(validate_migration_version("v1; DROP TABLE x").is_err());
+    }
+
+    #[test]
+    fn backslash_rejected() {
+        assert!(validate_migration_version("v1\\' OR 1=1").is_err());
+    }
+
+    #[test]
+    fn newline_rejected() {
+        assert!(validate_migration_version("v1\n'; DROP TABLE x --").is_err());
+    }
+
+    #[test]
+    fn carriage_return_rejected() {
+        assert!(validate_migration_version("v1\r\n").is_err());
+    }
+
+    #[test]
+    fn null_byte_rejected() {
+        assert!(validate_migration_version("v1\0").is_err());
+    }
+
+    #[test]
+    fn unicode_version_accepted() {
+        // Migration filenames could contain unicode (though unusual)
+        assert!(validate_migration_version("20260501_テスト").is_ok());
+    }
+
+    #[test]
+    fn empty_version_accepted() {
+        // Empty is structurally valid (migrate crate validates non-empty separately)
+        assert!(validate_migration_version("").is_ok());
+    }
+
+    #[test]
+    fn double_quote_accepted() {
+        // Double quotes don't escape single-quoted SQL string literals
+        assert!(validate_migration_version("v1\"test").is_ok());
+    }
+
+    #[test]
+    fn dash_dash_accepted() {
+        // SQL comment chars in version are safe inside single quotes
+        assert!(validate_migration_version("v1--comment").is_ok());
     }
 }
