@@ -114,7 +114,7 @@ pub enum Command {
         #[arg(long = "share-with")]
         share_with: Vec<String>,
         /// Do not persist result to server storage
-        #[arg(long = "no-persist", alias = "no-store", hide_long_help = true)]
+        #[arg(long = "no-persist", alias = "no-store")]
         no_persist: bool,
         /// Result display format
         #[arg(long, value_enum, default_value = "table")]
