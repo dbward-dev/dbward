@@ -80,6 +80,7 @@ async fn version_header(response: axum::response::Response) -> axum::response::R
 }
 
 pub fn build_router(state: AppState) -> Router {
+    let metrics_state = state.clone();
     let authed = Router::new()
         // Requests
         .route(
@@ -274,4 +275,8 @@ pub fn build_router(state: AppState) -> Router {
     public
         .merge(authed)
         .layer(middleware::map_response(version_header))
+        .layer(middleware::from_fn_with_state(
+            metrics_state,
+            super::middleware::metrics::metrics_middleware,
+        ))
 }

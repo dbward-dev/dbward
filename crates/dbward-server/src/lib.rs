@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use axum::Router;
 use config::{AutoApproveExt, SqlReviewExt};
 use dbward_app::ports::PolicyRepo;
+use dbward_app::ports::ResultStore;
 use dbward_app::use_cases::sync_config::{
     ApproverInput, ExecutionPolicyInput, SyncConfig, WebhookInput, WorkflowInput, WorkflowStepInput,
 };
@@ -633,7 +634,7 @@ pub async fn start(
     }
 
     // Spawn background tasks
-    let (bg_shutdown, mut bg_set) =
+    let (bg_shutdown, bg_handle) =
         background::spawn_background_tasks(state.clone(), draining.clone(), retention);
 
     let app = build_app(state, trusted);
@@ -657,14 +658,11 @@ pub async fn start(
     .with_graceful_shutdown(shutdown_fut)
     .await?;
 
-    // Collect background task results (detect panics)
+    // Wait for background supervisor to finish
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while let Ok(Some(result)) = tokio::time::timeout_at(deadline, bg_set.join_next()).await {
-        if let Err(e) = result {
-            tracing::error!(error = %e, "background task panicked");
-        }
+    if let Err(e) = tokio::time::timeout_at(deadline, bg_handle).await {
+        tracing::warn!(error = %e, "background supervisor did not finish in time");
     }
-    bg_set.abort_all();
     tracing::info!("server stopped");
     Ok(())
 }

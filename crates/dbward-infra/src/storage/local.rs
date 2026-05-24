@@ -60,4 +60,15 @@ impl ResultStore for LocalResultStore {
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(())
     }
+
+    async fn health_check(&self) -> Result<(), AppError> {
+        // Verify the store is writable by putting and deleting a probe object
+        let probe = Path::from(".health-probe");
+        self.store
+            .put(&probe, b"ok".to_vec().into())
+            .await
+            .map_err(|e| AppError::Internal(format!("local store health check failed: {e}")))?;
+        let _ = self.store.delete(&probe).await;
+        Ok(())
+    }
 }

@@ -577,6 +577,7 @@ pub trait ResultStore: Send + Sync {
     async fn put(&self, key: &str, data: &[u8], opts: PutOptions) -> Result<(), AppError>;
     async fn get_stream(&self, key: &str) -> Result<ResultStream, AppError>;
     async fn delete(&self, key: &str) -> Result<(), AppError>;
+    async fn health_check(&self) -> Result<(), AppError>;
 }
 
 // --- TokenSigner ---

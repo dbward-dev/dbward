@@ -78,6 +78,9 @@ impl ResultStore for NoopResultStore {
     async fn delete(&self, _: &str) -> Result<(), AppError> {
         Ok(())
     }
+    async fn health_check(&self) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 struct EmptyResultStream;
