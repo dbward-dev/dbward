@@ -196,4 +196,75 @@ mod tests {
         assert!(!slots.contains_key("old"));
         assert!(slots.contains_key("new"));
     }
+
+    fn test_summary(success: bool) -> ResultSummary {
+        ResultSummary {
+            execution_id: "exec-1".into(),
+            success,
+            rows_affected: Some(1),
+            truncated: false,
+            error_message: None,
+            result_data: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn publish_then_subscribe_returns_immediately() {
+        let ch = InMemoryResultChannel::default();
+        ch.create_slot("req-1");
+        ch.publish("req-1", test_summary(true)).await;
+
+        let result = ch.subscribe("req-1", 5).await.unwrap();
+        assert!(result.is_some());
+        assert!(result.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn subscribe_before_publish_waits_and_receives() {
+        let ch = Arc::new(InMemoryResultChannel::default());
+        ch.create_slot("req-2");
+
+        let ch2 = ch.clone();
+        let handle = tokio::spawn(async move {
+            ch2.subscribe("req-2", 5).await
+        });
+
+        // Small delay to ensure subscriber is waiting
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        ch.publish("req-2", test_summary(true)).await;
+
+        let result = handle.await.unwrap().unwrap();
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn subscribe_timeout_returns_none() {
+        let ch = InMemoryResultChannel::default();
+        ch.create_slot("req-3");
+
+        let result = ch.subscribe("req-3", 1).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn notify_all_unblocks_subscribers() {
+        let ch = Arc::new(InMemoryResultChannel::default());
+        ch.create_slot("req-4");
+
+        let ch2 = ch.clone();
+        let handle = tokio::spawn(async move {
+            ch2.subscribe("req-4", 10).await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let start = std::time::Instant::now();
+        ch.notify_all().await;
+
+        let result = handle.await.unwrap().unwrap();
+        let elapsed = start.elapsed();
+        // notify_all unblocks but no data was published → None
+        assert!(result.is_none());
+        // Should return quickly, not wait for the 10s timeout
+        assert!(elapsed < std::time::Duration::from_secs(2), "took too long: {elapsed:?}");
+    }
 }

@@ -209,3 +209,97 @@ fn agent_extend_lease_and_find_executions() {
     assert_eq!(execs.len(), 1);
 }
 
+
+#[test]
+fn concurrent_claim_only_one_succeeds() {
+    use std::sync::Arc;
+    use std::thread;
+
+    // Tests CAS logic: only the first claim transitions dispatched→running.
+    // Both threads share the same DbConn (serialized by Mutex), so this verifies
+    // the SQL-level CAS (WHERE status='dispatched') correctly prevents double-claim.
+    // Note: true multi-connection concurrency (separate processes) is tested via E2E.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    let conn = dbward_infra::sqlite::open(path.to_str().unwrap()).unwrap();
+    register_db(&conn);
+
+    let request_repo = SqliteRequestRepo::new(conn.clone());
+    let req = Request {
+        id: "req-concurrent".into(),
+        requester: "alice".into(),
+        database: DatabaseName::new("app").unwrap(),
+        environment: Environment::new("production").unwrap(),
+        operation: Operation::ExecuteSelect,
+        detail: "SELECT 1".into(),
+        status: RequestStatus::Dispatched,
+        emergency: false,
+        reason: None,
+        idempotency_key: None,
+        metadata_json: "{}".into(),
+        share_with: vec![],
+        no_store: false,
+        workflow_snapshot_json: None,
+        decision_trace_json: None,
+        cancel_reason: None,
+        cancelled_by: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+        resolved_at: None,
+        expires_at: None,
+    };
+    request_repo.insert(&req).unwrap();
+
+    let conn1 = conn.clone();
+    let conn2 = conn.clone();
+
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let b1 = barrier.clone();
+    let b2 = barrier.clone();
+
+    let t1 = thread::spawn(move || {
+        let repo = SqliteAgentRepo::new(conn1);
+        let exec = Execution {
+            id: "exec-1".into(),
+            request_id: "req-concurrent".into(),
+            agent_id: "agent-A".into(),
+            status: ExecutionStatus::Running,
+            token: "tok-1".into(),
+            lease_expires_at: Utc::now() + chrono::Duration::seconds(60),
+            started_at: Some(Utc::now()),
+            finished_at: None,
+            error_message: None,
+            created_at: Utc::now(),
+        };
+        b1.wait(); // synchronize start
+        repo.claim_and_mark_running(&exec, "req-concurrent", Utc::now())
+    });
+
+    let t2 = thread::spawn(move || {
+        let repo = SqliteAgentRepo::new(conn2);
+        let exec = Execution {
+            id: "exec-2".into(),
+            request_id: "req-concurrent".into(),
+            agent_id: "agent-B".into(),
+            status: ExecutionStatus::Running,
+            token: "tok-2".into(),
+            lease_expires_at: Utc::now() + chrono::Duration::seconds(60),
+            started_at: Some(Utc::now()),
+            finished_at: None,
+            error_message: None,
+            created_at: Utc::now(),
+        };
+        b2.wait(); // synchronize start
+        repo.claim_and_mark_running(&exec, "req-concurrent", Utc::now())
+    });
+
+    let r1 = t1.join().unwrap();
+    let r2 = t2.join().unwrap();
+
+    // Exactly one should succeed (Ok(true)), the other should get Ok(false) or error
+    let successes = [&r1, &r2]
+        .iter()
+        .filter(|r| matches!(r, Ok(true)))
+        .count();
+    assert_eq!(successes, 1, "Exactly one agent should claim: r1={r1:?}, r2={r2:?}");
+}
