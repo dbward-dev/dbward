@@ -114,9 +114,9 @@ fn run_preset_small_team(
     eprintln!();
     eprintln!("━━ Next steps ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     eprintln!("  1. dbward-server --config server.toml --dev-bootstrap");
-    eprintln!("     → Prints DBWARD_AGENT_TOKEN to use in step 2");
+    eprintln!("     → Prints tokens (including DBWARD_AGENT_TOKEN) for step 2");
     eprintln!("  2. DBWARD_AGENT_TOKEN=<token> dbward-agent --config agent.toml");
-    eprintln!("  3. dbward doctor        # validates connectivity");
+    eprintln!("  3. dbward doctor        # verify connectivity + config");
     eprintln!("  4. dbward execute \"SELECT 1\"");
     eprintln!();
     eprintln!("━━ Optional tuning ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
