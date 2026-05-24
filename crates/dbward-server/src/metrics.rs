@@ -16,6 +16,7 @@ pub struct Metrics {
     pub agent_lease_expirations_total: AtomicU64,
     pub webhook_deliveries_total: CounterVec<1>,
     pub result_storage_total: CounterVec<1>,
+    pub background_panics_total: AtomicU64,
 
     // Histograms
     pub http_request_duration: HistogramVec<2>,
@@ -42,6 +43,7 @@ impl Metrics {
             agent_lease_expirations_total: AtomicU64::new(0),
             webhook_deliveries_total: CounterVec::new(),
             result_storage_total: CounterVec::new(),
+            background_panics_total: AtomicU64::new(0),
             http_request_duration: HistogramVec::new(),
             approval_wait: Histogram::new(),
             execution_duration: HistogramVec::new(),
@@ -116,6 +118,13 @@ pub fn render(
         &["status"],
         &metrics.result_storage_total,
     );
+    writeln!(out, "# TYPE dbward_background_panics_total counter").ok();
+    writeln!(
+        out,
+        "dbward_background_panics_total {}",
+        metrics.background_panics_total.load(Ordering::Relaxed)
+    )
+    .ok();
 
     // Histograms
     write_histogram_vec(

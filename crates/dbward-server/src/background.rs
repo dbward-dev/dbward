@@ -175,6 +175,7 @@ async fn run_supervisor(
                     }
                     Err(e) if e.is_panic() => {
                         error!("background task panicked: {e}");
+                        state.metrics.background_panics_total.fetch_add(1, Ordering::Relaxed);
 
                         // Sliding window rate limit (global budget)
                         let now = Instant::now();
