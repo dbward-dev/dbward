@@ -61,6 +61,15 @@ pub enum Command {
         non_interactive: bool,
         #[arg(long)]
         force: bool,
+        /// Generate config files from a preset template (e.g., small-team)
+        #[arg(long)]
+        preset: Option<String>,
+        /// Output directory for generated files
+        #[arg(long, default_value = ".")]
+        output_dir: std::path::PathBuf,
+        /// Print generated files to stdout without writing
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Login via OIDC (opens browser)
     Login {
@@ -255,7 +264,19 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Init {
             non_interactive,
             force,
-        } => return auth::run_init(&cli, *non_interactive, *force),
+            preset,
+            output_dir,
+            dry_run,
+        } => {
+            return auth::run_init(
+                &cli,
+                *non_interactive,
+                *force,
+                preset.as_deref(),
+                output_dir,
+                *dry_run,
+            );
+        }
         Command::Logout => {
             oidc_login::logout().await.map_err(CliError::Auth)?;
             return Ok(());

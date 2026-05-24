@@ -17,6 +17,21 @@ cargo build --release
 
 The binary is at `target/release/dbward`.
 
+## Quick setup with preset
+
+Generate production-ready config files for a small team (5-50 people):
+
+```bash
+dbward init --preset small-team
+```
+
+This creates 3 files:
+- `dbward.toml` — CLI config (server URL, default database)
+- `server.toml` — Approval workflows, auto-approve rules, SQL review
+- `agent.toml` — Database connection placeholders
+
+See the guided output for next steps, or continue below for a simplified dev environment.
+
 ## Start dev environment
 
 For PostgreSQL:

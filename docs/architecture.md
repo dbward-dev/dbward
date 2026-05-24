@@ -468,7 +468,7 @@ CREATE TABLE notification_policies (
 ## CLI Commands
 
 ```
-dbward init                     # Interactive setup wizard
+dbward init --preset small-team  # Generate config files for all components
 dbward login                    # OIDC login (browser)
 dbward login --device           # OIDC login (headless)
 dbward whoami                   # Show current identity
