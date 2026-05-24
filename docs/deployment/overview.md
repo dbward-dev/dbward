@@ -47,6 +47,14 @@ Agents register with capabilities; the server matches requests to the appropriat
 
 ## Quick start with Docker Compose
 
+Generate config files first:
+
+```bash
+dbward init --preset small-team
+```
+
+Then use Docker Compose:
+
 ```yaml
 services:
   server:
