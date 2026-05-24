@@ -114,8 +114,8 @@ pub enum Command {
         #[arg(long = "share-with")]
         share_with: Vec<String>,
         /// Do not persist result to server storage
-        #[arg(long = "no-store")]
-        no_store: bool,
+        #[arg(long = "no-persist")]
+        no_persist: bool,
         /// Result display format
         #[arg(long, value_enum, default_value = "table")]
         result_format: crate::display::ResultFormat,
@@ -409,7 +409,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             ref repo,
             ref idempotency_key,
             ref share_with,
-            no_store,
+            no_persist,
             result_format,
             timeout,
         } => {
@@ -427,7 +427,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                 repo.as_deref(),
                 idempotency_key.as_deref(),
                 share_with,
-                no_store,
+                no_persist,
                 result_format,
                 timeout,
             )
@@ -622,6 +622,24 @@ mod tests {
             } => {
                 assert_eq!(user.as_deref(), Some("alice"));
             }
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn no_persist_flag_parses() {
+        let cli = Cli::try_parse_from(["dbward", "execute", "--no-persist", "SELECT 1"]).unwrap();
+        match cli.command {
+            Command::Execute { no_persist, .. } => assert!(no_persist),
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn no_persist_defaults_to_false() {
+        let cli = Cli::try_parse_from(["dbward", "execute", "SELECT 1"]).unwrap();
+        match cli.command {
+            Command::Execute { no_persist, .. } => assert!(!no_persist),
             _ => panic!("unexpected command"),
         }
     }

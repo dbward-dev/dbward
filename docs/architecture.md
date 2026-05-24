@@ -362,8 +362,7 @@ MCP client never connects to DB. All operations go through server → agent.
 
 1. `dbward_execute_query` → creates request → returns result (if auto-approved and agent completes) or request ID (if pending)
 2. Human approves via CLI: `dbward approve {id}`
-3. AI calls `dbward_check_request` → returns status
-4. AI calls `dbward_get_result` → dispatches and returns result
+3. AI calls `dbward_wait_request` → waits for approval and returns result
 
 MCP agents authenticate via API tokens (OIDC browser flow not available in stdio mode).
 

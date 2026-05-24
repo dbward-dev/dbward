@@ -57,7 +57,7 @@ dbward execute "DROP TABLE temp" --emergency --reason "Production incident"
 | `--timeout <SECS>` | Timeout in seconds (no timeout if not specified). Exit code 124 on timeout |
 | `--output <PATH>` | Save result to file |
 | `--no-save` | Do not save result locally |
-| `--no-store` | Do not persist result to server storage |
+| `--no-persist` | Do not persist result to server storage |
 | `--share-with <SELECTOR>` | Share result (e.g. `group:dba`, `user:bob`) |
 | `--ticket <ID>` | Attach ticket metadata |
 | `--repo <NAME>` | Attach repository metadata |

@@ -71,26 +71,23 @@ Add to `.kiro/settings/mcp.json`:
 
 ### 3. Verify
 
-Ask your AI assistant: "What tables are in the database?" — it should use `dbward_list_schemas` to answer.
+Ask your AI assistant: "What tables are in the database?" — it should use `dbward_inspect_schema` to answer.
 
-## Available tools (15)
+## Available tools (12)
 
 ### Database operations
 
 | Tool | Description |
 |------|-------------|
 | `dbward_execute_query` | Execute SQL (goes through approval workflow) |
-| `dbward_list_schemas` | List tables and schemas |
-| `dbward_describe_table` | Show column definitions |
+| `dbward_inspect_schema` | Inspect schema (list tables or describe columns) |
 | `dbward_preview_impact` | Run EXPLAIN to preview query impact |
-| `dbward_compare_schema` | Show pending migration SQL |
 
 ### Request management
 
 | Tool | Description |
 |------|-------------|
-| `dbward_check_request` | Check request status (with timeout) |
-| `dbward_get_result` | Get execution result |
+| `dbward_wait_request` | Wait for request completion and return result |
 | `dbward_list_pending` | List requests awaiting approval |
 | `dbward_who_can_approve` | Show who can approve a request |
 | `dbward_find_similar_requests` | Find similar past requests |
@@ -118,8 +115,8 @@ When the AI executes a query that requires approval:
 2. If the IDE supports **elicitation**, dbward asks the user for confirmation directly in the IDE
 3. Otherwise, the AI reports the request ID and waits
 4. A human approves via CLI, another IDE, or Slack
-5. AI calls `dbward_check_request` to poll for approval
-6. Once approved, AI calls `dbward_get_result` to retrieve the output
+5. AI calls `dbward_wait_request` to wait for approval and result
+6. Once complete, the result is returned directly
 
 ### Elicitation (interactive approval prompt)
 
@@ -198,7 +195,7 @@ Pre-built prompts for common AI workflows:
 > ⚠ Request req_m3x4 requires approval from dba-team.
 > I'll check back when it's approved.
 >
-> *[polls with `dbward_check_request`]*
+> *[waits with `dbward_wait_request`]*
 >
 > ✓ Approved by bob@example.com. Migration applied successfully.
 

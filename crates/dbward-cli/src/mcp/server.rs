@@ -410,14 +410,11 @@ async fn handle_tools_call(
                 Err(e) => Err(e.to_string()),
             }
         }
-        "dbward_check_request" => {
+        "dbward_wait_request" => {
             let req_id = args["request_id"].as_str().unwrap_or("");
-            let timeout = args["timeout"].as_u64().unwrap_or(30);
-            check_request(client, req_id, timeout).await
-        }
-        "dbward_get_result" => {
-            let req_id = args["request_id"].as_str().unwrap_or("");
-            get_result(client, req_id).await
+            let timeout = args["timeout"].as_u64().unwrap_or(60);
+            let include_result = args["include_result"].as_bool().unwrap_or(true);
+            wait_request(client, req_id, timeout, include_result).await
         }
         "dbward_list_pending" => client
             .list_pending_for_me(Some(20))
@@ -544,59 +541,31 @@ async fn handle_tools_call(
                     .map_err(|e| e.to_string())
             }
         }
-        "dbward_list_schemas" => {
+        "dbward_inspect_schema" => {
             let db = args["database"].as_str().unwrap_or(db_name);
-            let sql = "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name";
-            submit_and_wait(client, "execute_query", env, db, sql, None).await
-        }
-        "dbward_describe_table" => {
-            let table = match required_arg(args, "table") {
-                Ok(value) => value,
-                Err(message) => return jsonrpc_error(id, -32602, message),
-            };
-            let db = args["database"].as_str().unwrap_or(db_name);
-            let table_ref = match parse_table_reference(table) {
-                Ok(table_ref) => table_ref,
-                Err(message) => return jsonrpc_error(id, -32602, message),
-            };
-            let mut sql = "SELECT table_schema, table_name, column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE ".to_string();
-            if let Some(schema) = table_ref.schema {
-                sql.push_str(&format!(
-                    "table_schema = {} AND ",
-                    sql_string_literal(&schema)
-                ));
-            }
-            sql.push_str(&format!(
-                "table_name = {} ORDER BY table_schema, table_name, ordinal_position",
-                sql_string_literal(&table_ref.table)
-            ));
-            submit_and_wait(client, "execute_query", env, db, &sql, None).await
-        }
-        "dbward_compare_schema" => {
-            // Local: show pending migration files content
-            let dir = migrations_dir;
-            match std::fs::read_dir(dir) {
-                Ok(entries) => {
-                    let mut files: Vec<_> = entries
-                        .filter_map(|e| e.ok())
-                        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-                        .collect();
-                    files.sort_by_key(|e| e.file_name());
-                    let mut out = format!("Pending migrations in {}:\n", dir.display());
-                    for f in files.iter().rev().take(5) {
-                        let name = f.file_name();
-                        out.push_str(&format!("\n--- {} ---\n", name.to_string_lossy()));
-                        if let Ok(content) = read_migration_file(dir, &name.to_string_lossy()) {
-                            out.push_str(&content[..content.len().min(500)]);
-                            if content.len() > 500 {
-                                out.push_str("\n...truncated");
-                            }
-                        }
-                        out.push('\n');
-                    }
-                    Ok(out)
+            let table = args["table"].as_str().unwrap_or("");
+            if table.is_empty() {
+                // List all tables
+                let sql = "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name";
+                submit_and_wait(client, "execute_query", env, db, sql, None).await
+            } else {
+                // Describe specific table
+                let table_ref = match parse_table_reference(table) {
+                    Ok(table_ref) => table_ref,
+                    Err(message) => return jsonrpc_error(id, -32602, message),
+                };
+                let mut sql = "SELECT table_schema, table_name, column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE ".to_string();
+                if let Some(schema) = table_ref.schema {
+                    sql.push_str(&format!(
+                        "table_schema = {} AND ",
+                        sql_string_literal(&schema)
+                    ));
                 }
-                Err(e) => Err(format!("Cannot read migrations dir: {e}")),
+                sql.push_str(&format!(
+                    "table_name = {} ORDER BY table_schema, table_name, ordinal_position",
+                    sql_string_literal(&table_ref.table)
+                ));
+                submit_and_wait(client, "execute_query", env, db, &sql, None).await
             }
         }
         _ => Err(format!("Unknown tool: {tool_name}")),
@@ -632,8 +601,12 @@ async fn submit_and_wait(
 ) -> Result<String, String> {
     use crate::commands::workflow::{self, Outcome};
 
+    // Timeout applies to the entire orchestration (including auto-approved path
+    // which internally calls wait_and_resolve within submit_and_orchestrate).
+    const ORCHESTRATION_TIMEOUT: Duration = Duration::from_secs(120);
+
     let outcome = tokio::time::timeout(
-        Duration::from_secs(60),
+        ORCHESTRATION_TIMEOUT,
         workflow::submit_and_orchestrate(
             client,
             crate::server_client::CreateRequest {
@@ -657,17 +630,15 @@ async fn submit_and_wait(
         Ok(Ok(Outcome::Completed { result, .. })) => format_result(&result),
         Ok(Ok(Outcome::Pending { request_id, .. })) => Ok(format!(
             "Request {request_id} requires approval. \
-                 Use dbward_check_request to check status, \
-                 then dbward_get_result to retrieve the result."
+             Use dbward_wait_request to wait for completion."
         )),
         Ok(Ok(Outcome::Approved { request_id })) => {
-            // Dispatch and wait
             client
                 .dispatch(&request_id)
                 .await
                 .map_err(|e| e.body.clone())?;
             match tokio::time::timeout(
-                Duration::from_secs(60),
+                ORCHESTRATION_TIMEOUT,
                 workflow::wait_and_resolve(client, &request_id, false),
             )
             .await
@@ -675,16 +646,15 @@ async fn submit_and_wait(
                 Ok(Ok(resp)) => format_result(&resp),
                 Ok(Err(e)) => Err(e.to_string()),
                 Err(_) => Ok(format!(
-                    "Request {} is still executing. Use `dbward request resume {}` to check the result.",
-                    request_id, request_id
+                    "Request {request_id} is still executing (timed out after 120s). \
+                     Use dbward_wait_request with request_id '{request_id}' to get the result."
                 )),
             }
         }
         Ok(Err(e)) => Err(e.to_string()),
-        Err(_) => {
-            // Timeout — we don't have the request_id easily here, so give generic message
-            Ok("Request is still executing. Use dbward_check_request to check status.".to_string())
-        }
+        Err(_) => Ok("Request timed out during orchestration (120s). \
+             Use dbward_list_pending or dbward_wait_request to check status."
+            .to_string()),
     }
 }
 
@@ -713,60 +683,51 @@ fn format_result(resp: &Value) -> Result<String, String> {
     Ok("Executed successfully.".to_string())
 }
 
-async fn check_request(
+async fn wait_request(
     client: &crate::server_client::ServerClient,
     request_id: &str,
     timeout: u64,
+    include_result: bool,
 ) -> Result<String, String> {
     if request_id.is_empty() {
         return Err("request_id is required".to_string());
     }
+
+    // Status-only: no long-poll, return immediately
+    if !include_result {
+        let resp = client
+            .get_request(request_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = resp["status"].as_str().unwrap_or("unknown");
+        return Ok(format!("Request {request_id} status: {status}"));
+    }
+
     let resp = client
         .get_request_with_wait(request_id, timeout)
         .await
         .map_err(|e| e.to_string())?;
     let status = resp["status"].as_str().unwrap_or("unknown");
+
     match status {
         "pending" => Ok(format!("Request {request_id} is still pending approval.")),
-        "approved" | "auto_approved" | "dispatched" => Ok(format!(
-            "Request {request_id} is approved. Agent will execute it. \
-             Use dbward_get_result to retrieve the result."
-        )),
-        "executed" => Ok(format!(
-            "Request {request_id} executed. Use dbward_get_result to see the result."
-        )),
-        "rejected" => Ok(format!("Request {request_id} was rejected.")),
-        "failed" => Ok(format!("Request {request_id} execution failed.")),
-        _ => Ok(format!("Request {request_id} status: {status}")),
-    }
-}
-
-async fn get_result(
-    client: &crate::server_client::ServerClient,
-    request_id: &str,
-) -> Result<String, String> {
-    if request_id.is_empty() {
-        return Err("request_id is required".to_string());
-    }
-    let resp = client
-        .get_request(request_id)
-        .await
-        .map_err(|e| e.to_string())?;
-    let status = resp["status"].as_str().unwrap_or("unknown");
-    match status {
-        "approved" | "auto_approved" | "break_glass" => {
-            // Dispatch first, then wait for result
-            let _ = client.dispatch(request_id).await;
-            let result = crate::commands::workflow::wait_and_resolve(client, request_id, false)
-                .await
-                .map_err(|e| e.to_string())?;
-            format_result(&result)
-        }
-        "dispatched" | "running" => {
-            let result = crate::commands::workflow::wait_and_resolve(client, request_id, false)
-                .await
-                .map_err(|e| e.to_string())?;
-            format_result(&result)
+        "approved" | "auto_approved" | "break_glass" | "dispatched" | "running" => {
+            // Dispatch if needed, then wait for result
+            if status == "approved" || status == "auto_approved" || status == "break_glass" {
+                let _ = client.dispatch(request_id).await;
+            }
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(timeout),
+                crate::commands::workflow::wait_and_resolve(client, request_id, false),
+            )
+            .await
+            {
+                Ok(Ok(result)) => format_result(&result),
+                Ok(Err(e)) => Err(e.to_string()),
+                Err(_) => Ok(format!(
+                    "Request {request_id} is still executing (timed out after {timeout}s). Call dbward_wait_request again to continue waiting."
+                )),
+            }
         }
         "executed" | "failed" => {
             let result = crate::commands::workflow::resolve_terminal_result(client, request_id)
@@ -774,8 +735,12 @@ async fn get_result(
                 .map_err(|e| e.to_string())?;
             format_result(&result)
         }
-        _ => Ok(format!(
-            "Request {request_id} is not yet approved (status: {status})."
+        "rejected" => Ok(format!("Request {request_id} was rejected.")),
+        "cancelled" => Ok(format!("Request {request_id} was cancelled.")),
+        "expired" => Ok(format!("Request {request_id} has expired.")),
+        "execution_lost" => Ok(format!(
+            "Request {request_id} execution was lost (agent lease expired). It can be re-dispatched."
         )),
+        _ => Ok(format!("Request {request_id} status: {status}")),
     }
 }

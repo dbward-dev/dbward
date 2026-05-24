@@ -64,24 +64,14 @@ pub(crate) fn tools_definitions() -> Value {
             }
         },
         {
-            "name": "dbward_check_request",
-            "description": "Check request status. Waits up to timeout seconds for status change.",
+            "name": "dbward_wait_request",
+            "description": "Check request status or wait for completion. Returns result if executed, or current status otherwise. Set include_result=false for status-only check.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "request_id": {"type": "string", "description": "Request ID to check"},
-                    "timeout": {"type": "integer", "description": "Seconds to wait for status change (default 30, max 60)", "default": 30}
-                },
-                "required": ["request_id"]
-            }
-        },
-        {
-            "name": "dbward_get_result",
-            "description": "Get the execution result of a completed request",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "request_id": {"type": "string", "description": "Request ID"}
+                    "request_id": {"type": "string", "description": "Request ID"},
+                    "timeout": {"type": "integer", "description": "Max wait seconds for pending requests (default: 60)"},
+                    "include_result": {"type": "boolean", "description": "If true (default), dispatch and return result. If false, return status only."}
                 },
                 "required": ["request_id"]
             }
@@ -112,19 +102,9 @@ pub(crate) fn tools_definitions() -> Value {
             "inputSchema": {"type": "object", "properties": {"request_id": {"type": "string"}, "operation": {"type": "string"}, "environment": {"type": "string"}, "database": {"type": "string"}}}
         },
         {
-            "name": "dbward_list_schemas",
-            "description": "List tables and schemas in the target database",
-            "inputSchema": {"type": "object", "properties": {"database": {"type": "string"}, "environment": {"type": "string"}}}
-        },
-        {
-            "name": "dbward_describe_table",
-            "description": "Show column definitions for a table",
-            "inputSchema": {"type": "object", "properties": {"table": {"type": "string"}, "database": {"type": "string"}, "environment": {"type": "string"}}, "required": ["table"]}
-        },
-        {
-            "name": "dbward_compare_schema",
-            "description": "Show pending migration files that would change the schema",
-            "inputSchema": {"type": "object", "properties": {"database": {"type": "string"}}}
+            "name": "dbward_inspect_schema",
+            "description": "Inspect database schema. Omit 'table' to list all tables. Provide 'table' (e.g. 'users' or 'public.users') to show column definitions.",
+            "inputSchema": {"type": "object", "properties": {"table": {"type": "string", "description": "Table name to describe (e.g. 'users' or 'public.users'). Omit to list all tables."}, "database": {"type": "string"}, "environment": {"type": "string"}}}
         }
     ])
 }
@@ -692,8 +672,8 @@ mod tests {
             .collect();
         assert!(names.contains(&"dbward_execute_query"));
         assert!(names.contains(&"dbward_migrate_create"));
-        assert!(names.contains(&"dbward_check_request"));
-        assert!(names.contains(&"dbward_get_result"));
+        assert!(names.contains(&"dbward_wait_request"));
+        assert!(names.contains(&"dbward_inspect_schema"));
     }
 
     #[test]
@@ -768,5 +748,65 @@ mod tests {
         );
         assert!(text.contains("Request req_123 status: pending"));
         assert!(text.contains("Step 1 [all]: role:admin"));
+    }
+
+    #[test]
+    fn tools_count_is_12() {
+        let defs = tools_definitions();
+        let tools = defs.as_array().unwrap();
+        assert_eq!(tools.len(), 12);
+    }
+
+    #[test]
+    fn old_tool_names_are_removed() {
+        let defs = tools_definitions();
+        let names: Vec<&str> = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(!names.contains(&"dbward_check_request"));
+        assert!(!names.contains(&"dbward_get_result"));
+        assert!(!names.contains(&"dbward_list_schemas"));
+        assert!(!names.contains(&"dbward_describe_table"));
+        assert!(!names.contains(&"dbward_compare_schema"));
+    }
+
+    #[test]
+    fn wait_request_has_include_result_param() {
+        let defs = tools_definitions();
+        let tool = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "dbward_wait_request")
+            .unwrap();
+        let props = &tool["inputSchema"]["properties"];
+        assert!(props.get("include_result").is_some());
+        assert!(props.get("timeout").is_some());
+        assert!(props.get("request_id").is_some());
+    }
+
+    #[test]
+    fn inspect_schema_table_is_optional() {
+        let defs = tools_definitions();
+        let tool = defs
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "dbward_inspect_schema")
+            .unwrap();
+        let required = tool["inputSchema"].get("required");
+        // table should NOT be required
+        if let Some(r) = required {
+            let reqs: Vec<&str> = r
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect();
+            assert!(!reqs.contains(&"table"));
+        }
     }
 }
