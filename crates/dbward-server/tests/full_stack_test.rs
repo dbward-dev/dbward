@@ -1,7 +1,6 @@
 //! Full-stack integration tests: HTTP API → real SQLite repos
 //! Tests the complete request lifecycle through the REST API.
 
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use async_trait::async_trait;
@@ -9,17 +8,19 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-use dbward_app::error::{AppError, AuthError};
+use dbward_app::error::AuthError;
 use dbward_app::ports::*;
 use dbward_domain::auth::*;
-use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
 use dbward_domain::values::*;
 use dbward_infra::auth::RbacAuthorizer;
 use dbward_infra::sqlite::{self, *};
 use dbward_server::build_app;
 use dbward_server::state::AppState;
 
-// --- Minimal stubs for ports that don't have infra impls in test ---
+mod common;
+use common::*;
+
+// --- Test-specific token verifier (multi-user) ---
 
 struct TestTokenVerifier;
 #[async_trait]
@@ -60,141 +61,6 @@ impl TokenVerifier for TestTokenVerifier {
     }
 }
 
-struct TestRoleResolver;
-impl RoleResolver for TestRoleResolver {
-    fn resolve(
-        &self,
-        _: &str,
-        _: SubjectType,
-        _: &[String],
-    ) -> Result<Vec<ResolvedRole>, AuthError> {
-        Ok(vec![])
-    }
-}
-
-struct TestResultStore;
-#[async_trait]
-impl ResultStore for TestResultStore {
-    async fn put(&self, _: &str, _: &[u8], _: PutOptions) -> Result<(), AppError> {
-        Ok(())
-    }
-    async fn get_stream(&self, _: &str) -> Result<ResultStream, AppError> {
-        Ok(ResultStream {
-            content_length: Some(0),
-            stream: Box::pin(EmptyResultStream),
-        })
-    }
-    async fn delete(&self, _: &str) -> Result<(), AppError> {
-        Ok(())
-    }
-    async fn health_check(&self) -> Result<(), AppError> {
-        Ok(())
-    }
-}
-
-struct EmptyResultStream;
-impl futures_core::Stream for EmptyResultStream {
-    type Item = Result<bytes::Bytes, AppError>;
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        std::task::Poll::Ready(None)
-    }
-}
-
-struct TestResultChannel;
-#[async_trait]
-impl ResultChannel for TestResultChannel {
-    fn create_slot(&self, _: &str) {}
-    async fn publish(&self, _: &str, _: ResultSummary) {}
-    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> {
-        Ok(None)
-    }
-    async fn notify_all(&self) {}
-}
-
-struct TestTokenSigner;
-impl TokenSigner for TestTokenSigner {
-    fn sign(&self, _: &ExecutionTokenClaims) -> String {
-        "signed-token".into()
-    }
-    fn public_key_hex(&self) -> String {
-        "deadbeef".repeat(4)
-    }
-}
-
-struct TestNotifier;
-impl Notifier for TestNotifier {
-    fn dispatch(&self, _: WebhookEvent) {}
-}
-
-struct TestEventDispatcher;
-impl EventDispatcher for TestEventDispatcher {
-    fn dispatch(&self, _: TransitionEvent) {}
-}
-
-struct TestSsrfValidator;
-struct TestWebhookSender;
-#[async_trait]
-impl dbward_app::ports::WebhookSender for TestWebhookSender {
-    async fn send_one(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), String> {
-        Ok(())
-    }
-}
-impl SsrfValidator for TestSsrfValidator {
-    fn validate_url(&self, _: &str) -> Result<(), AppError> {
-        Ok(())
-    }
-}
-
-struct TestLicense;
-impl LicenseChecker for TestLicense {
-    fn max_tokens(&self) -> u32 {
-        10
-    }
-    fn max_databases(&self) -> u32 {
-        u32::MAX
-    }
-    fn max_workflows(&self) -> u32 {
-        5
-    }
-    fn max_webhooks(&self) -> u32 {
-        3
-    }
-    fn max_roles(&self) -> u32 {
-        8
-    }
-    fn is_enterprise(&self) -> bool {
-        false
-    }
-    fn configured_plan(&self) -> &str {
-        "free"
-    }
-    fn effective_plan(&self) -> &str {
-        "free"
-    }
-    fn is_expired(&self) -> bool {
-        false
-    }
-    fn check_expiry(&self, _now: chrono::DateTime<chrono::Utc>) {}
-}
-
-struct TestClock;
-impl Clock for TestClock {
-    fn now(&self) -> chrono::DateTime<chrono::Utc> {
-        chrono::Utc::now()
-    }
-}
-
-struct TestIdGen(std::sync::atomic::AtomicU64);
-impl IdGenerator for TestIdGen {
-    fn generate(&self) -> String {
-        let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        format!("req-{n:04}")
-    }
-}
-
 /// Build a full-stack AppState with real SQLite repos
 fn real_state() -> AppState {
     let conn = sqlite::open_memory().unwrap();
@@ -225,7 +91,7 @@ fn real_state() -> AppState {
 
     AppState {
         token_verifier: Arc::new(TestTokenVerifier),
-        role_resolver: Arc::new(TestRoleResolver),
+        role_resolver: Arc::new(NoopRoleResolver),
         authorizer,
         request_reader: Arc::new(SqliteRequestRepo::new(conn.clone())),
         request_writer: Arc::new(SqliteRequestRepo::new(conn.clone())),
@@ -243,19 +109,19 @@ fn real_state() -> AppState {
         audit_logger: Arc::new(SqliteAuditLogger::new(conn.clone())),
         audit_repo: Arc::new(SqliteAuditRepo::new(conn.clone())),
         policy_evaluator: Arc::new(SqlitePolicyEvaluator::new(conn.clone())),
-        result_store: Arc::new(TestResultStore),
-        result_channel: Arc::new(TestResultChannel),
-        token_signer: Arc::new(TestTokenSigner),
-        notifier: Arc::new(TestNotifier),
-        event_dispatcher: Arc::new(TestEventDispatcher),
-        ssrf_validator: Arc::new(TestSsrfValidator),
-        license_checker: Arc::new(TestLicense),
-        clock: Arc::new(TestClock),
-        id_generator: Arc::new(TestIdGen(std::sync::atomic::AtomicU64::new(1))),
+        result_store: Arc::new(NoopResultStore),
+        result_channel: Arc::new(NoopResultChannel),
+        token_signer: Arc::new(NoopTokenSigner),
+        notifier: Arc::new(NoopNotifier),
+        event_dispatcher: Arc::new(NoopEventDispatcher),
+        ssrf_validator: Arc::new(NoopSsrfValidator),
+        license_checker: Arc::new(NoopLicenseChecker),
+        clock: Arc::new(RealClock),
+        id_generator: Arc::new(SeqIdGen::new()),
         token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
         webhook_delivery_repo: None,
-        webhook_sender: Arc::new(TestWebhookSender),
+        webhook_sender: Arc::new(NoopWebhookSender),
         draining: Arc::new(AtomicBool::new(false)),
         slack_config: None,
         slack_client: None,

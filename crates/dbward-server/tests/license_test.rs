@@ -1,7 +1,6 @@
 //! License limit integration tests.
 //! Verifies that Free/Pro/Enterprise plan limits are enforced correctly.
 
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use async_trait::async_trait;
@@ -9,18 +8,20 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::Service;
 
-use dbward_app::error::{AppError, AuthError};
+use dbward_app::error::AuthError;
 use dbward_app::ports::*;
 use dbward_domain::auth::*;
 use dbward_domain::license::{License, Plan};
-use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
 use dbward_domain::values::*;
 use dbward_infra::LicenseCheckerImpl;
 use dbward_infra::sqlite::{self, *};
 use dbward_server::build_app;
 use dbward_server::state::AppState;
 
-// --- Auth stubs ---
+mod common;
+use common::*;
+
+// --- Auth stubs (test-specific) ---
 
 struct AdminVerifier;
 
@@ -46,112 +47,6 @@ impl TokenVerifier for AdminVerifier {
     }
     async fn verify_oidc_token(&self, _: &str) -> Result<(String, Vec<String>), AuthError> {
         Err(AuthError::OidcNotConfigured)
-    }
-}
-
-struct NoopRoleResolver;
-impl RoleResolver for NoopRoleResolver {
-    fn resolve(
-        &self,
-        _: &str,
-        _: SubjectType,
-        _: &[String],
-    ) -> Result<Vec<ResolvedRole>, AuthError> {
-        Ok(vec![])
-    }
-}
-
-// --- Minimal service stubs ---
-
-struct NoopResultStore;
-#[async_trait]
-impl ResultStore for NoopResultStore {
-    async fn put(&self, _: &str, _: &[u8], _: PutOptions) -> Result<(), AppError> {
-        Ok(())
-    }
-    async fn get_stream(&self, _: &str) -> Result<ResultStream, AppError> {
-        Ok(ResultStream {
-            content_length: Some(0),
-            stream: Box::pin(EmptyResultStream),
-        })
-    }
-    async fn delete(&self, _: &str) -> Result<(), AppError> {
-        Ok(())
-    }
-    async fn health_check(&self) -> Result<(), AppError> {
-        Ok(())
-    }
-}
-
-struct EmptyResultStream;
-impl futures_core::Stream for EmptyResultStream {
-    type Item = Result<bytes::Bytes, AppError>;
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        std::task::Poll::Ready(None)
-    }
-}
-
-struct NoopResultChannel;
-#[async_trait]
-impl ResultChannel for NoopResultChannel {
-    fn create_slot(&self, _: &str) {}
-    async fn publish(&self, _: &str, _: ResultSummary) {}
-    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> {
-        Ok(None)
-    }
-    async fn notify_all(&self) {}
-}
-
-struct NoopTokenSigner;
-impl TokenSigner for NoopTokenSigner {
-    fn sign(&self, _: &ExecutionTokenClaims) -> String {
-        "s".into()
-    }
-    fn public_key_hex(&self) -> String {
-        "aa".repeat(32)
-    }
-}
-
-struct NoopNotifier;
-impl Notifier for NoopNotifier {
-    fn dispatch(&self, _: WebhookEvent) {}
-}
-
-struct NoopEventDispatcher;
-impl EventDispatcher for NoopEventDispatcher {
-    fn dispatch(&self, _: TransitionEvent) {}
-}
-
-struct NoopSsrf;
-impl SsrfValidator for NoopSsrf {
-    fn validate_url(&self, _: &str) -> Result<(), AppError> {
-        Ok(())
-    }
-}
-
-struct NoopWebhookSender;
-#[async_trait]
-impl WebhookSender for NoopWebhookSender {
-    async fn send_one(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), String> {
-        Ok(())
-    }
-}
-
-struct SeqId(std::sync::atomic::AtomicU64);
-impl IdGenerator for SeqId {
-    fn generate(&self) -> String {
-        let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        format!("id-{n:04}")
-    }
-}
-
-struct RealClock;
-impl Clock for RealClock {
-    fn now(&self) -> chrono::DateTime<chrono::Utc> {
-        chrono::Utc::now()
     }
 }
 
@@ -184,10 +79,10 @@ fn state_with_license(license: License) -> AppState {
         token_signer: Arc::new(NoopTokenSigner),
         notifier: Arc::new(NoopNotifier),
         event_dispatcher: Arc::new(NoopEventDispatcher),
-        ssrf_validator: Arc::new(NoopSsrf),
+        ssrf_validator: Arc::new(NoopSsrfValidator),
         license_checker: Arc::new(LicenseCheckerImpl::new(license, chrono::Utc::now())),
         clock: Arc::new(RealClock),
-        id_generator: Arc::new(SeqId(std::sync::atomic::AtomicU64::new(1))),
+        id_generator: Arc::new(SeqIdGen::new()),
         token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
         webhook_delivery_repo: None,

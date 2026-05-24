@@ -1,7 +1,6 @@
 //! Workflow state-transition integration tests.
 //! Tests the approval lifecycle through the REST API with real SQLite.
 
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use async_trait::async_trait;
@@ -9,15 +8,17 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::Service;
 
-use dbward_app::error::{AppError, AuthError};
+use dbward_app::error::AuthError;
 use dbward_app::ports::*;
 use dbward_domain::auth::*;
-use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
 use dbward_domain::values::*;
 use dbward_infra::auth::RbacAuthorizer;
 use dbward_infra::sqlite::{self, *};
 use dbward_server::build_app;
 use dbward_server::state::AppState;
+
+mod common;
+use common::*;
 
 // --- Token verifier with multiple users ---
 
@@ -97,143 +98,7 @@ impl TokenVerifier for MultiUserVerifier {
     }
 }
 
-// --- Minimal stubs ---
-
-struct NoopRoleResolver;
-impl RoleResolver for NoopRoleResolver {
-    fn resolve(
-        &self,
-        _: &str,
-        _: SubjectType,
-        _: &[String],
-    ) -> Result<Vec<ResolvedRole>, AuthError> {
-        Ok(vec![])
-    }
-}
-
-struct NoopResultStore;
-#[async_trait]
-impl ResultStore for NoopResultStore {
-    async fn put(&self, _: &str, _: &[u8], _: PutOptions) -> Result<(), AppError> {
-        Ok(())
-    }
-    async fn get_stream(&self, _: &str) -> Result<ResultStream, AppError> {
-        Ok(ResultStream {
-            content_length: Some(0),
-            stream: Box::pin(EmptyResultStream),
-        })
-    }
-    async fn delete(&self, _: &str) -> Result<(), AppError> {
-        Ok(())
-    }
-    async fn health_check(&self) -> Result<(), AppError> {
-        Ok(())
-    }
-}
-
-struct EmptyResultStream;
-impl futures_core::Stream for EmptyResultStream {
-    type Item = Result<bytes::Bytes, AppError>;
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        std::task::Poll::Ready(None)
-    }
-}
-
-struct NoopResultChannel;
-#[async_trait]
-impl ResultChannel for NoopResultChannel {
-    fn create_slot(&self, _: &str) {}
-    async fn publish(&self, _: &str, _: ResultSummary) {}
-    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> {
-        Ok(None)
-    }
-    async fn notify_all(&self) {}
-}
-
-struct NoopTokenSigner;
-impl TokenSigner for NoopTokenSigner {
-    fn sign(&self, _: &ExecutionTokenClaims) -> String {
-        "signed".into()
-    }
-    fn public_key_hex(&self) -> String {
-        "aa".repeat(32)
-    }
-}
-
-struct NoopNotifier;
-impl Notifier for NoopNotifier {
-    fn dispatch(&self, _: WebhookEvent) {}
-}
-
-struct NoopEventDispatcher;
-impl EventDispatcher for NoopEventDispatcher {
-    fn dispatch(&self, _: TransitionEvent) {}
-}
-
-struct NoopSsrf;
-impl SsrfValidator for NoopSsrf {
-    fn validate_url(&self, _: &str) -> Result<(), AppError> {
-        Ok(())
-    }
-}
-
-struct TestWebhookSender;
-#[async_trait::async_trait]
-impl dbward_app::ports::WebhookSender for TestWebhookSender {
-    async fn send_one(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), String> {
-        Ok(())
-    }
-}
-
-struct NoopLicense;
-impl LicenseChecker for NoopLicense {
-    fn max_tokens(&self) -> u32 {
-        10
-    }
-    fn max_databases(&self) -> u32 {
-        u32::MAX
-    }
-    fn max_workflows(&self) -> u32 {
-        10
-    }
-    fn max_webhooks(&self) -> u32 {
-        3
-    }
-    fn max_roles(&self) -> u32 {
-        10
-    }
-    fn is_enterprise(&self) -> bool {
-        false
-    }
-    fn configured_plan(&self) -> &str {
-        "free"
-    }
-    fn effective_plan(&self) -> &str {
-        "free"
-    }
-    fn is_expired(&self) -> bool {
-        false
-    }
-    fn check_expiry(&self, _now: chrono::DateTime<chrono::Utc>) {}
-}
-
-struct SeqIdGen(std::sync::atomic::AtomicU64);
-impl IdGenerator for SeqIdGen {
-    fn generate(&self) -> String {
-        let n = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        format!("id-{n:04}")
-    }
-}
-
-struct RealClock;
-impl Clock for RealClock {
-    fn now(&self) -> chrono::DateTime<chrono::Utc> {
-        chrono::Utc::now()
-    }
-}
+// --- Minimal stubs (shared via common/) ---
 
 // --- Test state builder ---
 
@@ -306,14 +171,14 @@ fn workflow_state() -> AppState {
         token_signer: Arc::new(NoopTokenSigner),
         notifier: Arc::new(NoopNotifier),
         event_dispatcher: Arc::new(NoopEventDispatcher),
-        ssrf_validator: Arc::new(NoopSsrf),
-        license_checker: Arc::new(NoopLicense),
+        ssrf_validator: Arc::new(NoopSsrfValidator),
+        license_checker: Arc::new(NoopLicenseChecker),
         clock: Arc::new(RealClock),
-        id_generator: Arc::new(SeqIdGen(std::sync::atomic::AtomicU64::new(1))),
+        id_generator: Arc::new(SeqIdGen::new()),
         token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
         webhook_delivery_repo: None,
-        webhook_sender: Arc::new(TestWebhookSender),
+        webhook_sender: Arc::new(NoopWebhookSender),
         draining: Arc::new(AtomicBool::new(false)),
         slack_config: None,
         slack_client: None,

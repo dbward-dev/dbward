@@ -158,6 +158,25 @@ cleanup_tokens() {
 }
 
 # Print summary and exit (disables trap to avoid double-print)
+
+# Poll request status until it reaches expected state or timeout.
+# Usage: wait_for_status <request_id> <expected_status> <token> [timeout_secs]
+# Returns 0 on success, 1 on timeout/failure.
+wait_for_status() {
+  local req_id=$1 expected=$2 token=$3 timeout=${4:-30}
+  for i in $(seq 1 "$timeout"); do
+    local status
+    status=$(api GET "/api/requests/$req_id" "$token" | json_field status)
+    [ "$status" = "$expected" ] && return 0
+    # Terminal failure states — stop early
+    case "$status" in
+      failed|rejected|cancelled) [ "$status" != "$expected" ] && return 1 ;;
+    esac
+    sleep 1
+  done
+  return 1
+}
+
 summary() {
   trap - EXIT
   cleanup_tokens

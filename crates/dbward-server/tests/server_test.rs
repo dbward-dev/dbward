@@ -1,4 +1,5 @@
-use std::sync::Arc;
+mod common;
+use common::*;
 
 use async_trait::async_trait;
 use axum::body::Body;
@@ -10,8 +11,7 @@ use dbward_app::ports::*;
 use dbward_domain::auth::*;
 use dbward_domain::entities::*;
 use dbward_domain::policies::{ExecutionPolicy, Workflow};
-use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
-use dbward_domain::values::{DatabaseName, Environment, Operation, ResultSummary};
+use dbward_domain::values::{DatabaseName, Environment, Operation};
 use dbward_server::build_app;
 use dbward_server::state::AppState;
 
@@ -53,20 +53,6 @@ impl TokenVerifier for MockTokenVerifier {
 
     async fn verify_oidc_token(&self, _token: &str) -> Result<(String, Vec<String>), AuthError> {
         Err(AuthError::OidcNotConfigured)
-    }
-}
-
-// --- Stub implementations for remaining ports ---
-
-struct StubRoleResolver;
-impl RoleResolver for StubRoleResolver {
-    fn resolve(
-        &self,
-        _: &str,
-        _: SubjectType,
-        _: &[String],
-    ) -> Result<Vec<ResolvedRole>, AuthError> {
-        Ok(vec![])
     }
 }
 
@@ -651,133 +637,10 @@ impl PolicyEvaluator for StubPolicyEvaluator {
     }
 }
 
-struct StubResultStore;
-#[async_trait]
-impl ResultStore for StubResultStore {
-    async fn put(&self, _: &str, _: &[u8], _: PutOptions) -> Result<(), AppError> {
-        Ok(())
-    }
-    async fn get_stream(&self, _: &str) -> Result<ResultStream, AppError> {
-        Ok(ResultStream {
-            content_length: Some(0),
-            stream: Box::pin(EmptyResultStream),
-        })
-    }
-    async fn delete(&self, _: &str) -> Result<(), AppError> {
-        Ok(())
-    }
-    async fn health_check(&self) -> Result<(), AppError> {
-        Ok(())
-    }
-}
-
-struct EmptyResultStream;
-impl futures_core::Stream for EmptyResultStream {
-    type Item = Result<bytes::Bytes, AppError>;
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        std::task::Poll::Ready(None)
-    }
-}
-
-struct StubResultChannel;
-#[async_trait]
-impl ResultChannel for StubResultChannel {
-    fn create_slot(&self, _: &str) {}
-    async fn publish(&self, _: &str, _: ResultSummary) {}
-    async fn subscribe(&self, _: &str, _: u64) -> Result<Option<ResultSummary>, AppError> {
-        Ok(None)
-    }
-    async fn notify_all(&self) {}
-}
-
-struct StubTokenSigner;
-impl TokenSigner for StubTokenSigner {
-    fn sign(&self, _: &ExecutionTokenClaims) -> String {
-        "signed".into()
-    }
-    fn public_key_hex(&self) -> String {
-        "deadbeef".into()
-    }
-}
-
-struct StubNotifier;
-impl Notifier for StubNotifier {
-    fn dispatch(&self, _: WebhookEvent) {}
-}
-
-struct StubEventDispatcher;
-impl EventDispatcher for StubEventDispatcher {
-    fn dispatch(&self, _: TransitionEvent) {}
-}
-
-struct StubSsrfValidator;
-impl SsrfValidator for StubSsrfValidator {
-    fn validate_url(&self, _: &str) -> Result<(), AppError> {
-        Ok(())
-    }
-}
-
-struct TestWebhookSender;
-#[async_trait::async_trait]
-impl dbward_app::ports::WebhookSender for TestWebhookSender {
-    async fn send_one(&self, _: &str, _: &str, _: Option<&str>) -> Result<(), String> {
-        Ok(())
-    }
-}
-
-struct StubLicenseChecker;
-impl LicenseChecker for StubLicenseChecker {
-    fn max_tokens(&self) -> u32 {
-        10
-    }
-    fn max_databases(&self) -> u32 {
-        u32::MAX
-    }
-    fn max_workflows(&self) -> u32 {
-        5
-    }
-    fn max_webhooks(&self) -> u32 {
-        3
-    }
-    fn max_roles(&self) -> u32 {
-        3
-    }
-    fn is_enterprise(&self) -> bool {
-        false
-    }
-    fn configured_plan(&self) -> &str {
-        "free"
-    }
-    fn effective_plan(&self) -> &str {
-        "free"
-    }
-    fn is_expired(&self) -> bool {
-        false
-    }
-    fn check_expiry(&self, _now: chrono::DateTime<chrono::Utc>) {}
-}
-
-struct StubClock;
-impl Clock for StubClock {
-    fn now(&self) -> chrono::DateTime<chrono::Utc> {
-        chrono::Utc::now()
-    }
-}
-
-struct StubIdGenerator;
-impl IdGenerator for StubIdGenerator {
-    fn generate(&self) -> String {
-        "test-id".into()
-    }
-}
-
 fn test_state() -> AppState {
     AppState {
         token_verifier: Arc::new(MockTokenVerifier),
-        role_resolver: Arc::new(StubRoleResolver),
+        role_resolver: Arc::new(NoopRoleResolver),
         authorizer: Arc::new(StubAuthorizer),
         request_reader: Arc::new(StubRequestRepo),
         request_writer: Arc::new(StubRequestRepo),
@@ -795,19 +658,19 @@ fn test_state() -> AppState {
         audit_logger: Arc::new(StubAuditLogger),
         audit_repo: Arc::new(StubAuditRepo),
         policy_evaluator: Arc::new(StubPolicyEvaluator),
-        result_store: Arc::new(StubResultStore),
-        result_channel: Arc::new(StubResultChannel),
-        token_signer: Arc::new(StubTokenSigner),
-        notifier: Arc::new(StubNotifier),
-        event_dispatcher: Arc::new(StubEventDispatcher),
-        ssrf_validator: Arc::new(StubSsrfValidator),
-        license_checker: Arc::new(StubLicenseChecker),
-        clock: Arc::new(StubClock),
-        id_generator: Arc::new(StubIdGenerator),
+        result_store: Arc::new(NoopResultStore),
+        result_channel: Arc::new(NoopResultChannel),
+        token_signer: Arc::new(NoopTokenSigner),
+        notifier: Arc::new(NoopNotifier),
+        event_dispatcher: Arc::new(NoopEventDispatcher),
+        ssrf_validator: Arc::new(NoopSsrfValidator),
+        license_checker: Arc::new(NoopLicenseChecker),
+        clock: Arc::new(RealClock),
+        id_generator: Arc::new(SeqIdGen::new()),
         token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
         webhook_delivery_repo: None,
-        webhook_sender: Arc::new(TestWebhookSender),
+        webhook_sender: Arc::new(NoopWebhookSender),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         slack_config: None,
         slack_client: None,
