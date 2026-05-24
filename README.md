@@ -18,7 +18,7 @@ $ dbward request approve req_7f3a --comment "Confirmed with product team"
 
 - 🔐 **Approval workflows** — multi-step, conditional auto-approve, TOML policy engine
 - 📋 **Audit logs** — tamper-evident hash chain, 24 event types, SQL redaction
-- 🤖 **MCP-native** — 15 tools, 6 prompts, elicitation support. AI agents operate safely
+- 🤖 **MCP-native** — 12 tools, 6 prompts, elicitation support. AI agents operate safely
 - ⚡ **Single binary** — Rust + embedded SQLite. No Docker, no external DB
 - 🔒 **Agent isolation** — DB credentials never leave the agent. CLI/AI never touch your database directly
 - 🆓 **Free** — approval, audit, MCP, break-glass all included. [Apache-2.0 / MIT](LICENSE-APACHE)
@@ -109,16 +109,13 @@ dbward request resume req_abc123
 | `dbward_migrate_up` | Apply pending migrations |
 | `dbward_migrate_down` | Rollback migrations |
 | `dbward_migrate_create` | Create migration file (local) |
-| `dbward_check_request` | Check request status |
-| `dbward_get_result` | Get execution result |
+| `dbward_wait_request` | Wait for request completion and return result |
 | `dbward_list_pending` | List pending approval requests |
 | `dbward_who_can_approve` | Show who can approve a request |
 | `dbward_find_similar_requests` | Find similar past requests |
 | `dbward_preview_impact` | EXPLAIN query before execution |
 | `dbward_explain_policy_failure` | Explain why approval is needed |
-| `dbward_list_schemas` | List database schemas/tables |
-| `dbward_describe_table` | Describe table columns |
-| `dbward_compare_schema` | Show pending migration SQL |
+| `dbward_inspect_schema` | Inspect database schema (list tables or describe columns) |
 
 **MCP Prompts (6):** `review_migration`, `explain_request`, `draft_migration`, `draft_rollback`, `summarize_audit_trail`, `prepare_approval_comment`
 

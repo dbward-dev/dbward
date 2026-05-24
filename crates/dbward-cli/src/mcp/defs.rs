@@ -64,24 +64,14 @@ pub(crate) fn tools_definitions() -> Value {
             }
         },
         {
-            "name": "dbward_check_request",
-            "description": "Check request status. Waits up to timeout seconds for status change.",
+            "name": "dbward_wait_request",
+            "description": "Check request status or wait for completion. Returns result if executed, or current status otherwise. Set include_result=false for status-only check.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "request_id": {"type": "string", "description": "Request ID to check"},
-                    "timeout": {"type": "integer", "description": "Seconds to wait for status change (default 30, max 60)", "default": 30}
-                },
-                "required": ["request_id"]
-            }
-        },
-        {
-            "name": "dbward_get_result",
-            "description": "Get the execution result of a completed request",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "request_id": {"type": "string", "description": "Request ID"}
+                    "request_id": {"type": "string", "description": "Request ID"},
+                    "timeout": {"type": "integer", "description": "Max wait seconds for pending requests (default: 60)"},
+                    "include_result": {"type": "boolean", "description": "If true (default), dispatch and return result. If false, return status only."}
                 },
                 "required": ["request_id"]
             }
@@ -112,19 +102,9 @@ pub(crate) fn tools_definitions() -> Value {
             "inputSchema": {"type": "object", "properties": {"request_id": {"type": "string"}, "operation": {"type": "string"}, "environment": {"type": "string"}, "database": {"type": "string"}}}
         },
         {
-            "name": "dbward_list_schemas",
-            "description": "List tables and schemas in the target database",
-            "inputSchema": {"type": "object", "properties": {"database": {"type": "string"}, "environment": {"type": "string"}}}
-        },
-        {
-            "name": "dbward_describe_table",
-            "description": "Show column definitions for a table",
-            "inputSchema": {"type": "object", "properties": {"table": {"type": "string"}, "database": {"type": "string"}, "environment": {"type": "string"}}, "required": ["table"]}
-        },
-        {
-            "name": "dbward_compare_schema",
-            "description": "Show pending migration files that would change the schema",
-            "inputSchema": {"type": "object", "properties": {"database": {"type": "string"}}}
+            "name": "dbward_inspect_schema",
+            "description": "Inspect database schema. Omit 'table' to list all tables. Provide 'table' (e.g. 'users' or 'public.users') to show column definitions.",
+            "inputSchema": {"type": "object", "properties": {"table": {"type": "string", "description": "Table name to describe (e.g. 'users' or 'public.users'). Omit to list all tables."}, "database": {"type": "string"}, "environment": {"type": "string"}}}
         }
     ])
 }
@@ -692,8 +672,8 @@ mod tests {
             .collect();
         assert!(names.contains(&"dbward_execute_query"));
         assert!(names.contains(&"dbward_migrate_create"));
-        assert!(names.contains(&"dbward_check_request"));
-        assert!(names.contains(&"dbward_get_result"));
+        assert!(names.contains(&"dbward_wait_request"));
+        assert!(names.contains(&"dbward_inspect_schema"));
     }
 
     #[test]

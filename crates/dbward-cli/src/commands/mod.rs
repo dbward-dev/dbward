@@ -114,8 +114,8 @@ pub enum Command {
         #[arg(long = "share-with")]
         share_with: Vec<String>,
         /// Do not persist result to server storage
-        #[arg(long = "no-store")]
-        no_store: bool,
+        #[arg(long = "no-persist", alias = "no-store", hide_long_help = true)]
+        no_persist: bool,
         /// Result display format
         #[arg(long, value_enum, default_value = "table")]
         result_format: crate::display::ResultFormat,
@@ -409,7 +409,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             ref repo,
             ref idempotency_key,
             ref share_with,
-            no_store,
+            no_persist,
             result_format,
             timeout,
         } => {
@@ -427,7 +427,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                 repo.as_deref(),
                 idempotency_key.as_deref(),
                 share_with,
-                no_store,
+                no_persist,
                 result_format,
                 timeout,
             )

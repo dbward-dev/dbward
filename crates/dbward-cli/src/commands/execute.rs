@@ -22,16 +22,16 @@ pub async fn run_execute(
     repo: Option<&str>,
     idempotency_key: Option<&str>,
     share_with: &[String],
-    no_store: bool,
+    no_persist: bool,
     result_format: ResultFormat,
     timeout: Option<u64>,
 ) -> Result<(), CliError> {
     if emergency && reason.is_none() {
         return Err(CliError::Config("--emergency requires --reason".into()));
     }
-    if no_store {
+    if no_persist {
         eprintln!(
-            "⚠ --no-store: result will not be persisted. If you disconnect, it cannot be recovered."
+            "⚠ --no-persist: result will not be persisted. If you disconnect, it cannot be recovered."
         );
     }
 
@@ -52,7 +52,7 @@ pub async fn run_execute(
         metadata: metadata.as_ref(),
         idempotency_key,
         share_with: sw,
-        no_store,
+        no_store: no_persist,
     };
 
     let outcome = if let Some(secs) = timeout {
