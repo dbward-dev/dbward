@@ -1,6 +1,4 @@
-mod common;
-#[allow(unused_imports)]
-use common::*;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::body::Body;
