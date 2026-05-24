@@ -114,7 +114,7 @@ pub enum Command {
         #[arg(long = "share-with")]
         share_with: Vec<String>,
         /// Do not persist result to server storage
-        #[arg(long = "no-persist", alias = "no-store")]
+        #[arg(long = "no-persist")]
         no_persist: bool,
         /// Result display format
         #[arg(long, value_enum, default_value = "table")]
@@ -629,15 +629,6 @@ mod tests {
     #[test]
     fn no_persist_flag_parses() {
         let cli = Cli::try_parse_from(["dbward", "execute", "--no-persist", "SELECT 1"]).unwrap();
-        match cli.command {
-            Command::Execute { no_persist, .. } => assert!(no_persist),
-            _ => panic!("unexpected command"),
-        }
-    }
-
-    #[test]
-    fn no_store_alias_parses_as_no_persist() {
-        let cli = Cli::try_parse_from(["dbward", "execute", "--no-store", "SELECT 1"]).unwrap();
         match cli.command {
             Command::Execute { no_persist, .. } => assert!(no_persist),
             _ => panic!("unexpected command"),
