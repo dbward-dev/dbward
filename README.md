@@ -100,7 +100,7 @@ dbward request resume req_abc123
 }
 ```
 
-**MCP Tools (15):**
+**MCP Tools (12):**
 
 | Tool | Description |
 |---|---|

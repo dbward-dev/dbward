@@ -601,36 +601,38 @@ async fn submit_and_wait(
 ) -> Result<String, String> {
     use crate::commands::workflow::{self, Outcome};
 
-    // Timeout applies to orchestration + execution AFTER request creation.
-    // Request creation itself is not wrapped (to avoid losing the request_id).
+    // Timeout applies to the entire orchestration (including auto-approved path
+    // which internally calls wait_and_resolve within submit_and_orchestrate).
     const ORCHESTRATION_TIMEOUT: Duration = Duration::from_secs(120);
 
-    let outcome = workflow::submit_and_orchestrate(
-        client,
-        crate::server_client::CreateRequest {
-            operation,
-            environment,
-            database,
-            detail,
-            emergency: false,
-            reason,
-            metadata: None,
-            idempotency_key: None,
-            share_with: None,
-            no_store: false,
-        },
-        false,
+    let outcome = tokio::time::timeout(
+        ORCHESTRATION_TIMEOUT,
+        workflow::submit_and_orchestrate(
+            client,
+            crate::server_client::CreateRequest {
+                operation,
+                environment,
+                database,
+                detail,
+                emergency: false,
+                reason,
+                metadata: None,
+                idempotency_key: None,
+                share_with: None,
+                no_store: false,
+            },
+            false,
+        ),
     )
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
 
     match outcome {
-        Outcome::Completed { result, .. } => format_result(&result),
-        Outcome::Pending { request_id, .. } => Ok(format!(
+        Ok(Ok(Outcome::Completed { result, .. })) => format_result(&result),
+        Ok(Ok(Outcome::Pending { request_id, .. })) => Ok(format!(
             "Request {request_id} requires approval. \
              Use dbward_wait_request to wait for completion."
         )),
-        Outcome::Approved { request_id } => {
+        Ok(Ok(Outcome::Approved { request_id })) => {
             client
                 .dispatch(&request_id)
                 .await
@@ -649,6 +651,10 @@ async fn submit_and_wait(
                 )),
             }
         }
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Ok("Request timed out during orchestration (120s). \
+             Use dbward_list_pending or dbward_wait_request to check status."
+            .to_string()),
     }
 }
 
@@ -687,15 +693,21 @@ async fn wait_request(
         return Err("request_id is required".to_string());
     }
 
+    // Status-only: no long-poll, return immediately
+    if !include_result {
+        let resp = client
+            .get_request(request_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = resp["status"].as_str().unwrap_or("unknown");
+        return Ok(format!("Request {request_id} status: {status}"));
+    }
+
     let resp = client
         .get_request_with_wait(request_id, timeout)
         .await
         .map_err(|e| e.to_string())?;
     let status = resp["status"].as_str().unwrap_or("unknown");
-
-    if !include_result {
-        return Ok(format!("Request {request_id} status: {status}"));
-    }
 
     match status {
         "pending" => Ok(format!("Request {request_id} is still pending approval.")),

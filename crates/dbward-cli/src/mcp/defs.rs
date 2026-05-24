@@ -800,7 +800,12 @@ mod tests {
         let required = tool["inputSchema"].get("required");
         // table should NOT be required
         if let Some(r) = required {
-            let reqs: Vec<&str> = r.as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+            let reqs: Vec<&str> = r
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap())
+                .collect();
             assert!(!reqs.contains(&"table"));
         }
     }

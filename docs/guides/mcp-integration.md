@@ -73,7 +73,7 @@ Add to `.kiro/settings/mcp.json`:
 
 Ask your AI assistant: "What tables are in the database?" — it should use `dbward_inspect_schema` to answer.
 
-## Available tools (15)
+## Available tools (12)
 
 ### Database operations
 
