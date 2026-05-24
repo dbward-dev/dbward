@@ -209,7 +209,6 @@ fn agent_extend_lease_and_find_executions() {
     assert_eq!(execs.len(), 1);
 }
 
-
 #[test]
 fn concurrent_claim_only_one_succeeds() {
     use std::sync::Arc;
@@ -297,9 +296,9 @@ fn concurrent_claim_only_one_succeeds() {
     let r2 = t2.join().unwrap();
 
     // Exactly one should succeed (Ok(true)), the other should get Ok(false) or error
-    let successes = [&r1, &r2]
-        .iter()
-        .filter(|r| matches!(r, Ok(true)))
-        .count();
-    assert_eq!(successes, 1, "Exactly one agent should claim: r1={r1:?}, r2={r2:?}");
+    let successes = [&r1, &r2].iter().filter(|r| matches!(r, Ok(true))).count();
+    assert_eq!(
+        successes, 1,
+        "Exactly one agent should claim: r1={r1:?}, r2={r2:?}"
+    );
 }

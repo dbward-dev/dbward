@@ -637,7 +637,6 @@ impl PolicyEvaluator for StubPolicyEvaluator {
     }
 }
 
-
 fn test_state() -> AppState {
     AppState {
         token_verifier: Arc::new(MockTokenVerifier),

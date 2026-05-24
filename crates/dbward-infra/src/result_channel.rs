@@ -225,9 +225,7 @@ mod tests {
         ch.create_slot("req-2");
 
         let ch2 = ch.clone();
-        let handle = tokio::spawn(async move {
-            ch2.subscribe("req-2", 5).await
-        });
+        let handle = tokio::spawn(async move { ch2.subscribe("req-2", 5).await });
 
         // Small delay to ensure subscriber is waiting
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -252,9 +250,7 @@ mod tests {
         ch.create_slot("req-4");
 
         let ch2 = ch.clone();
-        let handle = tokio::spawn(async move {
-            ch2.subscribe("req-4", 10).await
-        });
+        let handle = tokio::spawn(async move { ch2.subscribe("req-4", 10).await });
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let start = std::time::Instant::now();
@@ -265,6 +261,9 @@ mod tests {
         // notify_all unblocks but no data was published → None
         assert!(result.is_none());
         // Should return quickly, not wait for the 10s timeout
-        assert!(elapsed < std::time::Duration::from_secs(2), "took too long: {elapsed:?}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "took too long: {elapsed:?}"
+        );
     }
 }

@@ -931,4 +931,3 @@ fn duplicate_approve_same_actor_step_rejected() {
     };
     request_repo.insert_approval(&a3).unwrap();
 }
-

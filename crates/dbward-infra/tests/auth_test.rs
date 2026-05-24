@@ -322,4 +322,3 @@ fn token_list_revoke_all_purge() {
     let purged = repo.purge_revoked("2099-01-01T00:00:00Z").unwrap();
     assert_eq!(purged, 2);
 }
-

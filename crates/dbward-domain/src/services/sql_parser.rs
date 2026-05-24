@@ -129,12 +129,18 @@ mod tests {
 
     #[test]
     fn empty_string_returns_empty() {
-        assert_eq!(parse_statements("", Dialect::PostgreSql), Err(ParseError::Empty));
+        assert_eq!(
+            parse_statements("", Dialect::PostgreSql),
+            Err(ParseError::Empty)
+        );
     }
 
     #[test]
     fn whitespace_only_returns_empty() {
-        assert_eq!(parse_statements("   \n\t  ", Dialect::PostgreSql), Err(ParseError::Empty));
+        assert_eq!(
+            parse_statements("   \n\t  ", Dialect::PostgreSql),
+            Err(ParseError::Empty)
+        );
     }
 
     #[test]
@@ -156,20 +162,29 @@ mod tests {
     #[test]
     fn too_large_rejected() {
         let big = "SELECT ".to_string() + &"x".repeat(MAX_SQL_BYTES);
-        assert_eq!(parse_statements(&big, Dialect::PostgreSql), Err(ParseError::TooLarge));
+        assert_eq!(
+            parse_statements(&big, Dialect::PostgreSql),
+            Err(ParseError::TooLarge)
+        );
     }
 
     #[test]
     fn at_max_bytes_not_too_large() {
         let sql = "S".repeat(MAX_SQL_BYTES);
         // May fail to parse but should NOT be TooLarge
-        assert_ne!(parse_statements(&sql, Dialect::PostgreSql), Err(ParseError::TooLarge));
+        assert_ne!(
+            parse_statements(&sql, Dialect::PostgreSql),
+            Err(ParseError::TooLarge)
+        );
     }
 
     #[test]
     fn exceeds_max_bytes_rejected() {
         let sql = "S".repeat(MAX_SQL_BYTES + 1);
-        assert_eq!(parse_statements(&sql, Dialect::PostgreSql), Err(ParseError::TooLarge));
+        assert_eq!(
+            parse_statements(&sql, Dialect::PostgreSql),
+            Err(ParseError::TooLarge)
+        );
     }
 
     #[test]
@@ -257,8 +272,7 @@ mod tests {
 
     #[test]
     fn multiple_statements() {
-        let stmts =
-            parse_statements("SELECT 1; SELECT 2; SELECT 3", Dialect::PostgreSql).unwrap();
+        let stmts = parse_statements("SELECT 1; SELECT 2; SELECT 3", Dialect::PostgreSql).unwrap();
         assert_eq!(stmts.len(), 3);
     }
 
@@ -301,7 +315,10 @@ mod tests {
     fn hash_comment_skipped_mysql() {
         // MySQL # comment before LOAD
         assert!(matches!(
-            parse_statements("# comment\nLOAD DATA INFILE '/x' INTO TABLE t", Dialect::MySql),
+            parse_statements(
+                "# comment\nLOAD DATA INFILE '/x' INTO TABLE t",
+                Dialect::MySql
+            ),
             Err(ParseError::Rejected { .. })
         ));
     }

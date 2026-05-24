@@ -371,7 +371,9 @@ hfJb36Tg7pLvyt3/+C7x1kz+sA==
         let result = verifier.try_verify(&token).await;
         // After fix: expired tokens are NOT key mismatches, so had_non_signature_error = true
         // and the error gets "claims_error:" prefix
-        assert!(matches!(result, Err(AuthError::OidcVerificationFailed(ref msg)) if msg.starts_with("claims_error:")));
+        assert!(
+            matches!(result, Err(AuthError::OidcVerificationFailed(ref msg)) if msg.starts_with("claims_error:"))
+        );
     }
 
     #[tokio::test]
@@ -421,6 +423,8 @@ hfJb36Tg7pLvyt3/+C7x1kz+sA==
         let token = jsonwebtoken::encode(&header, &claims, &test_encoding_key()).unwrap();
 
         let result = verifier.try_verify(&token).await;
-        assert!(matches!(result, Err(AuthError::OidcVerificationFailed(msg)) if msg.contains("sub")));
+        assert!(
+            matches!(result, Err(AuthError::OidcVerificationFailed(msg)) if msg.contains("sub"))
+        );
     }
 }

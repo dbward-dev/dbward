@@ -575,7 +575,6 @@ mod redaction_tests {
     }
 }
 
-
 #[cfg(test)]
 mod signature_tests {
     use super::*;

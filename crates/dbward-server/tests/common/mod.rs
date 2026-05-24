@@ -44,6 +44,9 @@ impl ResultStore for NoopResultStore {
     async fn delete(&self, _: &str) -> Result<(), AppError> {
         Ok(())
     }
+    async fn health_check(&self) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 pub struct EmptyResultStream;
@@ -119,15 +122,33 @@ impl WebhookSender for NoopWebhookSender {
 
 pub struct NoopLicenseChecker;
 impl LicenseChecker for NoopLicenseChecker {
-    fn max_tokens(&self) -> u32 { 10 }
-    fn max_databases(&self) -> u32 { u32::MAX }
-    fn max_workflows(&self) -> u32 { 10 }
-    fn max_webhooks(&self) -> u32 { 3 }
-    fn max_roles(&self) -> u32 { 10 }
-    fn is_enterprise(&self) -> bool { false }
-    fn configured_plan(&self) -> &str { "free" }
-    fn effective_plan(&self) -> &str { "free" }
-    fn is_expired(&self) -> bool { false }
+    fn max_tokens(&self) -> u32 {
+        10
+    }
+    fn max_databases(&self) -> u32 {
+        u32::MAX
+    }
+    fn max_workflows(&self) -> u32 {
+        10
+    }
+    fn max_webhooks(&self) -> u32 {
+        3
+    }
+    fn max_roles(&self) -> u32 {
+        10
+    }
+    fn is_enterprise(&self) -> bool {
+        false
+    }
+    fn configured_plan(&self) -> &str {
+        "free"
+    }
+    fn effective_plan(&self) -> &str {
+        "free"
+    }
+    fn is_expired(&self) -> bool {
+        false
+    }
     fn check_expiry(&self, _: chrono::DateTime<chrono::Utc>) {}
 }
 

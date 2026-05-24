@@ -169,4 +169,3 @@ fn audit_purge_old() {
     // Purge everything
     assert_eq!(repo.purge_old("2099-01-01T00:00:00Z").unwrap(), 1);
 }
-

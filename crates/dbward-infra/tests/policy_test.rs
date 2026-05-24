@@ -354,4 +354,3 @@ fn notification_policy_crud_roundtrip() {
     assert!(repo.delete_notification_policy("np-1").unwrap());
     assert!(repo.get_notification_policy("np-1").unwrap().is_none());
 }
-
