@@ -601,41 +601,42 @@ async fn submit_and_wait(
 ) -> Result<String, String> {
     use crate::commands::workflow::{self, Outcome};
 
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(60),
-        workflow::submit_and_orchestrate(
-            client,
-            crate::server_client::CreateRequest {
-                operation,
-                environment,
-                database,
-                detail,
-                emergency: false,
-                reason,
-                metadata: None,
-                idempotency_key: None,
-                share_with: None,
-                no_store: false,
-            },
-            false,
-        ),
+    // Timeout applies to orchestration + execution AFTER request creation.
+    // Request creation itself is not wrapped (to avoid losing the request_id).
+    const ORCHESTRATION_TIMEOUT: Duration = Duration::from_secs(120);
+
+    let outcome = workflow::submit_and_orchestrate(
+        client,
+        crate::server_client::CreateRequest {
+            operation,
+            environment,
+            database,
+            detail,
+            emergency: false,
+            reason,
+            metadata: None,
+            idempotency_key: None,
+            share_with: None,
+            no_store: false,
+        },
+        false,
     )
-    .await;
+    .await
+    .map_err(|e| e.to_string())?;
 
     match outcome {
-        Ok(Ok(Outcome::Completed { result, .. })) => format_result(&result),
-        Ok(Ok(Outcome::Pending { request_id, .. })) => Ok(format!(
+        Outcome::Completed { result, .. } => format_result(&result),
+        Outcome::Pending { request_id, .. } => Ok(format!(
             "Request {request_id} requires approval. \
-                 Use dbward_wait_request to wait for completion."
+             Use dbward_wait_request to wait for completion."
         )),
-        Ok(Ok(Outcome::Approved { request_id })) => {
-            // Dispatch and wait
+        Outcome::Approved { request_id } => {
             client
                 .dispatch(&request_id)
                 .await
                 .map_err(|e| e.body.clone())?;
             match tokio::time::timeout(
-                Duration::from_secs(60),
+                ORCHESTRATION_TIMEOUT,
                 workflow::wait_and_resolve(client, &request_id, false),
             )
             .await
@@ -643,15 +644,10 @@ async fn submit_and_wait(
                 Ok(Ok(resp)) => format_result(&resp),
                 Ok(Err(e)) => Err(e.to_string()),
                 Err(_) => Ok(format!(
-                    "Request {} is still executing. Use `dbward request resume {}` to check the result.",
-                    request_id, request_id
+                    "Request {request_id} is still executing (timed out after 120s). \
+                     Use dbward_wait_request with request_id '{request_id}' to get the result."
                 )),
             }
-        }
-        Ok(Err(e)) => Err(e.to_string()),
-        Err(_) => {
-            // Timeout — we don't have the request_id easily here, so give generic message
-            Ok("Request is still executing. Use dbward_wait_request to check status.".to_string())
         }
     }
 }
