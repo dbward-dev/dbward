@@ -106,10 +106,23 @@ fn run_preset_small_team(
             .map_err(|e| CliError::Other(format!("failed to write {}: {e}", dst.display())))?;
     }
 
-    eprintln!("Created ({}):", output_dir.display());
-    for (name, _) in &files {
-        eprintln!("  {name}");
-    }
+    eprintln!("\n✓ Created dbward.toml, server.toml, agent.toml");
+    eprintln!();
+    eprintln!("━━ Required ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    eprintln!("  agent.toml:  Set DATABASE_URL_* env vars for target databases");
+    eprintln!("  dbward.toml: API token will be generated in step 1 below");
+    eprintln!();
+    eprintln!("━━ Next steps ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    eprintln!("  1. dbward-server --config server.toml --dev-bootstrap");
+    eprintln!("     → Prints DBWARD_AGENT_TOKEN to use in step 2");
+    eprintln!("  2. DBWARD_AGENT_TOKEN=<token> dbward-agent --config agent.toml");
+    eprintln!("  3. dbward doctor        # validates connectivity");
+    eprintln!("  4. dbward execute \"SELECT 1\"");
+    eprintln!();
+    eprintln!("━━ Optional tuning ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    eprintln!("  server.toml: team roles, approval rules, auto-approve thresholds");
+    eprintln!();
+    eprintln!("Docs: https://github.com/dbward-dev/dbward/blob/main/docs/getting-started.md");
     Ok(())
 }
 
