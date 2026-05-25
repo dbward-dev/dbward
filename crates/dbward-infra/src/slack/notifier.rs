@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
-use dbward_app::ports::{ApprovalRepo, ContextRepo, Notifier, RequestReader, WebhookEvent};
+use dbward_app::ports::{
+    ApprovalRepo, ContextRepo, Notifier, RequestReader, RoleResolver, WebhookEvent,
+};
 
-use super::{SlackClient, SlackConfig, SlackMessageRepo, block_kit};
+use super::{SlackClient, SlackConfig, SlackMessageRepo, SlackUserResolver, block_kit};
 
 /// Outbound Slack notifier. Implements `Notifier` trait for use as
 /// `CompositeEventDispatcher.request_notifier`.
@@ -13,6 +15,8 @@ pub struct SlackNotifier {
     context_repo: Arc<dyn ContextRepo>,
     request_reader: Arc<dyn RequestReader>,
     approval_repo: Arc<dyn ApprovalRepo>,
+    user_resolver: Arc<SlackUserResolver>,
+    role_resolver: Arc<dyn RoleResolver>,
     config: SlackConfig,
 }
 
@@ -23,6 +27,8 @@ impl SlackNotifier {
         context_repo: Arc<dyn ContextRepo>,
         request_reader: Arc<dyn RequestReader>,
         approval_repo: Arc<dyn ApprovalRepo>,
+        user_resolver: Arc<SlackUserResolver>,
+        role_resolver: Arc<dyn RoleResolver>,
         config: SlackConfig,
     ) -> Self {
         Self {
@@ -31,6 +37,8 @@ impl SlackNotifier {
             context_repo,
             request_reader,
             approval_repo,
+            user_resolver,
+            role_resolver,
             config,
         }
     }
@@ -65,6 +73,13 @@ impl SlackNotifier {
 
         // Enrich event with formatted approvers from workflow snapshot
         let mut event = event.clone();
+
+        // Replace requester with mention format for Block Kit display
+        if let Some(ref r) = event.requester {
+            let mention = self.user_resolver.mention_for(r).await;
+            event.requester = Some(mention);
+        }
+
         if event.approvers.is_none()
             && let Some(ref req_id) = event.request_id
             && let Ok(Some(req)) = self.request_reader.get(req_id)
@@ -76,8 +91,22 @@ impl SlackNotifier {
             }
         }
 
-        let blocks = block_kit::build_request_created(&event, context.as_ref());
-        let text = block_kit::fallback_text(&event);
+        // Resolve approver mentions for notification
+        let mention_suffix = self.resolve_approver_mentions(&event).await;
+
+        let mut blocks = block_kit::build_request_created(&event, context.as_ref());
+        // Add mention block so it's visible in the channel
+        if !mention_suffix.is_empty() {
+            blocks.push(serde_json::json!({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": mention_suffix}
+            }));
+        }
+        let text = if mention_suffix.is_empty() {
+            block_kit::fallback_text(&event)
+        } else {
+            format!("{} — {}", block_kit::fallback_text(&event), mention_suffix)
+        };
 
         match self.client.post_message(channel, &blocks, &text).await {
             Ok(ts) => {
@@ -137,12 +166,20 @@ impl SlackNotifier {
                 .find(|a| a.action == dbward_domain::entities::ApprovalAction::Reject)
                 .and_then(|a| a.comment.clone());
 
+            // Resolve requester mention for updated message
+            let requester_mention = if let Some(ref r) = event.requester {
+                Some(self.user_resolver.mention_for(r).await)
+            } else {
+                None
+            };
+
             let updated_blocks = block_kit::build_message_from_state(
                 &req,
                 workflow_json,
                 context.as_ref(),
                 current_step,
                 reject_reason.as_deref(),
+                requester_mention.as_deref(),
             );
             let text = block_kit::fallback_text(event);
             if let Err(e) = self
@@ -160,8 +197,13 @@ impl SlackNotifier {
         }
 
         // SECONDARY: Thread reply (always attempt, best-effort)
-        let reply_blocks = block_kit::build_thread_reply(event);
-        let reply_text = block_kit::fallback_text(event);
+        let mention_suffix = self.resolve_reply_mentions(event).await;
+        let reply_blocks = block_kit::build_thread_reply(event, &mention_suffix);
+        let reply_text = if mention_suffix.is_empty() {
+            block_kit::fallback_text(event)
+        } else {
+            format!("{} — {}", block_kit::fallback_text(event), mention_suffix)
+        };
         if let Err(e) = self
             .client
             .post_thread(
@@ -186,6 +228,165 @@ impl SlackNotifier {
             }
         }
         None
+    }
+
+    /// Resolve mentions for initial message (request_created/break_glass/auto_approved).
+    /// Returns formatted lines like "📋 Requester: @xxx\n👉 Next Approver: @yyy"
+    async fn resolve_approver_mentions(&self, event: &WebhookEvent) -> String {
+        let mut lines = Vec::new();
+
+        // Requester mention (already resolved to <@U...> by caller)
+        if let Some(ref r) = event.requester {
+            lines.push(format!("📋 Requester: {r}"));
+        }
+
+        if event.event_type == "request_auto_approved" {
+            return lines.join("\n");
+        }
+
+        // Next approver mention
+        let subjects = self.resolve_approver_subjects(event);
+        if !subjects.is_empty() {
+            let mentions = self.user_resolver.mentions_for(&subjects).await;
+            lines.push(format!("👉 Next Approver: {}", mentions.join(" ")));
+        }
+
+        lines.join("\n")
+    }
+
+    /// Resolve mention target for thread replies.
+    async fn resolve_reply_mentions(&self, event: &WebhookEvent) -> String {
+        let actor = event.actor.as_deref().unwrap_or("");
+
+        match event.event_type.as_str() {
+            "step_approved" => {
+                let subjects = self.resolve_next_step_subjects(event);
+                if subjects.is_empty() {
+                    return String::new();
+                }
+                let mentions = self.user_resolver.mentions_for(&subjects).await;
+                format!("👉 Next Approver: {}", mentions.join(" "))
+            }
+            "request_approved" | "request_rejected" | "request_completed" | "request_failed"
+            | "execution_lost" => {
+                if let Some(ref r) = event.requester {
+                    let mention = self.user_resolver.mention_for(r).await;
+                    format!("📋 Requester: {mention}")
+                } else {
+                    String::new()
+                }
+            }
+            "request_expired" => {
+                let mut lines = Vec::new();
+                if let Some(ref r) = event.requester {
+                    let mention = self.user_resolver.mention_for(r).await;
+                    lines.push(format!("📋 Requester: {mention}"));
+                }
+                let subjects = self.resolve_approver_subjects(event);
+                if !subjects.is_empty() {
+                    let mentions = self.user_resolver.mentions_for(&subjects).await;
+                    lines.push(format!("👉 Approver: {}", mentions.join(" ")));
+                }
+                lines.join("\n")
+            }
+            "request_cancelled" => {
+                let mut lines = Vec::new();
+                if let Some(ref r) = event.requester
+                    && r != actor
+                {
+                    let mention = self.user_resolver.mention_for(r).await;
+                    lines.push(format!("📋 Requester: {mention}"));
+                }
+                let subjects: Vec<String> = self
+                    .resolve_approver_subjects(event)
+                    .into_iter()
+                    .filter(|s| s != actor)
+                    .collect();
+                if !subjects.is_empty() {
+                    let mentions = self.user_resolver.mentions_for(&subjects).await;
+                    lines.push(format!("👉 Approver: {}", mentions.join(" ")));
+                }
+                lines.join("\n")
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// Extract subject_ids from workflow_snapshot approvers for current step.
+    fn resolve_approver_subjects(&self, event: &WebhookEvent) -> Vec<String> {
+        let req_id = match event.request_id.as_deref() {
+            Some(id) => id,
+            None => return vec![],
+        };
+        let req = match self.request_reader.get(req_id) {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                tracing::debug!(req_id, "mention: request not found");
+                return vec![];
+            }
+            Err(e) => {
+                tracing::debug!(req_id, error = %e, "mention: failed to read request");
+                return vec![];
+            }
+        };
+        let wf_json = match req.workflow_snapshot_json.as_deref() {
+            Some(j) => j,
+            None => return vec![],
+        };
+        let step = event.step_index.unwrap_or(0);
+        self.extract_subjects_from_step(wf_json, step)
+    }
+
+    /// Extract subjects for the NEXT step (after current approval).
+    fn resolve_next_step_subjects(&self, event: &WebhookEvent) -> Vec<String> {
+        let req_id = match event.request_id.as_deref() {
+            Some(id) => id,
+            None => return vec![],
+        };
+        let req = match self.request_reader.get(req_id) {
+            Ok(Some(r)) => r,
+            _ => return vec![],
+        };
+        let wf_json = match req.workflow_snapshot_json.as_deref() {
+            Some(j) => j,
+            None => return vec![],
+        };
+        let next_step = event.step_index.unwrap_or(0) + 1;
+        self.extract_subjects_from_step(wf_json, next_step)
+    }
+
+    /// Parse workflow JSON and resolve selectors for a given step index.
+    fn extract_subjects_from_step(&self, wf_json: &str, step_index: u32) -> Vec<String> {
+        let wf: serde_json::Value = match serde_json::from_str(wf_json) {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        };
+        let steps = match wf["steps"].as_array() {
+            Some(s) => s,
+            None => return vec![],
+        };
+        let step = match steps.get(step_index as usize) {
+            Some(s) => s,
+            None => return vec![],
+        };
+        let approvers = match step["approvers"].as_array() {
+            Some(a) => a,
+            None => return vec![],
+        };
+
+        let mut subjects = std::collections::HashSet::new();
+        for approver in approvers {
+            let selector = approver["selector"].as_str().unwrap_or("");
+            if let Some(user) = selector.strip_prefix("user:") {
+                subjects.insert(user.to_string());
+            } else if let Some(role) = selector.strip_prefix("role:") {
+                for s in self.role_resolver.subjects_for_role(role) {
+                    subjects.insert(s);
+                }
+            }
+            // group:* → skip (v0.1.3 未対応)
+        }
+        subjects.into_iter().collect()
     }
 }
 

@@ -251,6 +251,10 @@ pub trait UserRepo: Send + Sync {
     fn find_by_slack_user_id(&self, _slack_user_id: &str) -> Result<Option<String>, AppError> {
         Ok(None)
     }
+    /// Get slack_user_id for a given subject_id.
+    fn get_slack_user_id(&self, _subject_id: &str) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
 }
 
 // --- TokenRepo ---

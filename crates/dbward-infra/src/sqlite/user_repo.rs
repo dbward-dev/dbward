@@ -151,6 +151,15 @@ impl UserRepo for SqliteUserRepo {
         }
     }
 
+    fn get_slack_user_id(&self, subject_id: &str) -> Result<Option<String>, AppError> {
+        let conn = self.conn.lock().unwrap();
+        conn.prepare("SELECT slack_user_id FROM users WHERE id = ?1")
+            .map_err(|e| AppError::Internal(e.to_string()))?
+            .query_row(rusqlite::params![subject_id], |row| row.get(0))
+            .optional()
+            .map_err(|e| AppError::Internal(e.to_string()))
+    }
+
     fn find_by_slack_user_id(&self, slack_user_id: &str) -> Result<Option<String>, AppError> {
         let conn = self.conn.lock().unwrap();
         let result = conn

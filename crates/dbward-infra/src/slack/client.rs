@@ -221,4 +221,29 @@ impl SlackClient for SlackHttpClient {
         }
         Ok(())
     }
+
+    async fn lookup_user_by_email(&self, email: &str) -> Result<Option<String>, SlackError> {
+        let resp = self
+            .http
+            .get("https://slack.com/api/users.lookupByEmail")
+            .bearer_auth(&self.bot_token)
+            .query(&[("email", email)])
+            .send()
+            .await
+            .map_err(|e| SlackError::Network(e.to_string()))?;
+
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| SlackError::Network(e.to_string()))?;
+
+        if json["ok"].as_bool() != Some(true) {
+            let err = json["error"].as_str().unwrap_or("unknown");
+            if err == "users_not_found" {
+                return Ok(None);
+            }
+            return Err(SlackError::Api(err.to_string()));
+        }
+        Ok(json["user"]["id"].as_str().map(String::from))
+    }
 }

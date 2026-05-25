@@ -513,7 +513,7 @@ impl EventDispatcher for CompositeEventDispatcher {
 
         // Fan out to additional subscribers (ADR-004)
         if let Some(ref rn) = self.request_notifier {
-            rn.dispatch(webhook_event);
+            rn.dispatch(webhook_event.clone());
         }
     }
 }

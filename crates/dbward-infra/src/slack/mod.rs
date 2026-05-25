@@ -1,9 +1,11 @@
 pub mod block_kit;
 mod client;
 mod notifier;
+pub mod user_resolver;
 
 pub use client::SlackHttpClient;
 pub use notifier::SlackNotifier;
+pub use user_resolver::SlackUserResolver;
 
 use dbward_app::error::AppError;
 
@@ -44,6 +46,11 @@ pub trait SlackClient: Send + Sync {
 
     async fn post_ephemeral(&self, channel: &str, user: &str, text: &str)
     -> Result<(), SlackError>;
+
+    /// Look up a Slack user ID by email address (requires users:read.email scope).
+    async fn lookup_user_by_email(&self, _email: &str) -> Result<Option<String>, SlackError> {
+        Ok(None)
+    }
 }
 
 /// Persists request_id → Slack message mapping.

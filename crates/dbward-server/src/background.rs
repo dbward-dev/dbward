@@ -588,24 +588,44 @@ fn make_audit_event(
 }
 
 fn emit_webhook(state: &AppState, event_type: &str, request_id: &str) {
-    state.notifier.dispatch(WebhookEvent {
+    // Enrich with request data for Slack notification
+    // (sync DB read — acceptable for low-frequency background events;
+    //  consider spawn_blocking if scaling beyond 30 users)
+    let (database, environment, requester, operation) = match state.request_reader.get(request_id) {
+        Ok(Some(req)) => (
+            Some(req.database.as_str().to_string()),
+            Some(req.environment.as_str().to_string()),
+            Some(req.requester.clone()),
+            Some(req.operation.as_str().to_string()),
+        ),
+        _ => (None, None, None, None),
+    };
+
+    let event = WebhookEvent {
         event_type: event_type.to_string(),
         request_id: Some(request_id.to_string()),
-        database: None,
-        environment: None,
+        database,
+        environment,
         actor: Some("system".to_string()),
         detail: None,
-        requester: None,
+        requester,
         reason: None,
         redacted_detail: None,
         error_summary: None,
         approval_hint: None,
-        operation: None,
+        operation,
         step_index: None,
         total_steps: None,
         expires_at: None,
         approvers: None,
-    });
+    };
+
+    state.notifier.dispatch(event.clone());
+
+    // Also notify Slack (request_notifier)
+    if let Some(ref rn) = state.request_notifier {
+        rn.dispatch(event);
+    }
 }
 
 // --- Webhook DLQ Retry ---
