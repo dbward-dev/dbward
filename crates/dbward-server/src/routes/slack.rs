@@ -121,6 +121,7 @@ async fn handle_block_actions(
     let auth_user = match resolve_slack_auth_user(state, &slack_user_id).await {
         Ok(u) => u,
         Err(e) => {
+            tracing::warn!(slack_user_id = %slack_user_id, error = %e, "slack auth resolution failed");
             if let Some(ref slack_client) = state.slack_client {
                 let msg = if e == "not_linked" {
                     format!(

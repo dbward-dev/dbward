@@ -256,16 +256,31 @@ pub async fn run_from_args(
             let slack_msg_repo = Arc::new(dbward_infra::sqlite::SqliteSlackMessageRepo::new(
                 conn.clone(),
             ));
+            let user_resolver = Arc::new(dbward_infra::slack::SlackUserResolver::new(
+                slack_client.clone(),
+                user_repo.clone(),
+            ));
+
+            // Background warm-up: resolve Slack UIDs for all known subjects
+            let warmup_resolver = user_resolver.clone();
+            let warmup_user_repo: Arc<dyn dbward_app::ports::UserRepo> = user_repo.clone();
+            tokio::spawn(async move {
+                let subjects: Vec<String> = warmup_user_repo
+                    .list()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|u| u.id)
+                    .collect();
+                warmup_resolver.warm_up(subjects).await;
+            });
+
             Arc::new(dbward_infra::slack::SlackNotifier::new(
                 slack_client.clone(),
                 slack_msg_repo,
                 context_repo.clone(),
                 request_repo.clone(),
                 request_repo.clone(),
-                Arc::new(dbward_infra::slack::SlackUserResolver::new(
-                    slack_client,
-                    user_repo.clone(),
-                )),
+                user_resolver,
                 role_resolver.clone(),
                 sc.clone(),
             )) as Arc<dyn dbward_app::ports::Notifier>
@@ -278,6 +293,7 @@ pub async fn run_from_args(
             )) as Arc<dyn dbward_infra::slack::SlackClient>
         });
 
+    let slack_notifier_for_bg = slack_notifier.clone();
     let event_dispatcher: Arc<dyn dbward_app::ports::EventDispatcher> =
         Arc::new(dbward_infra::webhook::CompositeEventDispatcher {
             audit: audit_logger.clone(),
@@ -357,6 +373,7 @@ pub async fn run_from_args(
         draining: draining.clone(),
         slack_config,
         slack_client: slack_client_for_state,
+        request_notifier: slack_notifier_for_bg,
     };
 
     // Dev bootstrap: create tokens and output to stdout

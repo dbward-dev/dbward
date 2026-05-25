@@ -74,6 +74,7 @@ impl SlackUserResolver {
                 }
             }
             let _ = self.resolve_uid(&sid).await;
+            // Rate limit: Slack Tier 2 ~20 req/min. 3s interval = 20 req/min max.
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         }
         tracing::info!("Slack UID warm-up complete");
@@ -88,7 +89,8 @@ impl SlackUserResolver {
             }
         }
 
-        // 2. DB lookup
+        // 2. DB lookup (sync rusqlite — acceptable for 5-30 person teams;
+        //    consider spawn_blocking if scaling beyond that)
         if let Ok(Some(uid)) = self.user_repo.get_slack_user_id(subject_id) {
             self.insert_cache(subject_id, Some(uid.clone()));
             return Some(uid);

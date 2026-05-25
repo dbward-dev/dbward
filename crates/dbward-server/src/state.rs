@@ -62,4 +62,5 @@ pub struct AppState {
     // Slack
     pub slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub slack_client: Option<std::sync::Arc<dyn dbward_infra::slack::SlackClient>>,
+    pub request_notifier: Option<Arc<dyn Notifier>>,
 }

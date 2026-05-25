@@ -73,6 +73,13 @@ impl SlackNotifier {
 
         // Enrich event with formatted approvers from workflow snapshot
         let mut event = event.clone();
+
+        // Replace requester with mention format for Block Kit display
+        if let Some(ref r) = event.requester {
+            let mention = self.user_resolver.mention_for(r).await;
+            event.requester = Some(mention);
+        }
+
         if event.approvers.is_none()
             && let Some(ref req_id) = event.request_id
             && let Ok(Some(req)) = self.request_reader.get(req_id)
@@ -87,7 +94,14 @@ impl SlackNotifier {
         // Resolve approver mentions for notification
         let mention_suffix = self.resolve_approver_mentions(&event).await;
 
-        let blocks = block_kit::build_request_created(&event, context.as_ref());
+        let mut blocks = block_kit::build_request_created(&event, context.as_ref());
+        // Add mention block so it's visible in the channel
+        if !mention_suffix.is_empty() {
+            blocks.push(serde_json::json!({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": mention_suffix}
+            }));
+        }
         let text = if mention_suffix.is_empty() {
             block_kit::fallback_text(&event)
         } else {
@@ -152,12 +166,20 @@ impl SlackNotifier {
                 .find(|a| a.action == dbward_domain::entities::ApprovalAction::Reject)
                 .and_then(|a| a.comment.clone());
 
+            // Resolve requester mention for updated message
+            let requester_mention = if let Some(ref r) = event.requester {
+                Some(self.user_resolver.mention_for(r).await)
+            } else {
+                None
+            };
+
             let updated_blocks = block_kit::build_message_from_state(
                 &req,
                 workflow_json,
                 context.as_ref(),
                 current_step,
                 reject_reason.as_deref(),
+                requester_mention.as_deref(),
             );
             let text = block_kit::fallback_text(event);
             if let Err(e) = self
@@ -177,7 +199,11 @@ impl SlackNotifier {
         // SECONDARY: Thread reply (always attempt, best-effort)
         let mention_suffix = self.resolve_reply_mentions(event).await;
         let reply_blocks = block_kit::build_thread_reply(event, &mention_suffix);
-        let reply_text = block_kit::fallback_text(event);
+        let reply_text = if mention_suffix.is_empty() {
+            block_kit::fallback_text(event)
+        } else {
+            format!("{} — {}", block_kit::fallback_text(event), mention_suffix)
+        };
         if let Err(e) = self
             .client
             .post_thread(
@@ -204,39 +230,83 @@ impl SlackNotifier {
         None
     }
 
-    /// Resolve approver mentions for initial message (request_created).
+    /// Resolve mentions for initial message (request_created/break_glass/auto_approved).
+    /// Returns formatted lines like "📋 Requester: @xxx\n👉 Next Approver: @yyy"
     async fn resolve_approver_mentions(&self, event: &WebhookEvent) -> String {
-        if event.event_type == "break_glass" {
-            return String::new();
+        let mut lines = Vec::new();
+
+        // Requester mention (already resolved to <@U...> by caller)
+        if let Some(ref r) = event.requester {
+            lines.push(format!("📋 Requester: {r}"));
         }
+
+        if event.event_type == "request_auto_approved" {
+            return lines.join("\n");
+        }
+
+        // Next approver mention
         let subjects = self.resolve_approver_subjects(event);
-        if subjects.is_empty() {
-            return String::new();
+        if !subjects.is_empty() {
+            let mentions = self.user_resolver.mentions_for(&subjects).await;
+            lines.push(format!("👉 Next Approver: {}", mentions.join(" ")));
         }
-        let mentions = self.user_resolver.mentions_for(&subjects).await;
-        mentions.join(" ")
+
+        lines.join("\n")
     }
 
     /// Resolve mention target for thread replies.
     async fn resolve_reply_mentions(&self, event: &WebhookEvent) -> String {
+        let actor = event.actor.as_deref().unwrap_or("");
+
         match event.event_type.as_str() {
-            // Step progressed → mention next approvers
             "step_approved" => {
                 let subjects = self.resolve_next_step_subjects(event);
                 if subjects.is_empty() {
                     return String::new();
                 }
                 let mentions = self.user_resolver.mentions_for(&subjects).await;
-                mentions.join(" ")
+                format!("👉 Next Approver: {}", mentions.join(" "))
             }
-            // Final results → mention requester
             "request_approved" | "request_rejected" | "request_completed" | "request_failed"
-            | "request_expired" => {
-                if let Some(ref requester) = event.requester {
-                    self.user_resolver.mention_for(requester).await
+            | "execution_lost" => {
+                if let Some(ref r) = event.requester {
+                    let mention = self.user_resolver.mention_for(r).await;
+                    format!("📋 Requester: {mention}")
                 } else {
                     String::new()
                 }
+            }
+            "request_expired" => {
+                let mut lines = Vec::new();
+                if let Some(ref r) = event.requester {
+                    let mention = self.user_resolver.mention_for(r).await;
+                    lines.push(format!("📋 Requester: {mention}"));
+                }
+                let subjects = self.resolve_approver_subjects(event);
+                if !subjects.is_empty() {
+                    let mentions = self.user_resolver.mentions_for(&subjects).await;
+                    lines.push(format!("👉 Approver: {}", mentions.join(" ")));
+                }
+                lines.join("\n")
+            }
+            "request_cancelled" => {
+                let mut lines = Vec::new();
+                if let Some(ref r) = event.requester
+                    && r != actor
+                {
+                    let mention = self.user_resolver.mention_for(r).await;
+                    lines.push(format!("📋 Requester: {mention}"));
+                }
+                let subjects: Vec<String> = self
+                    .resolve_approver_subjects(event)
+                    .into_iter()
+                    .filter(|s| s != actor)
+                    .collect();
+                if !subjects.is_empty() {
+                    let mentions = self.user_resolver.mentions_for(&subjects).await;
+                    lines.push(format!("👉 Approver: {}", mentions.join(" ")));
+                }
+                lines.join("\n")
             }
             _ => String::new(),
         }
@@ -250,7 +320,14 @@ impl SlackNotifier {
         };
         let req = match self.request_reader.get(req_id) {
             Ok(Some(r)) => r,
-            _ => return vec![],
+            Ok(None) => {
+                tracing::debug!(req_id, "mention: request not found");
+                return vec![];
+            }
+            Err(e) => {
+                tracing::debug!(req_id, error = %e, "mention: failed to read request");
+                return vec![];
+            }
         };
         let wf_json = match req.workflow_snapshot_json.as_deref() {
             Some(j) => j,

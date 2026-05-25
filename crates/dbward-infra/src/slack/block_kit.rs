@@ -244,7 +244,7 @@ pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Val
     let display_text = if mention_suffix.is_empty() {
         format!("{emoji} {text}")
     } else {
-        format!("{emoji} {text} — {mention_suffix}")
+        format!("{emoji} {text}\n{mention_suffix}")
     };
 
     vec![json!({
@@ -261,8 +261,9 @@ pub fn build_message_from_state(
     context: Option<&RequestContextRecord>,
     current_step: u32,
     reject_reason: Option<&str>,
+    requester_mention: Option<&str>,
 ) -> Vec<Value> {
-    let requester = &req.requester;
+    let requester = requester_mention.unwrap_or(&req.requester);
     let db = req.database.as_str();
     let env = req.environment.as_str();
     let operation = req.operation.as_str();
