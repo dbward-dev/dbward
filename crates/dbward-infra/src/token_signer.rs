@@ -182,4 +182,207 @@ mod tests {
                 .is_ok()
         );
     }
+
+    #[test]
+    fn tampered_request_id_fails_verification() {
+        let dir = tempdir().unwrap();
+        let signer = Ed25519TokenSigner::load_or_generate(dir.path()).unwrap();
+        let claims = ExecutionTokenClaims {
+            request_id: "req-original".into(),
+            operation: "execute_dml".into(),
+            environment: "production".into(),
+            database: "app".into(),
+            detail_hash: "hash123".into(),
+            requester_role: "developer".into(),
+            requester: "alice".into(),
+        };
+        let token_json = signer.sign(&claims);
+        let v: serde_json::Value = serde_json::from_str(&token_json).unwrap();
+
+        use ed25519_dalek::Verifier;
+        let sig_bytes = hex::decode(v["signature"].as_str().unwrap()).unwrap();
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes.try_into().unwrap());
+
+        // Tamper: change request_id
+        let message = format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}",
+            "req-TAMPERED",
+            v["operation"].as_str().unwrap(),
+            v["environment"].as_str().unwrap(),
+            v["database"].as_str().unwrap(),
+            v["detail_hash"].as_str().unwrap(),
+            v["expires_at"].as_str().unwrap(),
+            v["requester_role"].as_str().unwrap(),
+            v["requester_subject_id"].as_str().unwrap(),
+        );
+        assert!(
+            signer
+                .public_key()
+                .verify(message.as_bytes(), &signature)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn tampered_detail_hash_fails_verification() {
+        let dir = tempdir().unwrap();
+        let signer = Ed25519TokenSigner::load_or_generate(dir.path()).unwrap();
+        let claims = ExecutionTokenClaims {
+            request_id: "req-3".into(),
+            operation: "execute_dml".into(),
+            environment: "production".into(),
+            database: "app".into(),
+            detail_hash: "correct_hash".into(),
+            requester_role: "developer".into(),
+            requester: "alice".into(),
+        };
+        let token_json = signer.sign(&claims);
+        let v: serde_json::Value = serde_json::from_str(&token_json).unwrap();
+
+        use ed25519_dalek::Verifier;
+        let sig_bytes = hex::decode(v["signature"].as_str().unwrap()).unwrap();
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes.try_into().unwrap());
+
+        // Tamper: change detail_hash (attacker tries different SQL)
+        let message = format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}",
+            v["request_id"].as_str().unwrap(),
+            v["operation"].as_str().unwrap(),
+            v["environment"].as_str().unwrap(),
+            v["database"].as_str().unwrap(),
+            "TAMPERED_HASH",
+            v["expires_at"].as_str().unwrap(),
+            v["requester_role"].as_str().unwrap(),
+            v["requester_subject_id"].as_str().unwrap(),
+        );
+        assert!(
+            signer
+                .public_key()
+                .verify(message.as_bytes(), &signature)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn tampered_database_field_fails_verification() {
+        let dir = tempdir().unwrap();
+        let signer = Ed25519TokenSigner::load_or_generate(dir.path()).unwrap();
+        let claims = ExecutionTokenClaims {
+            request_id: "req-4".into(),
+            operation: "execute_dml".into(),
+            environment: "staging".into(),
+            database: "app".into(),
+            detail_hash: "hash456".into(),
+            requester_role: "developer".into(),
+            requester: "alice".into(),
+        };
+        let token_json = signer.sign(&claims);
+        let v: serde_json::Value = serde_json::from_str(&token_json).unwrap();
+
+        use ed25519_dalek::Verifier;
+        let sig_bytes = hex::decode(v["signature"].as_str().unwrap()).unwrap();
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes.try_into().unwrap());
+
+        // Tamper: change database (attacker targets different DB)
+        let message = format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}",
+            v["request_id"].as_str().unwrap(),
+            v["operation"].as_str().unwrap(),
+            v["environment"].as_str().unwrap(),
+            "EVIL_DB",
+            v["detail_hash"].as_str().unwrap(),
+            v["expires_at"].as_str().unwrap(),
+            v["requester_role"].as_str().unwrap(),
+            v["requester_subject_id"].as_str().unwrap(),
+        );
+        assert!(
+            signer
+                .public_key()
+                .verify(message.as_bytes(), &signature)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn tampered_environment_fails_verification() {
+        let dir = tempdir().unwrap();
+        let signer = Ed25519TokenSigner::load_or_generate(dir.path()).unwrap();
+        let claims = ExecutionTokenClaims {
+            request_id: "req-5".into(),
+            operation: "execute_dml".into(),
+            environment: "staging".into(),
+            database: "app".into(),
+            detail_hash: "hash789".into(),
+            requester_role: "developer".into(),
+            requester: "alice".into(),
+        };
+        let token_json = signer.sign(&claims);
+        let v: serde_json::Value = serde_json::from_str(&token_json).unwrap();
+
+        use ed25519_dalek::Verifier;
+        let sig_bytes = hex::decode(v["signature"].as_str().unwrap()).unwrap();
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes.try_into().unwrap());
+
+        // Tamper: escalate to production
+        let message = format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}",
+            v["request_id"].as_str().unwrap(),
+            v["operation"].as_str().unwrap(),
+            "production",
+            v["database"].as_str().unwrap(),
+            v["detail_hash"].as_str().unwrap(),
+            v["expires_at"].as_str().unwrap(),
+            v["requester_role"].as_str().unwrap(),
+            v["requester_subject_id"].as_str().unwrap(),
+        );
+        assert!(
+            signer
+                .public_key()
+                .verify(message.as_bytes(), &signature)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn different_signer_key_fails_verification() {
+        let dir1 = tempdir().unwrap();
+        let dir2 = tempdir().unwrap();
+        let signer1 = Ed25519TokenSigner::load_or_generate(dir1.path()).unwrap();
+        let signer2 = Ed25519TokenSigner::load_or_generate(dir2.path()).unwrap();
+
+        let claims = ExecutionTokenClaims {
+            request_id: "req-6".into(),
+            operation: "execute_dml".into(),
+            environment: "production".into(),
+            database: "app".into(),
+            detail_hash: "hashXYZ".into(),
+            requester_role: "admin".into(),
+            requester: "bob".into(),
+        };
+        let token_json = signer1.sign(&claims);
+        let v: serde_json::Value = serde_json::from_str(&token_json).unwrap();
+
+        use ed25519_dalek::Verifier;
+        let sig_bytes = hex::decode(v["signature"].as_str().unwrap()).unwrap();
+        let signature = ed25519_dalek::Signature::from_bytes(&sig_bytes.try_into().unwrap());
+
+        let message = format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}",
+            v["request_id"].as_str().unwrap(),
+            v["operation"].as_str().unwrap(),
+            v["environment"].as_str().unwrap(),
+            v["database"].as_str().unwrap(),
+            v["detail_hash"].as_str().unwrap(),
+            v["expires_at"].as_str().unwrap(),
+            v["requester_role"].as_str().unwrap(),
+            v["requester_subject_id"].as_str().unwrap(),
+        );
+        // Verify with different key should fail (rogue server)
+        assert!(
+            signer2
+                .public_key()
+                .verify(message.as_bytes(), &signature)
+                .is_err()
+        );
+    }
 }

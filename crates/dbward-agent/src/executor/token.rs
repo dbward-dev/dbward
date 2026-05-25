@@ -236,4 +236,43 @@ mod tests {
         let err = token.verify(&claim, &pk).unwrap_err();
         assert!(err.to_string().contains("signature invalid"));
     }
+
+    #[test]
+    fn verify_operation_mismatch() {
+        let sk = make_signing_key();
+        let pk = sk.verifying_key();
+        let claim = make_claim();
+        let raw = sign_token(&claim, &sk);
+        let token = ExecutionToken::parse(&raw).unwrap();
+        let mut bad_claim = claim;
+        bad_claim.operation = "execute_dml".into();
+        let err = token.verify(&bad_claim, &pk).unwrap_err();
+        assert!(err.to_string().contains("operation mismatch"));
+    }
+
+    #[test]
+    fn verify_database_mismatch() {
+        let sk = make_signing_key();
+        let pk = sk.verifying_key();
+        let claim = make_claim();
+        let raw = sign_token(&claim, &sk);
+        let token = ExecutionToken::parse(&raw).unwrap();
+        let mut bad_claim = claim;
+        bad_claim.database = "evil_db".into();
+        let err = token.verify(&bad_claim, &pk).unwrap_err();
+        assert!(err.to_string().contains("database mismatch"));
+    }
+
+    #[test]
+    fn verify_environment_mismatch() {
+        let sk = make_signing_key();
+        let pk = sk.verifying_key();
+        let claim = make_claim();
+        let raw = sign_token(&claim, &sk);
+        let token = ExecutionToken::parse(&raw).unwrap();
+        let mut bad_claim = claim;
+        bad_claim.environment = "staging".into();
+        let err = token.verify(&bad_claim, &pk).unwrap_err();
+        assert!(err.to_string().contains("environment mismatch"));
+    }
 }
