@@ -103,8 +103,8 @@ pub(crate) fn tools_definitions() -> Value {
         },
         {
             "name": "dbward_inspect_schema",
-            "description": "Inspect database schema. Omit 'table' to list all tables. Provide 'table' (e.g. 'users' or 'public.users') to show column definitions.",
-            "inputSchema": {"type": "object", "properties": {"table": {"type": "string", "description": "Table name to describe (e.g. 'users' or 'public.users'). Omit to list all tables."}, "database": {"type": "string"}, "environment": {"type": "string"}}}
+            "description": "Inspect database schema. Omit 'table' to list all tables. Provide 'table' (e.g. 'users' or 'public.users') to show column definitions. Server auto-selects environment.",
+            "inputSchema": {"type": "object", "properties": {"table": {"type": "string", "description": "Table name to describe (e.g. 'users' or 'public.users'). Omit to list all tables."}, "database": {"type": "string", "description": "Target database name"}}}
         }
     ])
 }
@@ -406,11 +406,13 @@ pub(crate) fn required_arg<'a>(args: &'a Value, name: &str) -> Result<&'a str, S
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // Used in tests; inspect_schema now uses server API
 pub(crate) struct TableReference {
     pub schema: Option<String>,
     pub table: String,
 }
 
+#[allow(dead_code)]
 pub(crate) fn parse_table_reference(input: &str) -> Result<TableReference, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -430,6 +432,7 @@ pub(crate) fn parse_table_reference(input: &str) -> Result<TableReference, Strin
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn validate_sql_identifier<'a>(value: &'a str, kind: &str) -> Result<&'a str, String> {
     if value.is_empty() {
         return Err(format!("{kind} must not be empty"));
@@ -448,6 +451,7 @@ pub(crate) fn validate_sql_identifier<'a>(value: &'a str, kind: &str) -> Result<
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn sql_string_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }

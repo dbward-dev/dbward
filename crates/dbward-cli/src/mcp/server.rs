@@ -544,28 +544,36 @@ async fn handle_tools_call(
         "dbward_inspect_schema" => {
             let db = args["database"].as_str().unwrap_or(db_name);
             let table = args["table"].as_str().unwrap_or("");
-            if table.is_empty() {
-                // List all tables
-                let sql = "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name";
-                submit_and_wait(client, "execute_query", env, db, sql, None).await
+
+            // Use server schema API (same source as MCP resource)
+            let path = if table.is_empty() {
+                format!("/api/schemas/{db}")
             } else {
-                // Describe specific table
-                let table_ref = match parse_table_reference(table) {
-                    Ok(table_ref) => table_ref,
-                    Err(message) => return jsonrpc_error(id, -32602, message),
-                };
-                let mut sql = "SELECT table_schema, table_name, column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE ".to_string();
-                if let Some(schema) = table_ref.schema {
-                    sql.push_str(&format!(
-                        "table_schema = {} AND ",
-                        sql_string_literal(&schema)
-                    ));
+                // Simple percent-encode for query param safety
+                let encoded: String = table
+                    .bytes()
+                    .flat_map(|b| match b {
+                        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => {
+                            vec![b as char]
+                        }
+                        _ => format!("%{b:02X}").chars().collect(),
+                    })
+                    .collect();
+                format!("/api/schemas/{db}?table={encoded}")
+            };
+
+            match client.get_json_with_status(&path).await {
+                Ok((200, resp)) => Ok(serde_json::to_string_pretty(&resp).unwrap_or_default()),
+                Ok((403, _)) => Err(format!("Access denied to schema for database '{db}'.")),
+                Ok((404, resp)) => {
+                    let error = resp["error"].as_str().unwrap_or("not found");
+                    Err(error.to_string())
                 }
-                sql.push_str(&format!(
-                    "table_name = {} ORDER BY table_schema, table_name, ordinal_position",
-                    sql_string_literal(&table_ref.table)
-                ));
-                submit_and_wait(client, "execute_query", env, db, &sql, None).await
+                Ok((status, resp)) => {
+                    let error = resp["error"].as_str().unwrap_or("unknown error");
+                    Err(format!("Schema request failed ({status}): {error}"))
+                }
+                Err(e) => Err(e.to_string()),
             }
         }
         _ => Err(format!("Unknown tool: {tool_name}")),
@@ -599,62 +607,66 @@ async fn submit_and_wait(
     detail: &str,
     reason: Option<&str>,
 ) -> Result<String, String> {
-    use crate::commands::workflow::{self, Outcome};
+    use crate::commands::workflow;
 
-    // Timeout applies to the entire orchestration (including auto-approved path
-    // which internally calls wait_and_resolve within submit_and_orchestrate).
-    const ORCHESTRATION_TIMEOUT: Duration = Duration::from_secs(120);
+    const TIMEOUT: Duration = Duration::from_secs(120);
 
-    let outcome = tokio::time::timeout(
-        ORCHESTRATION_TIMEOUT,
-        workflow::submit_and_orchestrate(
-            client,
-            crate::server_client::CreateRequest {
-                operation,
-                environment,
-                database,
-                detail,
-                emergency: false,
-                reason,
-                metadata: None,
-                idempotency_key: None,
-                share_with: None,
-                no_store: false,
-            },
-            false,
-        ),
+    // 1. Create request OUTSIDE timeout (request_id is always preserved)
+    let cr = match workflow::create_request(
+        client,
+        crate::server_client::CreateRequest {
+            operation,
+            environment,
+            database,
+            detail,
+            emergency: false,
+            reason,
+            metadata: None,
+            idempotency_key: None,
+            share_with: None,
+            no_store: false,
+        },
     )
-    .await;
+    .await
+    {
+        Ok(cr) => cr,
+        Err(e) => return Err(rewrite_error(&e.to_string())),
+    };
 
-    match outcome {
-        Ok(Ok(Outcome::Completed { result, .. })) => format_result(&result),
-        Ok(Ok(Outcome::Pending { request_id, .. })) => Ok(format!(
-            "Request {request_id} requires approval. \
-             Use dbward_wait_request to wait for completion."
+    // 2. Pending → return immediately with request_id
+    if cr.status == "pending" {
+        return Ok(format!(
+            "Request {} requires approval. \
+             Use dbward_wait_request to wait for completion.",
+            cr.request_id
+        ));
+    }
+
+    // 3. Wait with timeout (request_id preserved on timeout)
+    match tokio::time::timeout(
+        TIMEOUT,
+        workflow::wait_for_completion(client, &cr.request_id, &cr.status, false),
+    )
+    .await
+    {
+        Ok(Ok(result)) => format_result(&result),
+        Ok(Err(e)) => Err(rewrite_error(&e.to_string())),
+        Err(_) => Ok(format!(
+            "Request {} is still executing (timed out after 120s). \
+             Use dbward_wait_request with request_id '{}' to get the result.",
+            cr.request_id, cr.request_id
         )),
-        Ok(Ok(Outcome::Approved { request_id })) => {
-            client
-                .dispatch(&request_id)
-                .await
-                .map_err(|e| e.body.clone())?;
-            match tokio::time::timeout(
-                ORCHESTRATION_TIMEOUT,
-                workflow::wait_and_resolve(client, &request_id, false),
-            )
-            .await
-            {
-                Ok(Ok(resp)) => format_result(&resp),
-                Ok(Err(e)) => Err(e.to_string()),
-                Err(_) => Ok(format!(
-                    "Request {request_id} is still executing (timed out after 120s). \
-                     Use dbward_wait_request with request_id '{request_id}' to get the result."
-                )),
-            }
-        }
-        Ok(Err(e)) => Err(e.to_string()),
-        Err(_) => Ok("Request timed out during orchestration (120s). \
-             Use dbward_list_pending or dbward_wait_request to check status."
-            .to_string()),
+    }
+}
+
+/// Rewrite known server validation errors to actionable MCP messages.
+fn rewrite_error(msg: &str) -> String {
+    if msg.contains("reason is required") {
+        "This workflow requires a reason. Pass the 'reason' parameter.".into()
+    } else if msg.contains("not registered") {
+        format!("{msg} Use dbward_inspect_schema to see available databases.")
+    } else {
+        msg.to_string()
     }
 }
 

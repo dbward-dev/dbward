@@ -456,6 +456,28 @@ impl ServerClient {
         self.parse_response(resp, path).await
     }
 
+    /// GET with status code for MCP tools that need granular error handling.
+    pub async fn get_json_with_status(&self, path: &str) -> Result<(u16, Value), CliError> {
+        let resp = self
+            .client
+            .get(format!("{}{}", self.base_url, path))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| CliError::Server(format!("get {path}: {e}")))?;
+        let status = resp.status().as_u16();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| CliError::Server(format!("get {path}: failed to read body: {e}")))?;
+        let body: Value = serde_json::from_str(&text).map_err(|_| {
+            CliError::Server(format!(
+                "get {path}: server returned non-JSON response (HTTP {status})"
+            ))
+        })?;
+        Ok((status, body))
+    }
+
     pub async fn get_result_content(&self, request_id: &str) -> Result<Value, CliError> {
         let resp = self
             .client
