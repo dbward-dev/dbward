@@ -456,6 +456,23 @@ impl ServerClient {
         self.parse_response(resp, path).await
     }
 
+    /// GET with status code for MCP tools that need granular error handling.
+    pub async fn get_json_with_status(&self, path: &str) -> Result<(u16, Value), CliError> {
+        let resp = self
+            .client
+            .get(format!("{}{}", self.base_url, path))
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| CliError::Server(format!("get {path}: {e}")))?;
+        let status = resp.status().as_u16();
+        let body: Value = resp
+            .json()
+            .await
+            .unwrap_or(serde_json::json!({"error": "failed to parse response"}));
+        Ok((status, body))
+    }
+
     pub async fn get_result_content(&self, request_id: &str) -> Result<Value, CliError> {
         let resp = self
             .client

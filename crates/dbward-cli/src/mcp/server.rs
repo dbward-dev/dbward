@@ -544,28 +544,40 @@ async fn handle_tools_call(
         "dbward_inspect_schema" => {
             let db = args["database"].as_str().unwrap_or(db_name);
             let table = args["table"].as_str().unwrap_or("");
-            if table.is_empty() {
-                // List all tables
-                let sql = "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema, table_name";
-                submit_and_wait(client, "execute_query", env, db, sql, None).await
+
+            // Use server schema API (same source as MCP resource)
+            let path = if table.is_empty() {
+                format!("/api/schemas/{db}")
             } else {
-                // Describe specific table
-                let table_ref = match parse_table_reference(table) {
-                    Ok(table_ref) => table_ref,
-                    Err(message) => return jsonrpc_error(id, -32602, message),
-                };
-                let mut sql = "SELECT table_schema, table_name, column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE ".to_string();
-                if let Some(schema) = table_ref.schema {
-                    sql.push_str(&format!(
-                        "table_schema = {} AND ",
-                        sql_string_literal(&schema)
-                    ));
+                // Simple percent-encode for query param safety
+                let encoded: String = table
+                    .bytes()
+                    .flat_map(|b| match b {
+                        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => {
+                            vec![b as char]
+                        }
+                        _ => format!("%{b:02X}").chars().collect(),
+                    })
+                    .collect();
+                format!("/api/schemas/{db}?table={encoded}")
+            };
+
+            match client.get_json_with_status(&path).await {
+                Ok((200, resp)) => {
+                    Ok(serde_json::to_string_pretty(&resp).unwrap_or_default())
                 }
-                sql.push_str(&format!(
-                    "table_name = {} ORDER BY table_schema, table_name, ordinal_position",
-                    sql_string_literal(&table_ref.table)
-                ));
-                submit_and_wait(client, "execute_query", env, db, &sql, None).await
+                Ok((403, _)) => {
+                    Err(format!("Access denied to schema for database '{db}'."))
+                }
+                Ok((404, resp)) => {
+                    let error = resp["error"].as_str().unwrap_or("not found");
+                    Err(error.to_string())
+                }
+                Ok((status, resp)) => {
+                    let error = resp["error"].as_str().unwrap_or("unknown error");
+                    Err(format!("Schema request failed ({status}): {error}"))
+                }
+                Err(e) => Err(e.to_string()),
             }
         }
         _ => Err(format!("Unknown tool: {tool_name}")),
