@@ -37,12 +37,12 @@ impl ApiTokenVerifier {
 #[async_trait]
 impl TokenVerifier for ApiTokenVerifier {
     async fn verify_api_token(&self, raw_token: &str) -> Result<AuthUser, AuthError> {
-        if !raw_token.starts_with("dbw_") || raw_token.len() < 12 {
+        if !raw_token.starts_with("dbw_") || raw_token.len() < 12 || raw_token.len() > 256 {
             return Err(AuthError::InvalidToken);
         }
 
         if !raw_token.is_ascii() {
-            tracing::warn!(token_len = raw_token.len(), "rejected non-ASCII API token");
+            tracing::debug!(token_len = raw_token.len(), "rejected non-ASCII API token");
             return Err(AuthError::InvalidToken);
         }
 
@@ -512,6 +512,29 @@ mod tests {
             FakePolicyRepo::empty(),
         );
         let err = v.verify_api_token("").await.unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken));
+    }
+
+    #[tokio::test]
+    async fn prefix_only_returns_invalid() {
+        let v = verifier(
+            FakeTokenRepo::empty(),
+            FakeUserRepo::ok(),
+            FakePolicyRepo::empty(),
+        );
+        let err = v.verify_api_token("dbw_").await.unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken));
+    }
+
+    #[tokio::test]
+    async fn oversized_token_returns_invalid() {
+        let v = verifier(
+            FakeTokenRepo::empty(),
+            FakeUserRepo::ok(),
+            FakePolicyRepo::empty(),
+        );
+        let long = format!("dbw_{}", "a".repeat(300));
+        let err = v.verify_api_token(&long).await.unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken));
     }
 }
