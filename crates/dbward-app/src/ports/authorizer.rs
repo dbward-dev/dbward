@@ -23,6 +23,11 @@ pub trait RoleResolver: Send + Sync {
         subject_type: SubjectType,
         groups: &[String],
     ) -> Result<Vec<ResolvedRole>, AuthError>;
+
+    /// Reverse lookup: role → subject_ids who have this role via static bindings.
+    fn subjects_for_role(&self, _role: &str) -> Vec<String> {
+        vec![]
+    }
 }
 
 /// Authorization: 2-method design per ADR-002.

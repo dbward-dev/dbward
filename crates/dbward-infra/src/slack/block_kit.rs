@@ -203,7 +203,7 @@ pub fn build_review_modal(
 }
 
 /// Build blocks for a thread reply.
-pub fn build_thread_reply(event: &WebhookEvent) -> Vec<Value> {
+pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Value> {
     let actor = event.actor.as_deref().unwrap_or("system");
 
     let (emoji, text) = match event.event_type.as_str() {
@@ -241,9 +241,15 @@ pub fn build_thread_reply(event: &WebhookEvent) -> Vec<Value> {
         _ => ("🔔", format!("{}: {actor}", event.event_type)),
     };
 
+    let display_text = if mention_suffix.is_empty() {
+        format!("{emoji} {text}")
+    } else {
+        format!("{emoji} {text} — {mention_suffix}")
+    };
+
     vec![json!({
         "type": "section",
-        "text": {"type": "mrkdwn", "text": format!("{emoji} {text}")}
+        "text": {"type": "mrkdwn", "text": display_text}
     })]
 }
 
@@ -504,7 +510,7 @@ mod tests {
     fn thread_reply_formats_correctly() {
         let mut event = sample_event();
         event.event_type = "request_approved".into();
-        let blocks = build_thread_reply(&event);
+        let blocks = build_thread_reply(&event, "");
         let text = blocks[0]["text"]["text"].as_str().unwrap();
         assert!(text.contains("Approved by alice"));
     }

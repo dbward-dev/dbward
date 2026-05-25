@@ -1,11 +1,11 @@
 pub mod block_kit;
 mod client;
-pub mod dm_notifier;
 mod notifier;
+pub mod user_resolver;
 
 pub use client::SlackHttpClient;
-pub use dm_notifier::SlackDmNotifier;
 pub use notifier::SlackNotifier;
+pub use user_resolver::SlackUserResolver;
 
 use dbward_app::error::AppError;
 
@@ -50,11 +50,6 @@ pub trait SlackClient: Send + Sync {
     /// Look up a Slack user ID by email address (requires users:read.email scope).
     async fn lookup_user_by_email(&self, _email: &str) -> Result<Option<String>, SlackError> {
         Ok(None)
-    }
-
-    /// Open a DM channel with a user (requires im:write scope).
-    async fn conversations_open(&self, _user_id: &str) -> Result<String, SlackError> {
-        Err(SlackError::Api("not implemented".into()))
     }
 }
 

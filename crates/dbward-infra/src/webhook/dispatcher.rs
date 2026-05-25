@@ -373,7 +373,6 @@ pub struct CompositeEventDispatcher {
     pub notifier: Arc<dyn Notifier>,
     pub result_channel: Option<Arc<dyn dbward_app::ports::ResultChannel>>,
     pub request_notifier: Option<Arc<dyn Notifier>>,
-    pub dm_notifier: Option<Arc<crate::slack::SlackDmNotifier>>,
     pub redaction_mode: RedactionMode,
     pub clock: Arc<dyn dbward_app::ports::Clock>,
 }
@@ -515,15 +514,6 @@ impl EventDispatcher for CompositeEventDispatcher {
         // Fan out to additional subscribers (ADR-004)
         if let Some(ref rn) = self.request_notifier {
             rn.dispatch(webhook_event.clone());
-        }
-
-        // DM notifications (DX-8)
-        if let Some(ref dm) = self.dm_notifier {
-            let dm = dm.clone();
-            let event = webhook_event;
-            tokio::spawn(async move {
-                dm.dispatch(&event).await;
-            });
         }
     }
 }

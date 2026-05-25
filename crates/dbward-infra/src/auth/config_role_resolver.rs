@@ -194,6 +194,14 @@ impl RoleResolver for ConfigRoleResolver {
 
         Ok(resolved)
     }
+
+    fn subjects_for_role(&self, role: &str) -> Vec<String> {
+        self.user_bindings
+            .iter()
+            .filter(|(_, roles)| roles.iter().any(|r| r == role))
+            .map(|(subject, _)| subject.clone())
+            .collect()
+    }
 }
 
 #[cfg(test)]

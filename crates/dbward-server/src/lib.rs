@@ -257,11 +257,16 @@ pub async fn run_from_args(
                 conn.clone(),
             ));
             Arc::new(dbward_infra::slack::SlackNotifier::new(
-                slack_client,
+                slack_client.clone(),
                 slack_msg_repo,
                 context_repo.clone(),
                 request_repo.clone(),
                 request_repo.clone(),
+                Arc::new(dbward_infra::slack::SlackUserResolver::new(
+                    slack_client,
+                    user_repo.clone(),
+                )),
+                role_resolver.clone(),
                 sc.clone(),
             )) as Arc<dyn dbward_app::ports::Notifier>
         });
@@ -273,32 +278,12 @@ pub async fn run_from_args(
             )) as Arc<dyn dbward_infra::slack::SlackClient>
         });
 
-    let dm_notifier: Option<Arc<dbward_infra::slack::SlackDmNotifier>> =
-        slack_client_for_state.as_ref().and_then(|client| {
-            let notifications = cfg
-                .slack
-                .as_ref()
-                .map(|s| &s.notifications)
-                .cloned()
-                .unwrap_or_default();
-            if !notifications.requester && !notifications.approver {
-                return None;
-            }
-            Some(Arc::new(dbward_infra::slack::SlackDmNotifier::new(
-                client.clone(),
-                user_repo.clone(),
-                notifications.requester,
-                notifications.approver,
-            )))
-        });
-
     let event_dispatcher: Arc<dyn dbward_app::ports::EventDispatcher> =
         Arc::new(dbward_infra::webhook::CompositeEventDispatcher {
             audit: audit_logger.clone(),
             notifier: notifier.clone(),
             result_channel: Some(result_channel.clone()),
             request_notifier: slack_notifier,
-            dm_notifier,
             redaction_mode: match cfg.audit.redaction.as_str() {
                 "none" => dbward_infra::webhook::RedactionMode::None,
                 "full" => dbward_infra::webhook::RedactionMode::Full,

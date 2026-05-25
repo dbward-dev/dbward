@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
-use dbward_app::ports::{ApprovalRepo, ContextRepo, Notifier, RequestReader, WebhookEvent};
+use dbward_app::ports::{
+    ApprovalRepo, ContextRepo, Notifier, RequestReader, RoleResolver, WebhookEvent,
+};
 
-use super::{SlackClient, SlackConfig, SlackMessageRepo, block_kit};
+use super::{SlackClient, SlackConfig, SlackMessageRepo, SlackUserResolver, block_kit};
 
 /// Outbound Slack notifier. Implements `Notifier` trait for use as
 /// `CompositeEventDispatcher.request_notifier`.
@@ -13,6 +15,8 @@ pub struct SlackNotifier {
     context_repo: Arc<dyn ContextRepo>,
     request_reader: Arc<dyn RequestReader>,
     approval_repo: Arc<dyn ApprovalRepo>,
+    user_resolver: Arc<SlackUserResolver>,
+    role_resolver: Arc<dyn RoleResolver>,
     config: SlackConfig,
 }
 
@@ -23,6 +27,8 @@ impl SlackNotifier {
         context_repo: Arc<dyn ContextRepo>,
         request_reader: Arc<dyn RequestReader>,
         approval_repo: Arc<dyn ApprovalRepo>,
+        user_resolver: Arc<SlackUserResolver>,
+        role_resolver: Arc<dyn RoleResolver>,
         config: SlackConfig,
     ) -> Self {
         Self {
@@ -31,6 +37,8 @@ impl SlackNotifier {
             context_repo,
             request_reader,
             approval_repo,
+            user_resolver,
+            role_resolver,
             config,
         }
     }
@@ -76,8 +84,15 @@ impl SlackNotifier {
             }
         }
 
+        // Resolve approver mentions for notification
+        let mention_suffix = self.resolve_approver_mentions(&event).await;
+
         let blocks = block_kit::build_request_created(&event, context.as_ref());
-        let text = block_kit::fallback_text(&event);
+        let text = if mention_suffix.is_empty() {
+            block_kit::fallback_text(&event)
+        } else {
+            format!("{} — {}", block_kit::fallback_text(&event), mention_suffix)
+        };
 
         match self.client.post_message(channel, &blocks, &text).await {
             Ok(ts) => {
@@ -160,7 +175,8 @@ impl SlackNotifier {
         }
 
         // SECONDARY: Thread reply (always attempt, best-effort)
-        let reply_blocks = block_kit::build_thread_reply(event);
+        let mention_suffix = self.resolve_reply_mentions(event).await;
+        let reply_blocks = block_kit::build_thread_reply(event, &mention_suffix);
         let reply_text = block_kit::fallback_text(event);
         if let Err(e) = self
             .client
@@ -186,6 +202,114 @@ impl SlackNotifier {
             }
         }
         None
+    }
+
+    /// Resolve approver mentions for initial message (request_created).
+    async fn resolve_approver_mentions(&self, event: &WebhookEvent) -> String {
+        if event.event_type == "break_glass" {
+            return String::new();
+        }
+        let subjects = self.resolve_approver_subjects(event);
+        if subjects.is_empty() {
+            return String::new();
+        }
+        let mentions = self.user_resolver.mentions_for(&subjects).await;
+        mentions.join(" ")
+    }
+
+    /// Resolve mention target for thread replies.
+    async fn resolve_reply_mentions(&self, event: &WebhookEvent) -> String {
+        match event.event_type.as_str() {
+            // Step progressed → mention next approvers
+            "step_approved" => {
+                let subjects = self.resolve_next_step_subjects(event);
+                if subjects.is_empty() {
+                    return String::new();
+                }
+                let mentions = self.user_resolver.mentions_for(&subjects).await;
+                mentions.join(" ")
+            }
+            // Final results → mention requester
+            "request_approved" | "request_rejected" | "request_completed" | "request_failed"
+            | "request_expired" => {
+                if let Some(ref requester) = event.requester {
+                    self.user_resolver.mention_for(requester).await
+                } else {
+                    String::new()
+                }
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// Extract subject_ids from workflow_snapshot approvers for current step.
+    fn resolve_approver_subjects(&self, event: &WebhookEvent) -> Vec<String> {
+        let req_id = match event.request_id.as_deref() {
+            Some(id) => id,
+            None => return vec![],
+        };
+        let req = match self.request_reader.get(req_id) {
+            Ok(Some(r)) => r,
+            _ => return vec![],
+        };
+        let wf_json = match req.workflow_snapshot_json.as_deref() {
+            Some(j) => j,
+            None => return vec![],
+        };
+        let step = event.step_index.unwrap_or(0);
+        self.extract_subjects_from_step(wf_json, step)
+    }
+
+    /// Extract subjects for the NEXT step (after current approval).
+    fn resolve_next_step_subjects(&self, event: &WebhookEvent) -> Vec<String> {
+        let req_id = match event.request_id.as_deref() {
+            Some(id) => id,
+            None => return vec![],
+        };
+        let req = match self.request_reader.get(req_id) {
+            Ok(Some(r)) => r,
+            _ => return vec![],
+        };
+        let wf_json = match req.workflow_snapshot_json.as_deref() {
+            Some(j) => j,
+            None => return vec![],
+        };
+        let next_step = event.step_index.unwrap_or(0) + 1;
+        self.extract_subjects_from_step(wf_json, next_step)
+    }
+
+    /// Parse workflow JSON and resolve selectors for a given step index.
+    fn extract_subjects_from_step(&self, wf_json: &str, step_index: u32) -> Vec<String> {
+        let wf: serde_json::Value = match serde_json::from_str(wf_json) {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        };
+        let steps = match wf["steps"].as_array() {
+            Some(s) => s,
+            None => return vec![],
+        };
+        let step = match steps.get(step_index as usize) {
+            Some(s) => s,
+            None => return vec![],
+        };
+        let approvers = match step["approvers"].as_array() {
+            Some(a) => a,
+            None => return vec![],
+        };
+
+        let mut subjects = std::collections::HashSet::new();
+        for approver in approvers {
+            let selector = approver["selector"].as_str().unwrap_or("");
+            if let Some(user) = selector.strip_prefix("user:") {
+                subjects.insert(user.to_string());
+            } else if let Some(role) = selector.strip_prefix("role:") {
+                for s in self.role_resolver.subjects_for_role(role) {
+                    subjects.insert(s);
+                }
+            }
+            // group:* → skip (v0.1.3 未対応)
+        }
+        subjects.into_iter().collect()
     }
 }
 

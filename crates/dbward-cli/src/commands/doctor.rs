@@ -545,9 +545,6 @@ fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
 
     // S6: auto_approve_consistency
     check_auto_approve_consistency(ctx, &cfg);
-
-    // S7: slack_dm_config
-    check_slack_dm_config(ctx, &cfg);
 }
 
 fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
@@ -1042,56 +1039,6 @@ fn count_results(ctx: &DoctorContext) -> (usize, usize, usize, usize) {
     (pass, warn, fail, skip)
 }
 
-fn check_slack_dm_config(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
-    let Some(ref slack) = cfg.slack else {
-        ctx.record(CheckResult {
-            id: "slack_dm",
-            status: Status::Skip,
-            message: "[slack] not configured — DM notifications disabled".into(),
-            hint: None,
-        });
-        return;
-    };
-
-    let notifications = &slack.notifications;
-    if !notifications.requester && !notifications.approver {
-        ctx.record(CheckResult {
-            id: "slack_dm",
-            status: Status::Pass,
-            message: "DM notifications disabled by config".into(),
-            hint: None,
-        });
-        return;
-    }
-
-    if slack.bot_token.is_empty() || slack.bot_token.starts_with("${") {
-        ctx.record(CheckResult {
-            id: "slack_dm",
-            status: Status::Fail,
-            message: "bot_token is empty or unresolved — DM will not work".into(),
-            hint: Some("Set SLACK_BOT_TOKEN environment variable".into()),
-        });
-        return;
-    }
-
-    let mut features = Vec::new();
-    if notifications.requester {
-        features.push("requester");
-    }
-    if notifications.approver {
-        features.push("approver");
-    }
-
-    ctx.record(CheckResult {
-        id: "slack_dm",
-        status: Status::Pass,
-        message: format!(
-            "DM enabled for: {}. Required scopes: chat:write, users:read.email, im:write",
-            features.join(", ")
-        ),
-        hint: None,
-    });
-}
 #[cfg(test)]
 mod tests {
     use super::*;
