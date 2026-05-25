@@ -41,8 +41,13 @@ impl TokenVerifier for ApiTokenVerifier {
             return Err(AuthError::InvalidToken);
         }
 
-        let without_prefix = &raw_token[4..];
-        let prefix = &without_prefix[..8];
+        if !raw_token.is_ascii() {
+            tracing::warn!(token_len = raw_token.len(), "rejected non-ASCII API token");
+            return Err(AuthError::InvalidToken);
+        }
+
+        let without_prefix = raw_token.get(4..).ok_or(AuthError::InvalidToken)?;
+        let prefix = without_prefix.get(..8).ok_or(AuthError::InvalidToken)?;
         let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
 
         let token = self
@@ -473,5 +478,40 @@ mod tests {
         assert_eq!(user.roles.len(), 1);
         assert_eq!(user.roles[0].name, "admin");
         assert_eq!(user.token_id, Some("tok-1".into()));
+    }
+
+    #[tokio::test]
+    async fn non_ascii_multibyte_returns_invalid() {
+        let v = verifier(
+            FakeTokenRepo::empty(),
+            FakeUserRepo::ok(),
+            FakePolicyRepo::empty(),
+        );
+        // Cyrillic Ю = 2 bytes; total >= 12 bytes but non-ASCII
+        let err = v.verify_api_token("dbw_abcdef8Ю*20").await.unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken));
+    }
+
+    #[tokio::test]
+    async fn non_ascii_exactly_12_bytes_returns_invalid() {
+        let v = verifier(
+            FakeTokenRepo::empty(),
+            FakeUserRepo::ok(),
+            FakePolicyRepo::empty(),
+        );
+        // 4 ("dbw_") + 6 ASCII + 1 two-byte char = 12 bytes
+        let err = v.verify_api_token("dbw_abcdefЮ").await.unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken));
+    }
+
+    #[tokio::test]
+    async fn empty_string_returns_invalid() {
+        let v = verifier(
+            FakeTokenRepo::empty(),
+            FakeUserRepo::ok(),
+            FakePolicyRepo::empty(),
+        );
+        let err = v.verify_api_token("").await.unwrap_err();
+        assert!(matches!(err, AuthError::InvalidToken));
     }
 }
