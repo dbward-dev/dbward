@@ -126,7 +126,6 @@ mod tests {
 
     #[test]
     fn is_private_detects_ipv4_mapped_ipv6() {
-        use std::net::Ipv6Addr;
         // ::ffff:127.0.0.1 — loopback via IPv4-mapped
         let mapped_loopback: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
         assert!(is_private(&mapped_loopback));
