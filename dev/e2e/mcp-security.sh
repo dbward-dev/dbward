@@ -22,9 +22,9 @@ echo "--- Path traversal in API params ---"
 STATUS=$(api_status GET "/api/schemas/..%2F..%2Fetc%2Fpasswd" "$ADMIN_TOKEN")
 [ "$STATUS" = "400" ] || [ "$STATUS" = "404" ] && pass "Path traversal in schema DB rejected ($STATUS)" || fail "Schema traversal" "got $STATUS"
 
-# Table name with path traversal
+# Table name with path traversal (must not return 200 with data)
 STATUS=$(api_status GET "/api/schemas/app?table=../../etc/passwd" "$ADMIN_TOKEN")
-[ "$STATUS" = "400" ] || [ "$STATUS" = "404" ] || [ "$STATUS" = "200" ] && pass "Table traversal handled ($STATUS)" || fail "Table traversal" "got $STATUS"
+[ "$STATUS" = "400" ] || [ "$STATUS" = "404" ] && pass "Table traversal rejected ($STATUS)" || fail "Table traversal" "got $STATUS (expected 400 or 404)"
 
 # --- SQL identifier injection ---
 echo ""
