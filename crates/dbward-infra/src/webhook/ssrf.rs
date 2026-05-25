@@ -123,4 +123,37 @@ mod tests {
         assert!(!is_private(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
         assert!(!is_private(&IpAddr::V4(Ipv4Addr::new(93, 184, 215, 14))));
     }
+
+    #[test]
+    fn is_private_detects_ipv4_mapped_ipv6() {
+        use std::net::Ipv6Addr;
+        // ::ffff:127.0.0.1 — loopback via IPv4-mapped
+        let mapped_loopback: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        assert!(is_private(&mapped_loopback));
+        // ::ffff:10.0.0.1 — private via IPv4-mapped
+        let mapped_private: IpAddr = "::ffff:10.0.0.1".parse().unwrap();
+        assert!(is_private(&mapped_private));
+        // ::ffff:192.168.1.1 — private via IPv4-mapped
+        let mapped_192: IpAddr = "::ffff:192.168.1.1".parse().unwrap();
+        assert!(is_private(&mapped_192));
+        // ::ffff:169.254.169.254 — link-local via IPv4-mapped (AWS metadata)
+        let mapped_metadata: IpAddr = "::ffff:169.254.169.254".parse().unwrap();
+        assert!(is_private(&mapped_metadata));
+        // ::ffff:8.8.8.8 — public via IPv4-mapped (should NOT be private)
+        let mapped_public: IpAddr = "::ffff:8.8.8.8".parse().unwrap();
+        assert!(!is_private(&mapped_public));
+    }
+
+    #[test]
+    fn is_private_detects_ula_and_link_local_ipv6() {
+        // ULA (fc00::/7)
+        let ula: IpAddr = "fd00::1".parse().unwrap();
+        assert!(is_private(&ula));
+        // Link-local (fe80::/10)
+        let link_local: IpAddr = "fe80::1".parse().unwrap();
+        assert!(is_private(&link_local));
+        // Global unicast (not private)
+        let global: IpAddr = "2001:db8::1".parse().unwrap();
+        assert!(!is_private(&global));
+    }
 }
