@@ -563,12 +563,8 @@ async fn handle_tools_call(
             };
 
             match client.get_json_with_status(&path).await {
-                Ok((200, resp)) => {
-                    Ok(serde_json::to_string_pretty(&resp).unwrap_or_default())
-                }
-                Ok((403, _)) => {
-                    Err(format!("Access denied to schema for database '{db}'."))
-                }
+                Ok((200, resp)) => Ok(serde_json::to_string_pretty(&resp).unwrap_or_default()),
+                Ok((403, _)) => Err(format!("Access denied to schema for database '{db}'.")),
                 Ok((404, resp)) => {
                     let error = resp["error"].as_str().unwrap_or("not found");
                     Err(error.to_string())

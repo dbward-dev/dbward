@@ -466,10 +466,15 @@ impl ServerClient {
             .await
             .map_err(|e| CliError::Server(format!("get {path}: {e}")))?;
         let status = resp.status().as_u16();
-        let body: Value = resp
-            .json()
+        let text = resp
+            .text()
             .await
-            .unwrap_or(serde_json::json!({"error": "failed to parse response"}));
+            .map_err(|e| CliError::Server(format!("get {path}: failed to read body: {e}")))?;
+        let body: Value = serde_json::from_str(&text).map_err(|_| {
+            CliError::Server(format!(
+                "get {path}: server returned non-JSON response (HTTP {status})"
+            ))
+        })?;
         Ok((status, body))
     }
 

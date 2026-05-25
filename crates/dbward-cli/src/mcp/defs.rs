@@ -103,8 +103,8 @@ pub(crate) fn tools_definitions() -> Value {
         },
         {
             "name": "dbward_inspect_schema",
-            "description": "Inspect database schema. Omit 'table' to list all tables. Provide 'table' (e.g. 'users' or 'public.users') to show column definitions.",
-            "inputSchema": {"type": "object", "properties": {"table": {"type": "string", "description": "Table name to describe (e.g. 'users' or 'public.users'). Omit to list all tables."}, "database": {"type": "string"}, "environment": {"type": "string"}}}
+            "description": "Inspect database schema. Omit 'table' to list all tables. Provide 'table' (e.g. 'users' or 'public.users') to show column definitions. Server auto-selects environment.",
+            "inputSchema": {"type": "object", "properties": {"table": {"type": "string", "description": "Table name to describe (e.g. 'users' or 'public.users'). Omit to list all tables."}, "database": {"type": "string", "description": "Target database name"}}}
         }
     ])
 }

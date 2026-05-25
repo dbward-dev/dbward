@@ -48,7 +48,7 @@ pub async fn wait_for_completion(
 ) -> Result<Value, CliError> {
     match status {
         "dispatched" | "running" => wait_and_resolve(sc, request_id, verbose).await,
-        "approved" => {
+        "approved" | "auto_approved" | "break_glass" => {
             sc.dispatch(request_id)
                 .await
                 .map_err(|e| CliError::Server(e.body.clone()))?;
