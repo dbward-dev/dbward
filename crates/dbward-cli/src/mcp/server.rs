@@ -599,62 +599,66 @@ async fn submit_and_wait(
     detail: &str,
     reason: Option<&str>,
 ) -> Result<String, String> {
-    use crate::commands::workflow::{self, Outcome};
+    use crate::commands::workflow;
 
-    // Timeout applies to the entire orchestration (including auto-approved path
-    // which internally calls wait_and_resolve within submit_and_orchestrate).
-    const ORCHESTRATION_TIMEOUT: Duration = Duration::from_secs(120);
+    const TIMEOUT: Duration = Duration::from_secs(120);
 
-    let outcome = tokio::time::timeout(
-        ORCHESTRATION_TIMEOUT,
-        workflow::submit_and_orchestrate(
-            client,
-            crate::server_client::CreateRequest {
-                operation,
-                environment,
-                database,
-                detail,
-                emergency: false,
-                reason,
-                metadata: None,
-                idempotency_key: None,
-                share_with: None,
-                no_store: false,
-            },
-            false,
-        ),
+    // 1. Create request OUTSIDE timeout (request_id is always preserved)
+    let cr = match workflow::create_request(
+        client,
+        crate::server_client::CreateRequest {
+            operation,
+            environment,
+            database,
+            detail,
+            emergency: false,
+            reason,
+            metadata: None,
+            idempotency_key: None,
+            share_with: None,
+            no_store: false,
+        },
     )
-    .await;
+    .await
+    {
+        Ok(cr) => cr,
+        Err(e) => return Err(rewrite_error(&e.to_string())),
+    };
 
-    match outcome {
-        Ok(Ok(Outcome::Completed { result, .. })) => format_result(&result),
-        Ok(Ok(Outcome::Pending { request_id, .. })) => Ok(format!(
-            "Request {request_id} requires approval. \
-             Use dbward_wait_request to wait for completion."
+    // 2. Pending → return immediately with request_id
+    if cr.status == "pending" {
+        return Ok(format!(
+            "Request {} requires approval. \
+             Use dbward_wait_request to wait for completion.",
+            cr.request_id
+        ));
+    }
+
+    // 3. Wait with timeout (request_id preserved on timeout)
+    match tokio::time::timeout(
+        TIMEOUT,
+        workflow::wait_for_completion(client, &cr.request_id, &cr.status, false),
+    )
+    .await
+    {
+        Ok(Ok(result)) => format_result(&result),
+        Ok(Err(e)) => Err(rewrite_error(&e.to_string())),
+        Err(_) => Ok(format!(
+            "Request {} is still executing (timed out after 120s). \
+             Use dbward_wait_request with request_id '{}' to get the result.",
+            cr.request_id, cr.request_id
         )),
-        Ok(Ok(Outcome::Approved { request_id })) => {
-            client
-                .dispatch(&request_id)
-                .await
-                .map_err(|e| e.body.clone())?;
-            match tokio::time::timeout(
-                ORCHESTRATION_TIMEOUT,
-                workflow::wait_and_resolve(client, &request_id, false),
-            )
-            .await
-            {
-                Ok(Ok(resp)) => format_result(&resp),
-                Ok(Err(e)) => Err(e.to_string()),
-                Err(_) => Ok(format!(
-                    "Request {request_id} is still executing (timed out after 120s). \
-                     Use dbward_wait_request with request_id '{request_id}' to get the result."
-                )),
-            }
-        }
-        Ok(Err(e)) => Err(e.to_string()),
-        Err(_) => Ok("Request timed out during orchestration (120s). \
-             Use dbward_list_pending or dbward_wait_request to check status."
-            .to_string()),
+    }
+}
+
+/// Rewrite known server validation errors to actionable MCP messages.
+fn rewrite_error(msg: &str) -> String {
+    if msg.contains("reason is required") {
+        "This workflow requires a reason. Pass the 'reason' parameter.".into()
+    } else if msg.contains("not registered") {
+        format!("{msg} Use dbward_inspect_schema to see available databases.")
+    } else {
+        msg.to_string()
     }
 }
 

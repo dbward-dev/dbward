@@ -150,7 +150,7 @@ max_estimated_rows = 1000
 [[auto_approve]]
 database = "*"
 environment = "staging"
-risk = "medium"
+risk = "low"
 
 # Development: auto-approve up to High (nearly everything)
 [[auto_approve]]

@@ -18,6 +18,49 @@ pub enum Outcome {
     Approved { request_id: String },
 }
 
+/// Result of request creation (before orchestration).
+pub struct CreateResult {
+    pub request_id: String,
+    pub status: String,
+    pub approvers: Vec<String>,
+}
+
+/// Create a request and return the initial status. No orchestration.
+pub async fn create_request(
+    sc: &ServerClient,
+    params: CreateRequest<'_>,
+) -> Result<CreateResult, CliError> {
+    let (id, status, approvers) = sc.create_request(params).await?;
+    Ok(CreateResult {
+        request_id: id,
+        status,
+        approvers,
+    })
+}
+
+/// Wait for an already-created request to reach terminal state.
+/// Handles dispatch if needed (approved status).
+pub async fn wait_for_completion(
+    sc: &ServerClient,
+    request_id: &str,
+    status: &str,
+    verbose: bool,
+) -> Result<Value, CliError> {
+    match status {
+        "dispatched" | "running" => wait_and_resolve(sc, request_id, verbose).await,
+        "approved" => {
+            sc.dispatch(request_id)
+                .await
+                .map_err(|e| CliError::Server(e.body.clone()))?;
+            wait_and_resolve(sc, request_id, verbose).await
+        }
+        "executed" | "failed" => resolve_terminal_result(sc, request_id).await,
+        _ => Err(CliError::Server(format!(
+            "unexpected status for wait: {status}"
+        ))),
+    }
+}
+
 /// Submit a request and orchestrate through to completion.
 ///
 /// This handles the common pattern: create → status branch → dispatch → wait → resolve.
@@ -27,29 +70,34 @@ pub async fn submit_and_orchestrate(
     params: CreateRequest<'_>,
     verbose: bool,
 ) -> Result<Outcome, CliError> {
-    let (id, status, approvers) = sc.create_request(params).await?;
+    let cr = create_request(sc, params).await?;
 
-    match status.as_str() {
+    match cr.status.as_str() {
         "dispatched" | "break_glass" | "running" => {
-            let result = wait_and_resolve(sc, &id, verbose).await?;
+            let result = wait_and_resolve(sc, &cr.request_id, verbose).await?;
             Ok(Outcome::Completed {
-                request_id: id,
+                request_id: cr.request_id,
                 result,
             })
         }
         "executed" | "failed" => {
-            let result = resolve_terminal_result(sc, &id).await?;
+            let result = resolve_terminal_result(sc, &cr.request_id).await?;
             Ok(Outcome::Completed {
-                request_id: id,
+                request_id: cr.request_id,
                 result,
             })
         }
-        "approved" | "auto_approved" => Ok(Outcome::Approved { request_id: id }),
-        "pending" => Ok(Outcome::Pending {
-            request_id: id,
-            approvers,
+        "approved" | "auto_approved" => Ok(Outcome::Approved {
+            request_id: cr.request_id,
         }),
-        _ => Err(CliError::Server(format!("unexpected status: {status}"))),
+        "pending" => Ok(Outcome::Pending {
+            request_id: cr.request_id,
+            approvers: cr.approvers,
+        }),
+        _ => Err(CliError::Server(format!(
+            "unexpected status: {}",
+            cr.status
+        ))),
     }
 }
 

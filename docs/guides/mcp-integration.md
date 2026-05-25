@@ -175,11 +175,16 @@ Pre-built prompts for common AI workflows:
 > **You:** "Add an index on users.email for faster lookups"
 >
 > **AI:** I'll create a migration for that.
-> *[calls `dbward_migrate_create` with name "add_email_index"]*
+> *[calls `dbward_migrate_create` with name "add_user_preferences"]*
 >
-> Created `db/migrations/20260508_add_email_index/up.sql`. Here's the SQL:
+> Created `db/migrations/20260508_add_user_preferences/up.sql`. Here's the SQL:
 > ```sql
-> CREATE INDEX CONCURRENTLY idx_users_email ON users(email);
+> CREATE TABLE IF NOT EXISTS user_preferences (
+>   user_id INTEGER REFERENCES users(id),
+>   key TEXT NOT NULL,
+>   value TEXT,
+>   PRIMARY KEY (user_id, key)
+> );
 > ```
 >
 > **You:** "Apply it to staging"
