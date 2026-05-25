@@ -383,8 +383,14 @@ impl SlackNotifier {
                 for s in self.role_resolver.subjects_for_role(role) {
                     subjects.insert(s);
                 }
+            } else if let Some(group) = selector.strip_prefix("group:") {
+                for s in self
+                    .role_resolver
+                    .subjects_for_selector(&format!("group:{group}"))
+                {
+                    subjects.insert(s);
+                }
             }
-            // group:* → skip (v0.1.3 未対応)
         }
         subjects.into_iter().collect()
     }

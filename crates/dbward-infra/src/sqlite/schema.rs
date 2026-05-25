@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 11;
+const SCHEMA_VERSION: u32 = 12;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -105,6 +105,12 @@ const MIGRATION_V11: &str = "
 ALTER TABLE requests ADD COLUMN decision_trace_json TEXT;
 ";
 
+const MIGRATION_V12: &str = "
+-- Add config_synced column if not present (safe to re-run)
+-- SQLite lacks IF NOT EXISTS for ALTER TABLE, so we use a no-op if already present.
+ALTER TABLE roles ADD COLUMN config_synced INTEGER NOT NULL DEFAULT 0;
+";
+
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
@@ -145,6 +151,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(MIGRATION_V9)?;
         conn.execute_batch(MIGRATION_V10)?;
         conn.execute_batch(MIGRATION_V11)?;
+        // V12 not needed for fresh DB (schema already includes config_synced)
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -176,6 +183,19 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 11 {
             conn.execute_batch(MIGRATION_V11)?;
+        }
+        if current < 12 {
+            // Idempotent: check if column exists before adding
+            let has_col: bool = conn
+                .prepare(
+                    "SELECT COUNT(*) FROM pragma_table_info('roles') WHERE name='config_synced'",
+                )
+                .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+                .unwrap_or(0)
+                > 0;
+            if !has_col {
+                conn.execute_batch(MIGRATION_V12)?;
+            }
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -354,7 +374,8 @@ CREATE TABLE IF NOT EXISTS roles (
     permissions_json TEXT NOT NULL DEFAULT '[]',
     databases_json TEXT NOT NULL DEFAULT '[\"*\"]',
     environments_json TEXT NOT NULL DEFAULT '[\"*\"]',
-    built_in INTEGER NOT NULL DEFAULT 0
+    built_in INTEGER NOT NULL DEFAULT 0,
+    config_synced INTEGER NOT NULL DEFAULT 0
 );
 
 -- Result policies

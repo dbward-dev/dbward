@@ -35,13 +35,22 @@ async fn resolve_slack_auth_user(
         .resolve(&subject_id, SubjectType::User, &user.groups)
         .map_err(|e| format!("{e}"))?;
 
-    Ok(AuthUser {
+    let mut auth_user = AuthUser {
         subject_id,
         subject_type: SubjectType::User,
         roles,
         groups: user.groups,
         token_id: None,
-    })
+    };
+    // Augment with TOML [[auth.groups]] membership
+    if let Some(config_groups) = state.role_resolver.config_groups_for(&auth_user.subject_id) {
+        for g in config_groups {
+            if !auth_user.groups.contains(g) {
+                auth_user.groups.push(g.clone());
+            }
+        }
+    }
+    Ok(auth_user)
 }
 
 /// Slack interaction endpoint. Receives button clicks (approve/reject).

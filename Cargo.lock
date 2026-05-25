@@ -677,6 +677,7 @@ dependencies = [
 name = "dbward-config"
 version = "0.1.1"
 dependencies = [
+ "dbward-domain",
  "hostname",
  "regex",
  "serde",

@@ -139,42 +139,92 @@ pub async fn run_from_args(
             }
         }
         dbward_infra::auth::ConfigRoleResolver::with_policy_repo(
-            vec![],
+            cfg.auth
+                .roles
+                .iter()
+                .map(|rc| {
+                    let perms: Vec<dbward_domain::auth::Permission> =
+                        rc.permissions.iter().map(|s| s.parse().unwrap()).collect();
+                    let databases = if rc.databases.is_empty() {
+                        vec![DatabaseName::new("*").unwrap()]
+                    } else {
+                        rc.databases
+                            .iter()
+                            .map(|d| DatabaseName::new(d).unwrap())
+                            .collect()
+                    };
+                    let environments = if rc.environments.is_empty() {
+                        vec![Environment::new("*").unwrap()]
+                    } else {
+                        rc.environments
+                            .iter()
+                            .map(|e| Environment::new(e).unwrap())
+                            .collect()
+                    };
+                    dbward_domain::auth::RoleDefinition {
+                        name: rc.name.clone(),
+                        permissions: perms,
+                        databases,
+                        environments,
+                    }
+                })
+                .collect(),
             group_bindings,
             user_bindings,
             cfg.auth.default_role.clone(),
             Some(policy_repo.clone()),
         )
+        .with_group_members(
+            cfg.auth
+                .groups
+                .iter()
+                .map(|gc| (gc.name.clone(), gc.members.iter().cloned().collect()))
+                .collect(),
+        )
     });
     let authorizer: Arc<dyn dbward_app::ports::Authorizer> =
         Arc::new(dbward_infra::auth::RbacAuthorizer);
 
-    // H-31: Validate role_bindings role names at startup
-    for binding in &cfg.auth.role_bindings {
-        if policy_repo
-            .get_roles_by_names(std::slice::from_ref(&binding.role))
-            .map_or(true, |v| v.is_empty())
-        {
-            tracing::warn!(role = %binding.role, "role_binding references undefined role; it will be ignored at runtime");
-        }
-    }
-    if let Some(ref oidc_cfg) = cfg.auth.oidc {
-        for mapping in &oidc_cfg.role_mappings {
-            if policy_repo
-                .get_roles_by_names(std::slice::from_ref(&mapping.role))
-                .map_or(true, |v| v.is_empty())
-            {
-                tracing::warn!(role = %mapping.role, "oidc.role_mappings references undefined role; it will be ignored at runtime");
+    // Sync TOML-defined custom roles to PolicyRepo (SQLite)
+    {
+        let active_names: Vec<String> = cfg.auth.roles.iter().map(|r| r.name.clone()).collect();
+        for rc in &cfg.auth.roles {
+            let perms: Vec<dbward_domain::auth::Permission> =
+                rc.permissions.iter().map(|s| s.parse().unwrap()).collect();
+            let databases = if rc.databases.is_empty() {
+                vec![DatabaseName::new("*").unwrap()]
+            } else {
+                rc.databases
+                    .iter()
+                    .map(|d| DatabaseName::new(d).unwrap())
+                    .collect()
+            };
+            let environments = if rc.environments.is_empty() {
+                vec![Environment::new("*").unwrap()]
+            } else {
+                rc.environments
+                    .iter()
+                    .map(|e| Environment::new(e).unwrap())
+                    .collect()
+            };
+            let def = dbward_domain::auth::RoleDefinition {
+                name: rc.name.clone(),
+                permissions: perms,
+                databases,
+                environments,
+            };
+            if let Err(e) = policy_repo.upsert_config_role(&def) {
+                return Err(
+                    format!("failed to sync config role '{}' to DB: {}", rc.name, e).into(),
+                );
             }
         }
+        if let Err(e) = policy_repo.delete_stale_config_roles(&active_names) {
+            return Err(format!("failed to clean stale config roles: {}", e).into());
+        }
     }
-    if let Some(ref default) = cfg.auth.default_role
-        && policy_repo
-            .get_roles_by_names(std::slice::from_ref(default))
-            .map_or(true, |v| v.is_empty())
-    {
-        tracing::warn!(role = %default, "default_role references undefined role");
-    }
+
+    // Role validation now handled by config validate() (fail-fast)
 
     // Result storage
     let result_store: Arc<dyn dbward_app::ports::ResultStore> =
