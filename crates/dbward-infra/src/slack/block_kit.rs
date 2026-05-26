@@ -33,6 +33,18 @@ pub fn build_request_created(
         );
     }
     fields.push(json!({"type": "mrkdwn", "text": format!("*Request ID:*\n`{short_id}`")}));
+    if let Some(ref reason) = event.reason
+        && !reason.is_empty()
+    {
+        let truncated: String = reason
+            .chars()
+            .take(100)
+            .collect::<String>()
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        fields.push(json!({"type": "mrkdwn", "text": format!("*Reason:*\n{truncated}")}));
+    }
 
     let mut blocks: Vec<Value> = vec![
         json!({
@@ -108,6 +120,65 @@ pub fn build_review_modal(
 
     // Context Enrichment
     if let Some(ctx) = context {
+        // DX-11: Explain results
+        if let Some(ref explain_json) = ctx.explain_json
+            && let Ok(explains) = serde_json::from_str::<Vec<Value>>(explain_json)
+            && !explains.is_empty()
+        {
+            let mut explain_text = String::from("*📊 Execution Plan*\n```");
+            for entry in explains.iter().take(5) {
+                let sql_preview: String = entry["sql"]
+                    .as_str()
+                    .unwrap_or("")
+                    .chars()
+                    .take(60)
+                    .collect::<String>()
+                    .replace('`', "'");
+                if let Some(plan) = entry.get("plan")
+                    && !plan.is_null()
+                {
+                    let node_type = plan["Plan"]["Node Type"]
+                        .as_str()
+                        .or_else(|| plan[0]["Plan"]["Node Type"].as_str())
+                        .unwrap_or("?");
+                    let rows = plan["Plan"]["Plan Rows"]
+                        .as_f64()
+                        .or_else(|| plan[0]["Plan"]["Plan Rows"].as_f64())
+                        .map(|r| format!("~{}", r as i64))
+                        .unwrap_or_default();
+                    let cost = plan["Plan"]["Total Cost"]
+                        .as_f64()
+                        .or_else(|| plan[0]["Plan"]["Total Cost"].as_f64())
+                        .map(|c| format!(", cost: {c:.1}"))
+                        .unwrap_or_default();
+                    explain_text.push_str(&format!(
+                        "{sql_preview}\n→ {node_type} (rows: {rows}{cost})\n"
+                    ));
+                } else if let Some(err) = entry.get("error") {
+                    let msg = err.as_str().unwrap_or("unavailable").replace('`', "'");
+                    explain_text.push_str(&format!("{sql_preview}\n⚠️ {msg}\n"));
+                } else {
+                    explain_text.push_str(&format!("{sql_preview}\n⚠️ unavailable\n"));
+                }
+            }
+            explain_text.push_str("```");
+            // Truncate to Slack's 3000 char limit for mrkdwn (char-boundary safe)
+            if explain_text.len() > 2900 {
+                let boundary = explain_text
+                    .char_indices()
+                    .take_while(|(i, _)| *i <= 2900)
+                    .last()
+                    .map(|(i, _)| i)
+                    .unwrap_or(2900);
+                explain_text.truncate(boundary);
+                explain_text.push_str("...```");
+            }
+            blocks.push(json!({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": explain_text}
+            }));
+        }
+
         let mut ctx_lines: Vec<String> = Vec::new();
 
         if let Some(ref risk_json) = ctx.risk_json
@@ -247,10 +318,12 @@ pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Val
         format!("{emoji} {text}\n{mention_suffix}")
     };
 
-    vec![json!({
+    let blocks = vec![json!({
         "type": "section",
         "text": {"type": "mrkdwn", "text": display_text}
-    })]
+    })];
+
+    blocks
 }
 
 /// Build updated blocks for the original message after resolution.
@@ -299,6 +372,18 @@ pub fn build_message_from_state(
         fields.push(json!({"type": "mrkdwn", "text": format!("*Approvers:*\n{approvers_text}")}));
     }
     fields.push(json!({"type": "mrkdwn", "text": format!("*Request ID:*\n`{short_id}`")}));
+    if let Some(ref reason) = req.reason
+        && !reason.is_empty()
+    {
+        let truncated: String = reason
+            .chars()
+            .take(100)
+            .collect::<String>()
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        fields.push(json!({"type": "mrkdwn", "text": format!("*Reason:*\n{truncated}")}));
+    }
 
     let mut blocks: Vec<Value> = vec![
         json!({"type": "header", "text": {"type": "plain_text", "text": format!("{emoji} {title}")}}),
@@ -350,7 +435,13 @@ pub fn build_message_from_state(
             if reason.is_empty() {
                 Some("❌ Rejected".into())
             } else {
-                let truncated: String = reason.chars().take(100).collect();
+                let truncated: String = reason
+                    .chars()
+                    .take(100)
+                    .collect::<String>()
+                    .replace('&', "&amp;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;");
                 Some(format!("❌ Rejected: {truncated}"))
             }
         }
@@ -386,7 +477,134 @@ pub fn build_message_from_state(
         }));
     }
 
+    // DX-12: Resume button for Approved status
+    if matches!(
+        req.status,
+        RequestStatus::Approved | RequestStatus::AutoApproved | RequestStatus::BreakGlass
+    ) {
+        blocks.push(json!({
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Resume"},
+                "style": "primary",
+                "action_id": "dbward_resume",
+                "value": &req.id
+            }]
+        }));
+    }
+
+    // DX-13: View Result button for terminal states
+    if matches!(req.status, RequestStatus::Executed | RequestStatus::Failed) && !req.no_store {
+        blocks.push(json!({
+            "type": "actions",
+            "elements": [{
+                "type": "button",
+                "text": {"type": "plain_text", "text": "View Result"},
+                "style": "primary",
+                "action_id": "dbward_view_result",
+                "value": &req.id
+            }]
+        }));
+    }
+
     blocks
+}
+
+/// DX-13: Build modal showing execution result.
+pub fn build_result_modal(
+    request_id: &str,
+    sql: Option<&str>,
+    data: &str,
+    content_length: Option<u64>,
+) -> Value {
+    let mut blocks: Vec<Value> = Vec::new();
+
+    // SQL
+    if let Some(sql) = sql {
+        let truncated: String = sql.chars().take(200).collect::<String>().replace('`', "'");
+        blocks.push(json!({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": format!("```{}```", truncated)}]
+        }));
+    }
+
+    let display = if let Ok(parsed) = serde_json::from_str::<Value>(data) {
+        let mut cleaned = parsed.clone();
+        if let Some(obj) = cleaned.as_object_mut() {
+            obj.remove("truncated");
+            obj.remove("truncation_reason");
+            obj.remove("storage_backend");
+            obj.remove("checksum_sha256");
+        }
+        serde_json::to_string_pretty(&cleaned).unwrap_or_else(|_| data.to_string())
+    } else {
+        data.to_string()
+    }
+    .replace('`', "'");
+
+    let truncated = display.len() > 2500;
+    let text: String = if truncated {
+        let boundary = display
+            .char_indices()
+            .take_while(|(i, _)| *i <= 2500)
+            .last()
+            .map(|(i, _)| i)
+            .unwrap_or(2500);
+        format!("```{}```\n_...truncated_", &display[..boundary])
+    } else {
+        format!("```{}```", display)
+    };
+
+    blocks.push(json!({
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": text}
+    }));
+
+    let size_str = content_length
+        .map(|l| {
+            if l > 1024 * 1024 {
+                format!("{:.1} MB", l as f64 / (1024.0 * 1024.0))
+            } else if l > 1024 {
+                format!("{:.1} KB", l as f64 / 1024.0)
+            } else {
+                format!("{l} bytes")
+            }
+        })
+        .unwrap_or_default();
+
+    let hint = if truncated || content_length.unwrap_or(0) > 2500 {
+        format!("Size: {size_str}\nRun `dbward request result {request_id}` for full output")
+    } else if !size_str.is_empty() {
+        format!("Size: {size_str}")
+    } else {
+        String::new()
+    };
+
+    if !hint.is_empty() {
+        blocks.push(json!({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": hint}]
+        }));
+    }
+
+    json!({
+        "type": "modal",
+        "title": {"type": "plain_text", "text": "Execution Result"},
+        "blocks": blocks
+    })
+}
+
+/// DX-13: Build modal for unavailable result.
+pub fn build_result_modal_unavailable(request_id: &str, reason: &str) -> Value {
+    json!({
+        "type": "modal",
+        "title": {"type": "plain_text", "text": "Execution Result"},
+        "blocks": [{
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": format!("⚠️ Result not available\n_{reason}_\n\nRequest: `{}`", &request_id[..8.min(request_id.len())])}
+        }]
+    })
 }
 
 /// Fallback text.
@@ -514,5 +732,110 @@ mod tests {
         let blocks = build_thread_reply(&event, "");
         let text = blocks[0]["text"]["text"].as_str().unwrap();
         assert!(text.contains("Approved by alice"));
+    }
+
+    #[test]
+    fn thread_reply_approved_has_no_button() {
+        let mut event = sample_event();
+        event.event_type = "request_approved".into();
+        let blocks = build_thread_reply(&event, "");
+        let actions = blocks.iter().find(|b| b["type"] == "actions");
+        assert!(
+            actions.is_none(),
+            "approved thread reply should not have button (moved to channel)"
+        );
+    }
+
+    #[test]
+    fn thread_reply_non_approved_has_no_button() {
+        let mut event = sample_event();
+        event.event_type = "request_rejected".into();
+        let blocks = build_thread_reply(&event, "");
+        let actions = blocks.iter().find(|b| b["type"] == "actions");
+        assert!(actions.is_none(), "rejected reply should not have actions");
+    }
+
+    #[test]
+    fn review_modal_shows_explain_plan() {
+        use dbward_app::ports::RequestContextRecord;
+        let ctx = RequestContextRecord {
+            request_id: "req-1".into(),
+            status: "ready".into(),
+            schema_snapshot_collected_at: None,
+            tables_json: None,
+            sql_review_json: None,
+            risk_json: None,
+            explain_json: Some(r#"[{"sql":"SELECT 1","plan":{"Plan":{"Node Type":"Result","Plan Rows":1,"Total Cost":0.01}}}]"#.into()),
+            created_at: "2026-01-01".into(),
+            updated_at: "2026-01-01".into(),
+        };
+        let modal = build_review_modal("req-1", Some("SELECT 1"), Some(&ctx));
+        let blocks_str = serde_json::to_string(&modal["blocks"]).unwrap();
+        assert!(blocks_str.contains("Execution Plan"));
+        assert!(blocks_str.contains("Result"));
+    }
+
+    #[test]
+    fn review_modal_shows_explain_error() {
+        use dbward_app::ports::RequestContextRecord;
+        let ctx = RequestContextRecord {
+            request_id: "req-2".into(),
+            status: "partial".into(),
+            schema_snapshot_collected_at: None,
+            tables_json: None,
+            sql_review_json: None,
+            risk_json: None,
+            explain_json: Some(r#"[{"sql":"DROP TABLE x","error":"permission denied"}]"#.into()),
+            created_at: "2026-01-01".into(),
+            updated_at: "2026-01-01".into(),
+        };
+        let modal = build_review_modal("req-2", Some("DROP TABLE x"), Some(&ctx));
+        let blocks_str = serde_json::to_string(&modal["blocks"]).unwrap();
+        assert!(blocks_str.contains("permission denied"));
+    }
+
+    #[test]
+    fn review_modal_no_explain_when_empty() {
+        use dbward_app::ports::RequestContextRecord;
+        let ctx = RequestContextRecord {
+            request_id: "req-3".into(),
+            status: "ready".into(),
+            schema_snapshot_collected_at: None,
+            tables_json: None,
+            sql_review_json: None,
+            risk_json: None,
+            explain_json: Some("[]".into()),
+            created_at: "2026-01-01".into(),
+            updated_at: "2026-01-01".into(),
+        };
+        let modal = build_review_modal("req-3", Some("SELECT 1"), Some(&ctx));
+        let blocks_str = serde_json::to_string(&modal["blocks"]).unwrap();
+        assert!(!blocks_str.contains("Execution Plan"));
+    }
+
+    #[test]
+    fn explain_truncation_is_char_safe() {
+        use dbward_app::ports::RequestContextRecord;
+        // Create a long explain with multibyte chars
+        let long_sql = "あ".repeat(600);
+        let explain = format!(
+            r#"[{{"sql":"{}","plan":{{"Plan":{{"Node Type":"Seq Scan","Plan Rows":9999,"Total Cost":999.99}}}}}}]"#,
+            long_sql
+        );
+        let ctx = RequestContextRecord {
+            request_id: "req-4".into(),
+            status: "ready".into(),
+            schema_snapshot_collected_at: None,
+            tables_json: None,
+            sql_review_json: None,
+            risk_json: None,
+            explain_json: Some(explain),
+            created_at: "2026-01-01".into(),
+            updated_at: "2026-01-01".into(),
+        };
+        // Should not panic
+        let modal = build_review_modal("req-4", Some("SELECT 1"), Some(&ctx));
+        let blocks_str = serde_json::to_string(&modal["blocks"]).unwrap();
+        assert!(blocks_str.contains("Execution Plan"));
     }
 }
