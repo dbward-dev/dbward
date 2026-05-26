@@ -493,7 +493,7 @@ pub struct ExecutionPolicyDef {
     pub max_rows: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SqlReviewConfig {
     #[serde(default = "default_warn")]
@@ -516,6 +516,23 @@ pub struct SqlReviewConfig {
     pub mixed_ddl_dml: String,
     #[serde(default = "default_warn")]
     pub large_in_list: String,
+}
+
+impl Default for SqlReviewConfig {
+    fn default() -> Self {
+        Self {
+            no_where_delete: "warn".into(),
+            no_where_update: "warn".into(),
+            drop_table: "warn".into(),
+            drop_column: "warn".into(),
+            not_null_without_default: "warn".into(),
+            create_index_not_concurrently: "warn".into(),
+            alter_column_type: "warn".into(),
+            truncate: "warn".into(),
+            mixed_ddl_dml: "warn".into(),
+            large_in_list: "warn".into(),
+        }
+    }
 }
 
 fn default_warn() -> String {
