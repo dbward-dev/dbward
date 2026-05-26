@@ -148,7 +148,7 @@ Control whether operations require approval:
 [[workflows]]
 database = "*"
 environment = "production"
-operations = ["execute_query", "migrate_up", "migrate_down"]
+operations = ["execute_select", "migrate_up", "migrate_down"]
 
 [[workflows.steps]]
 type = "approval"
@@ -391,7 +391,7 @@ agent_token = "dbw_agent_xxx"
 [capabilities]
 environments = ["development", "staging", "production"]
 databases = ["primary", "analytics"]
-operations = ["execute_query", "migrate_up", "migrate_down", "migrate_status"]
+operations = ["execute_select", "migrate_up", "migrate_down", "migrate_status"]
 
 [databases.primary]
 url = "postgres://user:pass@db-primary:5432/app"
@@ -416,7 +416,7 @@ format = "slack"
 [[workflows]]
 database = "*"
 environment = "production"
-operations = ["execute_query", "migrate_up", "migrate_down"]
+operations = ["execute_select", "migrate_up", "migrate_down"]
 
 [[workflows.steps]]
 type = "approval"
@@ -462,192 +462,21 @@ Safety features are always free. Pro pricing and availability are not yet determ
 
 ## Migration File Format
 
-Migrations use a directory-per-migration structure:
+Migrations use single-file [dbmate-compatible format](https://github.com/amacneil/dbmate):
 
 ```
-db/migrations/
-├── 20260501120000_create_users/
-│   ├── up.sql
-│   └── down.sql
-└── 20260502090000_add_email/
-    ├── up.sql
-    └── down.sql
+migrations/
+├── 20260501120000_create_users.sql
+└── 20260502090000_add_email.sql
 ```
 
 ```sql
--- up.sql
+-- migrate:up
 CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT NOT NULL);
-```
 
-```sql
--- down.sql
+-- migrate:down
 DROP TABLE users;
 ```
-
-## Metrics
-
-`GET /metrics` — Prometheus text format, requires admin authentication. Include your admin token in the `Authorization` header.
-
-Key alerts:
-- `dbward_agents_active == 0` → no agent running
-- `dbward_requests_oldest_pending_seconds > 3600` → stuck request
-- `rate(dbward_break_glass_total[5m]) > 0` → emergency bypass used
-
-## Self-Hosted Deployment
-
-### Minimum Requirements
-
-- Linux VM (EC2, GCE, DigitalOcean, etc.)
-- Docker + Docker Compose
-- S3 bucket (for backup and result storage)
-
-### Quick Deploy
-
-```bash
-git clone https://github.com/dbward-dev/dbward.git && cd dbward
-
-# Configure
-mkdir -p dev/secrets && echo "your-secure-password" > dev/secrets/db_password.txt
-
-# Start (from dev/ directory)
-cd dev
-docker compose up -d
-cat > .env << 'EOF'
-DATABASE_URL=postgres://user:pass@your-rds:5432/mydb
-DBWARD_AGENT_TOKEN=<generate after first start>
-LITESTREAM_S3_BUCKET=my-dbward-backups
-AWS_REGION=ap-northeast-1
-EOF
-chmod 600 .env
-
-# Create server.toml (minimal)
-cat > config/server.toml << 'EOF'
-[auth]
-mode = "token"
-
-[result_storage]
-backend = "s3"
-bucket = "my-dbward-results"
-region = "ap-northeast-1"
-
-[retention]
-result_ttl_days = 90
-
-[[workflows]]
-database = "*"
-environment = "production"
-require_reason = true
-
-[[workflows.steps]]
-type = "approval"
-
-[[workflows.steps.approvers]]
-role = "admin"
-min = 1
-EOF
-
-# Start
-docker compose up -d
-
-# Generate tokens
-docker compose exec dbward-server dbward server token create --user admin --role admin
-docker compose exec dbward-server dbward server token create --user agent --role agent
-```
-
-### Backup & Recovery
-
-SQLite state is replicated to S3 in real-time via [Litestream](https://litestream.io/) (~1 second RPO).
-
-**Disaster recovery** (EC2 dies):
-```bash
-# Just start on a new instance — auto-restores from S3
-docker compose up -d
-```
-
-**Point-in-time restore** (data corruption):
-```bash
-docker compose down
-docker run --rm -v dbward_server-data:/data \
-  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_REGION \
-  litestream/litestream:0.5 \
-  restore -o /data/dbward.db -timestamp "2026-05-07T10:00:00Z" \
-  s3://my-dbward-backups/dbward/prod
-docker compose up -d
-```
-
-### Without S3 (development / evaluation)
-
-If `LITESTREAM_S3_BUCKET` is not set, Litestream is skipped and dbward runs directly. Use `deploy/scripts/backup.sh` for manual backups.
-
-### TLS
-
-Bind to `127.0.0.1` (default in compose.yml) and put a reverse proxy in front:
-
-```bash
-# Example with Caddy (auto-TLS)
-caddy reverse-proxy --from dbward.internal.example.com --to localhost:13000
-```
-
-### Upgrade
-
-```bash
-# Docker (recommended)
-docker compose pull && docker compose up -d
-
-# CLI
-dbward self-update
-
-# Check current version
-curl http://localhost:3000/health
-# {"status":"ok","version":"0.1.2","min_agent_version":"0.1.2"}
-```
-
-SQLite migrations run automatically on server start. See [Upgrading Guide](docs/deployment/upgrading.md) for details.
-
-## Development
-
-```bash
-# Prerequisites: Rust 1.88+, Docker (for E2E tests)
-
-# Build
-cargo build --workspace
-
-# Unit tests
-cargo test --workspace
-
-# Dev environment (Docker)
-cd dev
-mkdir -p secrets && echo "dbward" > secrets/db_password.txt
-docker compose up -d
-./scripts/dev-init.sh
-
-# E2E tests
-./e2e/lifecycle.sh
-./e2e/security.sh
-```
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for full development setup.
-
-## Documentation
-
-Detailed documentation is available in the [`docs/`](docs/) directory:
-
-| Path | Description |
-|------|-------------|
-| [`docs/architecture.md`](docs/architecture.md) | System architecture and design decisions |
-| **Deployment** | |
-| [`docs/deployment/server.md`](docs/deployment/server.md) | Server configuration and setup |
-| [`docs/deployment/agent.md`](docs/deployment/agent.md) | Agent deployment and configuration |
-| [`docs/deployment/authentication.md`](docs/deployment/authentication.md) | API tokens, OIDC (Pro), and groups |
-| **Guides** | |
-| [`docs/guides/workflows.md`](docs/guides/workflows.md) | Workflow and approval policy configuration |
-| [`docs/guides/migrations.md`](docs/guides/migrations.md) | Migration management |
-| [`docs/guides/mcp-integration.md`](docs/guides/mcp-integration.md) | MCP integration for AI agents |
-| [`docs/guides/ci-cd.md`](docs/guides/ci-cd.md) | CI/CD pipeline integration |
-| **Reference** | |
-| [`docs/reference/api.md`](docs/reference/api.md) | REST API reference |
-| [`docs/reference/cli.md`](docs/reference/cli.md) | CLI command reference |
-| [`docs/reference/configuration.md`](docs/reference/configuration.md) | Configuration file reference |
 
 ## License
 

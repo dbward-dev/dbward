@@ -23,9 +23,9 @@ mode = "token"   # "token" | "oidc" | "both"
 
 ```bash
 # Via CLI (requires access to the SQLite database file)
-dbward server token create --user alice --role admin --data dbward.db
-dbward server token create --user bob --role developer --data dbward.db
-dbward server token create --user prod-agent --role admin --agent --data dbward.db
+dbward token create --subject alice --role admin 
+dbward token create --subject bob --role developer 
+dbward token create --subject prod-agent --role admin --agent 
 ```
 
 ```bash
@@ -106,7 +106,7 @@ mode = "oidc"    # or "both" to also allow API tokens
 [auth.oidc]
 issuer = "https://accounts.google.com"
 client_id = "123456789.apps.googleusercontent.com"
-# client_secret_env = "OIDC_CLIENT_SECRET"  # Optional: env var name
+# # client_secret_env is not supported  # Optional: env var name
 # jwks_uri = "http://keycloak:8080/realms/dbward/protocol/openid-connect/certs"  # Override for Docker
 default_role = "readonly"         # Role when no mapping matches (default: readonly)
 ```
@@ -263,7 +263,7 @@ curl -X POST http://localhost:3000/api/tokens \
 Agents use API tokens with `subject_type = "agent"`:
 
 ```bash
-dbward server token create --user prod-agent --role admin --agent --data dbward.db
+dbward token create --subject prod-agent --role admin --agent 
 ```
 
 In OIDC mode (`mode = "oidc"`), agents are the only entities allowed to use API tokens. Human users must authenticate via OIDC.
@@ -286,7 +286,7 @@ In `mode = "both"`, both API tokens and OIDC JWTs are accepted for all users.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `401 invalid token` | Token revoked or wrong | Check `dbward server token list` |
+| `401 invalid token` | Token revoked or wrong | Check `dbward token list` |
 | `401 token expired` | TTL exceeded | Create a new token |
 | `401 OIDC not configured` | JWT sent but `mode = "token"` | Change to `mode = "oidc"` or `"both"` |
 | `JWT verification failed` | Wrong issuer/audience/expired | Check `issuer` and `client_id` match IdP |

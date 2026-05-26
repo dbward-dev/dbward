@@ -54,7 +54,7 @@ agent_token = "${DBWARD_AGENT_TOKEN}"   # Agent token (created with --agent flag
 The agent token must be created with `--agent` flag:
 
 ```bash
-dbward server token create --user prod-agent-1 --role agent-default --agent --data dbward.db
+dbward token create --subject prod-agent-1 --subject-type agent --role agent-default
 ```
 
 ### Capabilities

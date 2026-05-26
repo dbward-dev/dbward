@@ -5,7 +5,7 @@ dbward manages database migrations with approval workflows. Migrations go throug
 ## File structure
 
 ```
-db/migrations/
+migrations/
 ├── 20260501120000_create_users.sql
 ├── 20260502090000_add_email_index.sql
 └── 20260503140000_create_orders.sql
@@ -30,7 +30,7 @@ DROP TABLE users;
 
 ```bash
 dbward migrate create add_users_table
-# Created: db/migrations/20260508120000_add_users_table.sql
+# Created: migrations/20260508120000_add_users_table.sql
 ```
 
 This is a local-only operation — no server connection needed. The generated file contains placeholder markers for up and down SQL.
@@ -75,7 +75,7 @@ dbward migrate down --count 2
 
 ## Approval flow
 
-Migrations go through the same workflow as `execute_select`. If your production workflow requires approval:
+Migrations go through the their own operations (`migrate_up`, `migrate_down`). If your production workflow requires approval:
 
 ```bash
 $ dbward -e production migrate up
@@ -109,10 +109,10 @@ Migration files are stored per-database:
 ```toml
 # dbward.toml
 [databases.app]
-migrations_dir = "db/migrations/app"
+migrations_dir = "migrations/app"
 
 [databases.analytics]
-migrations_dir = "db/migrations/analytics"
+migrations_dir = "migrations/analytics"
 ```
 
 ## Metadata options

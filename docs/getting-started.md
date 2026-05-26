@@ -49,11 +49,11 @@ dbward dev --database-url "mysql://user:password@localhost:3306/mydb"
 Example output:
 
 ```
-[dbward] Server listening on http://127.0.0.1:7890
+[dbward] Server listening on http://127.0.0.1:3000
 [dbward] Agent connected to database "mydb"
 [dbward] Dev tokens generated:
-           admin:     dw_dev_admin_xxxx
-           developer: dw_dev_developer_xxxx
+           admin:     dbw_admin_xxxx
+           developer: dbw_developer_xxxx
 [dbward] Config written to ~/.dbward/dev/client.toml
 
 Try:
@@ -81,15 +81,21 @@ dbward --config ~/.dbward/dev/client.toml execute "SELECT now()"
 # Create a new migration
 dbward --config ~/.dbward/dev/client.toml migrate create add_users_table
 
-# Edit the generated files
-$EDITOR db/migrations/20260508_add_users_table/up.sql
-$EDITOR db/migrations/20260508_add_users_table/down.sql
+# Edit the generated file (single-file dbmate format)
+$EDITOR migrations/20260508120000_add_users_table.sql
 
 # Apply
 dbward --config ~/.dbward/dev/client.toml migrate up
 ```
 
-Migration files are created as a directory under `./db/migrations/` with `up.sql` and `down.sql` inside.
+Migration files use single-file [dbmate-compatible format](https://github.com/amacneil/dbmate):
+```sql
+-- migrate:up
+CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);
+
+-- migrate:down
+DROP TABLE users;
+```
 
 ## What approval looks like
 

@@ -43,7 +43,7 @@ jobs:
           [databases.app]
           EOF
 
-          dbward -e production migrate up \
+          dbward --environment production migrate up \
             --idempotency-key "deploy-${{ github.sha }}" \
             --ticket "${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}" \
             --repo "${{ github.repository }}"
@@ -55,13 +55,13 @@ jobs:
       - name: Run migrations
         id: migrate
         continue-on-error: true
-        run: dbward -e production migrate up --idempotency-key "deploy-${{ github.sha }}"
+        run: dbward --environment production migrate up --idempotency-key "deploy-${{ github.sha }}"
 
       - name: Wait for approval if pending
         if: steps.migrate.outcome == 'failure'
         run: |
           # Exit code 2 = pending approval
-          REQUEST_ID=$(dbward -e production migrate status --format json | jq -r '.pending_request_id // empty')
+          REQUEST_ID=$(dbward --environment production migrate status --format json | jq -r '.pending_request_id // empty')
           if [ -n "$REQUEST_ID" ]; then
             echo "⏳ Waiting for approval: $REQUEST_ID"
             echo "Approve with: dbward request approve $REQUEST_ID"
@@ -75,10 +75,10 @@ jobs:
 Create a dedicated CI token with appropriate permissions:
 
 ```bash
-dbward server token create \
-  --user "github-actions" \
+dbward token create \
+  --subject "github-actions" \
   --role developer \
-  --data dbward.db
+  
 ```
 
 Store the token as a repository secret (`DBWARD_TOKEN`).
@@ -96,7 +96,7 @@ Store the token as a repository secret (`DBWARD_TOKEN`).
 Use `--idempotency-key` to safely retry failed CI jobs:
 
 ```bash
-dbward -e production migrate up --idempotency-key "deploy-${GITHUB_SHA}"
+dbward --environment production migrate up --idempotency-key "deploy-${GITHUB_SHA}"
 ```
 
 If the request already exists (same key), dbward returns the existing request status instead of creating a duplicate.
@@ -106,7 +106,7 @@ If the request already exists (same key), dbward returns the existing request st
 Use `--format json` for machine-readable output:
 
 ```bash
-dbward --format json -e production migrate status
+dbward --format json --environment production migrate status
 ```
 
 ```json

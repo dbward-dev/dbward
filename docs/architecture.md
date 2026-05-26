@@ -14,7 +14,7 @@
 │   - NO DB credentials or DB connection                   │
 │   - Creates requests, resumes, receives results       │
 │   - CLI: dbward login/migrate/execute/approve/reject/... │
-│   - MCP: dbward mcp (7 tools)                           │
+│   - MCP: dbward mcp (12 tools)                           │
 │   - Saves results locally (~/.dbward/results/)           │
 └──────────────┬───────────────────────────────────────────┘
                │ HTTPS (OIDC JWT or API token)
@@ -59,13 +59,13 @@
 
 ```
 dbward-cli (binary)
-├── dbward-core      (types, RBAC, audit, config, token verification)
+├── dbward-domain      (types, RBAC, audit, config, token verification)
 ├── dbward-migrate   (migration file I/O)
-│     └── dbward-core
+│     └── dbward-domain
 ├── dbward-server    (axum HTTP, auth, policy, SQLite, Ed25519, webhooks, result relay)
-│     └── dbward-core
+│     └── dbward-domain
 └── dbward-agent     (DatabaseDriver, polls server, executes operations)
-      ├── dbward-core
+      ├── dbward-domain
       └── dbward-migrate
 ```
 
@@ -89,7 +89,7 @@ Client                              Server                              Agent
   │                                   │     → webhook notification        │
   │                                   │                                   │
   ├─② POST /api/requests/{id}/resume ▶│ creates ResultSlot in memory   │
-  │  (dbward resume {id})             │ → status = dispatched             │
+  │  (dbward request resume {id})     │ → status = dispatched             │
   │                                   │                                   │
   ├─③ GET /api/requests/{id}/result/stream ▶│ long-poll (up to 5 min)    │
   │                                   │                                   │
@@ -207,7 +207,7 @@ Auto-refresh: before each command, if token expires within 5 minutes.
 
 ### API Tokens (for CI/CD, MCP agents)
 
-Managed via `dbward server token create/revoke`. Used when OIDC is not practical.
+Managed via `dbward token create/list/revoke (via API)`. Used when OIDC is not practical.
 
 ### Server Auth Configuration
 
@@ -361,7 +361,7 @@ dbward execute "SELECT pg_terminate_backend(12345)" \
 MCP client never connects to DB. All operations go through server → agent.
 
 1. `dbward_execute_query` → creates request → returns result (if auto-approved and agent completes) or request ID (if pending)
-2. Human approves via CLI: `dbward approve {id}`
+2. Human approves via CLI: `dbward request approve {id}`
 3. AI calls `dbward_wait_request` → waits for approval and returns result
 
 MCP agents authenticate via API tokens (OIDC browser flow not available in stdio mode).
@@ -478,15 +478,15 @@ dbward migrate status
 dbward migrate create <name>
 dbward execute <SQL>            # --emergency --reason for break-glass
                                 # --output <path> / --no-save
-dbward approve <ID>
-dbward reject <ID>
-dbward list                     # Show requests
-dbward resume <ID>              # Resume + wait for result
+dbward request approve <ID>
+dbward request reject <ID>
+dbward request list             # Show requests
+dbward request resume <ID>     # Resume + wait for result
                                 # --output <path> / --no-save
 dbward result <ID>              # Show locally saved result
 dbward mcp                      # MCP stdio server
 dbward server start             # HTTP server
-dbward server token create --user <USER> --role <ROLE> --data <DB>
+dbward token create --subject <USER> --subject-type user --role <ROLE>
 dbward server token revoke --id <ID> --data <DB>
 dbward agent --config <PATH>    # Start agent
 ```
