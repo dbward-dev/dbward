@@ -16,3 +16,4 @@ dbward.toml
 dev/tokens/
 dev/secrets/
 db/migrations/
+__pycache__/
