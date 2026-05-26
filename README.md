@@ -70,21 +70,24 @@ That's it. You now have approval workflows and audit logs for your local databas
 ### Team Setup
 
 ```bash
-# 1. Deploy dbward-server (any network)
-dbward server start --config dbward-server.toml
+# 1. Generate config for your team
+dbward init --preset small-team
 
-# 2. Deploy dbward-agent (DB-reachable network)
-dbward agent --config dbward-agent.toml
+# 2. Start server (first run generates bootstrap tokens)
+dbward-server --config server.toml --dev-bootstrap
 
-# 3. Developers use CLI (no DB access needed)
-dbward execute "DELETE FROM old_data" --database primary
-# → "Request abc12345-def6-7890-abcd-ef1234567890 requires approval."
+# 3. Start agent (connects to your database)
+DBWARD_AGENT_TOKEN=<token> dbward-agent --config agent.toml
 
-# 4. Approver
-dbward request approve abc12345-def6-7890-abcd-ef1234567890
+# 4. Developers use CLI (no DB access needed)
+dbward execute "DELETE FROM old_data" --reason "cleanup"
+# → "Request abc12345 requires approval."
 
-# 5. Developer gets result
-dbward request resume abc12345-def6-7890-abcd-ef1234567890
+# 5. Approver
+dbward request approve abc12345
+
+# 6. Developer gets result
+dbward request resume abc12345
 ```
 
 ### MCP Mode (AI agents)
@@ -404,7 +407,7 @@ url = "mysql://user:pass@db-analytics:3306/warehouse"
 
 ```toml
 # listen address and data path are set via CLI flags:
-#   dbward server start --listen 0.0.0.0:3000 --data dbward.db --config dbward-server.toml
+#   dbward-server --listen 0.0.0.0:3000 --data dbward.db --config server.toml
 
 [auth]
 mode = "token"  # "oidc", "token", or "both"
