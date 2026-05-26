@@ -503,6 +503,18 @@ pub trait PolicyRepo: Send + Sync {
     ) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError>;
     fn delete_role(&self, name: &str) -> Result<bool, AppError>;
     fn count_roles(&self) -> Result<u32, AppError>;
+
+    /// Upsert a config-synced role (non-built-in). Marks it as config_synced.
+    fn upsert_config_role(
+        &self,
+        _role: &dbward_domain::auth::RoleDefinition,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+    /// Delete config-synced roles whose names are NOT in active_names.
+    fn delete_stale_config_roles(&self, _active_names: &[String]) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 // --- LicenseChecker ---

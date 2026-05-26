@@ -116,6 +116,107 @@ impl ServerConfig {
                 )));
             }
         }
+
+        // Custom role definitions
+        let builtin_roles: HashSet<&str> = ["admin", "developer", "readonly", "agent-default"]
+            .into_iter()
+            .collect();
+        let mut custom_role_names: HashSet<&str> = HashSet::new();
+        for rc in &self.auth.roles {
+            if builtin_roles.contains(rc.name.as_str()) {
+                return Err(ConfigError::Validation(format!(
+                    "auth.roles: '{}' is a built-in role and cannot be redefined",
+                    rc.name
+                )));
+            }
+            if !custom_role_names.insert(rc.name.as_str()) {
+                return Err(ConfigError::Validation(format!(
+                    "auth.roles: duplicate role name '{}'",
+                    rc.name
+                )));
+            }
+            if rc.permissions.is_empty() {
+                return Err(ConfigError::Validation(format!(
+                    "auth.roles[{}]: permissions cannot be empty",
+                    rc.name
+                )));
+            }
+            for perm in &rc.permissions {
+                if perm.parse::<dbward_domain::auth::Permission>().is_err() {
+                    return Err(ConfigError::Validation(format!(
+                        "auth.roles[{}]: unknown permission '{}'",
+                        rc.name, perm
+                    )));
+                }
+            }
+            for db in &rc.databases {
+                if db != "*" && dbward_domain::values::DatabaseName::new(db).is_err() {
+                    return Err(ConfigError::Validation(format!(
+                        "auth.roles[{}]: invalid database name '{}'",
+                        rc.name, db
+                    )));
+                }
+            }
+            for env in &rc.environments {
+                if env != "*" && dbward_domain::values::Environment::new(env).is_err() {
+                    return Err(ConfigError::Validation(format!(
+                        "auth.roles[{}]: invalid environment name '{}'",
+                        rc.name, env
+                    )));
+                }
+            }
+        }
+
+        // Group definitions
+        let mut group_names: HashSet<&str> = HashSet::new();
+        for gc in &self.auth.groups {
+            if !group_names.insert(gc.name.as_str()) {
+                return Err(ConfigError::Validation(format!(
+                    "auth.groups: duplicate group name '{}'",
+                    gc.name
+                )));
+            }
+            if gc.members.is_empty() {
+                return Err(ConfigError::Validation(format!(
+                    "auth.groups[{}]: members cannot be empty",
+                    gc.name
+                )));
+            }
+        }
+
+        // role_bindings must reference defined roles
+        let all_defined_roles: HashSet<&str> = builtin_roles
+            .iter()
+            .copied()
+            .chain(custom_role_names.iter().copied())
+            .collect();
+        for rb in &self.auth.role_bindings {
+            if !all_defined_roles.contains(rb.role.as_str()) {
+                return Err(ConfigError::Validation(format!(
+                    "auth.role_bindings: role '{}' is not defined in auth.roles or built-in",
+                    rb.role
+                )));
+            }
+        }
+        if let Some(ref default) = self.auth.default_role
+            && !all_defined_roles.contains(default.as_str())
+        {
+            return Err(ConfigError::Validation(format!(
+                "auth.default_role: role '{}' is not defined in auth.roles or built-in",
+                default
+            )));
+        }
+        if let Some(ref oidc) = self.auth.oidc {
+            for mapping in &oidc.role_mappings {
+                if !all_defined_roles.contains(mapping.role.as_str()) {
+                    return Err(ConfigError::Validation(format!(
+                        "auth.oidc.role_mappings: role '{}' is not defined in auth.roles or built-in",
+                        mapping.role
+                    )));
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -169,6 +270,26 @@ pub struct AuthConfig {
     #[serde(default)]
     pub role_bindings: Vec<RoleBinding>,
     pub default_role: Option<String>,
+    #[serde(default)]
+    pub roles: Vec<RoleConfig>,
+    #[serde(default)]
+    pub groups: Vec<GroupConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct RoleConfig {
+    pub name: String,
+    pub permissions: Vec<String>,
+    #[serde(default)]
+    pub databases: Vec<String>,
+    #[serde(default)]
+    pub environments: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct GroupConfig {
+    pub name: String,
+    pub members: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -499,5 +620,204 @@ environment = "dev"
 "#;
         let err = ServerConfig::from_str(toml, "test").unwrap_err();
         assert!(err.to_string().contains("duplicate scope"));
+    }
+}
+
+#[cfg(test)]
+mod auth_roles_tests {
+    use super::*;
+
+    fn parse(toml: &str) -> Result<ServerConfig, ConfigError> {
+        ServerConfig::from_str(toml, "test")
+    }
+
+    fn base_config(extra: &str) -> String {
+        format!(
+            r#"
+[[databases]]
+name = "app"
+environments = ["production"]
+
+[[workflows]]
+database = "app"
+environment = "production"
+
+[[workflows.steps]]
+type = "approval"
+mode = "any"
+
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
+
+[auth]
+mode = "token"
+
+[result_storage]
+root_dir = "/tmp/r"
+
+[sql_review]
+no_where_delete = "warn"
+no_where_update = "warn"
+
+{extra}
+"#
+        )
+    }
+
+    #[test]
+    fn valid_custom_role() {
+        let cfg = parse(&base_config(
+            r#"
+[[auth.roles]]
+name = "dba"
+permissions = ["request.approve", "request.view"]
+databases = ["app"]
+environments = ["production"]
+"#,
+        ))
+        .unwrap();
+        assert_eq!(cfg.auth.roles.len(), 1);
+        assert_eq!(cfg.auth.roles[0].name, "dba");
+    }
+
+    #[test]
+    fn valid_wildcard_scope() {
+        parse(&base_config(
+            r#"
+[[auth.roles]]
+name = "superuser"
+permissions = ["*"]
+"#,
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn reject_builtin_name() {
+        let err = parse(&base_config(
+            r#"
+[[auth.roles]]
+name = "admin"
+permissions = ["request.view"]
+"#,
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("built-in role"));
+    }
+
+    #[test]
+    fn reject_empty_permissions() {
+        let err = parse(&base_config(
+            r#"
+[[auth.roles]]
+name = "empty"
+permissions = []
+"#,
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("permissions cannot be empty"));
+    }
+
+    #[test]
+    fn reject_unknown_permission() {
+        let err = parse(&base_config(
+            r#"
+[[auth.roles]]
+name = "bad"
+permissions = ["request.fly"]
+"#,
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("unknown permission"));
+    }
+
+    #[test]
+    fn reject_duplicate_role_name() {
+        let err = parse(&base_config(
+            r#"
+[[auth.roles]]
+name = "dba"
+permissions = ["request.approve"]
+
+[[auth.roles]]
+name = "dba"
+permissions = ["request.view"]
+"#,
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("duplicate role name"));
+    }
+
+    #[test]
+    fn reject_undefined_role_in_bindings() {
+        let err = parse(&base_config(
+            r#"
+[[auth.role_bindings]]
+role = "ghost"
+subjects = ["alice"]
+"#,
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("not defined"));
+    }
+
+    #[test]
+    fn valid_group_definition() {
+        let cfg = parse(&base_config(
+            r#"
+[[auth.groups]]
+name = "team-a"
+members = ["alice", "bob"]
+"#,
+        ))
+        .unwrap();
+        assert_eq!(cfg.auth.groups.len(), 1);
+    }
+
+    #[test]
+    fn reject_empty_group_members() {
+        let err = parse(&base_config(
+            r#"
+[[auth.groups]]
+name = "empty-team"
+members = []
+"#,
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("members cannot be empty"));
+    }
+
+    #[test]
+    fn reject_duplicate_group() {
+        let err = parse(&base_config(
+            r#"
+[[auth.groups]]
+name = "team"
+members = ["alice"]
+
+[[auth.groups]]
+name = "team"
+members = ["bob"]
+"#,
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("duplicate group name"));
+    }
+
+    #[test]
+    fn role_binding_with_config_role_passes() {
+        parse(&base_config(
+            r#"
+[[auth.roles]]
+name = "dba"
+permissions = ["request.approve"]
+
+[[auth.role_bindings]]
+role = "dba"
+subjects = ["carol"]
+"#,
+        ))
+        .unwrap();
     }
 }

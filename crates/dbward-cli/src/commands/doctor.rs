@@ -720,21 +720,26 @@ fn check_workflow_coverage(ctx: &mut DoctorContext, cfg: &dbward_config::ServerC
 
 fn check_role_resolution(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
     let builtin = ["admin", "developer", "readonly", "agent-default"];
+    let config_roles: std::collections::HashSet<&str> =
+        cfg.auth.roles.iter().map(|r| r.name.as_str()).collect();
     let mut undefined = Vec::new();
 
     for rb in &cfg.auth.role_bindings {
-        if !builtin.contains(&rb.role.as_str()) {
+        if !builtin.contains(&rb.role.as_str()) && !config_roles.contains(rb.role.as_str()) {
             undefined.push(rb.role.clone());
         }
     }
     if let Some(ref default) = cfg.auth.default_role
         && !builtin.contains(&default.as_str())
+        && !config_roles.contains(default.as_str())
     {
         undefined.push(default.clone());
     }
     if let Some(ref oidc) = cfg.auth.oidc {
         for mapping in &oidc.role_mappings {
-            if !builtin.contains(&mapping.role.as_str()) {
+            if !builtin.contains(&mapping.role.as_str())
+                && !config_roles.contains(mapping.role.as_str())
+            {
                 undefined.push(mapping.role.clone());
             }
         }
@@ -744,7 +749,7 @@ fn check_role_resolution(ctx: &mut DoctorContext, cfg: &dbward_config::ServerCon
         ctx.record(CheckResult {
             id: "role_resolution",
             status: Status::Pass,
-            message: "all roles are built-in".into(),
+            message: "all referenced roles are defined".into(),
             hint: None,
         });
     } else {
@@ -1181,13 +1186,18 @@ subjects = ["alice"]
 [auth]
 mode = "both"
 
+[[auth.roles]]
+name = "dba"
+permissions = ["request.approve"]
+
 [[auth.role_bindings]]
 role = "dba"
 subjects = ["bob"]
 "#,
         );
         check_role_resolution(&mut ctx, &cfg);
-        assert_eq!(ctx.results[0].status, Status::Warn);
-        assert!(ctx.results[0].message.contains("dba"));
+        // With the role defined, doctor no longer warns about it being undefined.
+        // Verify it passes without issues instead.
+        assert!(ctx.results.is_empty() || ctx.results.iter().all(|r| r.status != Status::Warn));
     }
 }

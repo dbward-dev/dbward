@@ -14,5 +14,6 @@ toml = { workspace = true }
 regex = "1"
 thiserror = { workspace = true }
 hostname = "0.4"
+dbward-domain = { path = "../dbward-domain" }
 
 [dev-dependencies]

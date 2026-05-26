@@ -633,6 +633,76 @@ impl PolicyRepo for SqlitePolicyRepo {
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(count)
     }
+
+    fn upsert_config_role(&self, role: &RoleDefinition) -> Result<(), AppError> {
+        let conn = self.conn.lock().unwrap();
+        let perms_json =
+            serde_json::to_string(&role.permissions).unwrap_or_else(|_| "[]".to_string());
+        let dbs_json: Vec<String> = role
+            .databases
+            .iter()
+            .map(|d| d.as_str().to_string())
+            .collect();
+        let dbs_str = serde_json::to_string(&dbs_json).unwrap_or_else(|_| "[\"*\"]".to_string());
+        let envs_json: Vec<String> = role
+            .environments
+            .iter()
+            .map(|e| e.as_str().to_string())
+            .collect();
+        let envs_str = serde_json::to_string(&envs_json).unwrap_or_else(|_| "[\"*\"]".to_string());
+        conn.execute(
+            "INSERT INTO roles (name, permissions_json, databases_json, environments_json, built_in, config_synced)
+             VALUES (?1, ?2, ?3, ?4, 0, 1)
+             ON CONFLICT(name) DO UPDATE SET permissions_json = ?2, databases_json = ?3, environments_json = ?4, config_synced = 1
+             WHERE config_synced = 1 OR built_in = 0",
+            rusqlite::params![role.name, perms_json, dbs_str, envs_str],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+        // Check if a non-config-synced role with this name already existed (API-managed)
+        let updated = conn.changes();
+        if updated == 0 {
+            // Role exists but is API-managed (config_synced=0, built_in=0) — skip silently
+            // Or it's a built_in role — already blocked by config validation
+            let exists: bool = conn
+                .prepare("SELECT COUNT(*) FROM roles WHERE name = ?1 AND config_synced = 0")
+                .and_then(|mut s| s.query_row(rusqlite::params![role.name], |r| r.get::<_, i64>(0)))
+                .unwrap_or(0)
+                > 0;
+            if exists {
+                return Err(AppError::Conflict(format!(
+                    "role '{}' already exists as API-managed; cannot override from config",
+                    role.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn delete_stale_config_roles(&self, active_names: &[String]) -> Result<(), AppError> {
+        let conn = self.conn.lock().unwrap();
+        if active_names.is_empty() {
+            conn.execute("DELETE FROM roles WHERE config_synced = 1", [])
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+        } else {
+            let placeholders: String = active_names
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 1))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "DELETE FROM roles WHERE config_synced = 1 AND name NOT IN ({})",
+                placeholders
+            );
+            let params: Vec<&dyn rusqlite::ToSql> = active_names
+                .iter()
+                .map(|n| n as &dyn rusqlite::ToSql)
+                .collect();
+            conn.execute(&sql, params.as_slice())
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+        }
+        Ok(())
+    }
 }
 
 // --- SqlitePolicyEvaluator ---

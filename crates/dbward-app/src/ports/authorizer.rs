@@ -28,6 +28,16 @@ pub trait RoleResolver: Send + Sync {
     fn subjects_for_role(&self, _role: &str) -> Vec<String> {
         vec![]
     }
+
+    /// Reverse lookup: selector string → subject_ids.
+    fn subjects_for_selector(&self, _selector: &str) -> Vec<String> {
+        vec![]
+    }
+
+    /// Returns TOML-configured groups for a subject_id (for AuthUser.groups augmentation).
+    fn config_groups_for(&self, _subject_id: &str) -> Option<&Vec<String>> {
+        None
+    }
 }
 
 /// Authorization: 2-method design per ADR-002.

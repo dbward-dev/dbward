@@ -9,6 +9,8 @@ pub struct ConfigRoleResolver {
     roles: HashMap<String, ResolvedRole>,
     role_bindings: HashMap<String, Vec<String>>,
     user_bindings: HashMap<String, Vec<String>>,
+    group_members: HashMap<String, HashSet<String>>,
+    subject_groups: HashMap<String, Vec<String>>,
     default_role: Option<String>,
     policy_repo: Option<Arc<dyn dbward_app::ports::PolicyRepo>>,
 }
@@ -123,9 +125,26 @@ impl ConfigRoleResolver {
             roles,
             role_bindings,
             user_bindings,
+            group_members: HashMap::new(),
+            subject_groups: HashMap::new(),
             default_role,
             policy_repo,
         }
+    }
+
+    pub fn with_group_members(mut self, group_members: HashMap<String, HashSet<String>>) -> Self {
+        let mut subject_groups: HashMap<String, Vec<String>> = HashMap::new();
+        for (group, members) in &group_members {
+            for member in members {
+                subject_groups
+                    .entry(member.clone())
+                    .or_default()
+                    .push(group.clone());
+            }
+        }
+        self.group_members = group_members;
+        self.subject_groups = subject_groups;
+        self
     }
 }
 
@@ -138,6 +157,16 @@ impl RoleResolver for ConfigRoleResolver {
     ) -> Result<Vec<ResolvedRole>, AuthError> {
         let mut role_names = HashSet::new();
 
+        // Augment groups with TOML-defined membership
+        let mut all_groups: Vec<String> = groups.to_vec();
+        if let Some(config_groups) = self.subject_groups.get(subject_id) {
+            for g in config_groups {
+                if !all_groups.contains(g) {
+                    all_groups.push(g.clone());
+                }
+            }
+        }
+
         // 1. Direct user -> role mapping
         if let Some(bindings) = self.user_bindings.get(subject_id) {
             for name in bindings {
@@ -146,7 +175,7 @@ impl RoleResolver for ConfigRoleResolver {
         }
 
         // 2. Group -> role mapping
-        for group in groups {
+        for group in &all_groups {
             if let Some(bindings) = self.role_bindings.get(group) {
                 for name in bindings {
                     role_names.insert(name.clone());
@@ -196,11 +225,39 @@ impl RoleResolver for ConfigRoleResolver {
     }
 
     fn subjects_for_role(&self, role: &str) -> Vec<String> {
-        self.user_bindings
-            .iter()
-            .filter(|(_, roles)| roles.iter().any(|r| r == role))
-            .map(|(subject, _)| subject.clone())
-            .collect()
+        let mut subjects: HashSet<String> = HashSet::new();
+        for (subject, roles) in &self.user_bindings {
+            if roles.iter().any(|r| r == role) {
+                subjects.insert(subject.clone());
+            }
+        }
+        for (group, roles) in &self.role_bindings {
+            if roles.iter().any(|r| r == role)
+                && let Some(members) = self.group_members.get(group)
+            {
+                subjects.extend(members.iter().cloned());
+            }
+        }
+        subjects.into_iter().collect()
+    }
+
+    fn subjects_for_selector(&self, selector: &str) -> Vec<String> {
+        if let Some(role) = selector.strip_prefix("role:") {
+            self.subjects_for_role(role)
+        } else if let Some(group) = selector.strip_prefix("group:") {
+            self.group_members
+                .get(group)
+                .map(|s| s.iter().cloned().collect())
+                .unwrap_or_default()
+        } else if let Some(user) = selector.strip_prefix("user:") {
+            vec![user.to_string()]
+        } else {
+            vec![]
+        }
+    }
+
+    fn config_groups_for(&self, subject_id: &str) -> Option<&Vec<String>> {
+        self.subject_groups.get(subject_id)
     }
 }
 

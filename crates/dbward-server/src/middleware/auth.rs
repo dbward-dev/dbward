@@ -90,7 +90,7 @@ pub async fn auth_middleware(
         _ => {}
     }
 
-    let user = if is_jwt {
+    let mut user = if is_jwt {
         let (subject_id, groups) = state
             .token_verifier
             .verify_oidc_token(token)
@@ -215,6 +215,15 @@ pub async fn auth_middleware(
         }
         auth_user
     };
+
+    // Augment AuthUser.groups with TOML [[auth.groups]] membership
+    if let Some(config_groups) = state.role_resolver.config_groups_for(&user.subject_id) {
+        for g in config_groups {
+            if !user.groups.contains(g) {
+                user.groups.push(g.clone());
+            }
+        }
+    }
 
     req.extensions_mut().insert(user);
     Ok(next.run(req).await)
