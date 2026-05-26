@@ -134,7 +134,7 @@ dbward uses **on-demand execution**: the agent does not execute on approval. Ins
 6. Client receives result and saves locally (~/.dbward/results/<id>.json)
 ```
 
-The server never writes results to disk — it relays them in-memory with a 10-minute TTL.
+Results are persisted locally by default (configurable to S3 or stream-only) — it relays them in-memory with a 10-minute TTL.
 
 ## Policy Engine
 
@@ -237,7 +237,7 @@ Global Options:
 | GET | `/health` | Health check |
 | GET | `/ready` | Readiness check |
 | GET | `/metrics` | Prometheus metrics (admin auth required) |
-| GET | `/api/public-key` | Ed25519 public key |
+| GET | `/api/public-key` | Agent-only: Ed25519 public key | Ed25519 public key |
 
 ### Requests
 
