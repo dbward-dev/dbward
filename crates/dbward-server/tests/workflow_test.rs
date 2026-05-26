@@ -50,7 +50,7 @@ impl TokenVerifier for MultiUserVerifier {
                         Permission::RequestCreateSelect,
                         Permission::RequestView,
                         Permission::RequestCancel,
-                        Permission::RequestDispatch,
+                        Permission::RequestResume,
                         Permission::ResultView,
                     ]),
                     databases: vec![DatabaseName::new("*").unwrap()],

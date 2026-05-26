@@ -197,7 +197,7 @@ pub async fn run_migrate(
             std::process::exit(2);
         }
         Outcome::Approved { request_id } => {
-            eprintln!("Request {request_id} is approved but not yet dispatched.");
+            eprintln!("Request {request_id} is approved but not yet resumed.");
             eprintln!("Run: dbward request resume {request_id}");
         }
     }

@@ -123,12 +123,12 @@ dbward request resume req_abc123
 
 ## On-Demand Execution
 
-dbward uses **on-demand execution**: the agent does not execute on approval. Instead, the client explicitly dispatches the request when ready to receive the result.
+dbward uses **on-demand execution**: the agent does not execute on approval. Instead, the client explicitly resumes the request when ready to receive the result.
 
 ```
 1. Client creates request → server evaluates policy → pending / auto_approved
 2. (If pending) Human approves via CLI
-3. Client dispatches (`dbward request resume <id>`) → server marks as "dispatched"
+3. Client resumes (`dbward request resume <id>`) → server marks as "dispatched"
 4. Agent polls, claims, executes on DB → returns result to server
 5. Server relays result in-memory to waiting client (long poll)
 6. Client receives result and saves locally (~/.dbward/results/<id>.json)
@@ -219,7 +219,7 @@ Commands:
     show          Show request detail
     approve       Approve a pending request
     reject        Reject a pending request
-    resume        Dispatch and wait for result
+    resume        Resume and wait for result
     cancel        Cancel a pending request
 
 Global Options:
@@ -248,7 +248,7 @@ Global Options:
 | GET | `/api/requests/:id` | Get request detail |
 | POST | `/api/requests/:id/approve` | Approve (requester ≠ approver) |
 | POST | `/api/requests/:id/reject` | Reject |
-| POST | `/api/requests/:id/dispatch` | Dispatch for on-demand execution |
+| POST | `/api/requests/:id/resume` | Resume for on-demand execution |
 | POST | `/api/requests/:id/cancel` | Cancel a pending request |
 | GET | `/api/requests/:id/result/stream` | Long-poll for result |
 | GET | `/api/requests/:id/result/content` | Get stored result content |

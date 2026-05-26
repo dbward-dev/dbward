@@ -724,9 +724,9 @@ async fn wait_request(
     match status {
         "pending" => Ok(format!("Request {request_id} is still pending approval.")),
         "approved" | "auto_approved" | "break_glass" | "dispatched" | "running" => {
-            // Dispatch if needed, then wait for result
+            // Resume if needed, then wait for result
             if status == "approved" || status == "auto_approved" || status == "break_glass" {
-                let _ = client.dispatch(request_id).await;
+                let _ = client.resume(request_id).await;
             }
             match tokio::time::timeout(
                 std::time::Duration::from_secs(timeout),
@@ -751,7 +751,7 @@ async fn wait_request(
         "cancelled" => Ok(format!("Request {request_id} was cancelled.")),
         "expired" => Ok(format!("Request {request_id} has expired.")),
         "execution_lost" => Ok(format!(
-            "Request {request_id} execution was lost (agent lease expired). It can be re-dispatched."
+            "Request {request_id} execution was lost (agent lease expired). It can be re-resumed."
         )),
         _ => Ok(format!("Request {request_id} status: {status}")),
     }

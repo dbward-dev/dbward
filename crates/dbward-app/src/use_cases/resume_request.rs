@@ -9,7 +9,7 @@ use dbward_domain::services::status_machine::{
 use crate::error::AppError;
 use crate::ports::*;
 
-pub struct DispatchRequest {
+pub struct ResumeRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub policy: Arc<dyn PolicyEvaluator>,
     pub request_reader: Arc<dyn RequestReader>,
@@ -20,23 +20,23 @@ pub struct DispatchRequest {
     pub clock: Arc<dyn Clock>,
 }
 
-pub struct DispatchRequestInput {
+pub struct ResumeRequestInput {
     pub request_id: String,
 }
 
 #[derive(Debug)]
-pub struct DispatchRequestOutput {
+pub struct ResumeRequestOutput {
     pub id: String,
     pub status: RequestStatus,
 }
 
-impl DispatchRequest {
+impl ResumeRequest {
     pub fn execute(
         &self,
-        input: DispatchRequestInput,
+        input: ResumeRequestInput,
         user: &AuthUser,
         ctx: &dbward_domain::entities::AuditContext,
-    ) -> Result<DispatchRequestOutput, AppError> {
+    ) -> Result<ResumeRequestOutput, AppError> {
         // 1. Get request
         let request = self
             .request_reader
@@ -47,7 +47,7 @@ impl DispatchRequest {
         self.authorizer
             .authorize_scoped(
                 user,
-                Permission::RequestDispatch,
+                Permission::RequestResume,
                 &request.database,
                 &request.environment,
                 &ResourceContext::Request {
@@ -138,7 +138,7 @@ impl DispatchRequest {
 
         result.commit(&*self.event_dispatcher);
 
-        Ok(DispatchRequestOutput {
+        Ok(ResumeRequestOutput {
             id: request.id,
             status: RequestStatus::Dispatched,
         })
@@ -468,11 +468,8 @@ mod tests {
         }
     }
 
-    fn make_uc(
-        reader: Arc<FakeDispatchReader>,
-        writer: Arc<FakeDispatchWriter>,
-    ) -> DispatchRequest {
-        DispatchRequest {
+    fn make_uc(reader: Arc<FakeDispatchReader>, writer: Arc<FakeDispatchWriter>) -> ResumeRequest {
+        ResumeRequest {
             authorizer: Arc::new(AllowAll),
             policy: Arc::new(FakePolicy),
             request_reader: reader,
@@ -503,7 +500,7 @@ mod tests {
 
         let out = uc
             .execute(
-                DispatchRequestInput {
+                ResumeRequestInput {
                     request_id: "req-001".into(),
                 },
                 &user,
@@ -533,7 +530,7 @@ mod tests {
 
         assert!(matches!(
             uc.execute(
-                DispatchRequestInput {
+                ResumeRequestInput {
                     request_id: "req-001".into()
                 },
                 &user,
@@ -562,7 +559,7 @@ mod tests {
 
         let out = uc
             .execute(
-                DispatchRequestInput {
+                ResumeRequestInput {
                     request_id: "req-001".into(),
                 },
                 &user,
@@ -678,8 +675,8 @@ mod tests {
         }
     }
 
-    fn exec_input() -> DispatchRequestInput {
-        DispatchRequestInput {
+    fn exec_input() -> ResumeRequestInput {
+        ResumeRequestInput {
             request_id: "req-001".into(),
         }
     }
@@ -720,7 +717,7 @@ mod tests {
             dispatched: Mutex::new(false),
         });
 
-        let uc = DispatchRequest {
+        let uc = ResumeRequest {
             authorizer: Arc::new(AllowAll),
             policy: Arc::new(FakePolicy),
             request_reader: reader,
@@ -758,7 +755,7 @@ mod tests {
             },
         });
 
-        let uc = DispatchRequest {
+        let uc = ResumeRequest {
             authorizer: Arc::new(AllowAll),
             policy,
             request_reader: reader,
@@ -804,7 +801,7 @@ mod tests {
             },
         });
 
-        let uc = DispatchRequest {
+        let uc = ResumeRequest {
             authorizer: Arc::new(AllowAll),
             policy,
             request_reader: reader,
@@ -847,7 +844,7 @@ mod tests {
             },
         });
 
-        let uc = DispatchRequest {
+        let uc = ResumeRequest {
             authorizer: Arc::new(AllowAll),
             policy,
             request_reader: reader,

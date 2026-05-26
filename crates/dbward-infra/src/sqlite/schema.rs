@@ -460,7 +460,7 @@ CREATE INDEX IF NOT EXISTS idx_pending_approvers_selector ON request_pending_app
 -- Seed built-in roles
 INSERT OR IGNORE INTO roles (name, permissions_json, databases_json, environments_json, built_in) VALUES
 ('admin', '[\"*\"]', '[\"*\"]', '[\"*\"]', 1),
-('developer', '[\"request.create\",\"request.create_select\",\"request.view\",\"request.cancel\",\"request.dispatch\",\"result.view\",\"token.revoke_own\"]', '[\"*\"]', '[\"*\"]', 1),
+('developer', '[\"request.create\",\"request.create_select\",\"request.view\",\"request.cancel\",\"request.resume\",\"result.view\",\"token.revoke_own\"]', '[\"*\"]', '[\"*\"]', 1),
 ('readonly', '[\"request.create_select\",\"request.view\",\"result.view\"]', '[\"*\"]', '[\"*\"]', 1),
 ('agent-default', '[\"agent.poll\",\"agent.claim\",\"agent.heartbeat\",\"agent.submit_result\"]', '[\"*\"]', '[\"*\"]', 1);
 

@@ -7,8 +7,8 @@ use serde_json::json;
 
 use dbward_app::error::AppError;
 use dbward_app::use_cases::{
-    approve_request, cancel_request, create_request, dispatch_request, get_request, get_result,
-    list_requests, reject_request, stream_result,
+    approve_request, cancel_request, create_request, get_request, get_result, list_requests,
+    reject_request, resume_request, stream_result,
 };
 use dbward_domain::auth::AuthUser;
 use dbward_domain::values::{DatabaseName, Environment, Operation};
@@ -432,7 +432,7 @@ pub async fn cancel(
     }
 }
 
-pub async fn dispatch(
+pub async fn resume(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
     client_ip: Option<Extension<ClientIp>>,
@@ -443,7 +443,7 @@ pub async fn dispatch(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = dispatch_request::DispatchRequest {
+    let uc = resume_request::ResumeRequest {
         authorizer: state.authorizer.clone(),
         policy: state.policy_evaluator.clone(),
         request_reader: state.request_reader.clone(),
@@ -454,7 +454,7 @@ pub async fn dispatch(
         clock: state.clock.clone(),
     };
 
-    let input = dispatch_request::DispatchRequestInput { request_id: id };
+    let input = resume_request::ResumeRequestInput { request_id: id };
 
     match uc.execute(input, &user, &audit_ctx) {
         Ok(out) => Ok((

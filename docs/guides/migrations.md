@@ -88,7 +88,7 @@ After approval:
 
 ```bash
 $ dbward request resume req_m1a2
-✓ Dispatching req_m1a2...
+✓ Resuming req_m1a2...
   Applied: 20260503140000_create_orders (up)
 ```
 

@@ -17,8 +17,8 @@ use dbward_app::use_cases::{
     approve_request::{ApproveRequest, ApproveRequestInput},
     cancel_request::{CancelRequest, CancelRequestInput},
     create_request::{CreateRequest, CreateRequestInput, RequestChannel},
-    dispatch_request::{DispatchRequest, DispatchRequestInput},
     reject_request::{RejectRequest, RejectRequestInput},
+    resume_request::{ResumeRequest, ResumeRequestInput},
 };
 
 // --- Shared Fake Infrastructure ---
@@ -416,7 +416,7 @@ fn make_user(id: &str, roles: &[&str]) -> AuthUser {
                 permissions: [
                     Permission::RequestCreate,
                     Permission::RequestApprove,
-                    Permission::RequestDispatch,
+                    Permission::RequestResume,
                     Permission::RequestCancel,
                 ]
                 .into_iter()
@@ -855,8 +855,8 @@ impl TestHarness {
         }
     }
 
-    fn dispatch_uc(&self) -> DispatchRequest {
-        DispatchRequest {
+    fn resume_uc(&self) -> ResumeRequest {
+        ResumeRequest {
             authorizer: self.authorizer.clone(),
             policy: self.policy.clone(),
             request_reader: self.repo.clone(),
@@ -904,9 +904,9 @@ fn full_lifecycle_create_approve_dispatch() {
 
     // Dispatch
     let dispatched = h
-        .dispatch_uc()
+        .resume_uc()
         .execute(
-            DispatchRequestInput {
+            ResumeRequestInput {
                 request_id: created.id.clone(),
             },
             &requester,
@@ -1003,8 +1003,8 @@ fn reject_blocks_further_actions() {
     assert!(matches!(result, Err(AppError::Conflict(_))));
 
     // Dispatch after reject → conflict
-    let result = h.dispatch_uc().execute(
-        DispatchRequestInput {
+    let result = h.resume_uc().execute(
+        ResumeRequestInput {
             request_id: created.id.clone(),
         },
         &requester,
@@ -1179,8 +1179,8 @@ fn dispatch_after_approval_ttl_expired_fails() {
     // Advance clock past approval_ttl (3600s)
     h.clock.advance(3601);
 
-    let result = h.dispatch_uc().execute(
-        DispatchRequestInput {
+    let result = h.resume_uc().execute(
+        ResumeRequestInput {
             request_id: created.id.clone(),
         },
         &requester,
@@ -1219,9 +1219,9 @@ fn redispatch_respects_max_executions() {
             &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
-    h.dispatch_uc()
+    h.resume_uc()
         .execute(
-            DispatchRequestInput {
+            ResumeRequestInput {
                 request_id: created.id.clone(),
             },
             &requester,
@@ -1503,9 +1503,9 @@ fn agent_full_flow_poll_claim_heartbeat() {
             &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
-    h.dispatch_uc()
+    h.resume_uc()
         .execute(
-            DispatchRequestInput {
+            ResumeRequestInput {
                 request_id: created.id.clone(),
             },
             &requester,
@@ -1623,9 +1623,9 @@ fn heartbeat_detects_cancelled_request() {
             &dbward_domain::entities::AuditContext::System,
         )
         .unwrap();
-    h.dispatch_uc()
+    h.resume_uc()
         .execute(
-            DispatchRequestInput {
+            ResumeRequestInput {
                 request_id: created.id.clone(),
             },
             &requester,
@@ -1721,9 +1721,9 @@ fn event_dispatcher_records_full_lifecycle() {
 
     // Dispatch → Dispatched
     let dispatched = h
-        .dispatch_uc()
+        .resume_uc()
         .execute(
-            DispatchRequestInput {
+            ResumeRequestInput {
                 request_id: created.id.clone(),
             },
             &requester,

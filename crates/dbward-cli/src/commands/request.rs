@@ -277,7 +277,7 @@ async fn run_resume(
     no_save: bool,
     result_format: ResultFormat,
 ) -> Result<(), CliError> {
-    // DML re-dispatch warning
+    // DML re-resume warning
     let req = sc.get_request(id).await?;
     let status = req["status"].as_str().unwrap_or("");
     let operation = req["operation"].as_str().unwrap_or("");
@@ -287,7 +287,7 @@ async fn run_resume(
         eprintln!("   The previous execution may have partially completed.");
         let sql_preview: String = detail.chars().take(80).collect();
         eprintln!("   SQL: {sql_preview}");
-        eprintln!("   Re-dispatching may cause DUPLICATE execution.");
+        eprintln!("   Re-resuming may cause DUPLICATE execution.");
         eprint!("   Continue? [y/N] ");
         std::io::Write::flush(&mut std::io::stderr()).ok();
         let mut input = String::new();
@@ -298,7 +298,7 @@ async fn run_resume(
         }
     }
 
-    if let Err(e) = sc.dispatch(id).await {
+    if let Err(e) = sc.resume(id).await {
         if e.status == 409 {
             // Fetch current status for a helpful message
             if let Ok(req) = sc.get_request(id).await {
@@ -314,25 +314,25 @@ async fn run_resume(
                         eprintln!("Request was cancelled.");
                     }
                     "dispatched" | "running" => {
-                        eprintln!("Already dispatched. Waiting for agent...");
+                        eprintln!("Already resumed. Waiting for agent...");
                     }
                     "execution_lost" => {
-                        eprintln!("Execution lost. Re-dispatch: dbward request resume {id}");
+                        eprintln!("Execution lost. Retry: dbward request resume {id}");
                     }
                     "pending" => {
                         eprintln!("Still pending approval.");
                     }
                     _ => {
-                        eprintln!("Request {id} cannot be dispatched (status: {status}).");
+                        eprintln!("Request {id} cannot be resumed (status: {status}).");
                     }
                 }
             } else {
-                eprintln!("Request {id} cannot be dispatched yet (may still be pending approval).");
+                eprintln!("Request {id} cannot be resumed yet (may still be pending approval).");
             }
             eprintln!("Check status: dbward request show {id}");
-            return Err(CliError::Server("request not ready for dispatch".into()));
+            return Err(CliError::Server("request not ready for resume".into()));
         }
-        return Err(e.into_cli_error("dispatch"));
+        return Err(e.into_cli_error("resume"));
     }
     let resp = tokio::select! {
         r = workflow::wait_and_resolve(sc, id, true) => r?,

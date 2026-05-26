@@ -47,15 +47,15 @@ pub struct ApproveResponse {
     pub execution_token: Option<serde_json::Value>,
 }
 
-/// Simple status response (used by dispatch, reject, cancel)
+/// Simple status response (used by resume, reject, cancel)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StatusResponse {
     pub id: String,
     pub status: RequestStatus,
 }
 
-/// POST /api/requests/{id}/dispatch — response
-pub type DispatchResponse = StatusResponse;
+/// POST /api/requests/{id}/resume — response
+pub type ResumeResponse = StatusResponse;
 
 /// GET /api/requests — response
 #[derive(Debug, Serialize, Deserialize)]

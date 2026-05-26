@@ -283,17 +283,17 @@ impl ServerClient {
         self.parse_response(resp, "get request").await
     }
 
-    pub async fn dispatch(&self, request_id: &str) -> Result<Value, ServerError> {
+    pub async fn resume(&self, request_id: &str) -> Result<Value, ServerError> {
         let resp = self
             .client
             .post(format!(
-                "{}/api/requests/{}/dispatch",
+                "{}/api/requests/{}/resume",
                 self.base_url, request_id
             ))
             .bearer_auth(&self.api_token)
             .send()
             .await
-            .map_err(|e| ServerError::from_response(0, format!("dispatch failed: {e}")))?;
+            .map_err(|e| ServerError::from_response(0, format!("resume failed: {e}")))?;
 
         self.parse_response_detailed(resp).await
     }
@@ -606,8 +606,8 @@ mod tests {
     fn falls_back_when_error_body_is_not_json() {
         let err = ServerError::from_response(502, "<html>bad gateway</html>".into());
 
-        match err.into_cli_error("dispatch") {
-            CliError::Server(msg) => assert_eq!(msg, "dispatch: <html>bad gateway</html>"),
+        match err.into_cli_error("resume") {
+            CliError::Server(msg) => assert_eq!(msg, "resume: <html>bad gateway</html>"),
             other => panic!("unexpected error variant: {other:?}"),
         }
     }
@@ -616,15 +616,12 @@ mod tests {
     fn hides_transport_error_details_in_cli_error() {
         let err = ServerError::from_response(
             0,
-            "dispatch failed: error sending request for url (https://user:secret@example.com)"
-                .into(),
+            "resume failed: error sending request for url (https://user:secret@example.com)".into(),
         );
 
-        match err.into_cli_error("dispatch") {
+        match err.into_cli_error("resume") {
             CliError::Server(msg) => {
-                assert!(
-                    msg.contains("dispatch: request failed before receiving a server response")
-                );
+                assert!(msg.contains("resume: request failed before receiving a server response"));
                 assert!(!msg.contains("secret"));
                 assert!(!msg.contains("https://"));
             }
