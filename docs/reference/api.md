@@ -188,13 +188,6 @@ GET /api/results
 ### Get storage config
 
 ```
-GET /api/storage-config
-```
-
----
-
-## Schemas
-
 ### `GET /api/schemas/{db}`
 
 Returns the agent-collected schema snapshot for a database. The server automatically resolves the best available environment (production > staging > development) from snapshots with `status=ready` that the caller is authorized to view.

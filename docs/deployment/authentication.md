@@ -23,9 +23,9 @@ mode = "token"   # "token" | "oidc" | "both"
 
 ```bash
 # Via CLI (requires access to the SQLite database file)
-dbward server token create --user alice --role admin --data dbward.db
-dbward server token create --user bob --role developer --data dbward.db
-dbward server token create --user prod-agent --role admin --agent --data dbward.db
+dbward token create --subject alice --role admin 
+dbward token create --subject bob --role developer 
+dbward token create --subject prod-agent --role admin --subject-type agent 
 ```
 
 ```bash
@@ -35,9 +35,9 @@ curl -X POST http://localhost:3000/api/tokens \
   -H "Content-Type: application/json" \
   -d '{
     "subject_id": "bob",
-    "role": "developer",
+    "roles": "developer",
     "name": "Bob CI token",
-    "expires_in": 7776000
+    "expires_at": 7776000
   }'
 ```
 
@@ -50,8 +50,8 @@ curl -X POST http://localhost:3000/api/tokens \
 | `subject_type` | string | `user` or `agent` (default: `user`) |
 | `name` | string | Human-readable label |
 | `groups` | string[] | Group memberships (for workflow approver matching) |
-| `expires_in` | integer | TTL in seconds (e.g., 7776000 = 90 days) |
-| `expires_at` | string | Absolute expiry (RFC 3339). Mutually exclusive with `expires_in`. |
+| `expires_at` | integer | TTL in seconds (e.g., 7776000 = 90 days) |
+| `expires_at` | string | Absolute expiry (RFC 3339). Mutually exclusive with `expires_at`. |
 
 ### Token lifecycle
 
@@ -59,7 +59,7 @@ curl -X POST http://localhost:3000/api/tokens \
 Create → Active → [Expired | Revoked]
 ```
 
-- **Expiration:** Tokens with `expires_in` or `expires_at` are automatically rejected after the deadline. No background cleanup needed.
+- **Expiration:** Tokens with `expires_at` or `expires_at` are automatically rejected after the deadline. No background cleanup needed.
 - **Revocation:** Tokens can be revoked immediately via API.
 - **Self-revoke:** Any user can revoke their own token (no admin required).
 - **No re-issue:** There is no rotate API. Revoke the old token and create a new one.
@@ -106,7 +106,7 @@ mode = "oidc"    # or "both" to also allow API tokens
 [auth.oidc]
 issuer = "https://accounts.google.com"
 client_id = "123456789.apps.googleusercontent.com"
-# client_secret_env = "OIDC_CLIENT_SECRET"  # Optional: env var name
+# # client_secret_env is not supported  # Optional: env var name
 # jwks_uri = "http://keycloak:8080/realms/dbward/protocol/openid-connect/certs"  # Override for Docker
 default_role = "readonly"         # Role when no mapping matches (default: readonly)
 ```
@@ -160,7 +160,7 @@ role = "developer"
 
 # Map by specific user
 [[auth.oidc.role_mappings]]
-subject = "alice@example.com"
+# Use [[auth.role_bindings]] for subject-based role assignment
 role = "admin"
 ```
 
@@ -251,7 +251,7 @@ curl -X POST http://localhost:3000/api/tokens \
   -H "Content-Type: application/json" \
   -d '{
     "subject_id": "ci-bot",
-    "role": "developer",
+    "roles": "developer",
     "groups": ["backend-team"]
   }'
 ```
@@ -263,7 +263,7 @@ curl -X POST http://localhost:3000/api/tokens \
 Agents use API tokens with `subject_type = "agent"`:
 
 ```bash
-dbward server token create --user prod-agent --role admin --agent --data dbward.db
+dbward token create --subject prod-agent --role admin --subject-type agent 
 ```
 
 In OIDC mode (`mode = "oidc"`), agents are the only entities allowed to use API tokens. Human users must authenticate via OIDC.
@@ -274,7 +274,7 @@ In `mode = "both"`, both API tokens and OIDC JWTs are accepted for all users.
 
 ## Security recommendations
 
-1. **Use TTL on all tokens** — Set `expires_in` to 90 days max. Rotate before expiry.
+1. **Use TTL on all tokens** — Set `expires_at` to 90 days max. Rotate before expiry.
 2. **Use OIDC for humans** — Avoid sharing long-lived tokens between team members.
 3. **Separate agent tokens** — One token per agent. Revoke individually if compromised.
 4. **Short JWT lifetime** — Configure your IdP to issue tokens with 5–15 minute expiry.
@@ -286,7 +286,7 @@ In `mode = "both"`, both API tokens and OIDC JWTs are accepted for all users.
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `401 invalid token` | Token revoked or wrong | Check `dbward server token list` |
+| `401 invalid token` | Token revoked or wrong | Check `dbward token list` |
 | `401 token expired` | TTL exceeded | Create a new token |
 | `401 OIDC not configured` | JWT sent but `mode = "token"` | Change to `mode = "oidc"` or `"both"` |
 | `JWT verification failed` | Wrong issuer/audience/expired | Check `issuer` and `client_id` match IdP |

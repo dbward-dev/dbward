@@ -25,16 +25,51 @@ Generate production-ready config files for a small team (5-50 people):
 dbward init --preset small-team
 ```
 
+You'll be prompted for:
+- **Server URL** (default: `http://localhost:3000`)
+- **Database name** (default: `app`)
+
 This creates 3 files:
 - `dbward.toml` — CLI config (server URL, default database)
 - `server.toml` — Approval workflows, auto-approve rules, SQL review
 - `agent.toml` — Database connection placeholders
 
-See the guided output for next steps, or continue below for a simplified dev environment.
+### Production startup
 
-## Start dev environment
+```bash
+# 1. Start the server (generates initial tokens on first run)
+dbward-server --config server.toml --dev-bootstrap
 
-For PostgreSQL:
+# Output:
+#   Bootstrap tokens:
+#     admin:     dbw_xxxx
+#     developer: dbw_yyyy
+#     agent:     dbw_zzzz
+
+# 2. Set your CLI token
+# Edit dbward.toml → token = "dbw_xxxx"
+
+# 3. Set database URL and start the agent
+export DATABASE_URL_APP_PRODUCTION="postgres://user:pass@host:5432/mydb"
+export DBWARD_AGENT_TOKEN="dbw_zzzz"
+dbward-agent --config agent.toml
+
+# 4. Verify everything works
+dbward doctor
+dbward execute "SELECT 1"
+```
+
+### Generated workflow rules (small-team preset)
+
+| Environment | Approval | Auto-approve |
+|-------------|----------|--------------|
+| development | None (empty steps) | Everything (unconditional, no risk check) |
+| staging | 1 admin | SELECT + safe DDL only (Low risk) |
+| production | 1 admin + reason required | Nothing (all human approval) |
+
+## Start dev environment (alternative)
+
+For quick local experimentation without separate server/agent processes:
 
 ```bash
 dbward dev --database-url "postgres://user:password@localhost:5432/mydb"
@@ -49,12 +84,12 @@ dbward dev --database-url "mysql://user:password@localhost:3306/mydb"
 Example output:
 
 ```
-[dbward] Server listening on http://127.0.0.1:7890
-[dbward] Agent connected to database "mydb"
-[dbward] Dev tokens generated:
-           admin:     dw_dev_admin_xxxx
-           developer: dw_dev_developer_xxxx
-[dbward] Config written to ~/.dbward/dev/client.toml
+dbward dev starting...
+  Server: http://127.0.0.1:3000
+  Database: mydb
+  Admin token:     dbw_xxxx
+  Developer token: dbw_yyyy
+  Config: ~/.dbward/dev/client.toml
 
 Try:
   dbward --config ~/.dbward/dev/client.toml execute "SELECT 1"
@@ -81,15 +116,21 @@ dbward --config ~/.dbward/dev/client.toml execute "SELECT now()"
 # Create a new migration
 dbward --config ~/.dbward/dev/client.toml migrate create add_users_table
 
-# Edit the generated files
-$EDITOR db/migrations/20260508_add_users_table/up.sql
-$EDITOR db/migrations/20260508_add_users_table/down.sql
+# Edit the generated file (single-file dbmate format)
+$EDITOR migrations/20260508120000_add_users_table.sql
 
 # Apply
 dbward --config ~/.dbward/dev/client.toml migrate up
 ```
 
-Migration files are created as a directory under `./db/migrations/` with `up.sql` and `down.sql` inside.
+Migration files use single-file [dbmate-compatible format](https://github.com/amacneil/dbmate):
+```sql
+-- migrate:up
+CREATE TABLE users (id SERIAL PRIMARY KEY, name TEXT);
+
+-- migrate:down
+DROP TABLE users;
+```
 
 ## What approval looks like
 
@@ -97,12 +138,12 @@ In production (when auto-approve is off), a request that requires approval exits
 
 ```bash
 $ dbward execute "DELETE FROM orders WHERE created_at < '2025-01-01'"
-Request rq_abc123 is pending approval.
+Request abc12345-def6-7890-abcd-ef1234567890 is pending approval.
 Approvers: @dba-team
 
 # Check details (risk, EXPLAIN plan, etc.)
-$ dbward request show rq_abc123
-Request rq_abc123
+$ dbward request show abc12345-def6-7890-abcd-ef1234567890
+Request abc12345-def6-7890-abcd-ef1234567890
   Status:      pending
   Detail:      DELETE FROM orders WHERE created_at < '2025-01-01'
   Risk:        Medium (LargeTable { rows: 50000 })
@@ -111,7 +152,7 @@ Request rq_abc123
   Explain:     ModifyTable on orders via Seq Scan (rows=12000, cost=890)
 
 # After someone approves:
-$ dbward request resume rq_abc123
+$ dbward request resume abc12345-def6-7890-abcd-ef1234567890
 ```
 
 dbward automatically assesses risk, runs EXPLAIN (read-only), and shows this context to approvers.

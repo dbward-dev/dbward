@@ -277,3 +277,88 @@ url = "postgres://user:${DB_PASSWORD}@host/db"
 ```
 
 All config files error on undefined variables. Use `${VAR:-default}` to provide a fallback value (e.g., `${PORT:-3000}`). Use `${VAR:-}` for an intentional empty default.
+
+---
+
+## Additional Supported Fields
+
+### Server: `trusted_proxies`
+
+```toml
+# CIDR ranges to trust for X-Forwarded-For resolution
+trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12"]
+```
+
+### Server: `[logging]`
+
+```toml
+[logging]
+level = "info"      # Log level (debug, info, warn, error)
+format = "text"     # "text" or "json"
+```
+
+> **Note:** The agent also supports `DBWARD_LOG_FORMAT=json` env var override. The server uses only the config value.
+
+### Server: `[slack]`
+
+```toml
+[slack]
+bot_token = "${SLACK_BOT_TOKEN}"
+signing_secret = "${SLACK_SIGNING_SECRET}"
+channel = "#db-approvals"
+
+[slack.channels]
+production = "#prod-db-approvals"    # Per-environment channel routing
+staging = "#staging-alerts"
+```
+
+### Server: Result Storage (S3)
+
+```toml
+[result_storage]
+backend = "s3"
+bucket = "my-bucket"
+region = "us-east-1"
+endpoint = "https://s3.amazonaws.com"  # Custom endpoint (MinIO)
+access_key_id = "${AWS_ACCESS_KEY_ID}"
+secret_access_key = "${AWS_SECRET_ACCESS_KEY}"
+path_style = false                     # true for MinIO
+prefix = "dbward/results"              # S3 key prefix
+max_persist_bytes = 10485760           # 10MB max (default)
+```
+
+### Workflow: Additional Fields
+
+```toml
+[[workflows]]
+database = "*"
+environment = "production"
+explain = true                # Run EXPLAIN on request creation (default: true)
+pending_ttl_secs = 86400      # Override pending expiry for this workflow
+statement_timeout_secs = 60   # Override statement timeout for this workflow
+```
+
+### Agent: Startup Retry
+
+```toml
+startup_retry_initial_ms = 1000   # Initial backoff (default: 1000)
+startup_retry_max_ms = 15000      # Max backoff (default: 15000)
+startup_max_wait_secs = 0         # Startup deadline, 0 = infinite (default: 0)
+```
+
+### Agent: Schema Sync
+
+```toml
+[schema_sync]
+enabled = true          # Collect and push schema to server (default: true)
+sync_on_startup = true  # Sync immediately on agent start (default: true)
+interval_secs = 0       # Periodic re-sync interval, 0 = disabled (default: 0)
+                        # When 0, sync only happens on startup (if sync_on_startup=true)
+                        # and after migrations
+```
+
+### CLI: `DBWARD_DATABASE` Environment Variable
+
+```bash
+export DBWARD_DATABASE=app   # Equivalent to --database app
+```

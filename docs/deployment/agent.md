@@ -13,12 +13,10 @@ agent_id = "prod-agent-1"
 url = "https://dbward.internal:3000"
 agent_token = "${DBWARD_AGENT_TOKEN}"
 
-[capabilities]
-databases = ["app"]
-environments = ["production", "staging"]
-operations = ["*"]
+# Operations this agent handles (default: all)
+# operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "migrate_status"]
 
-[databases.app]
+[databases.app.production]
 url = "${DATABASE_URL}"
 EOF
 
@@ -54,7 +52,7 @@ agent_token = "${DBWARD_AGENT_TOKEN}"   # Agent token (created with --agent flag
 The agent token must be created with `--agent` flag:
 
 ```bash
-dbward server token create --user prod-agent-1 --role agent-default --agent --data dbward.db
+dbward token create --subject prod-agent-1 --subject-type agent --role agent-default
 ```
 
 ### Capabilities
@@ -62,8 +60,9 @@ dbward server token create --user prod-agent-1 --role agent-default --agent --da
 Capabilities determine which jobs this agent can handle. The server matches jobs to agents based on these.
 
 ```toml
-[capabilities]
-databases = ["app"]               # Which databases this agent serves
+# Capabilities are derived from [databases] keys
+# operations (optional, defaults shown):
+operations = ["app"]               # Which databases this agent serves
 environments = ["production"]     # Which environments ("*" = all)
 operations = ["*"]                # Which operations ("*" = all)
 ```
@@ -71,11 +70,11 @@ operations = ["*"]                # Which operations ("*" = all)
 ### Database connections
 
 ```toml
-[databases.app]
+[databases.app.production]
 url = "postgres://user:pass@localhost:5432/mydb"
 # migrations_dir = "db/migrations"  # Optional: override for this database
 
-[databases.analytics]
+[databases.analytics.production]
 url = "mysql://user:pass@analytics.internal:3306/warehouse"
 ```
 
@@ -101,12 +100,13 @@ Agent A   Agent B
 ```toml
 agent_id = "prod-agent"
 
-[capabilities]
-databases = ["app"]
+# Capabilities are derived from [databases] keys
+# operations (optional, defaults shown):
+operations = ["app"]
 environments = ["production"]
 operations = ["*"]
 
-[databases.app]
+[databases.app.production]
 url = "postgres://...@prod-db:5432/app"
 ```
 
@@ -114,15 +114,16 @@ url = "postgres://...@prod-db:5432/app"
 ```toml
 agent_id = "staging-agent"
 
-[capabilities]
-databases = ["app", "analytics"]
+# Capabilities are derived from [databases] keys
+# operations (optional, defaults shown):
+operations = ["app", "analytics"]
 environments = ["staging", "development"]
 operations = ["*"]
 
-[databases.app]
+[databases.app.production]
 url = "postgres://...@staging-db:5432/app"
 
-[databases.analytics]
+[databases.analytics.production]
 url = "mysql://...@analytics:3306/warehouse"
 ```
 

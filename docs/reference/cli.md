@@ -80,13 +80,13 @@ dbward request list --status pending --user alice
 | Option | Description |
 |--------|-------------|
 | `--status <STATUS>` | Filter by status |
-| `--user <USER>` | Filter by requester |
+| `--subject <USER>` | Filter by requester |
 
 #### dbward request show
 
 ```bash
 dbward request show <ID>
-dbward request show <ID> --json   # Full JSON output (includes raw EXPLAIN plan)
+dbward request show <ID> --format json   # Full JSON output (includes raw EXPLAIN plan)
 ```
 
 Shows request details including automatically collected context:
@@ -374,24 +374,24 @@ dbward dev --database-url "postgres://localhost/myapp"
 Start the dbward HTTP server (production).
 
 ```bash
-dbward server start --config server.toml --data /data/dbward.db --listen 0.0.0.0:3000
+dbward server start --config server.toml  --listen 0.0.0.0:3000
 ```
 
-#### dbward server token create
+#### dbward token create
 
 ```bash
-dbward server token create --user alice --role admin --data /data/dbward.db
-dbward server token create --user agent-1 --role agent-default --agent --data /data/dbward.db
-dbward server token create --user bob --role developer --groups "backend,dba" --data /data/dbward.db
+dbward token create --subject alice --role admin 
+dbward token create --subject agent-1 --role agent-default --agent 
+dbward token create --subject bob --role developer --groups "backend,dba" 
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--user <NAME>` | Token subject |
+| `--subject <NAME>` | Token subject |
 | `--role <ROLE>` | Role to assign |
 | `--agent` | Create agent token |
 | `--groups <LIST>` | Comma-separated groups |
-| `--data <PATH>` | SQLite database path |
+| `` | SQLite database path |
 
 ---
 

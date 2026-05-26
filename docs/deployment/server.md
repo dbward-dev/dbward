@@ -26,7 +26,8 @@ min = 1
 EOF
 
 # 2. Create initial admin token
-dbward server token create --user admin --role admin --data /var/lib/dbward/dbward.db
+dbward-server --data /var/lib/dbward/dbward.db --dev-bootstrap
+# Or via API: dbward token create --subject admin --role admin
 
 # 3. Start
 dbward server start --config dbward-server.toml
@@ -50,7 +51,7 @@ trusted_proxies = ["10.0.0.0/8"]  # Trust X-Forwarded-For from these CIDRs
 ```toml
 [auth]
 mode = "token"                    # "token" | "oidc" | "both"
-break_glass_roles = ["admin", "developer"]  # Roles allowed to use --emergency
+# break_glass: any user with --emergency flag  # Roles allowed to use --emergency
 ```
 
 For OIDC setup, see [Authentication](authentication.md).
@@ -70,16 +71,16 @@ approval_ttl_secs = 86400         # Approval expiry — re-approval needed after
 ```toml
 [audit]
 redaction = "literals"            # "literals" (mask SQL values) | "none" (default: literals)
-record_ip = true                  # Record client IP in audit events (default: true)
+# IP recorded automatically via trusted_proxies                  # Record client IP in audit events (default: true)
 retention_days = 365              # Same as retention.audit_ttl_days (default: 365)
 ```
 
 ### Result storage
 
 ```toml
-# Disabled (default) — results are only relayed in-memory
+# Local (default) — results persisted to ./data/results/
 [result_storage]
-backend = "disabled"
+backend = "local"
 
 # Local filesystem
 [result_storage]
@@ -195,7 +196,7 @@ retry_on_failure = false          # Allow re-execution on failure only (default:
 [[result_policies]]
 database = "primary"
 environment = "production"
-delivery_mode = "direct"          # "direct" (default) | "managed"
+delivery_mode = "stream"          # "direct" (default) | "managed"
 access = ["requester", "admin"]   # Who can view results (default)
 ```
 
@@ -264,7 +265,7 @@ Create tokens for users and agents:
 
 ```bash
 # Admin token (full access)
-dbward server token create --user alice --role admin --data /var/lib/dbward/dbward.db
+dbward token create --subject alice --role admin
 
 # Developer token
 dbward server token create --user bob --role developer --data /var/lib/dbward/dbward.db

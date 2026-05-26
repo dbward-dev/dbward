@@ -93,12 +93,55 @@ To find your Slack Member ID: click your profile picture → **Profile** → **�
 ### Notification Flow
 
 1. User creates a request (via CLI, MCP, or API)
-2. dbward posts a summary to the configured Slack channel
-3. Designated approvers click **Review Request**
-4. A Modal shows the full SQL, risk assessment, and context
-5. Approver selects Approve/Reject, adds a comment, submits
-6. The original message updates to reflect the new status
-7. Thread replies track each state change
+2. dbward posts a summary to the configured Slack channel (per-environment routing)
+3. The message mentions designated approvers (`@user` or `@group`)
+4. Approvers click **Review Request** button
+5. dbward checks the user's linked Slack account and role permissions
+6. A Modal opens showing: SQL, risk assessment, EXPLAIN plan, context enrichment
+7. Approver selects Approve/Reject, adds a comment, submits
+8. The **original message updates** to reflect the new status (approve/reject/executed)
+9. A thread reply is posted for each state change (step approved, completed, failed)
+
+### Requester DM Notifications (planned)
+
+Direct message notifications for requesters are planned for a future release. Currently, all notifications go to the configured channel.
+
+### Message Updates (Canonical State)
+
+The original Slack message always reflects the **current** state of the request:
+
+| State | Message shows |
+|-------|--------------|
+| Pending | Risk level, approvers needed, "Review Request" button |
+| Step approved (multi-step) | ✅ Step 1 complete, next approvers needed |
+| Approved | ✅ Approved by @user, waiting for execution |
+| Executed | ✅ Completed successfully |
+| Failed | ❌ Execution failed + error summary |
+| Rejected | ❌ Rejected by @user + reason |
+| Expired | ⏰ Expired (approval timeout) |
+
+### Modal Review
+
+The modal shows information that is **not** in the channel message (for security):
+
+- Full SQL statement
+- Risk assessment details (factors, level)
+- Context: affected tables, SQL review findings
+- Approve / Reject radio buttons + comment field
+
+Approval progress (who approved, who's remaining) is shown in the **channel message update**, not in the modal.
+
+### Approver Resolution
+
+dbward maps workflow approver selectors to Slack mentions:
+
+| Workflow selector | Slack mention |
+|-------------------|--------------|
+| `role:admin` | All users with admin role who have `slack_user_id` set → `<@U123>` |
+| `group:dba-team` | Resolved via role_resolver → individual `<@U456> <@U789>` mentions |
+| `user:alice` | `<@alice_slack_uid>` (if linked) |
+
+Users without `slack_user_id` are silently skipped in mentions (but can still approve via CLI/API).
 
 ### What's Shown in the Channel
 

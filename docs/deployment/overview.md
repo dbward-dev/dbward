@@ -58,15 +58,15 @@ Then use Docker Compose:
 ```yaml
 services:
   server:
-    image: ghcr.io/dbward-dev/dbward-server:latest
+    image: dbward-server (built from source or Docker)
     ports:
-      - "7890:7890"
+      - "3000:3000"
     volumes:
       - ./server.toml:/etc/dbward/server.toml
       - server-data:/var/lib/dbward
 
   agent:
-    image: ghcr.io/dbward-dev/dbward-agent:latest
+    image: dbward-agent (built from source or Docker)
     volumes:
       - ./agent.toml:/etc/dbward/agent.toml
     depends_on:
@@ -88,8 +88,8 @@ volumes:
 
 | From | To | Port | Protocol | Purpose |
 |------|----|------|----------|---------|
-| Client | Server | 7890 | HTTP/HTTPS | Submit requests, get results |
-| Agent | Server | 7890 | HTTP/HTTPS | Poll for work, report results |
+| Client | Server | 3000 | HTTP/HTTPS | Submit requests, get results |
+| Agent | Server | 3000 | HTTP/HTTPS | Poll for work, report results |
 | Agent | Database | 5432/3306 | PostgreSQL/MySQL | Execute queries |
 
 > The server needs no inbound access from the agent's network — the agent initiates all connections outbound.
