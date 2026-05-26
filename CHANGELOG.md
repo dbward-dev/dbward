@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.1.3] — 2026-05-26
+
+Intelligent approval: risk-based auto-approve, context enrichment, Slack integration, and MCP consolidation.
+
+### Features
+
+- **Context Enrichment**: EXPLAIN plan, FK CASCADE detection, estimated row counts shown to approvers
+- **SQL Review**: 10 configurable rules (block/warn/off) — DELETE without WHERE, DROP TABLE, etc.
+- **Risk-based Auto-Approve**: `[[auto_approve]]` with scoped risk thresholds per database/environment
+- **Slack Approval**: Block Kit messages, Modal review, canonical message updates, thread replies, group mention resolution
+- **MCP Tool Consolidation**: 15 → 12 tools (wait_request, inspect_schema unified)
+- **Schema Sync**: Agent auto-collects schema on startup + after migrations
+- **Decision Trace**: Immutable record of why each request was approved/pending
+- **CLI Doctor**: `dbward doctor` validates config, connectivity, role resolution
+- **CLI Init**: `dbward init --preset small-team` generates production-ready config
+- **Policy Resolve**: `dbward policy resolve` shows effective policy per database/environment
+- **Config Roles**: `[[auth.roles]]` + `[[auth.groups]]` for TOML-based role management
+- **Background Supervisor**: Panic auto-restart with sliding window rate limit
+- **HTTP Metrics**: Prometheus-compatible `/metrics` (request count, latency, queue depth)
+- **Health Check**: `/ready` with ResultStore + SQLite write probe
+- **Notification Routing**: Per-environment Slack channel routing via `[slack.channels]`
+
+### Breaking Changes
+
+- `skip_approval_for` and `require_approval` workflow fields removed (server refuses to start)
+- `[auto_approve]` (singular) → `[[auto_approve]]` (scoped array)
+- MCP tools: `check_request` + `get_result` → `wait_request`; `list_schemas` + `describe_table` → `inspect_schema`; `compare_schema` removed
+- CLI: `--no-store` → `--no-persist`
+- API: `/api/requests/{id}/dispatch` → `/api/requests/{id}/resume`
+- SQLite schema V8 (auto-migrates on startup, no downgrade possible)
+
+### Bug Fixes
+
+- Agent 4xx → immediate stop (no retry on auth/permission errors)
+- Audit hash chain integrity (TX atomicity, purge tolerance)
+- Slack suspended user handling (fail-closed)
+- CAS rollback on concurrent approve/reject
+- Schema sync tolerates 404/501 from older servers
+
+### Documentation
+
+- 70+ accuracy fixes across all public docs (#70)
+- Configuration reference: all fields documented with defaults
+- Auto-approve, Slack, workflow guides expanded
+
 ## [0.1.2] — 2026-05-18
 
 Production readiness: Kubernetes/ECS deployment, agent resilience, Pro plan enforcement, and operational hardening.
