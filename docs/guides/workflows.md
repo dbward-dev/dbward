@@ -57,7 +57,7 @@ min = 1
 [[auto_approve]]
 database = "*"
 environment = "staging"
-risk = "medium"    # Auto-approve up to Medium risk
+risk = "low"       # Auto-approve Low risk only (SELECT + safe DDL)
 ```
 
 With this config:
@@ -101,10 +101,55 @@ max_estimated_rows = 1000  # Tables above this increase risk
 
 | Level | Triggers |
 |-------|----------|
-| Low | SELECT (with `allow_read_only`), safe DDL (with `allow_safe_ddl`) |
-| Medium | Large tables (above `max_estimated_rows`), ALTER TABLE |
-| High | CASCADE FK detected, multi-statement, DROP/TRUNCATE, many warnings |
-| Unknown | Schema not synced yet |
+| Low | SELECT (with `allow_read_only`), safe DDL (with `allow_safe_ddl`), simple DML with no warnings |
+| Medium | 1-2 SQL review warnings (e.g. `CREATE INDEX` without `CONCURRENTLY`), CASCADE FK on small table |
+| High | CASCADE FK on large table, multi-statement DML, ≥3 warnings, DROP/TRUNCATE |
+| Critical | (reserved for future use) |
+| Unknown | Schema not synced yet — **never auto-approved regardless of threshold** |
+
+### What counts as "safe DDL"
+
+When `allow_safe_ddl = true`, these DDL statements are classified as Low risk:
+
+| Statement | Condition |
+|-----------|-----------|
+| `CREATE TABLE` | Not `CREATE TABLE ... AS SELECT` or `OR REPLACE` |
+| `CREATE VIEW` | Not `OR REPLACE` |
+| `CREATE INDEX CONCURRENTLY` | PostgreSQL only, `CONCURRENTLY` keyword present |
+| `ALTER TABLE ADD COLUMN` | PostgreSQL only, all operations are `ADD COLUMN` |
+
+`CREATE INDEX` (without `CONCURRENTLY`) is **not** safe DDL — it produces a `create_index_not_concurrently` warning and raises risk to Medium.
+
+### What counts as "read only"
+
+When `allow_read_only = true`, any `SELECT` query (including subqueries, CTEs, window functions) is classified as Low risk. `SET` prelude + `SELECT` also counts as read-only.
+
+### The `max_estimated_rows` field
+
+This is used during risk scoring for DML statements:
+- If any referenced table's `estimated_rows` exceeds this value → risk increases
+- Combined with FK CASCADE detection → High risk
+- Default: 1000 rows
+
+**Requires schema sync**: The agent must have collected schema information for the target database. Without schema sync, risk = Unknown (never auto-approved).
+
+### Decision flow diagram
+
+```
+Request created
+  │
+  ├─ Workflow has no steps? ──→ Auto-approved (empty steps)
+  │
+  ├─ No auto_approve entry? ──→ Needs approval
+  │
+  ├─ risk = "none"? ──────────→ Needs approval
+  │
+  ├─ Risk = Unknown? ─────────→ Needs approval
+  │
+  └─ Risk ≤ threshold? ───────→ Auto-approved (risk-based)
+       │
+       └─ Risk > threshold ────→ Needs approval
+```
 
 ### Example: different thresholds per environment
 
