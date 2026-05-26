@@ -22,6 +22,8 @@ server:
     accessModes:
       - ReadWriteOnce
   config: |
+    state_dir = "/data"
+
     [auth]
     mode = "token"
 

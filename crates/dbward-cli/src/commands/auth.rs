@@ -113,9 +113,9 @@ fn run_preset_small_team(
     eprintln!("  dbward.toml: API token will be generated in step 1 below");
     eprintln!();
     eprintln!("━━ Next steps ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    eprintln!("  1. dbward-server --config server.toml --dev-bootstrap");
-    eprintln!("     → Prints tokens (including DBWARD_AGENT_TOKEN) for step 2");
-    eprintln!("  2. DBWARD_AGENT_TOKEN=<token> dbward-agent --config agent.toml");
+    eprintln!("  1. dbward-server --config server.toml");
+    eprintln!("     → First run auto-creates tokens in ./data/admin-token");
+    eprintln!("  2. DBWARD_AGENT_TOKEN=$(cat ./data/agent-token) dbward-agent --config agent.toml");
     eprintln!("  3. dbward doctor        # verify connectivity + config");
     eprintln!("  4. dbward execute \"SELECT 1\"");
     eprintln!();
@@ -141,7 +141,7 @@ migrations_dir = "migrations"
 
 [server]
 url = "{server_url}"
-# token = "dbw_..."  # Set after running: dbward-server with --dev-bootstrap
+# token = "dbw_..."  # Set from: cat ./data/admin-token (after first server start)
 
 [databases.{db_name}]
 "#
@@ -151,6 +151,7 @@ url = "{server_url}"
 fn gen_server_toml(db_name: &str) -> String {
     format!(
         r#"# dbward server configuration — small-team preset
+state_dir = "./data"
 
 [[databases]]
 name = "{db_name}"

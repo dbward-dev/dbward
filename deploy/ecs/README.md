@@ -28,22 +28,22 @@ aws cloudformation deploy --stack-name dbward --template-file template.yaml \
 ### 3. Bootstrap tokens (one-time, after first deploy)
 
 ```bash
-# Wait for server to be healthy
+# Server auto-initializes on first startup. Get the bootstrap tokens:
 TASK=$(aws ecs list-tasks --cluster dbward --service-name server --query 'taskArns[0]' --output text)
 
-# Create admin token
+# Read admin token from file
 aws ecs execute-command --cluster dbward --task $TASK --container server --interactive \
-  --command "dbward-server --data /data/dbward.db token create --user admin --role admin"
+  --command "cat /data/admin-token"
 
-# Create agent token
+# Read agent token from file
 aws ecs execute-command --cluster dbward --task $TASK --container server --interactive \
-  --command "gosu dbward dbward-server --data /data/dbward.db token create --user agent --role admin --agent"
+  --command "cat /data/agent-token"
 
 # Store the agent token in Secrets Manager
 aws secretsmanager create-secret --name dbward/agent-token --secret-string "dbw_..."
 ```
 
-> `token create` writes directly to SQLite — no running API needed. Data persists on EFS across restarts.
+
 
 ### 4. Enable agent (separate stack)
 

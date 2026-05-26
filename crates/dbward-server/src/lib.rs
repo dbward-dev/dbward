@@ -25,9 +25,8 @@ use tokio::time::Duration;
 /// Entry point for the standalone binary.
 pub async fn run_from_args(
     listen: &str,
-    data: &str,
     config_path: &str,
-    dev_bootstrap: bool,
+    force_bootstrap: bool,
     license_key: Option<&str>,
     license_file: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -39,6 +38,18 @@ pub async fn run_from_args(
             return Err(format!("config: {e}").into());
         }
     };
+
+    // Resolve state_dir relative to config file parent
+    let config_dir = std::path::Path::new(config_path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."));
+    let state_dir = if std::path::Path::new(&cfg.state_dir).is_absolute() {
+        std::path::PathBuf::from(&cfg.state_dir)
+    } else {
+        config_dir.join(&cfg.state_dir)
+    };
+    std::fs::create_dir_all(&state_dir)?;
+    let db_path = state_dir.join("dbward.db");
 
     // Logging: apply config, with RUST_LOG env override taking precedence
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -63,7 +74,7 @@ pub async fn run_from_args(
     }
 
     // Open SQLite (open already calls initialize internally)
-    let conn = dbward_infra::sqlite::open(data)?;
+    let conn = dbward_infra::sqlite::open(db_path.to_str().unwrap_or("dbward.db"))?;
 
     // Build infra implementations
     let token_repo = Arc::new(dbward_infra::sqlite::SqliteTokenRepo::new(conn.clone()));
@@ -257,15 +268,9 @@ pub async fn run_from_args(
         };
 
     // Services
-    let data_path = std::path::Path::new(data);
-    let data_dir = data_path.parent().unwrap_or(std::path::Path::new("."));
     let token_signer: Arc<dyn dbward_app::ports::TokenSigner> = Arc::new(
-        dbward_infra::Ed25519TokenSigner::load_or_generate(data_dir)?,
+        dbward_infra::Ed25519TokenSigner::load_or_generate(&state_dir)?,
     );
-    // M-11: Persist public key for external verification
-    let pub_key_path = data_dir.join("signing.pub");
-    std::fs::write(&pub_key_path, token_signer.public_key_hex())?;
-
     let result_channel: Arc<dyn dbward_app::ports::ResultChannel> =
         Arc::new(dbward_infra::InMemoryResultChannel::new(
             cfg.result_channel.max_slots,
@@ -426,46 +431,12 @@ pub async fn run_from_args(
         request_notifier: slack_notifier_for_bg,
     };
 
-    // Dev bootstrap: create tokens and output to stdout
-    if dev_bootstrap {
-        register_databases(&state, &cfg.databases)?;
-        sync_workflows(&state, &cfg.workflows)?;
+    // Auto-bootstrap: create tokens on first startup
+    bootstrap::auto_bootstrap(&state, &state_dir, force_bootstrap)?;
 
-        let data_dir = std::path::Path::new(data)
-            .parent()
-            .unwrap_or(std::path::Path::new("."));
-        let agent_token_path = data_dir.join("agent-token");
-
-        // Idempotent: skip if already bootstrapped
-        if agent_token_path.exists() {
-            eprintln!("[bootstrap] tokens already exist, skipping creation");
-        } else {
-            let admin_token = bootstrap::create_bootstrap_token(&state, "admin", "admin", false)?;
-            let dev_token =
-                bootstrap::create_bootstrap_token(&state, "developer", "developer", false)?;
-            let agent_token = bootstrap::create_bootstrap_token(&state, "agent", "admin", true)?;
-            let tokens = serde_json::json!({
-                "admin": admin_token,
-                "developer": dev_token,
-                "agent": agent_token,
-            });
-            println!("{}", serde_json::to_string(&tokens)?);
-
-            // Write agent token to file for Docker agent container
-            std::fs::write(&agent_token_path, &agent_token)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(
-                    &agent_token_path,
-                    std::fs::Permissions::from_mode(0o600),
-                )?;
-            }
-        }
-    } else {
-        register_databases(&state, &cfg.databases)?;
-        sync_workflows(&state, &cfg.workflows)?;
-    }
+    // Register databases and sync workflows on startup
+    register_databases(&state, &cfg.databases)?;
+    sync_workflows(&state, &cfg.workflows)?;
 
     // BUG-28: Sync webhooks from config
     sync_webhooks(&state, &cfg.webhooks)?;

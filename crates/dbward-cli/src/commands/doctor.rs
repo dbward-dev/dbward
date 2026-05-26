@@ -1079,7 +1079,8 @@ mod tests {
     }
 
     fn server_cfg(toml: &str) -> dbward_config::ServerConfig {
-        dbward_config::ServerConfig::from_str(toml, "test").unwrap()
+        let full = format!("state_dir = \"/tmp/test\"\n{toml}");
+        dbward_config::ServerConfig::from_str(&full, "test").unwrap()
     }
 
     #[test]

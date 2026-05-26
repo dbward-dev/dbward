@@ -7,6 +7,11 @@ dbward uses TOML configuration files. All config files support environment varia
 File: `dbward-server.toml` (passed via `--config`)
 
 ```toml
+# --- State Directory (required) ---
+# All server state lives here: SQLite DB, signing keys, agent-token file.
+# Relative paths resolve against the config file's parent directory.
+state_dir = "/data"
+
 # --- Databases ---
 # Register databases that agents can connect to.
 # Requests for unregistered database×environment pairs are rejected with:

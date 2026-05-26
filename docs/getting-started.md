@@ -37,14 +37,14 @@ This creates 3 files:
 ### Production startup
 
 ```bash
-# 1. Start the server (generates initial tokens on first run)
-dbward-server --config server.toml --dev-bootstrap
+# 1. Start the server (auto-initializes on first run)
+dbward-server --config server.toml
 
-# Output:
-#   Bootstrap tokens:
-#     admin:     dbw_xxxx
-#     developer: dbw_yyyy
-#     agent:     dbw_zzzz
+# First-run output (to stderr):
+#   [init] bootstrap tokens written to ./data/admin-token, ./data/agent-token
+
+# 2. Start the server
+dbward-server --config server.toml
 
 # 2. Set your CLI token
 # Edit dbward.toml → token = "dbw_xxxx"

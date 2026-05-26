@@ -48,15 +48,12 @@ services:
     <<: *security
     entrypoint: ["dbward-server"]
     command:
-      - --data
-      - /data/dbward.db
       - --listen
       - 0.0.0.0:3000
       - --config
       - /config/dbward-server.toml
       - --license-file
       - /secrets/license.key
-      - --dev-bootstrap
     logging:
       driver: json-file
       options:

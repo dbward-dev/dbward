@@ -9,9 +9,9 @@ Agent: {{ include "dbward.fullname" . }}-agent ({{ .Values.agent.replicas }} rep
 {{- end }}
 
 Next steps:
-  1. Create an admin token:
+  1. Get bootstrap tokens (created automatically on first startup):
      kubectl exec deploy/{{ include "dbward.fullname" . }}-server -- \
-       dbward-server --data /data/dbward.db token create --user admin --role admin
+       cat /data/admin-token
 
   2. Configure your CLI:
-     dbward init --server http://localhost:{{ .Values.server.port }} --token <TOKEN>
+     dbward init --server http://localhost:{{ .Values.server.port }} --token <ADMIN_TOKEN>

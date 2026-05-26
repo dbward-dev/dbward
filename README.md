@@ -75,13 +75,14 @@ That's it. You now have approval workflows and audit logs for your local databas
 # 1. Generate config for your team
 dbward init --preset small-team
 
-# 2. Start server (first run generates bootstrap tokens)
-dbward-server --config server.toml --dev-bootstrap
+# 2. Start server (auto-initializes on first run)
+dbward-server --config server.toml
+# → Tokens written to ./data/admin-token, ./data/agent-token
 
 # 3. Start agent (connects to your database)
-DBWARD_AGENT_TOKEN=<token> dbward-agent --config agent.toml
+DBWARD_AGENT_TOKEN=$(cat ./data/agent-token) dbward-agent --config agent.toml
 
-# 4. Developers use CLI (no DB access needed)
+# 5. Developers use CLI (no DB access needed)
 dbward execute "DELETE FROM old_data" --reason "cleanup"
 # → "Request abc12345 requires approval."
 
@@ -322,8 +323,12 @@ Auto-detected from URL scheme (`postgres://` or `mysql://`).
 ### API Tokens (Free)
 
 ```bash
-dbward server token create --user alice --role admin --data dbward.db
-# → dbw_f9a549aa...
+# Initial tokens created automatically on first server start:
+cat ./data/admin-token     # admin token
+cat ./data/agent-token     # agent token
+
+# Additional tokens via API:
+dbward token create --subject alice --role admin
 ```
 
 ### OIDC (Pro)
@@ -408,8 +413,8 @@ url = "mysql://user:pass@db-analytics:3306/warehouse"
 ### Server (`dbward-server.toml`)
 
 ```toml
-# listen address and data path are set via CLI flags:
-#   dbward-server --listen 0.0.0.0:3000 --data dbward.db --config server.toml
+# Start: dbward-server --config server.toml --listen 0.0.0.0:3000
+state_dir = "/data"
 
 [auth]
 mode = "token"  # "oidc", "token", or "both"

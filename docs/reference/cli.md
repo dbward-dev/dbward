@@ -374,7 +374,7 @@ dbward dev --database-url "postgres://localhost/myapp"
 Start the dbward HTTP server (production).
 
 ```bash
-dbward server start --config server.toml  --listen 0.0.0.0:3000
+dbward server start --config server.toml --listen 0.0.0.0:3000
 ```
 
 #### dbward token create

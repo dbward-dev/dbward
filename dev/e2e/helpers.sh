@@ -131,16 +131,23 @@ create_token() {
       *) shift ;;
     esac
   done
-  local output
-  output=$(docker compose exec -T dbward-server \
-    dbward-server --data /data/dbward.db token create \
-    --user "$user" --role "$role" $extra_args 2>&1)
+  # Read admin token from file (written by auto-bootstrap on first startup)
+  local admin_token
+  admin_token=$(docker compose exec -T dbward-server cat /data/admin-token 2>/dev/null || echo "")
+  # Create token via API
+  local is_agent=""
+  case "$extra_args" in *--agent*) is_agent="agent" ;; esac
+  local subject_type="${is_agent:-user}"
+  local result
+  result=$(curl -sf -X POST "${SERVER_URL}/api/tokens" \
+    -H "Authorization: Bearer $admin_token" \
+    -H "Content-Type: application/json" \
+    -d "{\"subject_id\":\"$user\",\"roles\":[\"$role\"],\"subject_type\":\"$subject_type\"}" 2>&1) || true
   local token
-  token=$(echo "$output" | grep -o 'dbw_[a-z0-9]*')
+  token=$(echo "$result" | grep -o '"token":"[^"]*"' | sed 's/"token":"//;s/"//')
   if [ -n "$token" ]; then
-    # Extract token ID from output for cleanup
     local token_id
-    token_id=$(echo "$output" | sed -n 's/.*ID: \([a-f0-9-]*\).*/\1/p' | head -1)
+    token_id=$(echo "$result" | grep -o '"id":"[^"]*"' | sed 's/"id":"//;s/"//' | head -1)
     [ -n "$token_id" ] && echo "$token_id" >> "$CREATED_TOKENS_FILE"
   fi
   echo "$token"
@@ -149,10 +156,11 @@ create_token() {
 # Revoke all tokens created during this test run
 cleanup_tokens() {
   if [ -z "${CREATED_TOKENS_FILE:-}" ] || [ ! -s "$CREATED_TOKENS_FILE" ]; then return; fi
+  local admin_token
+  admin_token=$(docker compose exec -T dbward-server cat /data/admin-token 2>/dev/null || echo "")
   while IFS= read -r token_id; do
-    docker compose exec -T dbward-server \
-      dbward-server --data /data/dbward.db token revoke \
-      --id "$token_id" 2>/dev/null || true
+    curl -sf -X DELETE "${SERVER_URL}/api/tokens/$token_id" \
+      -H "Authorization: Bearer $admin_token" 2>/dev/null || true
   done < "$CREATED_TOKENS_FILE"
   rm -f "$CREATED_TOKENS_FILE"
 }

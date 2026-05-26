@@ -108,10 +108,17 @@ impl TokenManage {
             }
         }
 
-        // Free tier limit
-        let count = self.token_repo.count_active()?;
-        if count >= self.license.max_tokens() {
-            return Err(AppError::PlanLimit("token limit reached".into()));
+        // Free tier limit (bootstrap tokens created by system are exempt)
+        let is_bootstrap = input
+            .name
+            .as_deref()
+            .is_some_and(|n| n.starts_with("bootstrap-"))
+            && user.subject_id == "system";
+        if !is_bootstrap {
+            let count = self.token_repo.count_active()?;
+            if count >= self.license.max_tokens() {
+                return Err(AppError::PlanLimit("token limit reached".into()));
+            }
         }
 
         // Generate token

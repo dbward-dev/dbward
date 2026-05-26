@@ -24,7 +24,9 @@ pub async fn run_dev(database_url: &str, port: u16) -> Result<(), CliError> {
     // Write server config
     let server_config_path = dev_dir.join("server.toml");
     let server_config = format!(
-        r#"[result_storage]
+        r#"state_dir = "{state_dir}"
+
+[result_storage]
 backend = "local"
 root_dir = "{results}"
 
@@ -36,12 +38,12 @@ environments = ["development"]
 database = "*"
 environment = "*"
 "#,
+        state_dir = dev_dir.display(),
         results = results_dir.display()
     );
     std::fs::write(&server_config_path, &server_config)?;
 
     let listen = format!("127.0.0.1:{port}");
-    let data_path = dev_dir.join("dbward.db");
     let server_url = format!("http://{listen}");
 
     eprintln!("dbward dev starting...");
@@ -49,30 +51,42 @@ environment = "*"
     eprintln!("  Database: {database_url}");
     eprintln!();
 
-    // Spawn server with --dev-bootstrap to get tokens on stdout
+    // Spawn server (auto-initializes on first run)
     let mut server_child = ProcessCommand::new(&server_binary)
         .arg("--listen")
         .arg(&listen)
-        .arg("--data")
-        .arg(&data_path)
         .arg("--config")
         .arg(&server_config_path)
-        .arg("--dev-bootstrap")
-        .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|e| CliError::Server(format!("failed to start server: {e}")))?;
 
-    // Read bootstrap tokens from server stdout (JSON line)
-    let tokens = read_bootstrap_tokens(&mut server_child)?;
-    let admin_token = tokens.get("admin").cloned().unwrap_or_default();
-    let dev_token = tokens.get("developer").cloned().unwrap_or_default();
-    let agent_token = tokens.get("agent").cloned().unwrap_or_default();
+    // Wait for token files to appear (written by auto-bootstrap on first run)
+    let admin_token_path = dev_dir.join("admin-token");
+    let agent_token_path = dev_dir.join("agent-token");
+    let dev_token_path = dev_dir.join("developer-token");
+
+    for i in 0..30 {
+        if admin_token_path.exists() && agent_token_path.exists() {
+            break;
+        }
+        if i == 29 {
+            cleanup_child(&mut server_child);
+            return Err(CliError::Server(
+                "timeout waiting for bootstrap token files".into(),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    let admin_token = std::fs::read_to_string(&admin_token_path).unwrap_or_default();
+    let dev_token = std::fs::read_to_string(&dev_token_path).unwrap_or_default();
+    let agent_token = std::fs::read_to_string(&agent_token_path).unwrap_or_default();
 
     let client_config_path = dev_dir.join("client.toml");
     let agent_config_path = dev_dir.join("agent.toml");
 
-    // If bootstrap was skipped (tokens empty), reuse existing config files
+    // If token files were already present (reuse existing config)
     let reusing_config =
         admin_token.is_empty() && client_config_path.exists() && agent_config_path.exists();
 
@@ -157,29 +171,6 @@ url = "{database_url}"
     let _ = server_child.wait();
 
     Ok(())
-}
-
-fn read_bootstrap_tokens(
-    child: &mut std::process::Child,
-) -> Result<std::collections::HashMap<String, String>, CliError> {
-    use std::io::BufRead;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| CliError::Server("cannot read server stdout".into()))?;
-    let reader = std::io::BufReader::new(stdout);
-    // Server outputs one JSON line: {"admin":"token","developer":"token","agent":"token"}
-    for line in reader.lines().take(10) {
-        let line = line.map_err(|e| CliError::Server(format!("read stdout: {e}")))?;
-        if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, String>>(&line)
-            && map.contains_key("admin")
-        {
-            return Ok(map);
-        }
-    }
-    Err(CliError::Server(
-        "server did not output bootstrap tokens".into(),
-    ))
 }
 
 fn cleanup_child(child: &mut std::process::Child) {

@@ -461,7 +461,7 @@ CREATE TABLE notification_policies (
 | DB credential leak | Only agent has credentials |
 | Agent result spoofing | Only the claiming agent_id can submit result |
 | Auth token leak (OIDC) | Short-lived JWT + PKCE + revocation |
-| Auth token leak (API) | `dbward server token revoke` + audit log |
+| Auth token leak (API) | `dbward token revoke --id <ID>` + audit log |
 | Webhook secret leak | HMAC-SHA256 signature verification |
 
 ## CLI Commands
@@ -485,9 +485,9 @@ dbward request resume <ID>     # Resume + wait for result
                                 # --output <path> / --no-save
 dbward result <ID>              # Show locally saved result
 dbward mcp                      # MCP stdio server
-dbward server start             # HTTP server
+dbward-server --config server.toml        # HTTP server (auto-initializes on first run)
 dbward token create --subject <USER> --subject-type user --role <ROLE>
-dbward server token revoke --id <ID> --data <DB>
+dbward token revoke --id <ID>
 dbward agent --config <PATH>    # Start agent
 ```
 
