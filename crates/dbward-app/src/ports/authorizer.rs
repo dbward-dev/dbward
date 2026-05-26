@@ -42,7 +42,7 @@ pub trait RoleResolver: Send + Sync {
 
 /// Authorization: 2-method design per ADR-002.
 pub trait Authorizer: Send + Sync {
-    /// Scoped operations (request.create, request.dispatch, etc.)
+    /// Scoped operations (request.create, request.resume, etc.)
     fn authorize_scoped(
         &self,
         user: &AuthUser,

@@ -21,7 +21,7 @@ DEV_TOKEN=$(create_token bob developer)
 [ -z "$ADMIN_DBA" ] && { echo "Failed to create dba token"; exit 1; }
 [ -z "$DEV_TOKEN" ] && { echo "Failed to create dev token"; exit 1; }
 
-# --- 1. Full E2E: create → approve → dispatch → agent execute ---
+# --- 1. Full E2E: create → approve → resume → agent execute ---
 echo "--- Full approval flow ---"
 
 REQ=$(api POST /api/requests "$DEV_TOKEN" \
@@ -50,9 +50,9 @@ show_output "Step 2 (dba-team): status=$APPROVE_STATUS"
 [ "$APPROVE_STATUS" = "approved" ] || [ "$APPROVE_STATUS" = "dispatched" ] && \
   pass "Two-step approval → $APPROVE_STATUS" || fail "Approve" "status=$APPROVE_STATUS"
 
-# Dispatch (if not auto-dispatched)
+# Resume (if not auto-dispatched)
 if [ "$APPROVE_STATUS" = "approved" ]; then
-  api POST "/api/requests/$REQ_ID/dispatch" "$DEV_TOKEN" -d '{}' >/dev/null
+  api POST "/api/requests/$REQ_ID/resume" "$DEV_TOKEN" -d '{}' >/dev/null
 fi
 
 # Wait for agent execution

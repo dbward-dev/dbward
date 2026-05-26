@@ -12,7 +12,7 @@
 ┌──────────────────────────────────────────────────────────┐
 │ Client (dbward-cli / dbward mcp)                         │
 │   - NO DB credentials or DB connection                   │
-│   - Creates requests, dispatches, receives results       │
+│   - Creates requests, resumes, receives results       │
 │   - CLI: dbward login/migrate/execute/approve/reject/... │
 │   - MCP: dbward mcp (7 tools)                           │
 │   - Saves results locally (~/.dbward/results/)           │
@@ -71,7 +71,7 @@ dbward-cli (binary)
 
 ## Request Flow (On-Demand Execution)
 
-All DB operations go through: client → server → agent → DB. The agent only executes when the client dispatches — not on approval.
+All DB operations go through: client → server → agent → DB. The agent only executes when the client resumes — not on approval.
 
 ```
 Client                              Server                              Agent
@@ -88,7 +88,7 @@ Client                              Server                              Agent
   │                                   │     → status = approved           │
   │                                   │     → webhook notification        │
   │                                   │                                   │
-  ├─② POST /api/requests/{id}/dispatch ▶│ creates ResultSlot in memory   │
+  ├─② POST /api/requests/{id}/resume ▶│ creates ResultSlot in memory   │
   │  (dbward resume {id})             │ → status = dispatched             │
   │                                   │                                   │
   ├─③ GET /api/requests/{id}/result/stream ▶│ long-poll (up to 5 min)    │
@@ -114,13 +114,13 @@ Client                              Server                              Agent
   │  CLI saves to ~/.dbward/results/  │                                   │
 ```
 
-For auto-approved requests, the CLI combines steps ①②③ in a single `dispatch_and_wait` call.
+For auto-approved requests, the CLI combines steps ①②③ in a single `resume_and_wait` call.
 
 ### Result Relay
 
 The server never persists results to disk. Results flow through in-memory `ResultSlot` channels:
 
-1. Client dispatches → server creates `ResultSlot` (Notify + Mutex)
+1. Client resumes → server creates `ResultSlot` (Notify + Mutex)
 2. Agent submits result → server writes to slot, notifies waiters
 3. Client receives result via long-poll → slot is removed
 4. Slots expire after 10 minutes (cleanup on insert/get)
@@ -481,7 +481,7 @@ dbward execute <SQL>            # --emergency --reason for break-glass
 dbward approve <ID>
 dbward reject <ID>
 dbward list                     # Show requests
-dbward resume <ID>              # Dispatch + wait for result
+dbward resume <ID>              # Resume + wait for result
                                 # --output <path> / --no-save
 dbward result <ID>              # Show locally saved result
 dbward mcp                      # MCP stdio server

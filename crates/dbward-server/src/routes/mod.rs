@@ -101,8 +101,8 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(requests::cancel),
         )
         .route(
-            "/api/requests/{id}/dispatch",
-            axum::routing::post(requests::dispatch),
+            "/api/requests/{id}/resume",
+            axum::routing::post(requests::resume),
         )
         .route(
             "/api/requests/{id}/result/stream",

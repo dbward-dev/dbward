@@ -121,7 +121,7 @@ Initial release. A workflow and approval engine for database operations.
 
 - **Agent-only execution**: CLI/MCP clients never touch the database directly. Only the agent connects to target databases.
 - **Three components**: CLI (request/approve), Server (workflow/audit/coordination), Agent (DB execution)
-- **On-demand execution**: Agent executes only after client dispatches, preventing result loss
+- **On-demand execution**: Agent executes only after client resumes, preventing result loss
 
 ### Features
 

@@ -151,13 +151,13 @@ POST /api/requests/{id}/reject
 POST /api/requests/{id}/cancel
 ```
 
-### Dispatch
+### Resume
 
 ```
-POST /api/requests/{id}/dispatch
+POST /api/requests/{id}/resume
 ```
 
-Triggers execution by an agent. Returns the execution token.
+Resumes execution by an agent. Returns the execution token.
 
 ### Stream result
 

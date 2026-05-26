@@ -14,7 +14,7 @@ pub enum Outcome {
         request_id: String,
         approvers: Vec<String>,
     },
-    /// Request is approved but not yet dispatched (caller should dispatch or inform user).
+    /// Request is approved but not yet resumed (caller should resume or inform user).
     Approved { request_id: String },
 }
 
@@ -39,7 +39,7 @@ pub async fn create_request(
 }
 
 /// Wait for an already-created request to reach terminal state.
-/// Handles dispatch if needed (approved status).
+/// Handles resume if needed (approved status).
 pub async fn wait_for_completion(
     sc: &ServerClient,
     request_id: &str,
@@ -49,7 +49,7 @@ pub async fn wait_for_completion(
     match status {
         "dispatched" | "running" => wait_and_resolve(sc, request_id, verbose).await,
         "approved" | "auto_approved" | "break_glass" => {
-            sc.dispatch(request_id)
+            sc.resume(request_id)
                 .await
                 .map_err(|e| CliError::Server(e.body.clone()))?;
             wait_and_resolve(sc, request_id, verbose).await
@@ -63,7 +63,7 @@ pub async fn wait_for_completion(
 
 /// Submit a request and orchestrate through to completion.
 ///
-/// This handles the common pattern: create → status branch → dispatch → wait → resolve.
+/// This handles the common pattern: create → status branch → resume → wait → resolve.
 /// ctrl+c handling, save_result, and process::exit are the caller's responsibility.
 pub async fn submit_and_orchestrate(
     sc: &ServerClient,
@@ -194,7 +194,7 @@ fn spawn_progress_reporter(sc: ServerClient, request_id: String) -> AbortOnDrop 
                         break;
                     }
                     "approved" => {
-                        eprintln!("  → dispatch expired (no agent picked up)");
+                        eprintln!("  → resume expired (no agent picked up)");
                         break;
                     }
                     _ => {}
@@ -225,15 +225,15 @@ async fn poll_until_terminal(
                     .await?;
             }
             "approved" | "auto_approved" | "break_glass" => {
-                // Stream failed and dispatch lease expired. Re-dispatch.
-                match sc.dispatch(request_id).await {
+                // Stream failed and resume lease expired. Re-resume.
+                match sc.resume(request_id).await {
                     Ok(_) => {
                         // Re-dispatched successfully; return None to retry stream
                         return Ok(None);
                     }
                     Err(e) => {
                         return Err(CliError::Server(format!(
-                            "request {request_id} is approved but dispatch failed: {}. Run: dbward request resume {request_id}",
+                            "request {request_id} is approved but resume failed: {}. Run: dbward request resume {request_id}",
                             e.body
                         )));
                     }
@@ -465,8 +465,8 @@ mod tests {
                 let response = if req_str.contains("/result/stream") {
                     // Stream always fails
                     "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 0\r\n\r\n".to_string()
-                } else if req_str.contains("POST") && req_str.contains("/dispatch") {
-                    // Dispatch succeeds
+                } else if req_str.contains("POST") && req_str.contains("/resume") {
+                    // Resume succeeds
                     let body = r#"{"status":"dispatched"}"#;
                     format!(
                         "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",

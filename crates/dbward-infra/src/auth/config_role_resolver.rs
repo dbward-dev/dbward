@@ -40,7 +40,7 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
                     Permission::RequestCreateSelect,
                     Permission::RequestView,
                     Permission::RequestCancel,
-                    Permission::RequestDispatch,
+                    Permission::RequestResume,
                     Permission::ResultView,
                     Permission::TokenRevokeOwn,
                 ]

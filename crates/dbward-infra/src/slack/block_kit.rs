@@ -363,7 +363,7 @@ pub fn build_message_from_state(
             }
         }
         RequestStatus::Expired => Some("⏰ Expired".into()),
-        RequestStatus::ExecutionLost => Some("⚠️ Execution lost — re-dispatch possible".into()),
+        RequestStatus::ExecutionLost => Some("⚠️ Execution lost — retry possible".into()),
     };
     if let Some(ref text) = status_text {
         blocks.push(json!({

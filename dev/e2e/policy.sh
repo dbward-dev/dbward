@@ -52,10 +52,10 @@ REQ=$(api POST /api/requests "$DEV_TOKEN" \
 REQ_ID=$(echo "$REQ" | json_field id)
 sleep 4
 
-# Try to re-dispatch → should be blocked by max_executions (config default=3, already used)
-STATUS=$(api_status POST "/api/requests/$REQ_ID/dispatch" "$ADMIN_TOKEN" -d '{}')
+# Try to re-resume → should be blocked by max_executions (config default=3, already used)
+STATUS=$(api_status POST "/api/requests/$REQ_ID/resume" "$ADMIN_TOKEN" -d '{}')
 if [ "$STATUS" = "409" ] || [ "$STATUS" = "410" ]; then
-  pass "Re-dispatch blocked by execution policy ($STATUS)"
+  pass "Re-resume blocked by execution policy ($STATUS)"
 else
   fail "Execution policy" "got $STATUS (expected 409 or 410)"
 fi

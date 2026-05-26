@@ -71,7 +71,7 @@ pub(crate) fn tools_definitions() -> Value {
                 "properties": {
                     "request_id": {"type": "string", "description": "Request ID"},
                     "timeout": {"type": "integer", "description": "Max wait seconds for pending requests (default: 60)"},
-                    "include_result": {"type": "boolean", "description": "If true (default), dispatch and return result. If false, return status only."}
+                    "include_result": {"type": "boolean", "description": "If true (default), resume and return result. If false, return status only."}
                 },
                 "required": ["request_id"]
             }

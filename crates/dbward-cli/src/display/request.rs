@@ -408,9 +408,7 @@ pub(crate) fn print_approve_result(body: &serde_json::Value, id: &str) {
     println!("Approved step {step}/{total}");
     println!("Request: {short_id}");
     if status == "approved" || status == "dispatched" {
-        println!(
-            "All steps complete. Agent has been dispatched. Run: dbward request resume {short_id}"
-        );
+        println!("All steps complete. Run: dbward request resume {short_id}");
     } else {
         println!("Waiting for further approvals.");
     }

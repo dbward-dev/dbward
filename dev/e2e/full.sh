@@ -115,8 +115,8 @@ else
   fail "Step 2 approve" "status=$STATUS token=$TOKEN"
 fi
 
-# --- Test: Dispatch + agent execution ---
-api POST "/api/requests/$REQ_ID/dispatch" "$BOB_TOKEN" -d '{}' >/dev/null
+# --- Test: Resume + agent execution ---
+api POST "/api/requests/$REQ_ID/resume" "$BOB_TOKEN" -d '{}' >/dev/null
 sleep 3
 FINAL=$(api GET "/api/requests/$REQ_ID" "$BOB_TOKEN")
 FINAL_STATUS=$(echo "$FINAL" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))")
@@ -165,8 +165,8 @@ else
   fail "Create shared request" "status=$SHARE_STATUS id=$SHARE_ID"
 fi
 
-# Dispatch and wait for agent execution
-api POST "/api/requests/$SHARE_ID/dispatch" "$BOB_TOKEN" -d '{}' >/dev/null 2>&1
+# Resume and wait for agent execution
+api POST "/api/requests/$SHARE_ID/resume" "$BOB_TOKEN" -d '{}' >/dev/null 2>&1
 sleep 4
 
 # Check request is executed
@@ -262,8 +262,8 @@ LOST_REQ=$(echo "$LOST_RESP" | python3 -c "import sys,json; d=json.load(sys.stdi
 if [ -z "$LOST_REQ" ]; then
   fail "Create request after restart" "response: $LOST_RESP"
 else
-  # If auto-approved, dispatch it
-  api POST "/api/requests/$LOST_REQ/dispatch" "$BOB_TOKEN" -d '{}' >/dev/null 2>&1
+  # If auto-approved, resume it
+  api POST "/api/requests/$LOST_REQ/resume" "$BOB_TOKEN" -d '{}' >/dev/null 2>&1
 
   LOST_STATUS=$(api GET "/api/requests/$LOST_REQ" "$BOB_TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))")
   if [ "$LOST_STATUS" = "dispatched" ]; then
