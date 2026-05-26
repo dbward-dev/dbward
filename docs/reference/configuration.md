@@ -294,8 +294,10 @@ trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12"]
 ```toml
 [logging]
 level = "info"      # Log level (debug, info, warn, error)
-format = "text"     # "text" or "json" (override with DBWARD_LOG_FORMAT=json env)
+format = "text"     # "text" or "json"
 ```
+
+> **Note:** The agent also supports `DBWARD_LOG_FORMAT=json` env var override. The server uses only the config value.
 
 ### Server: `[slack]`
 
@@ -306,7 +308,8 @@ signing_secret = "${SLACK_SIGNING_SECRET}"
 channel = "#db-approvals"
 
 [slack.channels]
-app = "#app-db-approvals"    # Per-database channel routing
+production = "#prod-db-approvals"    # Per-environment channel routing
+staging = "#staging-alerts"
 ```
 
 ### Server: Result Storage (S3)
@@ -349,7 +352,9 @@ startup_max_wait_secs = 0         # Startup deadline, 0 = infinite (default: 0)
 [schema_sync]
 enabled = true          # Collect and push schema to server (default: true)
 sync_on_startup = true  # Sync immediately on agent start (default: true)
-interval_secs = 0       # Periodic re-sync interval, 0 = startup only (default: 0)
+interval_secs = 0       # Periodic re-sync interval, 0 = disabled (default: 0)
+                        # When 0, sync only happens on startup (if sync_on_startup=true)
+                        # and after migrations
 ```
 
 ### CLI: `DBWARD_DATABASE` Environment Variable
