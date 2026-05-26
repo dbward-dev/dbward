@@ -102,13 +102,9 @@ To find your Slack Member ID: click your profile picture → **Profile** → **�
 8. The **original message updates** to reflect the new status (approve/reject/executed)
 9. A thread reply is posted for each state change (step approved, completed, failed)
 
-### Requester DM Notifications
+### Requester DM Notifications (planned)
 
-When a request is resolved (approved, rejected, completed, failed, expired), the requester receives a Slack DM if:
-- Their Slack account is linked (`dbward user update --slack-user-id`)
-- The server has `[slack]` configured
-
-This provides immediate feedback without requiring the requester to watch the channel.
+Direct message notifications for requesters are planned for a future release. Currently, all notifications go to the configured channel.
 
 ### Message Updates (Canonical State)
 
@@ -142,7 +138,7 @@ dbward maps workflow approver selectors to Slack mentions:
 | Workflow selector | Slack mention |
 |-------------------|--------------|
 | `role:admin` | All users with admin role who have `slack_user_id` set → `<@U123>` |
-| `group:dba-team` | Group mentions are not yet resolved to individual users (displayed as text) |
+| `group:dba-team` | Resolved via role_resolver → individual `<@U456> <@U789>` mentions |
 | `user:alice` | `<@alice_slack_uid>` (if linked) |
 
 Users without `slack_user_id` are silently skipped in mentions (but can still approve via CLI/API).
