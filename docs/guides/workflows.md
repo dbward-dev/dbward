@@ -122,7 +122,7 @@ When `allow_safe_ddl = true`, these DDL statements are classified as Low risk:
 
 ### What counts as "read only"
 
-When `allow_read_only = true`, any `SELECT` query (including subqueries, CTEs, window functions) is classified as Low risk. `SET` prelude + `SELECT` also counts as read-only.
+When `allow_read_only = true`, plain `SELECT` queries are classified as Low risk. `SET` prelude + `SELECT` also counts. However, writable CTEs (`INSERT/UPDATE/DELETE ... RETURNING` inside WITH), `SELECT ... INTO`, and queries using dangerous functions are classified as DML, not read-only.
 
 ### The `max_estimated_rows` field
 

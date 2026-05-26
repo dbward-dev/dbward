@@ -101,7 +101,6 @@ To find your Slack Member ID: click your profile picture → **Profile** → **�
 7. Approver selects Approve/Reject, adds a comment, submits
 8. The **original message updates** to reflect the new status (approve/reject/executed)
 9. A thread reply is posted for each state change (step approved, completed, failed)
-10. If configured, the requester receives a DM when their request is resolved
 
 ### Message Updates (Canonical State)
 
@@ -123,9 +122,7 @@ The modal shows information that is **not** in the channel message (for security
 
 - Full SQL statement
 - Risk assessment details (factors, level)
-- EXPLAIN plan (if available)
-- Context: affected tables, estimated rows, FK relationships
-- Approval progress (who approved, who's remaining)
+- Context: affected tables, SQL review findings
 - Approve / Reject radio buttons + comment field
 
 ### Approver Resolution
@@ -135,7 +132,7 @@ dbward maps workflow approver selectors to Slack mentions:
 | Workflow selector | Slack mention |
 |-------------------|--------------|
 | `role:admin` | All users with admin role who have `slack_user_id` set → `<@U123>` |
-| `group:dba-team` | All users in group who have `slack_user_id` → `<@U456> <@U789>` |
+| `group:dba-team` | Group mentions are not yet resolved to individual users (displayed as text) |
 | `user:alice` | `<@alice_slack_uid>` (if linked) |
 
 Users without `slack_user_id` are silently skipped in mentions (but can still approve via CLI/API).
