@@ -4,7 +4,7 @@
 
 ```
 --config <PATH>     Config file path (env: DBWARD_CONFIG)
-base <NAME>   Target database (env: DBWARD_DATABASE)
+--database <NAME>   Target database (env: DBWARD_DATABASE)
 --environment <ENV> Target environment (env: DBWARD_ENV)
 --format <FORMAT>   Output format: human (default), json
 ```
@@ -269,13 +269,13 @@ Diagnose configuration and connectivity issues. Three modes:
 
 ```bash
 dbward doctor                              # Check CLI config + server connectivity
-dbward doctor --subject-type agent dbward-agent.toml    # Validate agent config
+dbward doctor --agent dbward-agent.toml    # Validate agent config
 dbward doctor --server dbward-server.toml  # Validate server config
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--subject-type agent <PATH>` | Validate agent config file instead of CLI config |
+| `--agent <PATH>` | Validate agent config file instead of CLI config |
 | `--server <PATH>` | Validate server config file instead of CLI config |
 | `--timeout <SECS>` | Network timeout per check (default: 5) |
 | `--format json` | Machine-readable JSON output (global flag) |
@@ -364,7 +364,7 @@ dbward whoami
 Start local development server + agent.
 
 ```bash
-dbward dev base-url "postgres://localhost/myapp"
+dbward dev --database-url "postgres://localhost/myapp"
 ```
 
 ---
@@ -380,8 +380,8 @@ dbward server start --config server.toml  --listen 0.0.0.0:3000
 #### dbward token create
 
 ```bash
-dbward token create --user alice --role admin 
-dbward token create --subject agent-1 --role agent-default --subject-type agent 
+dbward token create --subject alice --role admin 
+dbward token create --subject agent-1 --role agent-default --agent 
 dbward token create --subject bob --role developer --groups "backend,dba" 
 ```
 
@@ -389,7 +389,7 @@ dbward token create --subject bob --role developer --groups "backend,dba"
 |--------|-------------|
 | `--subject <NAME>` | Token subject |
 | `--role <ROLE>` | Role to assign |
-| `--subject-type agent` | Create agent token |
+| `--agent` | Create agent token |
 | `--groups <LIST>` | Comma-separated groups |
 | `` | SQLite database path |
 

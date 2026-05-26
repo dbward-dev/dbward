@@ -63,7 +63,7 @@ dbward execute "SELECT 1"
 
 | Environment | Approval | Auto-approve |
 |-------------|----------|--------------|
-| development | None (empty steps) | Everything up to High risk |
+| development | None (empty steps) | Everything (unconditional, no risk check) |
 | staging | 1 admin | SELECT + safe DDL only (Low risk) |
 | production | 1 admin + reason required | Nothing (all human approval) |
 
@@ -84,12 +84,12 @@ dbward dev --database-url "mysql://user:password@localhost:3306/mydb"
 Example output:
 
 ```
-[dbward] Server listening on http://127.0.0.1:3000
-[dbward] Agent connected to database "mydb"
-[dbward] Dev tokens generated:
-           admin:     dbw_admin_xxxx
-           developer: dbw_developer_xxxx
-[dbward] Config written to ~/.dbward/dev/client.toml
+dbward dev starting...
+  Server: http://127.0.0.1:3000
+  Database: mydb
+  Admin token:     dbw_xxxx
+  Developer token: dbw_yyyy
+  Config: ~/.dbward/dev/client.toml
 
 Try:
   dbward --config ~/.dbward/dev/client.toml execute "SELECT 1"

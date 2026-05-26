@@ -35,7 +35,7 @@ curl -X POST http://localhost:3000/api/tokens \
   -H "Content-Type: application/json" \
   -d '{
     "subject_id": "bob",
-    "role": "developer",
+    "roles": "developer",
     "name": "Bob CI token",
     "expires_at": 7776000
   }'
@@ -251,7 +251,7 @@ curl -X POST http://localhost:3000/api/tokens \
   -H "Content-Type: application/json" \
   -d '{
     "subject_id": "ci-bot",
-    "role": "developer",
+    "roles": "developer",
     "groups": ["backend-team"]
   }'
 ```

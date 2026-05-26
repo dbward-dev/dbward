@@ -86,10 +86,10 @@ dbward execute "DELETE FROM old_data" --reason "cleanup"
 # → "Request abc12345 requires approval."
 
 # 5. Approver
-dbward request approve abc12345
+dbward request approve abc12345  # prefix match supported
 
 # 6. Developer gets result
-dbward request resume abc12345
+dbward request resume abc12345   # prefix match supported
 ```
 
 ### MCP Mode (AI agents)

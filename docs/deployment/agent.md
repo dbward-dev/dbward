@@ -13,11 +13,8 @@ agent_id = "prod-agent-1"
 url = "https://dbward.internal:3000"
 agent_token = "${DBWARD_AGENT_TOKEN}"
 
-# Capabilities are derived from [databases] keys
-# operations (optional, defaults shown):
-operations = ["app"]
-environments = ["production", "staging"]
-operations = ["*"]
+# Operations this agent handles (default: all)
+# operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "migrate_status"]
 
 [databases.app.production]
 url = "${DATABASE_URL}"
@@ -77,7 +74,7 @@ operations = ["*"]                # Which operations ("*" = all)
 url = "postgres://user:pass@localhost:5432/mydb"
 # migrations_dir = "db/migrations"  # Optional: override for this database
 
-[databases.analytics]
+[databases.analytics.production]
 url = "mysql://user:pass@analytics.internal:3306/warehouse"
 ```
 
@@ -126,7 +123,7 @@ operations = ["*"]
 [databases.app.production]
 url = "postgres://...@staging-db:5432/app"
 
-[databases.analytics]
+[databases.analytics.production]
 url = "mysql://...@analytics:3306/warehouse"
 ```
 
