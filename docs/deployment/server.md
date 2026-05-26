@@ -78,9 +78,9 @@ retention_days = 365              # Same as retention.audit_ttl_days (default: 3
 ### Result storage
 
 ```toml
-# Disabled (default) — results are only relayed in-memory
+# Local (default) — results persisted to ./data/results/
 [result_storage]
-backend = "disabled"
+backend = "local"
 
 # Local filesystem
 [result_storage]
@@ -196,7 +196,7 @@ retry_on_failure = false          # Allow re-execution on failure only (default:
 [[result_policies]]
 database = "primary"
 environment = "production"
-delivery_mode = "direct"          # "direct" (default) | "managed"
+delivery_mode = "stream"          # "direct" (default) | "managed"
 access = ["requester", "admin"]   # Who can view results (default)
 ```
 

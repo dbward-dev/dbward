@@ -103,12 +103,12 @@ In production (when auto-approve is off), a request that requires approval exits
 
 ```bash
 $ dbward execute "DELETE FROM orders WHERE created_at < '2025-01-01'"
-Request rq_abc123 is pending approval.
+Request abc12345-def6-7890-abcd-ef1234567890 is pending approval.
 Approvers: @dba-team
 
 # Check details (risk, EXPLAIN plan, etc.)
-$ dbward request show rq_abc123
-Request rq_abc123
+$ dbward request show abc12345-def6-7890-abcd-ef1234567890
+Request abc12345-def6-7890-abcd-ef1234567890
   Status:      pending
   Detail:      DELETE FROM orders WHERE created_at < '2025-01-01'
   Risk:        Medium (LargeTable { rows: 50000 })
@@ -117,7 +117,7 @@ Request rq_abc123
   Explain:     ModifyTable on orders via Seq Scan (rows=12000, cost=890)
 
 # After someone approves:
-$ dbward request resume rq_abc123
+$ dbward request resume abc12345-def6-7890-abcd-ef1234567890
 ```
 
 dbward automatically assesses risk, runs EXPLAIN (read-only), and shows this context to approvers.

@@ -79,16 +79,16 @@ Migrations go through the their own operations (`migrate_up`, `migrate_down`). I
 
 ```bash
 $ dbward -e production migrate up
-⚠ Request req_m1a2 requires approval.
+⚠ Request m1a2 requires approval.
   Approvers: dba-team
-Run: dbward request resume req_m1a2
+Run: dbward request resume m1a2
 ```
 
 After approval:
 
 ```bash
-$ dbward request resume req_m1a2
-✓ Resuming req_m1a2...
+$ dbward request resume m1a2
+✓ Dispatching m1a2...
   Applied: 20260503140000_create_orders (up)
 ```
 

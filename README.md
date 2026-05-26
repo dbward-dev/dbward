@@ -6,10 +6,10 @@ Stop accidents before they hit production. Add approval gates, audit trails, and
 
 ```bash
 $ dbward execute "UPDATE users SET active = false WHERE last_login < '2025-01-01'"
-⚠ Request req_7f3a created (production × execute_query)
+⚠ Request 7f3a2b01 created (production × execute_query)
   Requires 1 approval.
 
-$ dbward request approve req_7f3a --comment "Confirmed with product team"
+$ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
 ✓ Approved. Executing on agent-prod-01...
 ✓ 3 rows affected (12ms)
 ```
@@ -78,13 +78,13 @@ dbward agent --config dbward-agent.toml
 
 # 3. Developers use CLI (no DB access needed)
 dbward execute "DELETE FROM old_data" --database primary
-# → "Request req_abc123 requires approval."
+# → "Request abc12345-def6-7890-abcd-ef1234567890 requires approval."
 
 # 4. Approver
-dbward request approve req_abc123
+dbward request approve abc12345-def6-7890-abcd-ef1234567890
 
 # 5. Developer gets result
-dbward request resume req_abc123
+dbward request resume abc12345-def6-7890-abcd-ef1234567890
 ```
 
 ### MCP Mode (AI agents)

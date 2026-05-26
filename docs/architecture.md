@@ -251,7 +251,7 @@ JWKS cache: 1-hour TTL, re-fetch on unknown kid (min 60s interval).
 
 ```json
 {
-  "request_id": "req_abc",
+  "request_id": "abc",
   "operation": "migrate_up",
   "environment": "production",
   "database": "primary",
