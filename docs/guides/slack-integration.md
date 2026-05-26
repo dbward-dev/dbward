@@ -133,6 +133,8 @@ The modal shows information that is **not** in the channel message (for security
 - Context: affected tables, SQL review findings
 - Approve / Reject radio buttons + comment field
 
+Approval progress (who approved, who's remaining) is shown in the **channel message update**, not in the modal.
+
 ### Approver Resolution
 
 dbward maps workflow approver selectors to Slack mentions:
