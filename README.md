@@ -55,8 +55,10 @@ $ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
 ## Quick Start
 
 ```bash
-# Install
-curl -fsSL https://dbward.dev/install.sh | sh
+# Install (from source)
+git clone https://github.com/dbward-dev/dbward.git && cd dbward
+cargo build --release
+# Binaries: target/release/dbward, dbward-server, dbward-agent
 
 # Initialize config
 dbward init
