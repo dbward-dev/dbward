@@ -25,16 +25,51 @@ Generate production-ready config files for a small team (5-50 people):
 dbward init --preset small-team
 ```
 
+You'll be prompted for:
+- **Server URL** (default: `http://localhost:3000`)
+- **Database name** (default: `app`)
+
 This creates 3 files:
 - `dbward.toml` — CLI config (server URL, default database)
 - `server.toml` — Approval workflows, auto-approve rules, SQL review
 - `agent.toml` — Database connection placeholders
 
-See the guided output for next steps, or continue below for a simplified dev environment.
+### Production startup
 
-## Start dev environment
+```bash
+# 1. Start the server (generates initial tokens on first run)
+dbward-server --config server.toml --dev-bootstrap
 
-For PostgreSQL:
+# Output:
+#   Bootstrap tokens:
+#     admin:     dbw_xxxx
+#     developer: dbw_yyyy
+#     agent:     dbw_zzzz
+
+# 2. Set your CLI token
+# Edit dbward.toml → token = "dbw_xxxx"
+
+# 3. Set database URL and start the agent
+export DATABASE_URL_APP_PRODUCTION="postgres://user:pass@host:5432/mydb"
+export DBWARD_AGENT_TOKEN="dbw_zzzz"
+dbward-agent --config agent.toml
+
+# 4. Verify everything works
+dbward doctor
+dbward execute "SELECT 1"
+```
+
+### Generated workflow rules (small-team preset)
+
+| Environment | Approval | Auto-approve |
+|-------------|----------|--------------|
+| development | None (empty steps) | Everything up to High risk |
+| staging | 1 admin | SELECT + safe DDL only (Low risk) |
+| production | 1 admin + reason required | Nothing (all human approval) |
+
+## Start dev environment (alternative)
+
+For quick local experimentation without separate server/agent processes:
 
 ```bash
 dbward dev --database-url "postgres://user:password@localhost:5432/mydb"
