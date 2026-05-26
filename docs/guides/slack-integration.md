@@ -102,6 +102,14 @@ To find your Slack Member ID: click your profile picture → **Profile** → **�
 8. The **original message updates** to reflect the new status (approve/reject/executed)
 9. A thread reply is posted for each state change (step approved, completed, failed)
 
+### Requester DM Notifications
+
+When a request is resolved (approved, rejected, completed, failed, expired), the requester receives a Slack DM if:
+- Their Slack account is linked (`dbward user update --slack-user-id`)
+- The server has `[slack]` configured
+
+This provides immediate feedback without requiring the requester to watch the channel.
+
 ### Message Updates (Canonical State)
 
 The original Slack message always reflects the **current** state of the request:
