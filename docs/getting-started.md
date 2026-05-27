@@ -30,7 +30,7 @@ You'll be prompted for:
 - **Database name** (default: `app`)
 
 This creates 3 files:
-- `dbward.toml` — CLI config (server URL, default database)
+- `dbward.toml` — CLI project config (default database, migrations)
 - `server.toml` — Approval workflows, auto-approve rules, SQL review
 - `agent.toml` — Database connection placeholders
 

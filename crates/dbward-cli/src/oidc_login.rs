@@ -140,7 +140,7 @@ pub async fn login(
     };
 
     save_credentials(&creds)?;
-    eprintln!("Login successful. Credentials saved to ~/.dbward/credentials.json");
+    eprintln!("Login successful. Credentials saved.");
     Ok(())
 }
 
