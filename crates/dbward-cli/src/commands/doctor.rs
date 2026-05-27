@@ -46,7 +46,7 @@ impl DoctorContext {
 // ---------------------------------------------------------------------------
 
 pub async fn run(
-    config_path: &std::path::Path,
+    config_path: Option<&std::path::Path>,
     agent_config: Option<PathBuf>,
     server_config: Option<PathBuf>,
     json_output: bool,
@@ -83,21 +83,27 @@ pub async fn run(
 // CLI mode
 // ---------------------------------------------------------------------------
 
-async fn run_cli_mode(ctx: &mut DoctorContext, config_path: &std::path::Path) {
+async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&std::path::Path>) {
     if !ctx.json_output {
         eprintln!("dbward doctor — CLI configuration\n");
     }
 
     // C1: config_parse
-    let cfg = match crate::config::load(config_path) {
-        Ok(c) => {
+    let cfg = match crate::config::load_resolved(config_path, false) {
+        Ok(m) => {
+            let sources_str = m
+                .sources_loaded
+                .iter()
+                .map(|(_, p)| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
             ctx.record(CheckResult {
                 id: "config_parse",
                 status: Status::Pass,
-                message: config_path.display().to_string(),
+                message: sources_str,
                 hint: None,
             });
-            Some(c)
+            Some(m.config)
         }
         Err(e) => {
             ctx.record(CheckResult {
