@@ -17,6 +17,14 @@ cargo build --release
 
 The binary is at `target/release/dbward`.
 
+## Configuration model
+
+dbward uses two config layers:
+- **Global** (`~/.config/dbward/config.toml`): server URL, API token or OIDC settings
+- **Project** (`./dbward.toml`): databases, migrations, defaults
+
+Run `dbward init` to set up both. The global config is shared across all projects.
+
 ## Quick setup with preset
 
 Generate production-ready config files for a small team (5-50 people):
@@ -46,8 +54,9 @@ dbward-server --config server.toml
 # 2. Start the server
 dbward-server --config server.toml
 
-# 2. Set your CLI token
-# Edit dbward.toml → token = "dbw_xxxx"
+# 2. Set your CLI token (in global config)
+# Edit ~/.config/dbward/config.toml → token = "dbw_xxxx"
+# Or: export DBWARD_TOKEN="dbw_xxxx"
 
 # 3. Set database URL and start the agent
 export DATABASE_URL_APP_PRODUCTION="postgres://user:pass@host:5432/mydb"
@@ -102,7 +111,7 @@ Try:
 - Stores config and state in `~/.dbward/dev/`
 - Generates API tokens automatically for admin and developer roles
 
-> **Note:** `--config` points to the dev-mode client config. For production, place `dbward.toml` in your project root instead.
+> **Note:** `--config` runs in standalone mode (single file, no global merge). For production, use `dbward init` to set up the two-layer config instead.
 
 ## Run your first query
 

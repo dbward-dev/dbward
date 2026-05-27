@@ -240,7 +240,8 @@ Two-layer resolution:
 1. Global: `~/.config/dbward/config.toml` (server connection, auth)
 2. Project: `dbward.toml` in CWD (databases, migrations)
 
-When `--config` or `DBWARD_CONFIG` is set, only that file is used (standalone mode).
+When `--config` or `DBWARD_CONFIG` is set, only that file is used (standalone mode, no global merge).
+Use `--merge-global` to opt into global merge with an explicit config path.
 
 ### Global config (`~/.config/dbward/config.toml`)
 
@@ -271,7 +272,11 @@ migrations_dir = "analytics/migrations"
 
 | Variable | Purpose |
 |----------|---------|
-| `DBWARD_CONFIG` | Path to CLI config file |
+| `DBWARD_CONFIG` | Path to CLI config file (standalone mode) |
+| `DBWARD_GLOBAL_CONFIG` | Path to global config file |
+| `DBWARD_SERVER_URL` | Override server URL |
+| `DBWARD_TOKEN` | Override API token |
+| `DBWARD_DATABASE` | Default database |
 | `DBWARD_ENV` | Default environment |
 
 ---

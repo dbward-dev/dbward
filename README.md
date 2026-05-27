@@ -100,7 +100,7 @@ dbward request resume abc12345   # prefix match supported
   "mcpServers": {
     "dbward": {
       "command": "dbward",
-      "args": ["mcp", "--config", "dbward.toml"]
+      "args": ["mcp"]
     }
   }
 }
