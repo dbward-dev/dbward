@@ -35,11 +35,7 @@ struct Credentials {
     client_id: String,
 }
 
-fn credentials_path() -> PathBuf {
-    dirs_next().join("credentials.json")
-}
-
-fn dirs_next() -> PathBuf {
+fn legacy_credentials_path() -> PathBuf {
     let dir = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".dbward");
@@ -49,7 +45,26 @@ fn dirs_next() -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
     }
-    dir
+    dir.join("credentials.json")
+}
+
+fn scoped_credentials_path(issuer: &str, client_id: &str) -> PathBuf {
+    dbward_config::scoped_credentials_path(issuer, client_id)
+}
+
+/// Resolve best credentials path: scoped if exists, else legacy fallback.
+fn resolve_credentials_path(issuer: &str, client_id: &str) -> PathBuf {
+    let scoped = scoped_credentials_path(issuer, client_id);
+    if scoped.exists() {
+        return scoped;
+    }
+    // Fallback to legacy
+    let legacy = legacy_credentials_path();
+    if legacy.exists() {
+        return legacy;
+    }
+    // Default to scoped (for new writes)
+    scoped
 }
 
 /// Authorization Code Flow + PKCE
@@ -226,7 +241,38 @@ pub async fn login_device(
 }
 
 pub async fn logout() -> Result<(), String> {
-    let path = credentials_path();
+    // Try to find credentials in any location
+    let legacy = legacy_credentials_path();
+    let path = if legacy.exists() {
+        legacy.clone()
+    } else {
+        // Try to find a scoped credential file
+        let creds_dir = dbward_config::global_config_dir().join("credentials");
+        if creds_dir.exists() {
+            match std::fs::read_dir(&creds_dir) {
+                Ok(entries) => {
+                    let first = entries
+                        .filter_map(|e| e.ok())
+                        .find(|e| e.path().extension().is_some_and(|ext| ext == "json"));
+                    match first {
+                        Some(entry) => entry.path(),
+                        None => {
+                            eprintln!("Not logged in.");
+                            return Ok(());
+                        }
+                    }
+                }
+                Err(_) => {
+                    eprintln!("Not logged in.");
+                    return Ok(());
+                }
+            }
+        } else {
+            eprintln!("Not logged in.");
+            return Ok(());
+        }
+    };
+
     if !path.exists() {
         eprintln!("Not logged in.");
         return Ok(());
@@ -260,7 +306,22 @@ pub async fn logout() -> Result<(), String> {
 }
 
 pub fn whoami() -> Result<(), String> {
-    let path = credentials_path();
+    // Find credentials: try legacy first, then scoped dir
+    let legacy = legacy_credentials_path();
+    let path = if legacy.exists() {
+        legacy
+    } else {
+        let creds_dir = dbward_config::global_config_dir().join("credentials");
+        if let Ok(entries) = std::fs::read_dir(&creds_dir) {
+            entries
+                .filter_map(|e| e.ok())
+                .find(|e| e.path().extension().is_some_and(|ext| ext == "json"))
+                .map(|e| e.path())
+                .ok_or_else(|| "no OIDC credentials".to_string())?
+        } else {
+            return Err("no OIDC credentials".into());
+        }
+    };
     if !path.exists() {
         return Err("no OIDC credentials".into());
     }
@@ -290,7 +351,7 @@ pub fn whoami() -> Result<(), String> {
 
 /// Load saved access token (auto-refresh if near expiry).
 pub async fn load_token(issuer: &str, client_id: &str) -> Result<String, String> {
-    let path = credentials_path();
+    let path = resolve_credentials_path(issuer, client_id);
     if !path.exists() {
         return Err("not logged in. Run: dbward login".into());
     }
@@ -458,7 +519,16 @@ async fn find_port() -> Result<u16, String> {
 }
 
 fn save_credentials(creds: &Credentials) -> Result<(), String> {
-    let path = credentials_path();
+    // Write to scoped path based on issuer+client_id
+    let path = scoped_credentials_path(&creds.issuer, &creds.client_id);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
+    }
     let json = serde_json::to_string_pretty(creds).map_err(|e| e.to_string())?;
     let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
     file.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
@@ -468,6 +538,12 @@ fn save_credentials(creds: &Credentials) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
             .map_err(|e| e.to_string())?;
+    }
+
+    // Clean up legacy file if it exists and matches
+    let legacy = legacy_credentials_path();
+    if legacy.exists() {
+        let _ = std::fs::remove_file(&legacy);
     }
 
     Ok(())

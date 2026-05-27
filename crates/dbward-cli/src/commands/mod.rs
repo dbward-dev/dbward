@@ -28,14 +28,13 @@ use crate::server_client::ServerClient;
 #[derive(Parser)]
 #[command(name = "dbward", about = "DB operations workflow + approval engine")]
 pub struct Cli {
-    /// Path to config file
-    #[arg(
-        long,
-        env = "DBWARD_CONFIG",
-        default_value = "dbward.toml",
-        global = true
-    )]
-    pub config: PathBuf,
+    /// Path to config file (standalone mode: disables global merge)
+    #[arg(long, env = "DBWARD_CONFIG", global = true)]
+    pub config: Option<PathBuf>,
+
+    /// Merge global config even when --config is explicitly set
+    #[arg(long, global = true)]
+    pub merge_global: bool,
 
     /// Select named database from config
     #[arg(long, env = "DBWARD_DATABASE", global = true)]
@@ -287,8 +286,8 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                 return Ok(());
             }
             // Fall back to API token via server
-            let cfg = match config::load(&cli.config) {
-                Ok(c) => c,
+            let cfg = match config::load_resolved(cli.config.as_deref(), cli.merge_global) {
+                Ok(m) => m.config,
                 Err(e) => {
                     return Err(CliError::Auth(format!(
                         "Not logged in. Config error: {e}\nRun: dbward login or dbward init"
@@ -333,7 +332,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             timeout,
         } => {
             return doctor::run(
-                &cli.config,
+                cli.config.as_deref(),
                 agent.clone(),
                 server.clone(),
                 cli.format == "json",
@@ -344,7 +343,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         _ => {}
     }
 
-    let cfg = config::load(&cli.config)?;
+    let cfg = config::load_resolved(cli.config.as_deref(), cli.merge_global)?.config;
 
     // Login needs OIDC config but not full auth
     if let Command::Login { device } = &cli.command {

@@ -1,5 +1,5 @@
 use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::Cli;
 use crate::error::CliError;
@@ -26,18 +26,17 @@ pub fn run_init(
 // ---------------------------------------------------------------------------
 
 fn run_basic_init(cli: &Cli, non_interactive: bool, force: bool) -> Result<(), CliError> {
-    let config_path = &cli.config;
-    if config_path.exists() && !force {
-        return Err(CliError::Config(format!(
-            "{} already exists. Use --force to overwrite.",
-            config_path.display()
-        )));
-    }
-
-    let (server_url, db_name) = prompt_inputs(non_interactive)?;
-
-    let content = format!(
-        r#"default_database = "{db_name}"
+    // Standalone mode: write single file (backward compat)
+    if let Some(ref config_path) = cli.config {
+        if config_path.exists() && !force {
+            return Err(CliError::Config(format!(
+                "{} already exists. Use --force to overwrite.",
+                config_path.display()
+            )));
+        }
+        let (server_url, db_name) = prompt_inputs(non_interactive)?;
+        let content = format!(
+            r#"default_database = "{db_name}"
 
 [server]
 url = "{server_url}"
@@ -45,10 +44,55 @@ url = "{server_url}"
 
 [databases.{db_name}]
 "#
-    );
+        );
+        std::fs::write(config_path, content.trim_end())?;
+        eprintln!("Created {}", config_path.display());
+        return Ok(());
+    }
 
-    std::fs::write(config_path, content.trim_end())?;
-    eprintln!("Created {}", config_path.display());
+    // Auto-detect mode: global + project
+    let (server_url, db_name) = prompt_inputs(non_interactive)?;
+
+    // 1. Global config
+    let global_dir = crate::config::global_config_dir();
+    let global_path = global_dir.join("config.toml");
+    if global_path.exists() && !force {
+        eprintln!("ℹ Using existing server config: {}", global_path.display());
+    } else {
+        std::fs::create_dir_all(&global_dir)?;
+        let global_content = format!(
+            r#"[server]
+url = "{server_url}"
+# token = "dbw_..."  # Or use [server.oidc] for OIDC
+"#
+        );
+        std::fs::write(&global_path, global_content.trim_end())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&global_dir, std::fs::Permissions::from_mode(0o700));
+            let _ = std::fs::set_permissions(&global_path, std::fs::Permissions::from_mode(0o600));
+        }
+        eprintln!("✓ Created {}", global_path.display());
+    }
+
+    // 2. Project config
+    let project_path = PathBuf::from("dbward.toml");
+    if project_path.exists() && !force {
+        return Err(CliError::Config(format!(
+            "{} already exists. Use --force to overwrite.",
+            project_path.display()
+        )));
+    }
+    let project_content = format!(
+        r#"default_database = "{db_name}"
+migrations_dir = "migrations"
+
+[databases.{db_name}]
+"#
+    );
+    std::fs::write(&project_path, project_content.trim_end())?;
+    eprintln!("✓ Created {}", project_path.display());
     Ok(())
 }
 
