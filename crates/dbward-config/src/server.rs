@@ -8,6 +8,9 @@ use crate::expand::expand_env_vars;
 
 #[derive(Debug, Deserialize)]
 pub struct ServerConfig {
+    /// Directory for server state (SQLite DB, signing keys, agent-token).
+    /// Required — no default. Relative paths resolve against config file parent.
+    pub state_dir: String,
     #[serde(default)]
     pub result_storage: ResultStorageConfig,
     #[serde(default)]
@@ -587,9 +590,14 @@ fn default_slack_channel() -> String {
 mod tests {
     use super::*;
 
+    fn test_cfg(extra: &str) -> String {
+        format!("state_dir = \"/tmp\"\n{extra}")
+    }
+
     #[test]
     fn minimal_valid_config() {
-        let toml = r#"
+        let toml = test_cfg(
+            r#"
 [[databases]]
 name = "app"
 environments = ["dev"]
@@ -597,36 +605,42 @@ environments = ["dev"]
 [[workflows]]
 database = "*"
 environment = "*"
-"#;
-        let cfg = ServerConfig::from_str(toml, "test").unwrap();
+"#,
+        );
+        let cfg = ServerConfig::from_str(&toml, "test").unwrap();
         assert_eq!(cfg.databases.len(), 1);
         assert_eq!(cfg.retention.approval_ttl_secs, 86400);
     }
 
     #[test]
     fn rejects_zero_approval_ttl() {
-        let toml = r#"
+        let toml = test_cfg(
+            r#"
 [retention]
 approval_ttl_secs = 0
-"#;
-        let err = ServerConfig::from_str(toml, "test").unwrap_err();
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
         assert!(err.to_string().contains("approval_ttl_secs"));
     }
 
     #[test]
     fn rejects_timeout_exceeding_max() {
-        let toml = r#"
+        let toml = test_cfg(
+            r#"
 [[execution_policies]]
 statement_timeout_secs = 500
 max_statement_timeout_secs = 300
-"#;
-        let err = ServerConfig::from_str(toml, "test").unwrap_err();
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
         assert!(err.to_string().contains("must not exceed"));
     }
 
     #[test]
     fn rejects_duplicate_auto_approve_scope() {
-        let toml = r#"
+        let toml = test_cfg(
+            r#"
 [[auto_approve]]
 database = "app"
 environment = "dev"
@@ -634,8 +648,9 @@ environment = "dev"
 [[auto_approve]]
 database = "app"
 environment = "dev"
-"#;
-        let err = ServerConfig::from_str(toml, "test").unwrap_err();
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
         assert!(err.to_string().contains("duplicate scope"));
     }
 }
@@ -645,7 +660,8 @@ mod auth_roles_tests {
     use super::*;
 
     fn parse(toml: &str) -> Result<ServerConfig, ConfigError> {
-        ServerConfig::from_str(toml, "test")
+        let full = format!("state_dir = \"/tmp\"\n{toml}");
+        ServerConfig::from_str(&full, "test")
     }
 
     fn base_config(extra: &str) -> String {

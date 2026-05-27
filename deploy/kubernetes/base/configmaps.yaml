@@ -5,6 +5,8 @@ metadata:
   namespace: dbward
 data:
   server.toml: |
+    state_dir = "/data"
+
     [auth]
     mode = "token"
 

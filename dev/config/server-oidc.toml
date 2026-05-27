@@ -1,3 +1,4 @@
+state_dir = "/data"
 [auth]
 mode = "both"
 

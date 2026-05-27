@@ -41,8 +41,9 @@ if [ -n "$TOKEN_ID" ]; then
 else
   # Fallback: revoke via CLI using prefix
   VICTIM_PREFIX="${VICTIM_TOKEN:4:8}"
-  docker compose exec -T dbward-server \
-    dbward-server --data /data/dbward.db token revoke --prefix "$VICTIM_PREFIX" >/dev/null 2>&1 || true
+  # Revoke directly via SQLite (test-only, prefix-based revoke not exposed via API)
+  docker compose exec -T dbward-server sqlite3 /data/dbward.db \
+    "UPDATE tokens SET status='revoked', revoked_at=datetime('now') WHERE token_prefix='$VICTIM_PREFIX';" 2>/dev/null || true
   sleep 1
   STATUS=$(api_status GET /api/requests "$VICTIM_TOKEN")
   [ "$STATUS" = "401" ] && pass "Revoked token rejected (401)" || skip "Revoke test inconclusive ($STATUS)"

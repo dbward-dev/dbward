@@ -28,13 +28,20 @@ impl Ed25519TokenSigner {
             {
                 use std::io::Write;
                 use std::os::unix::fs::OpenOptionsExt;
-                std::fs::OpenOptions::new()
+                // O_EXCL: fail if file already exists (race protection)
+                match std::fs::OpenOptions::new()
                     .write(true)
-                    .create(true)
-                    .truncate(true)
+                    .create_new(true)
                     .mode(0o600)
-                    .open(&key_path)?
-                    .write_all(&key.to_bytes())?;
+                    .open(&key_path)
+                {
+                    Ok(mut f) => f.write_all(&key.to_bytes())?,
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        // Another process created it first — load theirs
+                        return Self::load_or_generate(data_dir);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             #[cfg(not(unix))]
             {

@@ -24,6 +24,7 @@ Parameters:
   ServerConfigToml:
     Type: String
     Default: |
+      state_dir = "/data"
       [auth]
       mode = "token"
       [[databases]]
@@ -313,7 +314,7 @@ Resources:
                   cat >> /tmp/server.toml << 'TOMLEOF'
                   ${ResultStorageConfig}
                   TOMLEOF
-                  exec dbward-server --data /data/dbward.db --listen 0.0.0.0:3000 --config /tmp/server.toml
+                  exec dbward-server --listen 0.0.0.0:3000 --config /tmp/server.toml
                 - ConfigContent: !Ref ServerConfigToml
                   ResultStorageConfig: !If
                     - UseS3Storage
@@ -462,7 +463,7 @@ Outputs:
       aws cloudformation deploy --stack-name ${AWS::StackName} --template-file template.yaml --parameter-overrides ImageTag=NEW_TAG --capabilities CAPABILITY_NAMED_IAM
 
   BootstrapCommand:
-    Description: Create initial tokens after first deploy
+    Description: Read bootstrap tokens after first deploy (auto-created on startup)
     Value: !Sub |
       TASK=$(aws ecs list-tasks --cluster ${AWS::StackName} --service-name server --query "taskArns[0]" --output text)
-      aws ecs execute-command --cluster ${AWS::StackName} --task $TASK --container server --interactive --command "dbward-server --data /data/dbward.db token create --user admin --role admin"
+      aws ecs execute-command --cluster ${AWS::StackName} --task $TASK --container server --interactive --command "cat /data/admin-token"

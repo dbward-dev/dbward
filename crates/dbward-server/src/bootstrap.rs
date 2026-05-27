@@ -1,7 +1,8 @@
-use std::sync::Arc;
+use std::path::Path;
 
-use dbward_app::use_cases::token_manage::{TokenCreateInput, TokenManage, TokenRevokeInput};
+use dbward_app::use_cases::token_manage::{TokenCreateInput, TokenManage};
 use dbward_domain::auth::{AuthUser, Permission, ResolvedRole, SubjectType};
+use dbward_domain::entities::TokenStatus;
 use dbward_domain::values::{DatabaseName, Environment};
 
 use crate::state::AppState;
@@ -57,101 +58,112 @@ pub fn create_bootstrap_token(
     Ok(output.token)
 }
 
-/// Create a token directly from a SQLite database path (no running server needed).
-pub fn create_token_standalone(
-    data: &str,
-    user: &str,
-    role: &str,
-    is_agent: bool,
-    groups: &[String],
-    license_key: Option<&str>,
-    license_file: Option<&str>,
+/// Auto-bootstrap: on first startup, create DB + signing key + tokens.
+/// Does NOT exit. Does NOT print tokens to stdout (file only).
+pub fn auto_bootstrap(
+    state: &AppState,
+    state_dir: &Path,
+    force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = dbward_infra::sqlite::open(data)?;
+    let token_repo = &state.token_repo;
+    let agent_token_path = state_dir.join("agent-token");
+    let admin_token_path = state_dir.join("admin-token");
 
-    let token_repo = Arc::new(dbward_infra::sqlite::SqliteTokenRepo::new(conn.clone()));
-    let user_repo = Arc::new(dbward_infra::sqlite::SqliteUserRepo::new(conn.clone()));
-    let policy_repo = Arc::new(dbward_infra::sqlite::SqlitePolicyRepo::new(conn.clone()));
-    let audit_logger = Arc::new(dbward_infra::sqlite::SqliteAuditLogger::new(conn));
+    // Count active bootstrap tokens
+    let existing: Vec<_> = token_repo
+        .list()?
+        .into_iter()
+        .filter(|t| {
+            t.name
+                .as_deref()
+                .is_some_and(|n| n.starts_with("bootstrap-"))
+                && t.status == TokenStatus::Active
+        })
+        .collect();
+    let count = existing.len();
 
-    let license = crate::resolve_license(license_key, license_file);
-    let uc = TokenManage {
-        authorizer: Arc::new(dbward_infra::auth::RbacAuthorizer),
-        token_repo,
-        user_repo,
-        policy_repo,
-        license: Arc::new(dbward_infra::LicenseCheckerImpl::new(
-            license,
-            chrono::Utc::now(),
-        )),
-        audit: audit_logger,
-        clock: Arc::new(dbward_infra::UtcClock),
-        id_gen: Arc::new(dbward_infra::UuidGenerator),
-        token_gen: Arc::new(dbward_infra::SecureTokenGenerator),
-    };
+    if force {
+        // Revoke all existing bootstrap tokens
+        let now = chrono::Utc::now();
+        for t in &existing {
+            token_repo.revoke(&t.id, now)?;
+        }
+        if count > 0 {
+            eprintln!("[init] existing bootstrap tokens revoked ({count})");
+        }
+    } else if count == 3 {
+        // Fully bootstrapped — verify token files exist
+        let dev_token_path = state_dir.join("developer-token");
+        let missing: Vec<_> = [&agent_token_path, &admin_token_path, &dev_token_path]
+            .iter()
+            .filter(|p| !p.exists())
+            .map(|p| p.display().to_string())
+            .collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "bootstrap token file(s) missing: {}\n  \
+                 Tokens exist in DB but files are not recoverable (SHA-256 hash only stored).\n  \
+                 Run with --force-bootstrap to revoke existing tokens and generate new ones.",
+                missing.join(", ")
+            )
+            .into());
+        }
+        return Ok(());
+    } else if count > 0 {
+        // Partial state (1-2 tokens) — fail-closed
+        return Err(format!(
+            "incomplete bootstrap state: {count}/3 tokens found.\n  \
+             Run with --force-bootstrap to reset and regenerate tokens."
+        )
+        .into());
+    }
 
-    let subject_type = if is_agent { "agent" } else { "user" };
-    let output = uc.create(
-        TokenCreateInput {
-            subject_id: user.to_string(),
-            subject_type: subject_type.to_string(),
-            name: Some(format!("cli-{user}")),
-            roles: vec![role.to_string()],
-            groups: groups.to_vec(),
-            expires_at: None,
-        },
-        &system_user(),
-        &dbward_domain::entities::AuditContext::System,
-    )?;
+    // Create bootstrap tokens
+    let admin_token = create_bootstrap_token(state, "admin", "admin", false)?;
+    let dev_token = create_bootstrap_token(state, "developer", "developer", false)?;
+    let agent_token = create_bootstrap_token(state, "agent", "admin", true)?;
 
-    let token_type = if is_agent { "agent" } else { "user" };
-    println!("Token created:");
-    println!("  ID:    {}", output.id);
-    println!("  Token: {}", output.token);
-    println!("  User:  {user}");
-    println!("  Role:  {role}");
-    println!("  Type:  {token_type}");
-    println!();
-    println!("Save this token — it cannot be retrieved later.");
+    // Write token files (0600)
+    write_token_file(&admin_token_path, &admin_token)?;
+    write_token_file(&agent_token_path, &agent_token)?;
+
+    // Also write developer token for dev convenience
+    let dev_token_path = state_dir.join("developer-token");
+    write_token_file(&dev_token_path, &dev_token)?;
+
+    eprintln!(
+        "[init] bootstrap tokens written to {}, {}",
+        admin_token_path.display(),
+        agent_token_path.display()
+    );
 
     Ok(())
 }
 
-/// Revoke a token directly from a SQLite database path (no running server needed).
-pub fn revoke_token_standalone(
-    data: &str,
-    token_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let conn = dbward_infra::sqlite::open(data)?;
-
-    let token_repo = Arc::new(dbward_infra::sqlite::SqliteTokenRepo::new(conn.clone()));
-    let user_repo = Arc::new(dbward_infra::sqlite::SqliteUserRepo::new(conn.clone()));
-    let policy_repo = Arc::new(dbward_infra::sqlite::SqlitePolicyRepo::new(conn.clone()));
-    let audit_logger = Arc::new(dbward_infra::sqlite::SqliteAuditLogger::new(conn));
-
-    let uc = TokenManage {
-        authorizer: Arc::new(dbward_infra::auth::RbacAuthorizer),
-        token_repo,
-        user_repo,
-        policy_repo,
-        license: Arc::new(dbward_infra::LicenseCheckerImpl::new(
-            dbward_domain::license::License::default(),
-            chrono::Utc::now(),
-        )),
-        audit: audit_logger,
-        clock: Arc::new(dbward_infra::UtcClock),
-        id_gen: Arc::new(dbward_infra::UuidGenerator),
-        token_gen: Arc::new(dbward_infra::SecureTokenGenerator),
-    };
-
-    uc.revoke(
-        TokenRevokeInput {
-            token_id: token_id.to_string(),
-        },
-        &system_user(),
-        &dbward_domain::entities::AuditContext::System,
-    )?;
-
-    println!("Token revoked: {token_id}");
+fn write_token_file(path: &Path, token: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    // Atomic: write to temp file then rename to prevent partial reads
+    let tmp_path = path.with_extension("tmp");
+    {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp_path)?;
+            f.write_all(token.as_bytes())?;
+            f.sync_all()?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut f = std::fs::File::create(&tmp_path)?;
+            f.write_all(token.as_bytes())?;
+            f.sync_all()?;
+        }
+    }
+    std::fs::rename(&tmp_path, path)?;
     Ok(())
 }

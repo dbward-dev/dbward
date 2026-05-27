@@ -1,5 +1,5 @@
 dbs:
-  - path: ${DBWARD_DB_PATH:-/data/dbward.db}
+  - path: /data/dbward.db
     replica:
       type: s3
       bucket: ${LITESTREAM_S3_BUCKET}

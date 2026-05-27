@@ -25,12 +25,9 @@ role = "admin"
 min = 1
 EOF
 
-# 2. Create initial admin token
-dbward-server --data /var/lib/dbward/dbward.db --dev-bootstrap
-# Or via API: dbward token create --subject admin --role admin
-
-# 3. Start
-dbward server start --config dbward-server.toml
+# 2. Start (auto-initializes on first run: creates DB, keys, tokens)
+dbward-server --config dbward-server.toml
+# First run writes tokens to: ./data/admin-token, ./data/agent-token
 ```
 
 ## Configuration reference
@@ -38,8 +35,8 @@ dbward server start --config dbward-server.toml
 ### Top-level settings
 
 ```toml
-# listen and data are set via CLI flags (--listen, --data), not TOML.
-# These CLI defaults are: listen = "127.0.0.1:3000", data = "dbward.db"
+# Required: directory for server state (SQLite DB, signing keys, agent-token)
+state_dir = "/var/lib/dbward"
 
 trusted_proxies = ["10.0.0.0/8"]  # Trust X-Forwarded-For from these CIDRs
 ```
@@ -234,9 +231,8 @@ After=network.target
 [Service]
 Type=simple
 User=dbward
-ExecStart=/usr/local/bin/dbward server start \
+ExecStart=/usr/local/bin/dbward-server \
   --config /etc/dbward/dbward-server.toml \
-  --data /var/lib/dbward/dbward.db \
   --listen 0.0.0.0:3000
 Restart=always
 RestartSec=5
@@ -255,7 +251,6 @@ docker run -d \
   -v ./dbward-server.toml:/etc/dbward/dbward-server.toml:ro \
   ghcr.io/dbward-dev/dbward-server:latest \
     --config /etc/dbward/dbward-server.toml \
-    --data /data/dbward.db \
     --listen 0.0.0.0:3000
 ```
 
@@ -264,14 +259,15 @@ docker run -d \
 Create tokens for users and agents:
 
 ```bash
-# Admin token (full access)
+# Initial tokens created automatically on first server start.
+# Read them from files:
+cat /data/admin-token    # admin token
+cat /data/agent-token    # agent token
+
+# Additional tokens via API (requires admin token):
 dbward token create --subject alice --role admin
-
-# Developer token
-dbward server token create --user bob --role developer --data /var/lib/dbward/dbward.db
-
-# Agent token (for dbward-agent)
-dbward server token create --user prod-agent --role admin --agent --data /var/lib/dbward/dbward.db
+dbward token create --subject bob --role developer
+dbward token create --subject prod-agent --role admin --agent
 ```
 
 Tokens can also be managed via the REST API:

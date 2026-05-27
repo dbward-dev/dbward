@@ -10,8 +10,6 @@ pub enum ServerAction {
     Start {
         #[arg(long, default_value = "127.0.0.1:3000")]
         listen: String,
-        #[arg(long, default_value = "dbward.db")]
-        data: String,
         #[arg(long, default_value = "dbward-server.toml")]
         config: String,
     },
@@ -19,21 +17,15 @@ pub enum ServerAction {
 
 pub async fn run_server_command(action: &ServerAction) -> Result<(), CliError> {
     match action {
-        ServerAction::Start {
-            listen,
-            data,
-            config,
-        } => run_server_start(listen, data, config).await,
+        ServerAction::Start { listen, config } => run_server_start(listen, config).await,
     }
 }
 
-async fn run_server_start(listen: &str, data: &str, config: &str) -> Result<(), CliError> {
+async fn run_server_start(listen: &str, config: &str) -> Result<(), CliError> {
     let binary = find_server_binary()?;
     let status = ProcessCommand::new(&binary)
         .arg("--listen")
         .arg(listen)
-        .arg("--data")
-        .arg(data)
         .arg("--config")
         .arg(config)
         .status()

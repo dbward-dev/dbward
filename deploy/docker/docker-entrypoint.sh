@@ -7,8 +7,7 @@ if [ "$(id -u)" = '0' ]; then
   exec gosu dbward "$0" "$@"
 fi
 
-DB_PATH="${DBWARD_DB_PATH:-/data/dbward.db}"
-export DBWARD_DB_PATH="$DB_PATH"
+DB_PATH="/data/dbward.db"
 
 # Litestream replication mode (requires litestream binary in the image)
 if [ -n "${LITESTREAM_S3_BUCKET:-}" ]; then
