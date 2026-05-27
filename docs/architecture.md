@@ -200,7 +200,7 @@ Both resolve to `AuthUser { token_id, user, role }`.
 dbward login     → Browser → IdP → Authorization Code Flow + PKCE
 dbward login --device → Device Code Flow (headless)
 dbward whoami    → Show identity, role, expiry
-dbward logout    → Revoke at IdP + delete ~/.dbward/credentials.json
+dbward logout    → Revoke at IdP + delete credentials
 ```
 
 Auto-refresh: before each command, if token expires within 5 minutes.

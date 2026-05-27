@@ -100,7 +100,7 @@ dbward request resume abc12345   # prefix match supported
   "mcpServers": {
     "dbward": {
       "command": "dbward",
-      "args": ["mcp", "--config", "dbward.toml"]
+      "args": ["mcp"]
     }
   }
 }
@@ -229,7 +229,7 @@ Commands:
     cancel        Cancel a pending request
 
 Global Options:
-  --config <PATH>          Config file [default: dbward.toml]
+  --config <PATH>          Config file (standalone mode; omit for auto-detect)
   --database <NAME>        Target database [env: DBWARD_DATABASE]
   --environment <ENV>      Environment [env: DBWARD_ENV]
 ```
@@ -372,15 +372,23 @@ dbward execute "SELECT pg_terminate_backend(12345)" \
 
 ## Configuration
 
-### Client (`dbward.toml`)
+Config is resolved in two layers:
+1. **Global** (`~/.config/dbward/config.toml`): server URL, token/OIDC
+2. **Project** (`./dbward.toml`): databases, migrations
+
+### Global (`~/.config/dbward/config.toml`)
+
+```toml
+[server]
+url = "http://localhost:3000"
+token = "dbw_..."
+```
+
+### Project (`dbward.toml`)
 
 ```toml
 default_database = "app"
 migrations_dir = "db/migrations"
-
-[server]
-url = "http://localhost:3000"
-token = "dbw_..."
 
 [databases.app]
 # No DB URL here — agent handles connections

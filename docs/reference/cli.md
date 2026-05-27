@@ -3,10 +3,11 @@
 ## Global Options
 
 ```
---config <PATH>     Config file path (env: DBWARD_CONFIG)
---database <NAME>   Target database (env: DBWARD_DATABASE)
---environment <ENV> Target environment (env: DBWARD_ENV)
---format <FORMAT>   Output format: human (default), json
+--config <PATH>       Config file path — standalone mode (env: DBWARD_CONFIG)
+--merge-global        Merge global config when --config is set
+--database <NAME>     Target database (env: DBWARD_DATABASE)
+--environment <ENV>   Target environment (env: DBWARD_ENV)
+--format <FORMAT>     Output format: human (default), json
 ```
 
 ---

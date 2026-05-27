@@ -236,10 +236,16 @@ operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "mi
 
 ## CLI Configuration
 
-File: `dbward.toml` (auto-detected or `--config` / `DBWARD_CONFIG` env var)
+Two-layer resolution:
+1. Global: `~/.config/dbward/config.toml` (server connection, auth)
+2. Project: `dbward.toml` in CWD (databases, migrations)
+
+When `--config` or `DBWARD_CONFIG` is set, only that file is used (standalone mode, no global merge).
+Use `--merge-global` to opt into global merge with an explicit config path.
+
+### Global config (`~/.config/dbward/config.toml`)
 
 ```toml
-# Server connection
 [server]
 url = "https://dbward.internal:3000"
 token = "${DBWARD_TOKEN}"          # API token (mutually exclusive with oidc)
@@ -248,9 +254,11 @@ token = "${DBWARD_TOKEN}"          # API token (mutually exclusive with oidc)
 [server.oidc]
 issuer = "https://auth.example.com/realms/myorg"
 client_id = "dbward-cli"
-browser_url = "https://auth.example.com"  # URL shown to user (optional)
+```
 
-# Defaults
+### Project config (`dbward.toml`)
+
+```toml
 default_database = "app"           # Skip --database flag (optional)
 default_environment = "production" # Skip --environment flag (optional)
 migrations_dir = "db/migrations"   # Path to migration files (default: "migrations")
@@ -264,7 +272,11 @@ migrations_dir = "analytics/migrations"
 
 | Variable | Purpose |
 |----------|---------|
-| `DBWARD_CONFIG` | Path to CLI config file |
+| `DBWARD_CONFIG` | Path to CLI config file (standalone mode) |
+| `DBWARD_GLOBAL_CONFIG` | Path to global config file |
+| `DBWARD_SERVER_URL` | Override server URL |
+| `DBWARD_TOKEN` | Override API token |
+| `DBWARD_DATABASE` | Default database |
 | `DBWARD_ENV` | Default environment |
 
 ---
