@@ -91,6 +91,15 @@ impl SlackNotifier {
             }
         }
 
+        // Enrich reason from request if not already set
+        if event.reason.is_none()
+            && let Some(ref req_id) = event.request_id
+            && let Ok(Some(req)) = self.request_reader.get(req_id)
+            && let Some(ref reason) = req.reason
+            && !reason.is_empty()
+        {
+            event.reason = Some(reason.clone());
+        }
         // Resolve approver mentions for notification
         let mention_suffix = self.resolve_approver_mentions(&event).await;
 

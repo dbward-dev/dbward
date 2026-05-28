@@ -122,7 +122,228 @@ async fn handle_block_actions(
     let slack_user_id = payload["user"]["id"].as_str().unwrap_or("").to_string();
     let channel_id = payload["channel"]["id"].as_str().unwrap_or("").to_string();
 
-    if action_id != "dbward_review" || request_id.is_empty() || trigger_id.is_empty() {
+    if action_id != "dbward_review"
+        && action_id != "dbward_resume"
+        && action_id != "dbward_view_result"
+    {
+        return StatusCode::OK;
+    }
+    if request_id.is_empty() {
+        return StatusCode::OK;
+    }
+
+    // DX-12: Resume button handler
+    if action_id == "dbward_resume" {
+        let state_clone = state.clone();
+        let channel = payload["container"]["channel_id"]
+            .as_str()
+            .unwrap_or(&channel_id)
+            .to_string();
+        let message_ts = payload["container"]["message_ts"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        tokio::spawn(async move {
+            let auth_user = match resolve_slack_auth_user(&state_clone, &slack_user_id).await {
+                Ok(u) => u,
+                Err(e) => {
+                    tracing::warn!(error = %e, "slack resume: auth failed");
+                    if let Some(ref sc) = state_clone.slack_client {
+                        let msg = if e == "not_linked" {
+                            format!(
+                                "⚠️ Your Slack account is not linked to dbward.\nRun: `dbward user link-slack {slack_user_id}`"
+                            )
+                        } else {
+                            "⚠️ Authentication failed. Please contact an administrator.".to_string()
+                        };
+                        let _ = sc.post_ephemeral(&channel, &slack_user_id, &msg).await;
+                    }
+                    return;
+                }
+            };
+            let uc = dbward_app::use_cases::resume_request::ResumeRequest {
+                authorizer: state_clone.authorizer.clone(),
+                policy: state_clone.policy_evaluator.clone(),
+                request_reader: state_clone.request_reader.clone(),
+                request_writer: state_clone.request_writer.clone(),
+                result_channel: state_clone.result_channel.clone(),
+                event_dispatcher: state_clone.event_dispatcher.clone(),
+                policy_repo: state_clone.policy_repo.clone(),
+                clock: state_clone.clock.clone(),
+            };
+            let input = dbward_app::use_cases::resume_request::ResumeRequestInput {
+                request_id: request_id.clone(),
+            };
+            let audit_ctx = dbward_domain::entities::AuditContext::Request(
+                dbward_domain::entities::ClientInfo {
+                    peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                    client_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                    source: dbward_domain::entities::IpSource::Direct,
+                },
+            );
+            match uc.execute(input, &auth_user, &audit_ctx) {
+                Ok(_) => {
+                    // Update root message to Dispatched state (removes Resume button)
+                    if let Some(ref sc) = state_clone.slack_client
+                        && !message_ts.is_empty()
+                        && let Ok(Some(req)) = state_clone.request_reader.get(&request_id)
+                    {
+                        let context = state_clone.context_repo.get(&request_id).ok().flatten();
+                        let current_step = req
+                            .workflow_snapshot_json
+                            .as_deref()
+                            .and_then(|wj| serde_json::from_str::<serde_json::Value>(wj).ok())
+                            .and_then(|v| v["steps"].as_array().map(|a| a.len() as u32))
+                            .unwrap_or(0);
+                        let blocks = dbward_infra::slack::block_kit::build_message_from_state(
+                            &req,
+                            req.workflow_snapshot_json.as_deref(),
+                            context.as_ref(),
+                            current_step,
+                            None,
+                            None,
+                        );
+                        let _ = sc
+                            .update_message(&channel, &message_ts, &blocks, "Dispatched")
+                            .await;
+                    }
+                }
+                Err(e) => {
+                    tracing::info!(error = %e, "slack resume failed");
+                    if let Some(ref sc) = state_clone.slack_client {
+                        let user_msg = match &e {
+                            dbward_app::error::AppError::Forbidden(_) => {
+                                "⚠️ You don't have permission to resume this request."
+                            }
+                            dbward_app::error::AppError::Conflict(_) => {
+                                "⚠️ This request cannot be resumed in its current state."
+                            }
+                            _ => "⚠️ Resume failed. Please try again or use the CLI.",
+                        };
+                        let _ = sc.post_ephemeral(&channel, &slack_user_id, user_msg).await;
+                    }
+                }
+            }
+        });
+        return StatusCode::OK;
+    }
+
+    // DX-13: View Result button handler
+    if action_id == "dbward_view_result" {
+        if trigger_id.is_empty() {
+            return StatusCode::OK;
+        }
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            // Open loading modal immediately (trigger_id expires quickly)
+            let loading = dbward_infra::slack::block_kit::build_result_modal_unavailable(
+                &request_id,
+                "Loading...",
+            );
+            let view_id = if let Some(ref sc) = state_clone.slack_client {
+                match sc.open_modal(&trigger_id, &loading).await {
+                    Ok(id) => id,
+                    Err(_) => return,
+                }
+            } else {
+                return;
+            };
+
+            let auth_user = match resolve_slack_auth_user(&state_clone, &slack_user_id).await {
+                Ok(u) => u,
+                Err(_) => {
+                    if let Some(ref sc) = state_clone.slack_client {
+                        let err_modal =
+                            dbward_infra::slack::block_kit::build_result_modal_unavailable(
+                                &request_id,
+                                "Authentication failed.",
+                            );
+                        let _ = sc.update_modal(&view_id, &err_modal).await;
+                    }
+                    return;
+                }
+            };
+            let uc = dbward_app::use_cases::get_result::GetResult {
+                authorizer: state_clone.authorizer.clone(),
+                request_reader: state_clone.request_reader.clone(),
+                agent_repo: state_clone.agent_repo.clone(),
+                result_store: state_clone.result_store.clone(),
+                policy_repo: state_clone.policy_repo.clone(),
+                clock: state_clone.clock.clone(),
+            };
+            let input = dbward_app::use_cases::get_result::GetResultInput {
+                request_id: request_id.clone(),
+            };
+            match uc.execute(input, &auth_user).await {
+                Ok(output) => {
+                    let mut buf = Vec::new();
+                    let content_length = output.stream.content_length;
+                    let mut stream = output.stream.stream;
+                    loop {
+                        use std::pin::Pin;
+                        let next =
+                            std::future::poll_fn(|cx| Pin::as_mut(&mut stream).poll_next(cx)).await;
+                        match next {
+                            Some(Ok(bytes)) => {
+                                buf.extend_from_slice(&bytes);
+                                if buf.len() > 64 * 1024 {
+                                    break;
+                                }
+                            }
+                            _ => break,
+                        }
+                    }
+                    let text = String::from_utf8_lossy(&buf);
+                    let sql = state_clone
+                        .request_reader
+                        .get(&request_id)
+                        .ok()
+                        .flatten()
+                        .map(|r| r.detail.clone());
+                    let modal = dbward_infra::slack::block_kit::build_result_modal(
+                        &request_id,
+                        sql.as_deref(),
+                        &text,
+                        content_length,
+                    );
+                    if let Some(ref sc) = state_clone.slack_client {
+                        let _ = sc.update_modal(&view_id, &modal).await;
+                    }
+                }
+                Err(dbward_app::error::AppError::Gone(msg)) => {
+                    let modal = dbward_infra::slack::block_kit::build_result_modal_unavailable(
+                        &request_id,
+                        &msg,
+                    );
+                    if let Some(ref sc) = state_clone.slack_client {
+                        let _ = sc.update_modal(&view_id, &modal).await;
+                    }
+                }
+                Err(dbward_app::error::AppError::Forbidden(_)) => {
+                    if let Some(ref sc) = state_clone.slack_client {
+                        let modal = dbward_infra::slack::block_kit::build_result_modal_unavailable(
+                            &request_id,
+                            "You don't have permission to view this result.",
+                        );
+                        let _ = sc.update_modal(&view_id, &modal).await;
+                    }
+                }
+                Err(_) => {
+                    if let Some(ref sc) = state_clone.slack_client {
+                        let modal = dbward_infra::slack::block_kit::build_result_modal_unavailable(
+                            &request_id,
+                            "Failed to load result.",
+                        );
+                        let _ = sc.update_modal(&view_id, &modal).await;
+                    }
+                }
+            }
+        });
+        return StatusCode::OK;
+    }
+
+    // dbward_review: open review modal
+    if trigger_id.is_empty() {
         return StatusCode::OK;
     }
 
