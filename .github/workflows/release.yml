@@ -21,19 +21,15 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             container: rust:1.88-bookworm
-            suffix: linux-amd64
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             container: rust:1.88-bookworm
-            suffix: linux-arm64
           - target: x86_64-apple-darwin
             os: macos-latest
             container: ""
-            suffix: darwin-amd64
           - target: aarch64-apple-darwin
             os: macos-latest
             container: ""
-            suffix: darwin-arm64
 
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container || null }}
@@ -65,16 +61,19 @@ jobs:
       - name: Package
         shell: bash
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p dist
           for bin in dbward dbward-server dbward-agent; do
             SRC="target/${{ matrix.target }}/release/$bin"
             [ -f "$SRC" ] || continue
-            cp "$SRC" "dist/${bin}-${{ matrix.suffix }}"
+            ARCHIVE="${bin}-v${VERSION}-${{ matrix.target }}.tar.gz"
+            tar -czf "dist/${ARCHIVE}" -C "target/${{ matrix.target }}/release" "$bin"
+            shasum -a 256 "dist/${ARCHIVE}" | awk '{print $1 "  " $2}' > "dist/${ARCHIVE}.sha256"
           done
 
       - uses: actions/upload-artifact@v4
         with:
-          name: binaries-${{ matrix.suffix }}
+          name: binaries-${{ matrix.target }}
           path: dist/
 
   release:
@@ -108,20 +107,21 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: binaries-linux-amd64
+          name: binaries-x86_64-unknown-linux-gnu
           path: dist/amd64
 
       - uses: actions/download-artifact@v4
         with:
-          name: binaries-linux-arm64
+          name: binaries-aarch64-unknown-linux-gnu
           path: dist/arm64
 
       - name: Extract binaries
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p binaries/amd64 binaries/arm64
           for bin in dbward dbward-server dbward-agent; do
-            cp "dist/amd64/${bin}-linux-amd64" "binaries/amd64/${bin}"
-            cp "dist/arm64/${bin}-linux-arm64" "binaries/arm64/${bin}"
+            tar -xzf "dist/amd64/${bin}-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz" -C binaries/amd64/
+            tar -xzf "dist/arm64/${bin}-v${VERSION}-aarch64-unknown-linux-gnu.tar.gz" -C binaries/arm64/
             chmod +x "binaries/amd64/${bin}" "binaries/arm64/${bin}"
           done
 
