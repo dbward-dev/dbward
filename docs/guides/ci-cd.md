@@ -27,7 +27,8 @@ jobs:
 
       - name: Install dbward
         run: |
-          curl -sL https://github.com/dbward-dev/dbward/releases/latest/download/dbward-linux-amd64 -o dbward
+          VERSION=$(curl -s https://api.github.com/repos/dbward-dev/dbward/releases/latest | grep -o '"tag_name": "v[^"]*"' | cut -d'"' -f4 | sed 's/^v//')
+          curl -sL "https://github.com/dbward-dev/dbward/releases/latest/download/dbward-v${VERSION}-x86_64-unknown-linux-gnu.tar.gz" | tar xz
           chmod +x dbward
           sudo mv dbward /usr/local/bin/
 

@@ -2,7 +2,7 @@
 
 use crate::error::CliError as Error;
 
-const REPO_OWNER: &str = "metapox";
+const REPO_OWNER: &str = "dbward-dev";
 const REPO_NAME: &str = "dbward";
 
 pub async fn run_self_update() -> Result<(), Error> {
