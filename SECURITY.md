@@ -11,9 +11,13 @@
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Instead, please report them via email:
+Instead, use GitHub's private vulnerability reporting:
 
-📧 **security@dbward.dev**
+1. Go to [Security → Advisories → Report a vulnerability](https://github.com/dbward-dev/dbward/security/advisories/new)
+2. Fill in the details (description, steps to reproduce, impact)
+3. Submit — only you and the maintainers can see the report
+
+This keeps the vulnerability private until a fix is available.
 
 ### What to include
 
