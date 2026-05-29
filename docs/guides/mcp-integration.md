@@ -1,3 +1,8 @@
+---
+title: MCP Integration
+description: Use dbward as an MCP server for AI assistants
+---
+
 # MCP Integration
 
 Use dbward from AI-powered IDEs (Cursor, GitHub Copilot, Kiro) via the [Model Context Protocol](https://modelcontextprotocol.io). The AI can query databases, run migrations, and check request status — all through dbward's approval workflow.

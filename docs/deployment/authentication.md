@@ -1,3 +1,8 @@
+---
+title: Authentication
+description: Configure OIDC and API token auth
+---
+
 # Authentication
 
 dbward supports two authentication methods: **API tokens** (simple, self-hosted) and **OIDC** (SSO with your identity provider). You can use either or both.

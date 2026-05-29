@@ -1,3 +1,8 @@
+---
+title: REST API Reference
+description: All dbward REST API endpoints
+---
+
 # REST API Reference
 
 Base URL: `http://localhost:3000` (or your server address)

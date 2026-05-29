@@ -1,3 +1,8 @@
+---
+title: CLI Reference
+description: All dbward CLI commands and options
+---
+
 # CLI Reference
 
 ## Global Options

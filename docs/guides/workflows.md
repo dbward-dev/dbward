@@ -1,3 +1,8 @@
+---
+title: Workflows
+description: Design approval workflows for your team
+---
+
 # Workflows
 
 Workflows define who must approve a database operation before it executes. Configure them in `dbward-server.toml`.

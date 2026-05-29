@@ -1,3 +1,8 @@
+---
+title: Slack Integration
+description: Connect dbward to Slack for approval notifications
+---
+
 # Slack Integration
 
 Connect dbward to Slack for approval notifications and one-click approve/reject.
