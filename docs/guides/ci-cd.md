@@ -1,3 +1,8 @@
+---
+title: CI/CD Integration
+description: Run dbward in CI/CD pipelines
+---
+
 # CI/CD Integration
 
 Run migrations and database operations in CI/CD pipelines with dbward's approval workflow.

@@ -1,3 +1,8 @@
+---
+title: Agent Setup
+description: Deploy the dbward agent
+---
+
 # Agent Setup
 
 The dbward agent is the **only component that connects to your database**. It polls the server for approved jobs, executes them, and returns results.

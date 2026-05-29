@@ -1,3 +1,8 @@
+---
+title: Configuration Reference
+description: Complete configuration file specification
+---
+
 # Configuration Reference
 
 dbward uses TOML configuration files. All config files support environment variable expansion with `${VAR_NAME}` syntax.

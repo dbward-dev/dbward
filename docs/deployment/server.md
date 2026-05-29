@@ -1,3 +1,8 @@
+---
+title: Server Setup
+description: Deploy the dbward server
+---
+
 # Server Setup
 
 The dbward server manages approval state, audit logs, and coordinates agents. It does **not** connect to your database.

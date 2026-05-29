@@ -1,3 +1,8 @@
+---
+title: Architecture
+description: System components and data flow
+---
+
 # Architecture
 
 ## Components

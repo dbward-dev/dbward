@@ -1,3 +1,8 @@
+---
+title: Deployment Overview
+description: Production deployment architecture
+---
+
 # Deployment Overview
 
 ## Architecture

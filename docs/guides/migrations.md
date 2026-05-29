@@ -1,3 +1,8 @@
+---
+title: Migrations
+description: Manage database migrations with approval workflows
+---
+
 # Migrations
 
 dbward manages database migrations with approval workflows. Migrations go through the same approval process as ad-hoc queries.
