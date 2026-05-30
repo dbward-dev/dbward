@@ -21,7 +21,7 @@ $ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
 - 🤖 **MCP-native** — 12 tools, 6 prompts, elicitation support. AI agents operate safely
 - ⚡ **Single binary** — Rust + embedded SQLite. No Docker, no external DB
 - 🔒 **Agent isolation** — DB credentials never leave the agent. CLI/AI never touch your database directly
-- 🆓 **Free** — approval, audit, MCP, break-glass all included. [Apache-2.0 / MIT](LICENSE-APACHE)
+- 🆓 **Free** — approval, audit, MCP, break-glass all included. [Apache-2.0 / BSL-1.1](LICENSE-BSL)
 
 ## Architecture
 
