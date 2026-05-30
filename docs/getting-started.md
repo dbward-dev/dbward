@@ -9,8 +9,8 @@ Choose how you want to try dbward:
 
 | Path | Best for | Time | Requirements |
 |------|----------|------|--------------|
-| [**Connect your database**](quickstart-local) | You already have PostgreSQL or MySQL running | 3 min | macOS or Linux |
-| [**Try with Docker**](quickstart-docker) | You want a self-contained demo with a test database | 5 min | Docker + Docker Compose |
+| [**Connect your database**](quickstart-local.md) | You already have PostgreSQL or MySQL running | 3 min | macOS or Linux |
+| [**Try with Docker**](quickstart-docker.md) | You want a self-contained demo with a test database | 5 min | Docker + Docker Compose |
 
 Both paths end with a working approval flow you can test.
 
@@ -28,7 +28,7 @@ Both paths end with a working approval flow you can test.
 
 ## What's next after getting started
 
-- [Team Setup](deployment/overview) — deploy server + agent for your team
-- [Workflows Guide](guides/workflows) — approval policies and conditions
-- [MCP Integration](guides/mcp-integration) — use dbward as an MCP server for AI tools
-- [Configuration Reference](reference/configuration) — all config options
+- [Team Setup](deployment/overview.md) — deploy server + agent for your team
+- [Workflows Guide](guides/workflows.md) — approval policies and conditions
+- [MCP Integration](guides/mcp-integration.md) — use dbward as an MCP server for AI tools
+- [Configuration Reference](reference/configuration.md) — all config options

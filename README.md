@@ -55,19 +55,20 @@ $ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
 ## Quick Start
 
 ```bash
-# Install (from source)
-git clone https://github.com/dbward-dev/dbward.git && cd dbward
-cargo build --release
-# Binaries: target/release/dbward, dbward-server, dbward-agent
+# Install (downloads dbward, dbward-server, dbward-agent)
+curl -fsSL https://dbward.dev/install.sh | sh
 
-# Initialize config
-dbward init
+# Or CLI only (for developers connecting to an existing server):
+# DBWARD_COMPONENTS=cli curl -fsSL https://dbward.dev/install.sh | sh
 
 # Start local server + agent (development mode)
-dbward dev --database-url "postgres://localhost/myapp"
+dbward dev --database-url "postgres://user:pass@localhost:5432/mydb"
+
+# In another terminal — run a query
+dbward --config ~/.dbward/dev/client.toml --database app execute "SELECT 1"
 ```
 
-That's it. You now have approval workflows and audit logs for your local database.
+> **See also:** [Quickstart with Docker](https://dbward.dev/quickstart-docker/) for a self-contained demo with a test database.
 
 ### Team Setup
 
@@ -76,21 +77,25 @@ That's it. You now have approval workflows and audit logs for your local databas
 dbward init --preset small-team
 
 # 2. Start server (auto-initializes on first run)
-dbward-server --config server.toml
-# → Tokens written to ./data/admin-token, ./data/agent-token
+dbward-server --listen 0.0.0.0:3000 --config server.toml
+# → Tokens written to ./data/admin-token, ./data/agent-token, ./data/developer-token
 
 # 3. Start agent (connects to your database)
 DBWARD_AGENT_TOKEN=$(cat ./data/agent-token) dbward-agent --config agent.toml
 
-# 5. Developers use CLI (no DB access needed)
+# 4. Configure CLI for developer
+export DBWARD_TOKEN=$(cat ./data/developer-token)
+# Or edit ~/.config/dbward/config.toml → token = "dbw_..."
+
+# 5. Developer submits a request
 dbward execute "DELETE FROM old_data" --reason "cleanup"
 # → "Request abc12345 requires approval."
 
-# 5. Approver
-dbward request approve abc12345  # prefix match supported
+# 6. Approver approves (using admin token)
+DBWARD_TOKEN=$(cat ./data/admin-token) dbward request approve abc12345 --comment "LGTM"
 
-# 6. Developer gets result
-dbward request resume abc12345   # prefix match supported
+# 7. Developer resumes execution
+dbward request resume abc12345
 ```
 
 ### MCP Mode (AI agents)
@@ -380,7 +385,8 @@ dbward execute "SELECT pg_terminate_backend(12345)" \
 - Skips approval — agent executes immediately when dispatched
 - Fires `break_glass` webhook (🚨 in Slack)
 - Reason recorded in audit log
-- Admin and Developer only
+- **Admin role only** (developer/readonly cannot use)
+- **Not available via MCP** (AI agents cannot trigger break-glass)
 
 ## Configuration
 

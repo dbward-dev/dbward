@@ -9,47 +9,37 @@ Connect dbward to an existing database and run your first query through the appr
 
 **Prerequisites:** PostgreSQL or MySQL running and accessible.
 
-## 1. Download binaries
+## 1. Install
 
-`dbward dev` runs server + agent internally, so all 3 binaries must be in the same directory.
-
-Download from [GitHub Releases](https://github.com/dbward-dev/dbward/releases/latest) and extract. For example (macOS Apple Silicon, replace version as needed):
+The install script downloads `dbward`, `dbward-server`, and `dbward-agent`:
 
 ```bash
-VERSION=0.1.3
-TARGET=aarch64-apple-darwin
-
-# Linux x86_64: TARGET=x86_64-unknown-linux-gnu
-# Linux ARM64:  TARGET=aarch64-unknown-linux-gnu
-# macOS Intel:  TARGET=x86_64-apple-darwin
-
-for bin in dbward dbward-server dbward-agent; do
-  curl -sL "https://github.com/dbward-dev/dbward/releases/download/v${VERSION}/${bin}-v${VERSION}-${TARGET}.tar.gz" | tar xz
-done
+curl -fsSL https://dbward.dev/install.sh | sh
 ```
+
+Installs to `/usr/local/bin` (or `~/.dbward/bin` if no write access).
 
 ## 2. Start dev mode
 
 ```bash
-./dbward dev --database-url "postgres://user:password@localhost:5432/mydb"
+dbward dev --database-url "postgres://user:password@localhost:5432/mydb"
 ```
 
 For MySQL:
 ```bash
-./dbward dev --database-url "mysql://user:password@localhost:3306/mydb"
+dbward dev --database-url "mysql://user:password@localhost:3306/mydb"
 ```
 
 Output:
 ```
 dbward dev starting...
   Server: http://127.0.0.1:3000
-  Database: mydb
+  Database: postgres://user:password@localhost:5432/mydb
   Admin token:     dbw_xxxx
   Developer token: dbw_yyyy
   Config: ~/.dbward/dev/client.toml
 
-Try:
-  dbward --config ~/.dbward/dev/client.toml execute "SELECT 1"
+Try: dbward --config ~/.dbward/dev/client.toml --database app execute "SELECT 1"
 ```
 
 ## 3. Run a query
@@ -57,13 +47,13 @@ Try:
 In another terminal:
 
 ```bash
-./dbward --config ~/.dbward/dev/client.toml --database app execute "SELECT now()"
+dbward --config ~/.dbward/dev/client.toml --database app execute "SELECT now()"
 ```
 
 In dev mode, requests are auto-approved and executed immediately.
 
 ## 4. Next steps
 
-- [Team Setup](deployment/overview) — separate server + agent for production
-- [MCP Integration](guides/mcp-integration) — connect AI agents
-- [Try with Docker](quickstart-docker) — full demo with approval flow
+- [Team Setup](deployment/overview.md) — separate server + agent for production
+- [MCP Integration](guides/mcp-integration.md) — connect AI agents
+- [Try with Docker](quickstart-docker.md) — full demo with approval flow
