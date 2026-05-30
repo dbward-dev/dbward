@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.1.4] — 2026-05-30
+
+Hardening: code review findings, migration tooling, reactive elicitation, and deployment improvements.
+
+### Bug Fixes
+
+- **MCP migrate v1/v2 mismatch** (H-2): MCP `migrate_up`/`migrate_down` tools now produce v2 JSON detail (was sending v1 string that agent couldn't parse — migrations via MCP were completely broken)
+- **Request insert atomicity** (M-2): `insert()` now wrapped in transaction (prevents orphan requests when `populate_pending_approvers` fails)
+- **OIDC EC key support** (M-3): JWKS parser handles ES256/ES384 keys + algorithm rotation fix
+- **API type safety** (M-4/M-5): `POST /api/requests` uses typed `CreateRequestBody` — non-string `detail` returns 422
+- **Audit limit cap** (M-6): `GET /api/audit/events?limit=N` capped at 200 (prevents DoS)
+- **MCP elicitation ID collision** (M-11): Elicitation IDs use `"elicit-N"` string prefix (no longer collides with JSON-RPC numeric IDs)
+- **Approve step semantics** (M-13): `current_step` output unified to "completed step count"
+- **Slack empty secret** (M-14): Empty `signing_secret` gracefully disables Slack (was potential HMAC bypass)
+- **SqlReviewConfig default** (#74): Empty string default → proper "warn" values
+- **max_executions=0** (BUG-1): Config validation rejects `max_executions = 0` (must be ≥ 1)
+
+### Features
+
+- **Non-transactional migrations** (ISSUE-3): `-- migrate:up transaction:false` marker for `CREATE INDEX CONCURRENTLY` support (PostgreSQL only, single-statement)
+- **Reactive elicitation** (ISSUE-12): MCP `submit_and_wait` detects `reason_required` error and elicits reason from user automatically (works for all environments, not just production)
+- **CLI two-layer config** (#76): Global `~/.config/dbward/` + project-level CWD resolution
+- **Slack explain/resume/view** (#78): Rich Slack interactions for request review
+- **One-command install** (#80): `curl -sSL ... | sh` installer script
+
+### Breaking Changes
+
+- `GET /api/result-policies` response: `[...]` → `{"result_policies": [...]}`
+- `POST /api/requests` `detail` must be string (previously silently accepted any JSON type)
+- `max_estimated_rows = 0` now means "zero rows allowed" (previously meant unlimited)
+- `--data` flag removed (#75) — use `state_dir` in server.toml
+
+### Deployment
+
+- **ECS ALB default enabled** (#89): Fixed endpoint for CLI access (was optional, now default)
+- **ECS circuit breaker** (#89): `DeploymentCircuitBreaker` prevents 3-hour CloudFormation hangs
+- **ECS AlbSubnetIds removed** (#89): ALB uses same `SubnetIds` as tasks (fewer parameters)
+- Unified release asset naming: `{bin}-v{ver}-{target}.tar.gz` (#79)
+
+### Documentation
+
+- Security documentation + deployment checklist (#81, #82)
+- Quickstart split into local DB / Docker paths (#84)
+- ADR-002 approver scope bypass documented
+- Dependabot configured (#84)
+
 ## [0.1.3] — 2026-05-26
 
 Intelligent approval: risk-based auto-approve, context enrichment, Slack integration, and MCP consolidation.
