@@ -21,7 +21,7 @@ $ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
 - 🤖 **MCP-native** — 12 tools, 6 prompts, elicitation support. AI agents operate safely
 - ⚡ **Single binary** — Rust + embedded SQLite. No Docker, no external DB
 - 🔒 **Agent isolation** — DB credentials never leave the agent. CLI/AI never touch your database directly
-- 🆓 **Free** — approval, audit, MCP, break-glass all included. [Apache-2.0 / MIT](LICENSE-APACHE)
+- 🆓 **Free** — approval, audit, MCP, break-glass all included. [Apache-2.0 / BSL-1.1](LICENSE-BSL)
 
 ## Architecture
 
@@ -308,6 +308,18 @@ Global Options:
 - **API token auth** — SHA-256 hashed, prefix+hash composite lookup
 - **OIDC auth** — JWT verification with JWKS caching, RS256/ES256, PKCE for CLI (Pro)
 - **Audit hash chain** — SHA-256 chain linking all events, tamper-evident
+
+## Platform Support
+
+| Target | Status |
+|---|---|
+| Linux x86_64 (glibc) | ✅ Supported |
+| Linux aarch64 (glibc) | ✅ Supported |
+| macOS Apple Silicon | ✅ Supported |
+| macOS Intel | ✅ Supported |
+| Windows | ❌ Not supported |
+
+Pre-built binaries are available on [GitHub Releases](https://github.com/dbward-dev/dbward/releases). Docker images are published for `linux/amd64` and `linux/arm64`.
 
 ## Database Support
 

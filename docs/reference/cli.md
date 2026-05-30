@@ -86,7 +86,9 @@ dbward request list --status pending --user alice
 | Option | Description |
 |--------|-------------|
 | `--status <STATUS>` | Filter by status |
-| `--subject <USER>` | Filter by requester |
+| `--user <USER>` | Filter by requester |
+| `--pending-for-me` | Show only requests awaiting your approval |
+| `--limit <N>` | Max results |
 
 #### dbward request show
 
@@ -386,18 +388,19 @@ dbward server start --config server.toml --listen 0.0.0.0:3000
 #### dbward token create
 
 ```bash
-dbward token create --subject alice --role admin 
-dbward token create --subject agent-1 --role agent-default --agent 
-dbward token create --subject bob --role developer --groups "backend,dba" 
+dbward token create --subject alice --role admin
+dbward token create --subject agent-1 --role agent-default --subject-type agent
+dbward token create --subject bob --role developer --groups "backend,dba"
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--subject <NAME>` | Token subject |
 | `--role <ROLE>` | Role to assign |
-| `--agent` | Create agent token |
+| `--subject-type <TYPE>` | `user` (default) or `agent` |
 | `--groups <LIST>` | Comma-separated groups |
-| `` | SQLite database path |
+| `--name <NAME>` | Optional display name |
+| `--expires <DURATION>` | Optional expiry (e.g. `30d`) |
 
 ---
 

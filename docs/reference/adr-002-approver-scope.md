@@ -1,3 +1,7 @@
+---
+title: "ADR-002: Approver Scope"
+description: Designated approver scope behavior
+---
 # ADR-002 Addendum: Designated Approver Scope Behavior
 
 ## Context
