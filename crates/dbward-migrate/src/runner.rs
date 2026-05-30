@@ -41,7 +41,13 @@ impl MigrationRunner {
             if cancel.is_cancelled() {
                 return Err(MigrateError::Cancelled);
             }
-            driver.apply_migration(&entry.sql, &entry.version).await?;
+            if entry.transactional {
+                driver.apply_migration(&entry.sql, &entry.version).await?;
+            } else {
+                driver
+                    .apply_migration_no_tx(&entry.sql, &entry.version)
+                    .await?;
+            }
             applied.push(entry.version.clone());
         }
         Ok(MigrationRunResult {
@@ -77,7 +83,13 @@ impl MigrationRunner {
             if cancel.is_cancelled() {
                 return Err(MigrateError::Cancelled);
             }
-            driver.revert_migration(&entry.sql, &entry.version).await?;
+            if entry.transactional {
+                driver.revert_migration(&entry.sql, &entry.version).await?;
+            } else {
+                driver
+                    .revert_migration_no_tx(&entry.sql, &entry.version)
+                    .await?;
+            }
             reverted.push(entry.version.clone());
         }
         Ok(MigrationRunResult {
@@ -128,6 +140,22 @@ mod tests {
             self.applied.lock().unwrap().retain(|v| v != version);
             Ok(())
         }
+        async fn apply_migration_no_tx(
+            &self,
+            _sql: &str,
+            version: &str,
+        ) -> Result<(), DriverError> {
+            self.applied.lock().unwrap().push(version.to_owned());
+            Ok(())
+        }
+        async fn revert_migration_no_tx(
+            &self,
+            _sql: &str,
+            version: &str,
+        ) -> Result<(), DriverError> {
+            self.applied.lock().unwrap().retain(|v| v != version);
+            Ok(())
+        }
         async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
             Ok(())
         }
@@ -166,11 +194,19 @@ mod tests {
     }
 
     fn make_detail(direction: &str, migrations: Vec<(&str, &str)>) -> String {
+        make_detail_with_tx(
+            direction,
+            migrations.into_iter().map(|(v, s)| (v, s, true)).collect(),
+        )
+    }
+
+    fn make_detail_with_tx(direction: &str, migrations: Vec<(&str, &str, bool)>) -> String {
         let entries: Vec<MigrationEntry> = migrations
             .into_iter()
-            .map(|(v, sql)| MigrationEntry {
+            .map(|(v, sql, tx)| MigrationEntry {
                 version: v.to_owned(),
                 sql: sql.to_owned(),
+                transactional: tx,
             })
             .collect();
         let detail = MigrationDetail {
@@ -265,5 +301,142 @@ mod tests {
         let driver = Arc::new(MockDriver::new(vec!["001".into(), "003".into()]));
         let versions = MigrationRunner::status(driver.as_ref()).await.unwrap();
         assert_eq!(versions, vec!["001", "003"]);
+    }
+
+    /// Mock that tracks whether no_tx methods were called.
+    struct TrackingMockDriver {
+        applied: std::sync::Mutex<Vec<String>>,
+        no_tx_calls: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl TrackingMockDriver {
+        fn new() -> Self {
+            Self {
+                applied: std::sync::Mutex::new(vec![]),
+                no_tx_calls: std::sync::Mutex::new(vec![]),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl DatabaseDriver for TrackingMockDriver {
+        async fn query(&self, _: &str) -> Result<QueryOutput, DriverError> {
+            unimplemented!()
+        }
+        async fn execute(&self, _: &str) -> Result<u64, DriverError> {
+            unimplemented!()
+        }
+        async fn apply_migration(&self, _sql: &str, version: &str) -> Result<(), DriverError> {
+            self.applied.lock().unwrap().push(version.to_owned());
+            Ok(())
+        }
+        async fn revert_migration(&self, _sql: &str, version: &str) -> Result<(), DriverError> {
+            self.applied.lock().unwrap().retain(|v| v != version);
+            Ok(())
+        }
+        async fn apply_migration_no_tx(
+            &self,
+            _sql: &str,
+            version: &str,
+        ) -> Result<(), DriverError> {
+            self.applied.lock().unwrap().push(version.to_owned());
+            self.no_tx_calls
+                .lock()
+                .unwrap()
+                .push(format!("apply_no_tx:{version}"));
+            Ok(())
+        }
+        async fn revert_migration_no_tx(
+            &self,
+            _sql: &str,
+            version: &str,
+        ) -> Result<(), DriverError> {
+            self.applied.lock().unwrap().retain(|v| v != version);
+            self.no_tx_calls
+                .lock()
+                .unwrap()
+                .push(format!("revert_no_tx:{version}"));
+            Ok(())
+        }
+        async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
+            Ok(())
+        }
+        async fn applied_versions(&self) -> Result<Vec<String>, DriverError> {
+            Ok(self.applied.lock().unwrap().clone())
+        }
+        async fn query_cancellable(
+            &self,
+            _: &str,
+            _: u64,
+            _: &CancelState,
+            _: Option<usize>,
+        ) -> Result<QueryOutput, DriverError> {
+            unimplemented!()
+        }
+        async fn execute_cancellable(
+            &self,
+            _: &str,
+            _: u64,
+            _: &CancelState,
+        ) -> Result<u64, DriverError> {
+            unimplemented!()
+        }
+        async fn cancel_query(&self, _: &str) -> Result<bool, DriverError> {
+            unimplemented!()
+        }
+        async fn collect_schema(&self) -> Result<dbward_driver::SchemaSnapshot, DriverError> {
+            unimplemented!()
+        }
+        async fn explain(&self, _: &str, _: u64) -> Result<serde_json::Value, DriverError> {
+            unimplemented!()
+        }
+        fn dialect(&self) -> &'static str {
+            "postgresql"
+        }
+    }
+
+    #[tokio::test]
+    async fn run_up_uses_no_tx_when_transactional_false() {
+        let driver = Arc::new(TrackingMockDriver::new());
+        let cancel = CancelState::new();
+        let detail = make_detail_with_tx(
+            "up",
+            vec![
+                ("001", "CREATE INDEX CONCURRENTLY idx ON t(c)", false),
+                ("002", "CREATE TABLE t2 (id INT)", true),
+            ],
+        );
+        let result = MigrationRunner::run_up(driver.as_ref(), &detail, &cancel)
+            .await
+            .unwrap();
+        assert_eq!(result.applied, vec!["001", "002"]);
+        let no_tx = driver.no_tx_calls.lock().unwrap().clone();
+        assert_eq!(no_tx, vec!["apply_no_tx:001"]);
+    }
+
+    #[tokio::test]
+    async fn run_down_uses_no_tx_when_transactional_false() {
+        let driver = Arc::new(TrackingMockDriver::new());
+        {
+            driver
+                .applied
+                .lock()
+                .unwrap()
+                .extend(vec!["001".into(), "002".into()]);
+        }
+        let cancel = CancelState::new();
+        let detail = make_detail_with_tx(
+            "down",
+            vec![
+                ("001", "DROP TABLE t1", true),
+                ("002", "DROP INDEX CONCURRENTLY idx", false),
+            ],
+        );
+        let result = MigrationRunner::run_down(driver.as_ref(), &detail, &cancel)
+            .await
+            .unwrap();
+        assert_eq!(result.reverted, vec!["002", "001"]);
+        let no_tx = driver.no_tx_calls.lock().unwrap().clone();
+        assert_eq!(no_tx, vec!["revert_no_tx:002"]);
     }
 }

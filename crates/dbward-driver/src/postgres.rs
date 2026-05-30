@@ -18,6 +18,19 @@ fn validate_migration_version(version: &str) -> Result<(), DriverError> {
     Ok(())
 }
 
+/// Check if SQL contains multiple statements (semicolon followed by non-whitespace).
+fn has_multiple_statements(sql: &str) -> bool {
+    let mut found_semi = false;
+    for ch in sql.trim().chars() {
+        if ch == ';' {
+            found_semi = true;
+        } else if found_semi && !ch.is_whitespace() {
+            return true;
+        }
+    }
+    false
+}
+
 pub struct PostgresDriver {
     pool: sqlx::PgPool,
     url: String,
@@ -126,6 +139,48 @@ impl DatabaseDriver for PostgresDriver {
         let batch =
             format!("{down_sql}\n;\nDELETE FROM schema_migrations WHERE version = '{version}';");
         sqlx::raw_sql(&batch)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn apply_migration_no_tx(&self, sql: &str, version: &str) -> Result<(), DriverError> {
+        validate_migration_version(version)?;
+        if has_multiple_statements(sql) {
+            return Err(DriverError::QueryFailed(
+                "transactional=false migrations must contain a single SQL statement".into(),
+            ));
+        }
+        sqlx::raw_sql(sql)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let insert = format!("INSERT INTO schema_migrations (version) VALUES ('{version}');");
+        sqlx::raw_sql(&insert)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn revert_migration_no_tx(
+        &self,
+        down_sql: &str,
+        version: &str,
+    ) -> Result<(), DriverError> {
+        validate_migration_version(version)?;
+        if has_multiple_statements(down_sql) {
+            return Err(DriverError::QueryFailed(
+                "transactional=false migrations must contain a single SQL statement".into(),
+            ));
+        }
+        sqlx::raw_sql(down_sql)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let delete = format!("DELETE FROM schema_migrations WHERE version = '{version}';");
+        sqlx::raw_sql(&delete)
             .execute(&self.pool)
             .await
             .map_err(|e| DriverError::QueryFailed(e.to_string()))?;

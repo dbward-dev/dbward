@@ -323,43 +323,37 @@ async fn handle_tools_call(
         "dbward_execute_query" => {
             let sql = args["sql"].as_str().unwrap_or("");
             let db = args["database"].as_str().unwrap_or(db_name);
-            let mut reason = args["reason"].as_str().map(|s| s.to_string());
+            let reason = args["reason"].as_str().map(|s| s.to_string());
 
             if sql.is_empty() {
                 Err("sql parameter is required".to_string())
             } else {
-                // Elicitation: ask for reason on production if not provided
-                if env == "production" && reason.is_none() && client_supports_elicitation {
-                    match elicit.ask(
-                        "Production execution requires a reason.",
-                        json!({
-                            "type": "object",
-                            "properties": {
-                                "reason": {"type": "string", "description": "Why is this execution needed?"},
-                                "ticket": {"type": "string", "description": "Related ticket (optional)"}
-                            },
-                            "required": ["reason"]
-                        }),
-                    ).await {
-                        Ok(ElicitResult::Accept { content }) => {
-                            reason = content["reason"].as_str().map(|s| s.to_string());
-                        }
-                        Ok(ElicitResult::Decline) => return json!({
-                            "jsonrpc": "2.0", "id": id,
-                            "result": {"content": [{"type": "text", "text": "User declined to provide reason."}], "isError": true}
-                        }),
-                        Ok(ElicitResult::Cancel) | Err(_) => return json!({
-                            "jsonrpc": "2.0", "id": id,
-                            "result": {"content": [{"type": "text", "text": "Cancelled."}], "isError": true}
-                        }),
-                    }
-                }
-                submit_and_wait(client, "execute_query", env, db, sql, reason.as_deref()).await
+                submit_and_wait(
+                    client,
+                    "execute_query",
+                    env,
+                    db,
+                    sql,
+                    reason.as_deref(),
+                    elicit,
+                    client_supports_elicitation,
+                )
+                .await
             }
         }
         "dbward_migrate_status" => {
             let db = args["database"].as_str().unwrap_or(db_name);
-            submit_and_wait(client, "migrate_status", env, db, "", None).await
+            submit_and_wait(
+                client,
+                "migrate_status",
+                env,
+                db,
+                "",
+                None,
+                elicit,
+                client_supports_elicitation,
+            )
+            .await
         }
         "dbward_migrate_up" => {
             let count = args["count"].as_u64().map(|n| n as usize);
@@ -402,6 +396,8 @@ async fn handle_tools_call(
                                     db,
                                     &detail,
                                     args["reason"].as_str(),
+                                    elicit,
+                                    client_supports_elicitation,
                                 )
                                 .await
                             }
@@ -432,6 +428,8 @@ async fn handle_tools_call(
                                             db,
                                             &detail,
                                             args["reason"].as_str(),
+                                            elicit,
+                                            client_supports_elicitation,
                                         )
                                         .await
                                     }
@@ -547,7 +545,17 @@ async fn handle_tools_call(
                 Err(message) => return jsonrpc_error(id, -32602, message),
             };
             let explain_sql = format!("EXPLAIN {preview_sql}");
-            submit_and_wait(client, "execute_query", env, db, &explain_sql, None).await
+            submit_and_wait(
+                client,
+                "execute_query",
+                env,
+                db,
+                &explain_sql,
+                None,
+                elicit,
+                client_supports_elicitation,
+            )
+            .await
         }
         "dbward_explain_policy_failure" => {
             let req_id = args["request_id"].as_str().unwrap_or("");
@@ -642,6 +650,7 @@ async fn handle_tools_call(
 }
 
 /// Submit request, if dispatched wait for result, if pending return request_id.
+#[allow(clippy::too_many_arguments)]
 async fn submit_and_wait(
     client: &crate::server_client::ServerClient,
     operation: &str,
@@ -649,10 +658,10 @@ async fn submit_and_wait(
     database: &str,
     detail: &str,
     reason: Option<&str>,
+    elicit: &ElicitHandle,
+    supports_elicit: bool,
 ) -> Result<String, String> {
     use crate::commands::workflow;
-
-    const TIMEOUT: Duration = Duration::from_secs(120);
 
     // 1. Create request OUTSIDE timeout (request_id is always preserved)
     let cr = match workflow::create_request(
@@ -673,8 +682,61 @@ async fn submit_and_wait(
     .await
     {
         Ok(cr) => cr,
-        Err(e) => return Err(rewrite_error(&e.to_string())),
+        Err(e) => {
+            let err_str = e.to_string();
+            // Reactive elicitation: if reason_required and we can elicit
+            if err_str.contains("reason is required") && reason.is_none() && supports_elicit {
+                match elicit.ask(
+                    "This workflow requires a reason. Why is this operation needed?",
+                    json!({
+                        "type": "object",
+                        "properties": {
+                            "reason": {"type": "string", "description": "Why is this operation needed?"}
+                        },
+                        "required": ["reason"]
+                    }),
+                ).await {
+                    Ok(ElicitResult::Accept { content }) => {
+                        if let Some(r) = content["reason"].as_str() {
+                            // Retry once with reason
+                            let cr2 = workflow::create_request(
+                                client,
+                                crate::server_client::CreateRequest {
+                                    operation,
+                                    environment,
+                                    database,
+                                    detail,
+                                    emergency: false,
+                                    reason: Some(r),
+                                    metadata: None,
+                                    idempotency_key: None,
+                                    share_with: None,
+                                    no_store: false,
+                                },
+                            ).await.map_err(|e2| rewrite_error(&e2.to_string()))?;
+                            // Continue with cr2 below
+                            return submit_and_wait_resume(client, &cr2).await;
+                        }
+                        return Err(rewrite_error(&err_str));
+                    }
+                    _ => return Err(rewrite_error(&err_str)),
+                }
+            }
+            return Err(rewrite_error(&err_str));
+        }
     };
+
+    submit_and_wait_resume(client, &cr).await
+}
+
+/// Continue submit_and_wait after successful request creation.
+async fn submit_and_wait_resume(
+    client: &crate::server_client::ServerClient,
+    cr: &crate::commands::workflow::CreateResult,
+) -> Result<String, String> {
+    use crate::commands::workflow;
+
+    const TIMEOUT: Duration = Duration::from_secs(120);
 
     // 2. Pending → return immediately with request_id
     if cr.status == "pending" {

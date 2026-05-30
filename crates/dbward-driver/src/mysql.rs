@@ -165,6 +165,22 @@ impl DatabaseDriver for MysqlDriver {
             .map_err(|e| DriverError::QueryFailed(e.to_string()))
     }
 
+    async fn apply_migration_no_tx(&self, _sql: &str, _version: &str) -> Result<(), DriverError> {
+        Err(DriverError::QueryFailed(
+            "non-transactional migrations are not supported for MySQL".into(),
+        ))
+    }
+
+    async fn revert_migration_no_tx(
+        &self,
+        _down_sql: &str,
+        _version: &str,
+    ) -> Result<(), DriverError> {
+        Err(DriverError::QueryFailed(
+            "non-transactional migrations are not supported for MySQL".into(),
+        ))
+    }
+
     async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS schema_migrations (version VARCHAR(255) PRIMARY KEY)",

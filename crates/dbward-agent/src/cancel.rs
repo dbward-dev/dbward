@@ -96,6 +96,12 @@ mod tests {
         async fn revert_migration(&self, _: &str, _: &str) -> Result<(), DriverError> {
             unimplemented!()
         }
+        async fn apply_migration_no_tx(&self, _: &str, _: &str) -> Result<(), DriverError> {
+            unimplemented!()
+        }
+        async fn revert_migration_no_tx(&self, _: &str, _: &str) -> Result<(), DriverError> {
+            unimplemented!()
+        }
         async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
             unimplemented!()
         }

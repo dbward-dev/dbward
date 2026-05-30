@@ -21,6 +21,12 @@ pub struct MigrationDetail {
 pub struct MigrationEntry {
     pub version: String,
     pub sql: String,
+    #[serde(default = "default_true")]
+    pub transactional: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl MigrationDetail {
@@ -53,6 +59,7 @@ pub fn build_migrate_up_detail(
         .map(|m| MigrationEntry {
             version: m.version.clone(),
             sql: m.up_sql.clone(),
+            transactional: m.up_transactional,
         })
         .collect();
 
@@ -91,6 +98,7 @@ pub fn build_migrate_down_detail(
             Ok(MigrationEntry {
                 version: version.clone(),
                 sql: sql.clone(),
+                transactional: m.down_transactional,
             })
         })
         .collect::<Result<Vec<_>, MigrateError>>()?;

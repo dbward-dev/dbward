@@ -11,6 +11,8 @@ pub struct Migration {
     pub name: String,
     pub up_sql: String,
     pub down_sql: Option<String>,
+    pub up_transactional: bool,
+    pub down_transactional: bool,
 }
 
 /// Parse migration files from a directory.
@@ -43,6 +45,17 @@ pub fn parse_migrations_dir(dir: &Path) -> Result<Vec<Migration>, MigrateError> 
     Ok(migrations)
 }
 
+fn parse_marker_line(content: &str, marker_pos: usize, marker_len: usize) -> (bool, usize) {
+    let after_marker = marker_pos + marker_len;
+    let line_end = content[after_marker..]
+        .find('\n')
+        .map(|i| after_marker + i + 1)
+        .unwrap_or(content.len());
+    let marker_line = &content[after_marker..line_end];
+    let transactional = !marker_line.contains("transaction:false");
+    (transactional, line_end)
+}
+
 fn parse_migration_file(filename: &str, content: &str) -> Option<Migration> {
     let stem = filename.strip_suffix(".sql")?;
     let (version, name) = stem.split_once('_')?;
@@ -50,14 +63,16 @@ fn parse_migration_file(filename: &str, content: &str) -> Option<Migration> {
     let up_marker = "-- migrate:up";
     let down_marker = "-- migrate:down";
 
-    let up_start = content.find(up_marker)? + up_marker.len();
+    let up_pos = content.find(up_marker)?;
+    let (up_transactional, up_sql_start) = parse_marker_line(content, up_pos, up_marker.len());
 
-    let (up_sql, down_sql) = if let Some(down_pos) = content.find(down_marker) {
-        let up = content[up_start..down_pos].trim().to_string();
-        let down = content[down_pos + down_marker.len()..].trim().to_string();
-        (up, if down.is_empty() { None } else { Some(down) })
+    let (up_sql, down_sql, down_transactional) = if let Some(down_pos) = content.find(down_marker) {
+        let up = content[up_sql_start..down_pos].trim().to_string();
+        let (dt, down_sql_start) = parse_marker_line(content, down_pos, down_marker.len());
+        let down = content[down_sql_start..].trim().to_string();
+        (up, if down.is_empty() { None } else { Some(down) }, dt)
     } else {
-        (content[up_start..].trim().to_string(), None)
+        (content[up_sql_start..].trim().to_string(), None, true)
     };
 
     Some(Migration {
@@ -65,6 +80,8 @@ fn parse_migration_file(filename: &str, content: &str) -> Option<Migration> {
         name: name.to_string(),
         up_sql,
         down_sql,
+        up_transactional,
+        down_transactional,
     })
 }
 
@@ -112,6 +129,32 @@ mod tests {
     #[test]
     fn rejects_missing_marker() {
         assert!(parse_migration_file("20260501_x.sql", "SELECT 1;").is_none());
+    }
+
+    #[test]
+    fn parses_transaction_false_up() {
+        let content = "-- migrate:up transaction:false\nCREATE INDEX CONCURRENTLY idx ON t(col);\n\n-- migrate:down\nDROP INDEX idx;\n";
+        let m = parse_migration_file("20260501120000_add_idx.sql", content).unwrap();
+        assert!(!m.up_transactional);
+        assert!(m.down_transactional);
+        assert_eq!(m.up_sql, "CREATE INDEX CONCURRENTLY idx ON t(col);");
+        assert_eq!(m.down_sql.as_deref(), Some("DROP INDEX idx;"));
+    }
+
+    #[test]
+    fn parses_transaction_false_down() {
+        let content = "-- migrate:up\nCREATE TABLE t (id INT);\n\n-- migrate:down transaction:false\nDROP INDEX CONCURRENTLY idx;\n";
+        let m = parse_migration_file("20260501120000_drop_idx.sql", content).unwrap();
+        assert!(m.up_transactional);
+        assert!(!m.down_transactional);
+    }
+
+    #[test]
+    fn default_transactional_true() {
+        let content = "-- migrate:up\nCREATE TABLE t (id INT);\n\n-- migrate:down\nDROP TABLE t;\n";
+        let m = parse_migration_file("20260501120000_init.sql", content).unwrap();
+        assert!(m.up_transactional);
+        assert!(m.down_transactional);
     }
 
     #[test]

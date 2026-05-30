@@ -110,6 +110,11 @@ impl ServerConfig {
 
         // Execution policy timeout consistency
         for (i, ep) in self.execution_policies.iter().enumerate() {
+            if ep.max_executions == Some(0) {
+                return Err(ConfigError::Validation(format!(
+                    "execution_policies[{i}]: max_executions must be >= 1"
+                )));
+            }
             if let (Some(st), Some(max_st)) =
                 (ep.statement_timeout_secs, ep.max_statement_timeout_secs)
                 && st > max_st
