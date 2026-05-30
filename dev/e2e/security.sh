@@ -78,8 +78,8 @@ if [ -n "${READONLY_TOKEN:-}" ]; then
   STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1"}')
   [ "$STATUS" = "201" ] && pass "Readonly can create SELECT request" || fail "Readonly create SELECT" "got $STATUS"
 
-  # Readonly cannot create DML request
-  STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" -d '{"operation":"execute_query","environment":"development","database":"app","detail":"DELETE FROM users"}')
+  # Readonly cannot create DML request (use WHERE clause to pass SQL review, hit authz)
+  STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" -d '{"operation":"execute_dml","environment":"development","database":"app","detail":"DELETE FROM users WHERE id = 999"}')
   [ "$STATUS" = "403" ] && pass "Readonly cannot create DML request" || fail "Readonly create DML" "got $STATUS"
 
   # Readonly can read own audit

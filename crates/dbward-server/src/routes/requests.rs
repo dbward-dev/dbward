@@ -16,45 +16,17 @@ use dbward_domain::values::{DatabaseName, Environment, Operation};
 use crate::middleware::trusted_proxies::ClientIp;
 use crate::state::AppState;
 
+use super::map_error;
+
 type ApiResult =
     Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)>;
-
-/// Check if user can approve a pending request by parsing its workflow snapshot.
-fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
-    let status = match &e {
-        AppError::Forbidden(_) => StatusCode::FORBIDDEN,
-        AppError::Auth(_) => StatusCode::UNAUTHORIZED,
-        AppError::NotFound(_) => StatusCode::NOT_FOUND,
-        AppError::Conflict(_) => StatusCode::CONFLICT,
-        AppError::Gone(_) => StatusCode::GONE,
-        AppError::Validation(_) => StatusCode::BAD_REQUEST,
-        AppError::PlanLimit(_) => StatusCode::PAYMENT_REQUIRED,
-        AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
-        AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    let code = e.code();
-    let hint: Option<String> = match &e {
-        AppError::Forbidden(_) => Some("check your role permissions".into()),
-        AppError::Conflict(_) => Some("request may have been modified concurrently".into()),
-        AppError::Validation(msg) => Some(msg.clone()),
-        _ => None,
-    };
-    let message = match &e {
-        AppError::Internal(_) => "internal server error".to_string(),
-        other => other.to_string(),
-    };
-    (
-        status,
-        Json(json!({"error": message, "code": code, "hint": hint})),
-    )
-}
 
 pub async fn create(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
     client_ip: Option<Extension<ClientIp>>,
     connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
-    Json(body): Json<serde_json::Value>,
+    Json(body): Json<dbward_api_types::requests::CreateRequestBody>,
 ) -> ApiResult {
     if state.draining.load(std::sync::atomic::Ordering::SeqCst) {
         return Err((
@@ -68,27 +40,14 @@ pub async fn create(
         connect_info.as_ref().map(|e| &e.0),
     );
 
-    let database = body["database"].as_str().unwrap_or_default();
-    let environment = body["environment"].as_str().unwrap_or_default();
-    let detail = body["detail"].as_str().unwrap_or_default();
-
-    let database =
-        DatabaseName::new(database).map_err(|e| map_error(AppError::Validation(e.to_string())))?;
-    let environment = Environment::new(environment)
+    let database = DatabaseName::new(&body.database)
+        .map_err(|e| map_error(AppError::Validation(e.to_string())))?;
+    let environment = Environment::new(&body.environment)
         .map_err(|e| map_error(AppError::Validation(e.to_string())))?;
 
-    let share_with = body["share_with"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let operation = match body["operation"].as_str() {
-        None | Some("") => Operation::ExecuteSelect, // unspecified → classify from SQL
-        Some(s) => s
+    let operation = match body.operation.as_str() {
+        "" => Operation::ExecuteSelect,
+        s => s
             .parse::<Operation>()
             .map_err(|e| map_error(AppError::Validation(e)))?,
     };
@@ -97,14 +56,15 @@ pub async fn create(
         database,
         environment,
         operation,
-        detail: detail.to_string(),
-        reason: body["reason"].as_str().map(String::from),
-        emergency: body["emergency"].as_bool().unwrap_or(false),
-        idempotency_key: body["idempotency_key"].as_str().map(String::from),
-        share_with,
-        no_store: body["no_store"].as_bool().unwrap_or(false),
+        detail: body.detail,
+        reason: body.reason,
+        emergency: body.emergency,
+        idempotency_key: body.idempotency_key,
+        share_with: body.share_with,
+        no_store: body.no_store,
         metadata_json: body
-            .get("metadata")
+            .metadata
+            .as_ref()
             .map(|v| v.to_string())
             .unwrap_or_else(|| "{}".into()),
         channel: create_request::RequestChannel::Api,

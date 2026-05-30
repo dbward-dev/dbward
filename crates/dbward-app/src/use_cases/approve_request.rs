@@ -235,11 +235,7 @@ impl ApproveRequest {
             status: new_status,
             approved_by: user.subject_id.clone(),
             step_completed,
-            current_step: if all_satisfied {
-                total_steps
-            } else {
-                step_completed + 1
-            },
+            current_step: step_completed,
             total_steps,
         })
     }

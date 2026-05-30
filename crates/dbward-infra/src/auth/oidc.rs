@@ -79,10 +79,18 @@ impl OidcVerifier {
 
         let mut decoding_keys = Vec::new();
         for key in keys_arr {
+            // RSA keys
             if let (Some(n), Some(e)) = (
                 key.get("n").and_then(|v| v.as_str()),
                 key.get("e").and_then(|v| v.as_str()),
             ) && let Ok(dk) = jsonwebtoken::DecodingKey::from_rsa_components(n, e)
+            {
+                decoding_keys.push(dk);
+            }
+            // EC keys (ES256/ES384)
+            else if key.get("kty").and_then(|v| v.as_str()) == Some("EC")
+                && let Ok(jwk_value) = serde_json::from_value::<jsonwebtoken::jwk::Jwk>(key.clone())
+                && let Ok(dk) = jsonwebtoken::DecodingKey::from_jwk(&jwk_value)
             {
                 decoding_keys.push(dk);
             }
@@ -106,42 +114,52 @@ impl OidcVerifier {
             ));
         }
 
-        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
-        validation.set_audience(&[&self.client_id]);
-        validation.set_issuer(&[&self.issuer]);
-        validation.leeway = 30;
+        let algorithms = vec![
+            jsonwebtoken::Algorithm::RS256,
+            jsonwebtoken::Algorithm::RS384,
+            jsonwebtoken::Algorithm::RS512,
+            jsonwebtoken::Algorithm::ES256,
+            jsonwebtoken::Algorithm::ES384,
+        ];
 
         let mut last_err = String::new();
         let mut had_non_signature_error = false;
         for key in keys.keys.iter() {
-            match jsonwebtoken::decode::<serde_json::Value>(token, key, &validation) {
-                Ok(token_data) => {
-                    let claims = token_data.claims;
-                    let subject = claims
-                        .get("sub")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| {
-                            AuthError::OidcVerificationFailed("missing sub claim".into())
-                        })?
-                        .to_string();
-                    let groups: Vec<String> = claims
-                        .get(&self.groups_claim)
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    return Ok((subject, groups));
-                }
-                Err(e) => {
-                    let msg = e.to_string();
-                    if !is_key_mismatch(&msg) {
-                        had_non_signature_error = true;
+            for &alg in &algorithms {
+                let mut validation = jsonwebtoken::Validation::new(alg);
+                validation.set_audience(&[&self.client_id]);
+                validation.set_issuer(&[&self.issuer]);
+                validation.leeway = 30;
+
+                match jsonwebtoken::decode::<serde_json::Value>(token, key, &validation) {
+                    Ok(token_data) => {
+                        let claims = token_data.claims;
+                        let subject = claims
+                            .get("sub")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                AuthError::OidcVerificationFailed("missing sub claim".into())
+                            })?
+                            .to_string();
+                        let groups: Vec<String> = claims
+                            .get(&self.groups_claim)
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        return Ok((subject, groups));
                     }
-                    last_err = msg;
-                    continue;
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if !is_key_mismatch(&msg) {
+                            had_non_signature_error = true;
+                        }
+                        last_err = msg;
+                        continue;
+                    }
                 }
             }
         }
@@ -190,7 +208,10 @@ fn is_key_mismatch(msg: &str) -> bool {
     if lower.contains("expired") || lower.contains("immature") {
         return false;
     }
-    lower.contains("signature") || lower.contains("key") || lower.contains("kid")
+    lower.contains("signature")
+        || lower.contains("key")
+        || lower.contains("kid")
+        || lower.contains("algorithm")
 }
 
 #[cfg(test)]
@@ -426,5 +447,50 @@ hfJb36Tg7pLvyt3/+C7x1kz+sA==
         assert!(
             matches!(result, Err(AuthError::OidcVerificationFailed(msg)) if msg.contains("sub"))
         );
+    }
+
+    #[tokio::test]
+    async fn try_verify_ec_key_es256() {
+        let ec_private_pem = b"-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQghzkWmSjYR3FVevfR
+BfBLxMalbODp6OSqxJxEbnLfjumhRANCAAQkU6QMRbb6y2bevL618Jk97Oz6c5rB
+a0JIHAMcgZVTSxT2YQKUkGFDYxkc7gOHP57lmREiCc55iPYh8Sa2bo6o
+-----END PRIVATE KEY-----";
+
+        let ec_public_pem = b"-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEJFOkDEW2+stm3ry+tfCZPezs+nOa
+wWtCSBwDHIGVU0sU9mEClJBhQ2MZHO4Dhz+e5ZkRIgnOeYj2IfEmtm6OqA==
+-----END PUBLIC KEY-----";
+
+        let encoding_key = jsonwebtoken::EncodingKey::from_ec_pem(ec_private_pem).unwrap();
+        let decoding_key = jsonwebtoken::DecodingKey::from_ec_pem(ec_public_pem).unwrap();
+
+        let verifier = OidcVerifier::new(
+            "https://issuer.example.com".into(),
+            "test-client".into(),
+            "groups".into(),
+            Some("https://example.com/.well-known/jwks.json".into()),
+        );
+        {
+            let mut keys = verifier.keys.write().await;
+            keys.keys = vec![decoding_key];
+            keys.fetched_at = Some(Instant::now());
+        }
+
+        let now = chrono::Utc::now().timestamp();
+        let claims = serde_json::json!({
+            "sub": "bob",
+            "iss": "https://issuer.example.com",
+            "aud": "test-client",
+            "exp": now + 3600,
+            "iat": now - 10,
+            "groups": ["ec-users"],
+        });
+        let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+        let token = jsonwebtoken::encode(&header, &claims, &encoding_key).unwrap();
+
+        let (sub, groups) = verifier.try_verify(&token).await.unwrap();
+        assert_eq!(sub, "bob");
+        assert_eq!(groups, vec!["ec-users"]);
     }
 }

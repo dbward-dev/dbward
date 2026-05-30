@@ -26,9 +26,9 @@ STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" \
   -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT 1"}')
 [ "$STATUS" = "201" ] && pass "Readonly can create SELECT (201)" || fail "Readonly SELECT" "got $STATUS"
 
-# --- 3. Readonly cannot DML ---
+# --- 3. Readonly cannot DML (use WHERE clause to pass SQL review, hit authz) ---
 STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" \
-  -d '{"operation":"execute_query","environment":"development","database":"app","detail":"DELETE FROM users"}')
+  -d '{"operation":"execute_dml","environment":"development","database":"app","detail":"DELETE FROM users WHERE id = 999"}')
 [ "$STATUS" = "403" ] && pass "Readonly cannot create DML (403)" || fail "Readonly DML" "got $STATUS"
 
 # --- 4. Readonly cannot migrate ---

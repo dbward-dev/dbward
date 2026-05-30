@@ -46,13 +46,15 @@ GONE=$(echo "$RESP" | python3 -c "import sys,json; ws=json.load(sys.stdin).get('
 echo ""
 echo "--- Execution Policy effect ---"
 
-# Create and execute a request (dev env auto-approves)
-REQ=$(api POST /api/requests "$DEV_TOKEN" \
-  -d '{"database":"app","environment":"development","detail":"SELECT 1"}')
+# Production has max_executions=1. Create, approve, wait for execution, then try re-resume.
+REQ=$(api POST /api/requests "$ADMIN_TOKEN" \
+  -d '{"database":"app","environment":"production","detail":"SELECT 1","reason":"e2e policy test"}')
 REQ_ID=$(echo "$REQ" | json_field id)
-sleep 4
+# Approve (admin has approver role)
+api POST "/api/requests/$REQ_ID/approve" "$ADMIN_TOKEN" -d '{}' >/dev/null
+sleep 5
 
-# Try to re-resume → should be blocked by max_executions (config default=3, already used)
+# Try to re-resume → should be blocked by max_executions=1 (already executed once)
 STATUS=$(api_status POST "/api/requests/$REQ_ID/resume" "$ADMIN_TOKEN" -d '{}')
 if [ "$STATUS" = "409" ] || [ "$STATUS" = "410" ]; then
   pass "Re-resume blocked by execution policy ($STATUS)"
