@@ -444,9 +444,7 @@ impl CreateRequest {
         // 5b. Workflow require_reason check
         if let Some(ref wf) = workflow {
             if wf.require_reason && input.reason.is_none() {
-                return Err(AppError::Validation(
-                    "reason is required by workflow policy".into(),
-                ));
+                return Err(AppError::Validation("reason_required".into()));
             }
         }
 
@@ -1041,9 +1039,7 @@ mod tests {
                 &dbward_domain::entities::AuditContext::System,
             )
             .unwrap_err();
-        assert!(
-            matches!(err, AppError::Validation(ref m) if m.contains("reason is required by workflow policy"))
-        );
+        assert!(matches!(err, AppError::Validation(ref m) if m == "reason_required"));
     }
 
     #[test]

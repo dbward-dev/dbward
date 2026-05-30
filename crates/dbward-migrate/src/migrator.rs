@@ -71,9 +71,15 @@ impl Migrator {
         };
 
         for migration in to_apply {
-            self.driver
-                .apply_migration(&migration.up_sql, &migration.version)
-                .await?;
+            if migration.up_transactional {
+                self.driver
+                    .apply_migration(&migration.up_sql, &migration.version)
+                    .await?;
+            } else {
+                self.driver
+                    .apply_migration_no_tx(&migration.up_sql, &migration.version)
+                    .await?;
+            }
             result
                 .applied
                 .push(format!("{}_{}", migration.version, migration.name));
@@ -106,9 +112,15 @@ impl Migrator {
                 MigrateError::Config(format!("no down migration for {}", migration.version))
             })?;
 
-            self.driver
-                .revert_migration(down_sql, &migration.version)
-                .await?;
+            if migration.down_transactional {
+                self.driver
+                    .revert_migration(down_sql, &migration.version)
+                    .await?;
+            } else {
+                self.driver
+                    .revert_migration_no_tx(down_sql, &migration.version)
+                    .await?;
+            }
             result
                 .rolled_back
                 .push(format!("{}_{}", migration.version, migration.name));

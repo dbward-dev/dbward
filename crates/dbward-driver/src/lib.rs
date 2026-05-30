@@ -31,6 +31,12 @@ pub trait DatabaseDriver: Send + Sync {
     async fn execute(&self, sql: &str) -> Result<u64, DriverError>;
     async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), DriverError>;
     async fn revert_migration(&self, down_sql: &str, version: &str) -> Result<(), DriverError>;
+    async fn apply_migration_no_tx(&self, sql: &str, version: &str) -> Result<(), DriverError>;
+    async fn revert_migration_no_tx(
+        &self,
+        down_sql: &str,
+        version: &str,
+    ) -> Result<(), DriverError>;
     async fn ensure_migrations_table(&self) -> Result<(), DriverError>;
     async fn applied_versions(&self) -> Result<Vec<String>, DriverError>;
 
