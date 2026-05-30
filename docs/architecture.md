@@ -144,7 +144,7 @@ Determine whether an operation requires approval:
 [[workflows]]
 database = "primary"
 environment = "production"
-operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down"]
+# operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "migrate_status"]
 
 [[workflows.steps]]
 type = "approval"
@@ -223,7 +223,6 @@ mode = "both"  # "oidc", "token", "both"
 [auth.oidc]
 issuer = "https://accounts.google.com"
 client_id = "xxx.apps.googleusercontent.com"
-client_secret_env = "DBWARD_OIDC_CLIENT_SECRET"
 jwks_uri = "..."  # optional override for Docker environments
 default_role = "readonly"
 
@@ -287,16 +286,13 @@ max_concurrent_tasks = 2
 url = "https://dbward.internal:3000"
 agent_token = "dbw_agent_xxx"
 
-[capabilities]
-environments = ["development", "staging", "production"]
-databases = ["primary", "analytics"]
-operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "migrate_status"]
+# Operations this agent handles (default: all)
+# operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "migrate_status"]
 
-[databases.primary]
+[databases.primary.production]
 url = "postgres://user:pass@db-primary:5432/app"
-migrations_dir = "/data/migrations/primary"
 
-[databases.analytics]
+[databases.analytics.production]
 url = "mysql://user:pass@db-analytics:3306/warehouse"
 ```
 
@@ -466,7 +462,7 @@ CREATE TABLE notification_policies (
 | DB credential leak | Only agent has credentials |
 | Agent result spoofing | Only the claiming agent_id can submit result |
 | Auth token leak (OIDC) | Short-lived JWT + PKCE + revocation |
-| Auth token leak (API) | `dbward token revoke --id <ID>` + audit log |
+| Auth token leak (API) | `dbward token revoke <ID>` + audit log |
 | Webhook secret leak | HMAC-SHA256 signature verification |
 
 ## CLI Commands
@@ -492,7 +488,7 @@ dbward result <ID>              # Show locally saved result
 dbward mcp                      # MCP stdio server
 dbward-server --config server.toml        # HTTP server (auto-initializes on first run)
 dbward token create --subject <USER> --subject-type user --role <ROLE>
-dbward token revoke --id <ID>
+dbward token revoke <ID>
 dbward agent --config <PATH>    # Start agent
 ```
 

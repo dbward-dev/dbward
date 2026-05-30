@@ -12,8 +12,8 @@ The dbward server manages approval state, audit logs, and coordinates agents. It
 ```bash
 # 1. Create config
 cat > dbward-server.toml << 'EOF'
-listen = "0.0.0.0:3000"
-data = "/var/lib/dbward/dbward.db"
+
+state_dir = "/var/lib/dbward"
 
 [auth]
 mode = "token"
@@ -32,7 +32,7 @@ EOF
 
 # 2. Start (auto-initializes on first run: creates DB, keys, tokens)
 dbward-server --config dbward-server.toml
-# First run writes tokens to: ./data/admin-token, ./data/agent-token
+# First run writes tokens to: /var/lib/dbward/admin-token, /var/lib/dbward/agent-token
 ```
 
 ## Configuration reference
@@ -74,7 +74,7 @@ approval_ttl_secs = 86400         # Approval expiry — re-approval needed after
 [audit]
 redaction = "literals"            # "literals" (mask SQL values) | "none" (default: literals)
 # IP recorded automatically via trusted_proxies                  # Record client IP in audit events (default: true)
-retention_days = 365              # Same as retention.audit_ttl_days (default: 365)
+
 ```
 
 ### Result storage
