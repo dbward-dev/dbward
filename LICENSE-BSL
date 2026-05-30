@@ -2,17 +2,18 @@ Business Source License 1.1
 
 Parameters
 
-Licensor:             metapox
+Licensor:             dbward-dev
 Licensed Work:        dbward-server
-                      The Licensed Work is (c) 2025 metapox
-Additional Use Grant: You may use the Licensed Work for any purpose,
-                      including production use, provided that you do not
-                      offer it to third parties as a managed service.
-
-                      "Managed service" means providing the Licensed Work
-                      to third parties as a hosted or managed offering
-                      where the service provides users with access to the
-                      substantial functionality of the Licensed Work.
+                      The Licensed Work is (c) 2025 dbward-dev
+Additional Use Grant: You may use the Licensed Work in production,
+                      including internal business use, use by affiliates
+                      and contractors, integration via CLI, API, CI/CD,
+                      MCP, AI agents, and deployment in customer-dedicated
+                      environments by systems integrators or managed service
+                      providers — provided that you do not offer the Licensed
+                      Work to third parties as a hosted or managed service
+                      where such third parties access the approval, policy, or
+                      database-operation functionality of the Licensed Work.
 Change Date:          2029-05-08
 
 Change License:       Apache License, Version 2.0
