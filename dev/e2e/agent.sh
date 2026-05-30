@@ -85,8 +85,8 @@ echo "--- Statement timeout ---"
 REQ4=$(api POST "/api/requests" "$DEV_TOKEN" \
   -d '{"operation":"execute_query","environment":"development","database":"app","detail":"SELECT pg_sleep(120)"}')
 REQ4_ID=$(echo "$REQ4" | json_field id)
-echo "  pg_sleep(120) submitted, waiting for timeout (~30s)..."
-sleep 35
+echo "  pg_sleep(120) submitted, waiting for timeout (~60s per dev execution_policy)..."
+sleep 65
 REQ4_STATUS=$(api GET "/api/requests/$REQ4_ID" "$DEV_TOKEN" | json_field status)
 if [ "$REQ4_STATUS" = "failed" ]; then
   pass "Statement timeout killed long query (status=failed)"

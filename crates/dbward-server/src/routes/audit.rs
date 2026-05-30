@@ -48,7 +48,7 @@ pub async fn list_events(
                     database: params.database,
                     since: params.since,
                     until: params.until,
-                    limit: params.limit.unwrap_or(50),
+                    limit: params.limit.unwrap_or(50).min(200),
                     offset: params.offset.unwrap_or(0),
                 },
             },

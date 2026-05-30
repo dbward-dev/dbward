@@ -26,7 +26,7 @@ struct ElicitHandle {
 }
 
 struct ElicitMsg {
-    id: u64,
+    id: String,
     message: String,
     schema: Value,
     response_tx: oneshot::Sender<ElicitResult>,
@@ -34,7 +34,8 @@ struct ElicitMsg {
 
 impl ElicitHandle {
     async fn ask(&self, message: &str, schema: Value) -> Result<ElicitResult, String> {
-        let id = self.id_counter.fetch_add(1, Ordering::Relaxed);
+        let seq = self.id_counter.fetch_add(1, Ordering::Relaxed);
+        let id = format!("elicit-{}", seq);
         let (tx, rx) = oneshot::channel();
         self.tx
             .send(ElicitMsg {
@@ -72,7 +73,7 @@ pub async fn run_stdio(
     let elicit_id_counter = Arc::new(AtomicU64::new(1));
 
     let mut client_supports_elicitation = false;
-    let mut pending_elicitations: HashMap<u64, oneshot::Sender<ElicitResult>> = HashMap::new();
+    let mut pending_elicitations: HashMap<String, oneshot::Sender<ElicitResult>> = HashMap::new();
 
     let reader = tokio::spawn(async move {
         let stdin = tokio::io::stdin();
@@ -147,7 +148,7 @@ pub async fn run_stdio(
 
                 // Check if this is a response (to our elicitation request)
                 if id.is_some() && request.get("method").is_none() {
-                    let resp_id = id.as_ref().and_then(|v| v.as_u64()).unwrap_or(0);
+                    let resp_id = id.as_ref().and_then(|v| v.as_str()).unwrap_or("").to_string();
                     if let Some(tx) = pending_elicitations.remove(&resp_id) {
                         let result = &request["result"];
                         let elicit_result = if request.get("error").is_some() {
@@ -230,8 +231,8 @@ pub async fn run_stdio(
             }
             // Elicitation requests from workers
             Some(elicit_msg) = elicit_rx.recv() => {
-                let elicit_id = elicit_msg.id;
-                pending_elicitations.insert(elicit_id, elicit_msg.response_tx);
+                let elicit_id = elicit_msg.id.clone();
+                pending_elicitations.insert(elicit_id.clone(), elicit_msg.response_tx);
                 if outgoing_tx.send(json!({
                     "jsonrpc": "2.0",
                     "id": elicit_id,
@@ -363,20 +364,50 @@ async fn handle_tools_call(
         "dbward_migrate_up" => {
             let count = args["count"].as_u64().map(|n| n as usize);
             let db = args["database"].as_str().unwrap_or(db_name);
-            match dbward_migrate::build_migration_approval_detail(
-                migrations_dir,
-                count.unwrap_or(0),
-            ) {
-                Ok(detail) => {
-                    submit_and_wait(
-                        client,
-                        "migrate_up",
-                        env,
-                        db,
-                        &detail,
-                        args["reason"].as_str(),
-                    )
-                    .await
+            match dbward_migrate::build_migrate_up_detail(migrations_dir, &[]) {
+                Ok(mut d) => {
+                    if d.migrations.is_empty() {
+                        if !migrations_dir.exists() {
+                            Err(format!(
+                                "migrations directory not found: {}",
+                                migrations_dir.display()
+                            ))
+                        } else {
+                            let has_sql = std::fs::read_dir(migrations_dir)
+                                .ok()
+                                .map(|entries| {
+                                    entries.filter_map(|e| e.ok()).any(|e| {
+                                        e.path().extension().is_some_and(|ext| ext == "sql")
+                                    })
+                                })
+                                .unwrap_or(false);
+                            if has_sql {
+                                Err(format!(
+                                    "found .sql files in {} but none matched the expected format. \
+                                     Expected: <timestamp>_<name>.sql with '-- migrate:up' marker.",
+                                    migrations_dir.display()
+                                ))
+                            } else {
+                                Ok("No pending migrations found.".into())
+                            }
+                        }
+                    } else {
+                        d.max_count = count.filter(|&c| c > 0);
+                        match d.to_detail_string() {
+                            Ok(detail) => {
+                                submit_and_wait(
+                                    client,
+                                    "migrate_up",
+                                    env,
+                                    db,
+                                    &detail,
+                                    args["reason"].as_str(),
+                                )
+                                .await
+                            }
+                            Err(e) => Err(e.to_string()),
+                        }
+                    }
                 }
                 Err(e) => Err(e.to_string()),
             }
@@ -384,20 +415,32 @@ async fn handle_tools_call(
         "dbward_migrate_down" => {
             let count = args["count"].as_u64().map(|n| n as usize);
             let db = args["database"].as_str().unwrap_or(db_name);
-            match dbward_migrate::build_migration_approval_detail(
-                migrations_dir,
-                count.unwrap_or(1),
-            ) {
-                Ok(detail) => {
-                    submit_and_wait(
-                        client,
-                        "migrate_down",
-                        env,
-                        db,
-                        &detail,
-                        args["reason"].as_str(),
-                    )
-                    .await
+            match dbward_migrate::list_down_versions(migrations_dir) {
+                Ok(all_down) => {
+                    if all_down.is_empty() {
+                        Ok("No migrations with down SQL found.".into())
+                    } else {
+                        match dbward_migrate::build_migrate_down_detail(migrations_dir, &all_down) {
+                            Ok(mut d) => {
+                                d.max_count = Some(count.unwrap_or(1));
+                                match d.to_detail_string() {
+                                    Ok(detail) => {
+                                        submit_and_wait(
+                                            client,
+                                            "migrate_down",
+                                            env,
+                                            db,
+                                            &detail,
+                                            args["reason"].as_str(),
+                                        )
+                                        .await
+                                    }
+                                    Err(e) => Err(e.to_string()),
+                                }
+                            }
+                            Err(e) => Err(e.to_string()),
+                        }
+                    }
                 }
                 Err(e) => Err(e.to_string()),
             }

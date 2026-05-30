@@ -2,6 +2,9 @@ use crate::error::CliError;
 use reqwest::Client;
 use serde_json::Value;
 use std::sync::OnceLock;
+use std::time::Duration;
+
+const API_TIMEOUT: Duration = Duration::from_secs(30);
 
 const MAX_ERROR_BODY_PREVIEW: usize = 200;
 
@@ -184,6 +187,7 @@ impl ServerClient {
         let resp = self
             .client
             .post(format!("{}/api/requests", self.base_url))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .json(&body)
             .send()
@@ -235,6 +239,7 @@ impl ServerClient {
         let resp = self
             .client
             .get(&url)
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .send()
             .await
@@ -251,6 +256,7 @@ impl ServerClient {
         let resp = self
             .client
             .get(&url)
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .send()
             .await
@@ -272,9 +278,15 @@ impl ServerClient {
         if wait > 0 {
             url = format!("{url}?wait={wait}");
         }
+        let timeout = if wait > 0 {
+            Duration::from_secs(wait + 30)
+        } else {
+            API_TIMEOUT
+        };
         let resp = self
             .client
             .get(&url)
+            .timeout(timeout)
             .bearer_auth(&self.api_token)
             .send()
             .await
@@ -290,6 +302,7 @@ impl ServerClient {
                 "{}/api/requests/{}/resume",
                 self.base_url, request_id
             ))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .send()
             .await
@@ -328,6 +341,7 @@ impl ServerClient {
                 "{}/api/requests/{}/approve",
                 self.base_url, request_id
             ))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .json(&body)
             .send()
@@ -352,6 +366,7 @@ impl ServerClient {
                 "{}/api/requests/{}/reject",
                 self.base_url, request_id
             ))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .json(&body)
             .send()
@@ -376,6 +391,7 @@ impl ServerClient {
                 "{}/api/requests/{}/cancel",
                 self.base_url, request_id
             ))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .json(&body)
             .send()
@@ -438,6 +454,7 @@ impl ServerClient {
         let resp = self
             .client
             .get(&url)
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .send()
             .await
@@ -449,6 +466,7 @@ impl ServerClient {
         let resp = self
             .client
             .get(format!("{}{}", self.base_url, path))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .send()
             .await
@@ -461,6 +479,7 @@ impl ServerClient {
         let resp = self
             .client
             .get(format!("{}{}", self.base_url, path))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .send()
             .await
@@ -485,6 +504,7 @@ impl ServerClient {
                 "{}/api/requests/{}/result/content",
                 self.base_url, request_id
             ))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .send()
             .await
@@ -508,6 +528,7 @@ impl ServerClient {
         let resp = self
             .client
             .get(format!("{}/api/results", self.base_url))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .send()
             .await
@@ -519,6 +540,7 @@ impl ServerClient {
         let resp = self
             .client
             .get(format!("{}{path}", self.base_url))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .send()
             .await
@@ -534,6 +556,7 @@ impl ServerClient {
         let resp = self
             .client
             .patch(format!("{}{path}", self.base_url))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .json(body)
             .send()
@@ -545,6 +568,7 @@ impl ServerClient {
         let resp = self
             .client
             .post(format!("{}/api/tokens", self.base_url))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .json(body)
             .send()
@@ -568,6 +592,7 @@ impl ServerClient {
         let resp = self
             .client
             .delete(format!("{}/api/tokens/{id}", self.base_url))
+            .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .send()
             .await

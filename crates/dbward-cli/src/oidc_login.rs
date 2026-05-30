@@ -417,7 +417,14 @@ async fn discover_with_override(
             issuer.trim_end_matches('/')
         ),
     };
-    let mut disc: OidcDiscovery = reqwest::get(&url)
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+    let mut disc: OidcDiscovery = client
+        .get(&url)
+        .send()
         .await
         .map_err(|e| format!("OIDC discovery failed: {e}"))?
         .json()

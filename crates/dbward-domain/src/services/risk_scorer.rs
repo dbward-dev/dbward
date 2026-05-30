@@ -112,11 +112,7 @@ pub fn evaluate(input: &RiskInput) -> RiskAssessment {
     }
 
     // Table-level risks
-    let effective_max_rows = if input.max_estimated_rows == 0 {
-        i64::MAX
-    } else {
-        input.max_estimated_rows
-    };
+    let effective_max_rows = input.max_estimated_rows;
     for table in input.tables {
         if table.has_cascade_fk && table.estimated_rows > effective_max_rows {
             factors.push(RiskFactor::CascadeDelete {

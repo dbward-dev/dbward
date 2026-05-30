@@ -60,13 +60,19 @@ fn map_error(e: AppError) -> (StatusCode, Json<serde_json::Value>) {
         AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     let code = e.code();
+    let hint: Option<String> = match &e {
+        AppError::Forbidden(_) => Some("check your role permissions".into()),
+        AppError::Conflict(_) => Some("request may have been modified concurrently".into()),
+        AppError::Validation(msg) => Some(msg.clone()),
+        _ => None,
+    };
     let message = match &e {
         AppError::Internal(_) => "internal server error".to_string(),
         other => other.to_string(),
     };
     (
         status,
-        Json(serde_json::json!({"error": message, "code": code})),
+        Json(serde_json::json!({"error": message, "code": code, "hint": hint})),
     )
 }
 

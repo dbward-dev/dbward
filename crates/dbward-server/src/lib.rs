@@ -293,15 +293,19 @@ pub async fn run_from_args(
         tracing::warn!("failed to load webhooks on startup: {e}");
     }
     // Slack integration (opt-in: only if [slack] config section exists)
-    let slack_config = cfg
-        .slack
-        .as_ref()
-        .map(|s| dbward_infra::slack::SlackConfig {
-            bot_token: s.bot_token.clone(),
-            signing_secret: s.signing_secret.clone(),
-            default_channel: s.channel.clone(),
-            channel_overrides: s.channels.clone(),
-        });
+    let slack_config = cfg.slack.as_ref().and_then(|s| {
+        if s.signing_secret.trim().is_empty() {
+            tracing::error!("slack.signing_secret is empty — disabling Slack integration");
+            None
+        } else {
+            Some(dbward_infra::slack::SlackConfig {
+                bot_token: s.bot_token.clone(),
+                signing_secret: s.signing_secret.clone(),
+                default_channel: s.channel.clone(),
+                channel_overrides: s.channels.clone(),
+            })
+        }
+    });
 
     let slack_notifier: Option<Arc<dyn dbward_app::ports::Notifier>> =
         slack_config.as_ref().map(|sc| {

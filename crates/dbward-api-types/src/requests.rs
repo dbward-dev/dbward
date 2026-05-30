@@ -8,8 +8,9 @@ pub type RequestStatus = String;
 pub struct CreateRequestBody {
     pub database: String,
     pub environment: String,
+    #[serde(default)]
     pub operation: String,
-    pub detail: serde_json::Value,
+    pub detail: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -20,6 +21,8 @@ pub struct CreateRequestBody {
     pub emergency: bool,
     #[serde(default)]
     pub no_store: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub share_with: Vec<String>,
 }
 
 /// POST /api/requests — response

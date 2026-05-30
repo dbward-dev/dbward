@@ -260,7 +260,10 @@ pub(super) async fn list_result_policies(
             })
         })
         .collect();
-    Ok((StatusCode::OK, Json(serde_json::json!(items))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({"result_policies": items})),
+    ))
 }
 
 pub(super) async fn get_result_policy(
