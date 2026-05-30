@@ -37,7 +37,7 @@ Parameters:
 
   EnableAlb:
     Type: String
-    Default: "false"
+    Default: "true"
     AllowedValues: ["true", "false"]
 
   ResultStorageBackend:
@@ -50,11 +50,6 @@ Parameters:
     Type: String
     Default: ""
     Description: S3 bucket name for result storage (from storage.yaml output). Required when ResultStorageBackend=s3.
-
-  AlbSubnetIds:
-    Type: CommaDelimitedList
-    Default: ""
-    Description: Public subnets for ALB (if EnableAlb=true)
 
   EcrRepositoryName:
     Type: String
@@ -365,6 +360,9 @@ Resources:
       DeploymentConfiguration:
         MinimumHealthyPercent: 0
         MaximumPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
       NetworkConfiguration:
         AwsvpcConfiguration:
           Subnets:
@@ -414,7 +412,7 @@ Resources:
     Properties:
       Name: !Sub "${AWS::StackName}-alb"
       Scheme: internet-facing
-      Subnets: !Ref AlbSubnetIds
+      Subnets: !Ref SubnetIds
       SecurityGroups: [!Ref AlbSG]
 
   AlbTargetGroup:
