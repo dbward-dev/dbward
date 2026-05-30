@@ -103,6 +103,6 @@ Add `-v` to also remove the database volume.
 
 ## Next steps
 
-- [Connect your own database](quickstart-local) — use dbward with your real DB
-- [Workflows Guide](guides/workflows) — customize approval policies
-- [Deployment Overview](deployment/overview) — production architecture
+- [Connect your own database](quickstart-local.md) — use dbward with your real DB
+- [Workflows Guide](guides/workflows.md) — customize approval policies
+- [Deployment Overview](deployment/overview.md) — production architecture

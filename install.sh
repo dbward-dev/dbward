@@ -3,10 +3,15 @@
 # Usage: curl -fsSL https://dbward.dev/install.sh | sh
 #        DBWARD_VERSION=0.1.3 sh install.sh
 #        DBWARD_INSTALL_DIR=~/.local/bin sh install.sh
+#        DBWARD_COMPONENTS=cli sh install.sh   (CLI only)
 set -eu
 
 REPO="dbward-dev/dbward"
-BINS="dbward dbward-server dbward-agent"
+case "${DBWARD_COMPONENTS:-all}" in
+  cli)  BINS="dbward" ;;
+  all)  BINS="dbward dbward-server dbward-agent" ;;
+  *)    BINS=$(echo "${DBWARD_COMPONENTS}" | tr ',' ' ') ;;
+esac
 BASE_URL="https://github.com/${REPO}/releases"
 
 # --- helpers ---
