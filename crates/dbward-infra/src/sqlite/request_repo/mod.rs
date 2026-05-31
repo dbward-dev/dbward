@@ -226,7 +226,7 @@ mod tests {
     fn setup() -> SqliteRequestRepo {
         let conn = open_memory().unwrap();
         {
-            let c = conn.lock().unwrap();
+            let c = conn.lock();
             c.execute(
                 "INSERT INTO databases (id, name, environment, created_at) VALUES ('app:production', 'app', 'production', '2024-01-01T00:00:00Z')",
                 [],

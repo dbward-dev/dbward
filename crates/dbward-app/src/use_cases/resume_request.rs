@@ -77,16 +77,14 @@ impl ResumeRequest {
         .map_err(|e| AppError::Conflict(e.to_string()))?;
 
         // 4. Approval TTL check (based on resolved_at = when approval was granted)
-        if let Some(resolved_at) = request.resolved_at {
-            if let Some(wf_json) = &request.workflow_snapshot_json {
-                if let Ok(wf) = serde_json::from_str::<dbward_domain::policies::Workflow>(wf_json) {
-                    if let Some(ttl) = wf.approval_ttl_secs {
-                        let elapsed = (self.clock.now() - resolved_at).num_seconds() as u64;
-                        if elapsed > ttl {
-                            return Err(AppError::Gone("approval expired".into()));
-                        }
-                    }
-                }
+        if let Some(resolved_at) = request.resolved_at
+            && let Some(wf_json) = &request.workflow_snapshot_json
+            && let Ok(wf) = serde_json::from_str::<dbward_domain::policies::Workflow>(wf_json)
+            && let Some(ttl) = wf.approval_ttl_secs
+        {
+            let elapsed = (self.clock.now() - resolved_at).num_seconds() as u64;
+            if elapsed > ttl {
+                return Err(AppError::Gone("approval expired".into()));
             }
         }
 

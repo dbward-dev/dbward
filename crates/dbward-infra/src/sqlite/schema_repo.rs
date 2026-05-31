@@ -17,7 +17,7 @@ impl SqliteSchemaRepo {
 
 impl SchemaRepo for SqliteSchemaRepo {
     fn upsert_snapshot(&self, record: &SchemaSnapshotRecord) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO schema_snapshots \
              (database_name, environment, status, snapshot_json, error_message, dialect, collected_at, agent_id) \
@@ -43,7 +43,7 @@ impl SchemaRepo for SqliteSchemaRepo {
     }
 
     fn get_snapshot(&self, db: &str, env: &str) -> Result<Option<SchemaSnapshotRecord>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT database_name, environment, status, snapshot_json, error_message, dialect, collected_at, agent_id \
              FROM schema_snapshots WHERE database_name = ?1 AND environment = ?2",
@@ -69,7 +69,7 @@ impl SchemaRepo for SqliteSchemaRepo {
     }
 
     fn get_dialect(&self, db: &str, env: &str) -> Result<Option<String>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let result: Result<Option<String>, _> = conn.query_row(
             "SELECT dialect FROM databases WHERE name = ?1 AND environment = ?2",
             params![db, env],
@@ -145,7 +145,7 @@ mod tests {
     fn setup() -> DbConn {
         let conn = open_memory().unwrap();
         {
-            let c = conn.lock().unwrap();
+            let c = conn.lock();
             initialize(&c).unwrap();
         }
         conn

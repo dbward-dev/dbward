@@ -15,7 +15,7 @@ impl SqliteWebhookRepo {
 
 impl WebhookRepo for SqliteWebhookRepo {
     fn create(&self, webhook: &Webhook) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let events_json = serde_json::to_string(&webhook.events)
             .map_err(|e| AppError::Internal(e.to_string()))?;
         let now = chrono::Utc::now().to_rfc3339();
@@ -31,7 +31,7 @@ impl WebhookRepo for SqliteWebhookRepo {
     }
 
     fn get(&self, id: &str) -> Result<Option<Webhook>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT id, url, events_json, format, secret, status FROM webhooks WHERE id = ?1",
@@ -46,7 +46,7 @@ impl WebhookRepo for SqliteWebhookRepo {
     }
 
     fn list(&self) -> Result<Vec<Webhook>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT id, url, events_json, format, secret, status FROM webhooks")
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -58,7 +58,7 @@ impl WebhookRepo for SqliteWebhookRepo {
     }
 
     fn update(&self, webhook: &Webhook) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let events_json = serde_json::to_string(&webhook.events)
             .map_err(|e| AppError::Internal(e.to_string()))?;
         let now = chrono::Utc::now().to_rfc3339();
@@ -73,7 +73,7 @@ impl WebhookRepo for SqliteWebhookRepo {
     }
 
     fn delete(&self, id: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute("DELETE FROM webhooks WHERE id = ?1", rusqlite::params![id])
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(())

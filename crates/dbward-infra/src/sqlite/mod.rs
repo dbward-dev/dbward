@@ -1,6 +1,7 @@
 mod schema;
 
 mod agent_repo;
+mod audit_helper;
 mod audit_repo;
 mod context_repo;
 mod database_repo;
@@ -31,9 +32,9 @@ pub use webhook_delivery_repo::SqliteWebhookDeliveryRepo;
 pub use webhook_repo::SqliteWebhookRepo;
 
 use chrono::{DateTime, Utc};
+use parking_lot::Mutex;
 use rusqlite::Connection;
 use std::sync::Arc;
-use std::sync::Mutex;
 
 /// Parse an RFC3339 datetime string from the database without panicking.
 pub(crate) fn parse_datetime(s: &str) -> Result<DateTime<Utc>, rusqlite::Error> {

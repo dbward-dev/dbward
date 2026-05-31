@@ -20,7 +20,7 @@ impl SqliteAgentRepo {
 
 impl AgentRepo for SqliteAgentRepo {
     fn upsert(&self, agent: &Agent) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let databases_json = serde_json::to_string(&agent.databases)
             .map_err(|e| AppError::Internal(e.to_string()))?;
         let active_jobs_json = serde_json::to_string(&agent.active_jobs)
@@ -47,7 +47,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn get(&self, agent_id: &str) -> Result<Option<Agent>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.query_row(
             "SELECT id, token_id, databases_json, status, max_concurrent, in_flight, uptime_secs, active_jobs_json, last_seen_at, created_at FROM agents WHERE id = ?1",
             params![agent_id],
@@ -73,7 +73,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn list(&self) -> Result<Vec<Agent>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, token_id, databases_json, status, max_concurrent, in_flight, uptime_secs, active_jobs_json, last_seen_at, created_at FROM agents ORDER BY last_seen_at DESC",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -102,7 +102,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn create_execution(&self, execution: &Execution) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let status = execution_status_str(execution.status);
         let lease = execution.lease_expires_at.to_rfc3339();
         let started = execution.started_at.map(|t| t.to_rfc3339());
@@ -118,7 +118,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn get_execution(&self, execution_id: &str) -> Result<Option<Execution>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.query_row(
             "SELECT id, request_id, agent_id, status, token, lease_expires_at, started_at, finished_at, error_message, created_at
              FROM executions WHERE id = ?1",
@@ -134,7 +134,7 @@ impl AgentRepo for SqliteAgentRepo {
         execution_id: &str,
         status: ExecutionStatus,
     ) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         // Set finished_at when execution reaches a terminal state
         let finished = matches!(status, ExecutionStatus::Completed | ExecutionStatus::Failed);
         if finished {
@@ -158,7 +158,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn extend_lease(&self, execution_id: &str, new_expiry: DateTime<Utc>) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE executions SET lease_expires_at = ?1 WHERE id = ?2",
             params![new_expiry.to_rfc3339(), execution_id],
@@ -174,7 +174,7 @@ impl AgentRepo for SqliteAgentRepo {
         if databases.is_empty() {
             return Ok(vec![]);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let placeholders: Vec<String> = databases
             .iter()
             .enumerate()
@@ -243,7 +243,7 @@ impl AgentRepo for SqliteAgentRepo {
         env: &Environment,
         exclude_request_id: &str,
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let database_id = format!("{}:{}", db, env);
         let count: u32 = conn
             .query_row(
@@ -260,7 +260,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn find_executions_for_request(&self, request_id: &str) -> Result<Vec<Execution>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, request_id, agent_id, status, token, lease_expires_at, started_at, finished_at, error_message, created_at
              FROM executions WHERE request_id = ?1 ORDER BY created_at ASC",
@@ -283,7 +283,7 @@ impl AgentRepo for SqliteAgentRepo {
         request_id: &str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let tx = conn
             .unchecked_transaction()
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -328,7 +328,7 @@ impl AgentRepo for SqliteAgentRepo {
     ) -> Result<dbward_app::ports::CompletionOutcome, AppError> {
         use dbward_app::ports::CompletionOutcome;
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -397,7 +397,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn find_expired_leases(&self, now: &str) -> Result<Vec<(String, String)>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, request_id FROM executions WHERE status IN ('claimed', 'running') AND datetime(lease_expires_at) < datetime(?1)"
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -416,7 +416,7 @@ impl AgentRepo for SqliteAgentRepo {
         request_id: &str,
         now: &str,
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let tx = conn
             .unchecked_transaction()
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -442,9 +442,7 @@ impl AgentRepo for SqliteAgentRepo {
         audit_event: &AuditEvent,
         now: &str,
     ) -> Result<bool, AppError> {
-        use sha2::{Digest, Sha256};
-
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -461,53 +459,19 @@ impl AgentRepo for SqliteAgentRepo {
         ).map_err(|e| AppError::Internal(e.to_string()))?;
 
         // Inline audit INSERT with hash chain
-        let prev_hash: Option<String> = tx
-            .query_row(
-                "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-            .ok();
-        let id = uuid::Uuid::new_v4().to_string();
-        let hash_input = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-            id,
-            audit_event.event_type,
-            audit_event.actor_id,
-            audit_event.created_at.to_rfc3339(),
-            prev_hash.as_deref().unwrap_or(""),
-            crate::sqlite::audit_repo::outcome_str(audit_event.outcome),
-            audit_event.request_id.as_deref().unwrap_or(""),
-            audit_event.operation.as_deref().unwrap_or(""),
-            audit_event.database_name.as_deref().unwrap_or(""),
-            audit_event.environment.as_deref().unwrap_or(""),
-            audit_event.reason.as_deref().unwrap_or(""),
-            audit_event.detail_raw.as_deref().unwrap_or(""),
-            audit_event.metadata_json,
-        );
-        let event_hash = hex::encode(Sha256::digest(hash_input.as_bytes()));
-        tx.execute(
-            "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
-            rusqlite::params![
-                id, audit_event.event_type, crate::sqlite::audit_repo::category_str(audit_event.event_category),
-                audit_event.event_version, crate::sqlite::audit_repo::outcome_str(audit_event.outcome),
-                audit_event.actor_id, crate::sqlite::audit_repo::actor_type_str(audit_event.actor_type),
-                audit_event.resource_type, audit_event.resource_id,
-                audit_event.peer_ip, audit_event.client_ip, audit_event.client_ip_source,
-                audit_event.request_id, audit_event.operation,
-                audit_event.database_name, audit_event.environment,
-                audit_event.detail_fingerprint, audit_event.detail_raw, audit_event.reason,
-                audit_event.metadata_json, prev_hash, event_hash,
-                audit_event.created_at.to_rfc3339(),
-            ],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        crate::sqlite::audit_helper::insert_audit_event_in_tx(
+            &tx,
+            audit_event,
+            crate::sqlite::audit_helper::IdPolicy::AlwaysGenerate,
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
         tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(true)
     }
 
     fn find_expired_results(&self, now: &str) -> Result<Vec<(String, String)>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT id, storage_key FROM results WHERE datetime(expires_at) < datetime(?1)",
@@ -523,7 +487,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn delete_result(&self, result_id: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "DELETE FROM result_access WHERE result_id = ?1",
             rusqlite::params![result_id],
@@ -544,52 +508,12 @@ fn insert_audit_in_agent_tx(
     tx: &rusqlite::Transaction<'_>,
     audit_event: &AuditEvent,
 ) -> Result<(), AppError> {
-    use sha2::{Digest, Sha256};
-    let outcome = crate::sqlite::audit_repo::outcome_str(audit_event.outcome);
-    let category = crate::sqlite::audit_repo::category_str(audit_event.event_category);
-    let actor_type = crate::sqlite::audit_repo::actor_type_str(audit_event.actor_type);
-
-    let prev_hash: Option<String> = tx
-        .query_row(
-            "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
-    let id = uuid::Uuid::new_v4().to_string();
-    let hash_input = format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        id,
-        audit_event.event_type,
-        audit_event.actor_id,
-        audit_event.created_at.to_rfc3339(),
-        prev_hash.as_deref().unwrap_or(""),
-        outcome,
-        audit_event.request_id.as_deref().unwrap_or(""),
-        audit_event.operation.as_deref().unwrap_or(""),
-        audit_event.database_name.as_deref().unwrap_or(""),
-        audit_event.environment.as_deref().unwrap_or(""),
-        audit_event.reason.as_deref().unwrap_or(""),
-        audit_event.detail_raw.as_deref().unwrap_or(""),
-        audit_event.metadata_json,
-    );
-    let event_hash = hex::encode(Sha256::digest(hash_input.as_bytes()));
-    tx.execute(
-        "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
-        params![
-            id, audit_event.event_type, category,
-            audit_event.event_version, outcome,
-            audit_event.actor_id, actor_type,
-            audit_event.resource_type, audit_event.resource_id,
-            audit_event.peer_ip, audit_event.client_ip, audit_event.client_ip_source,
-            audit_event.request_id, audit_event.operation,
-            audit_event.database_name, audit_event.environment,
-            audit_event.detail_fingerprint, audit_event.detail_raw, audit_event.reason,
-            audit_event.metadata_json, prev_hash, event_hash,
-            audit_event.created_at.to_rfc3339(),
-        ],
-    ).map_err(|e| AppError::Internal(e.to_string()))?;
-    Ok(())
+    crate::sqlite::audit_helper::insert_audit_event_in_tx(
+        tx,
+        audit_event,
+        crate::sqlite::audit_helper::IdPolicy::AlwaysGenerate,
+    )
+    .map_err(|e| AppError::Internal(e.to_string()))
 }
 
 fn selector_type_str(st: SelectorType) -> &'static str {

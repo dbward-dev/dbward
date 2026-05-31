@@ -119,16 +119,15 @@ pub fn evaluate(
     }
 
     // Risk-based auto-approve
-    if let Some(entry) = auto_approve_entry {
-        if let Some(max_level) = entry.max_risk_level {
-            if let Some(level) = risk_level {
-                // Unknown is never auto-approved even with risk = "high"
-                if level != RiskLevel::Unknown && level <= max_level {
-                    return ApprovalDecision::AutoApproved {
-                        reason: AutoApproveReason::RiskBased,
-                    };
-                }
-            }
+    if let Some(entry) = auto_approve_entry
+        && let Some(max_level) = entry.max_risk_level
+        && let Some(level) = risk_level
+    {
+        // Unknown is never auto-approved even with risk = "high"
+        if level != RiskLevel::Unknown && level <= max_level {
+            return ApprovalDecision::AutoApproved {
+                reason: AutoApproveReason::RiskBased,
+            };
         }
     }
 

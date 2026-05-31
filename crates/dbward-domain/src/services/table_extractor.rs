@@ -1,4 +1,4 @@
-use sqlparser::ast::{visit_relations, ObjectName, Query, SetExpr, Statement};
+use sqlparser::ast::{ObjectName, Query, SetExpr, Statement, visit_relations};
 use std::collections::HashSet;
 
 /// A reference to a table found in SQL.

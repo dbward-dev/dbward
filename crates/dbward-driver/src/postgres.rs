@@ -10,13 +10,7 @@ use crate::{
 /// Reject migration version strings containing characters that could escape
 /// the SQL string literal used in `format!("...VALUES ('{version}')...")`.
 /// Specific to PostgreSQL's raw_sql batch approach.
-fn validate_migration_version(version: &str) -> Result<(), DriverError> {
-    const FORBIDDEN: &[char] = &['\'', ';', '\\', '\n', '\r', '\0'];
-    if version.contains(FORBIDDEN) {
-        return Err(DriverError::QueryFailed("invalid migration version".into()));
-    }
-    Ok(())
-}
+use crate::common::validate_migration_version;
 
 /// Check if SQL contains multiple statements (semicolon followed by non-whitespace).
 fn has_multiple_statements(sql: &str) -> bool {
@@ -65,13 +59,7 @@ impl PostgresDriver {
 }
 
 fn classify_connect_error(e: sqlx::Error) -> DriverError {
-    if let sqlx::Error::Database(ref db_err) = e
-        && let Some(code) = db_err.code()
-        && (code == "28P01" || code == "28000")
-    {
-        return DriverError::AuthenticationFailed(e.to_string());
-    }
-    DriverError::ConnectionFailed(e.to_string())
+    crate::common::classify_connect_error(e, &["28P01", "28000"])
 }
 
 #[async_trait::async_trait]

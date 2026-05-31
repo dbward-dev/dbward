@@ -142,15 +142,15 @@ fn check_no_where_delete(
     if action == RuleAction::Off {
         return;
     }
-    if let Statement::Delete(del) = stmt {
-        if del.selection.is_none() {
-            findings.push(Finding {
-                rule: RuleId::NoWhereDelete,
-                action,
-                message: "DELETE without WHERE clause".into(),
-                statement_index: idx,
-            });
-        }
+    if let Statement::Delete(del) = stmt
+        && del.selection.is_none()
+    {
+        findings.push(Finding {
+            rule: RuleId::NoWhereDelete,
+            action,
+            message: "DELETE without WHERE clause".into(),
+            statement_index: idx,
+        });
     }
 }
 
@@ -163,15 +163,15 @@ fn check_no_where_update(
     if action == RuleAction::Off {
         return;
     }
-    if let Statement::Update(upd) = stmt {
-        if upd.selection.is_none() {
-            findings.push(Finding {
-                rule: RuleId::NoWhereUpdate,
-                action,
-                message: "UPDATE without WHERE clause".into(),
-                statement_index: idx,
-            });
-        }
+    if let Statement::Update(upd) = stmt
+        && upd.selection.is_none()
+    {
+        findings.push(Finding {
+            rule: RuleId::NoWhereUpdate,
+            action,
+            message: "UPDATE without WHERE clause".into(),
+            statement_index: idx,
+        });
     }
 }
 
@@ -179,15 +179,15 @@ fn check_drop_table(stmt: &Statement, idx: usize, action: RuleAction, findings: 
     if action == RuleAction::Off {
         return;
     }
-    if let Statement::Drop { object_type, .. } = stmt {
-        if *object_type == ObjectType::Table {
-            findings.push(Finding {
-                rule: RuleId::DropTable,
-                action,
-                message: "DROP TABLE detected".into(),
-                statement_index: idx,
-            });
-        }
+    if let Statement::Drop { object_type, .. } = stmt
+        && *object_type == ObjectType::Table
+    {
+        findings.push(Finding {
+            rule: RuleId::DropTable,
+            action,
+            message: "DROP TABLE detected".into(),
+            statement_index: idx,
+        });
     }
 }
 
@@ -258,15 +258,15 @@ fn check_create_index_not_concurrently(
     if action == RuleAction::Off {
         return;
     }
-    if let Statement::CreateIndex(ci) = stmt {
-        if !ci.concurrently {
-            findings.push(Finding {
-                rule: RuleId::CreateIndexNotConcurrently,
-                action,
-                message: "CREATE INDEX without CONCURRENTLY".into(),
-                statement_index: idx,
-            });
-        }
+    if let Statement::CreateIndex(ci) = stmt
+        && !ci.concurrently
+    {
+        findings.push(Finding {
+            rule: RuleId::CreateIndexNotConcurrently,
+            action,
+            message: "CREATE INDEX without CONCURRENTLY".into(),
+            statement_index: idx,
+        });
     }
 }
 
@@ -324,15 +324,15 @@ fn check_large_in_list(
         return;
     }
     let _ = visit_expressions(stmt, |expr| {
-        if let Expr::InList { list, .. } = expr {
-            if list.len() > 100 {
-                findings.push(Finding {
-                    rule: RuleId::LargeInList,
-                    action,
-                    message: format!("IN list with {} elements (>100)", list.len()),
-                    statement_index: idx,
-                });
-            }
+        if let Expr::InList { list, .. } = expr
+            && list.len() > 100
+        {
+            findings.push(Finding {
+                rule: RuleId::LargeInList,
+                action,
+                message: format!("IN list with {} elements (>100)", list.len()),
+                statement_index: idx,
+            });
         }
         ControlFlow::<()>::Continue(())
     });
@@ -406,19 +406,21 @@ mod tests {
     #[test]
     fn create_index_not_concurrently_pg() {
         let r = review_pg("CREATE INDEX idx ON users(email)");
-        assert!(r
-            .findings
-            .iter()
-            .any(|f| f.rule == RuleId::CreateIndexNotConcurrently));
+        assert!(
+            r.findings
+                .iter()
+                .any(|f| f.rule == RuleId::CreateIndexNotConcurrently)
+        );
     }
 
     #[test]
     fn create_index_not_concurrently_skipped_for_mysql() {
         let r = review_mysql("CREATE INDEX idx ON users(email)");
-        assert!(!r
-            .findings
-            .iter()
-            .any(|f| f.rule == RuleId::CreateIndexNotConcurrently));
+        assert!(
+            !r.findings
+                .iter()
+                .any(|f| f.rule == RuleId::CreateIndexNotConcurrently)
+        );
     }
 
     #[test]

@@ -47,20 +47,18 @@ impl GetResult {
 
         // Check if delivery_mode=Stream means result was intentionally not stored
         // Only applies to successful results (failures are always stored)
-        if request.status != dbward_domain::entities::RequestStatus::Failed {
-            if let Ok(Some(policy)) = self
+        if request.status != dbward_domain::entities::RequestStatus::Failed
+            && let Ok(Some(policy)) = self
                 .policy_repo
                 .find_result_policy(&request.database, &request.environment)
-            {
-                if matches!(
-                    policy.delivery_mode,
-                    dbward_domain::policies::DeliveryMode::Stream
-                ) {
-                    return Err(AppError::Gone(
-                        "result not stored by policy (stream-only delivery)".into(),
-                    ));
-                }
-            }
+            && matches!(
+                policy.delivery_mode,
+                dbward_domain::policies::DeliveryMode::Stream
+            )
+        {
+            return Err(AppError::Gone(
+                "result not stored by policy (stream-only delivery)".into(),
+            ));
         }
 
         // Merge access selectors: request.share_with + ResultPolicy.access

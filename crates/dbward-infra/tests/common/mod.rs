@@ -10,7 +10,6 @@ pub fn setup() -> DbConn {
 
 pub fn register_db(conn: &DbConn) {
     conn.lock()
-        .unwrap()
         .execute(
             "INSERT INTO databases (id, name, environment, created_at) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![

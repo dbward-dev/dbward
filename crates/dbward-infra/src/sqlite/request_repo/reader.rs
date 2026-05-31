@@ -10,7 +10,7 @@ use super::{SqliteRequestRepo, build_selectors, map_err, row_to_request};
 
 impl RequestReader for SqliteRequestRepo {
     fn get(&self, id: &str) -> Result<Option<Request>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT * FROM requests WHERE id = ?1")
             .map_err(map_err)?;
@@ -29,7 +29,7 @@ impl RequestReader for SqliteRequestRepo {
         status: Option<&str>,
         user: Option<&str>,
     ) -> Result<(Vec<Request>, u32), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
 
         let mut conditions = Vec::new();
         let mut count_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -86,7 +86,7 @@ impl RequestReader for SqliteRequestRepo {
         Ok((items, total))
     }
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT * FROM requests WHERE idempotency_key = ?1")
             .map_err(map_err)?;
@@ -107,7 +107,7 @@ impl RequestReader for SqliteRequestRepo {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<Request>, u32), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
 
         let mut selectors = vec![format!("user:{user_id}")];
         for g in groups {
@@ -180,7 +180,7 @@ impl RequestReader for SqliteRequestRepo {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<Request>, u32), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let selectors = build_selectors(user_id, groups, roles);
         let placeholders: String = selectors
             .iter()
@@ -226,7 +226,7 @@ impl RequestReader for SqliteRequestRepo {
         groups: &[String],
         roles: &[String],
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let selectors = build_selectors(user_id, groups, roles);
         let sel_placeholders: String = selectors
             .iter()
@@ -254,7 +254,7 @@ impl RequestReader for SqliteRequestRepo {
         Ok(exists)
     }
     fn count_executions(&self, request_id: &str) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let count: u32 = conn
             .query_row(
                 "SELECT COUNT(*) FROM executions WHERE request_id = ?1",
@@ -271,7 +271,7 @@ impl RequestReader for SqliteRequestRepo {
         roles: &[String],
         limit: u32,
     ) -> Result<Vec<dbward_app::ports::repos::StoredResultEntry>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut conditions = vec![
             "req.requester = ?1".to_string(),
             "(ra.selector_type = 'user' AND ra.selector_value = ?1)".to_string(),
@@ -325,7 +325,7 @@ impl RequestReader for SqliteRequestRepo {
             .map_err(|e| AppError::Internal(e.to_string()))
     }
     fn count_by_status(&self, status: &str) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let count: u32 = conn
             .query_row(
                 "SELECT COUNT(*) FROM requests WHERE status = ?1",
@@ -342,7 +342,7 @@ impl RequestReader for SqliteRequestRepo {
         if request_ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let placeholders = request_ids
             .iter()
             .map(|_| "?")

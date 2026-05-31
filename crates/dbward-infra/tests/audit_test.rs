@@ -91,7 +91,7 @@ fn audit_chain_detects_broken_link() {
 
     // Tamper with the DB directly (simulate attacker modifying actor_id)
     {
-        let c = conn.lock().unwrap();
+        let c = conn.lock();
         c.execute(
             "UPDATE audit_events SET actor_id = 'hacked' WHERE rowid = 1",
             [],

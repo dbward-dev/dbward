@@ -42,12 +42,12 @@ impl ApproveRequest {
         ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<ApproveRequestOutput, AppError> {
         // 0. Input validation
-        if let Some(ref c) = input.comment {
-            if c.len() > 1024 {
-                return Err(AppError::Validation(
-                    "comment too long (max 1024 bytes)".into(),
-                ));
-            }
+        if let Some(ref c) = input.comment
+            && c.len() > 1024
+        {
+            return Err(AppError::Validation(
+                "comment too long (max 1024 bytes)".into(),
+            ));
         }
 
         // 1. Get request
@@ -66,12 +66,12 @@ impl ApproveRequest {
 
         // 2b. Expiry check (enforce even if background job hasn't run yet)
         let now = self.clock.now();
-        if let Some(expires_at) = request.expires_at {
-            if now >= expires_at {
-                return Err(AppError::Gone(
+        if let Some(expires_at) = request.expires_at
+            && now >= expires_at
+        {
+            return Err(AppError::Gone(
                     "request has expired. Hint: set pending_ttl_secs in your workflow configuration to increase the approval window".into(),
                 ));
-            }
         }
 
         // 3. Parse workflow snapshot (fail-closed: all pending requests have a workflow)

@@ -67,7 +67,6 @@ fn real_state() -> AppState {
 
     // Register a database so requests can be created
     conn.lock()
-        .unwrap()
         .execute(
             "INSERT INTO databases (id, name, environment, created_at) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![
@@ -80,7 +79,7 @@ fn real_state() -> AppState {
         .unwrap();
 
     // Insert auto-approve workflow (empty steps)
-    conn.lock().unwrap()
+    conn.lock()
         .execute(
             "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps) VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, 0)",
             rusqlite::params!["wf-auto", "app", "production", "[]", "[]"],

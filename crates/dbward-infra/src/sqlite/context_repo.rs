@@ -17,7 +17,7 @@ impl SqliteContextRepo {
 
 impl ContextRepo for SqliteContextRepo {
     fn create(&self, ctx: &RequestContextRecord) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO request_context \
              (request_id, status, schema_snapshot_collected_at, tables_json, sql_review_json, risk_json, explain_json, created_at, updated_at) \
@@ -39,7 +39,7 @@ impl ContextRepo for SqliteContextRepo {
     }
 
     fn get(&self, request_id: &str) -> Result<Option<RequestContextRecord>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let result = conn.query_row(
             "SELECT request_id, status, schema_snapshot_collected_at, tables_json, sql_review_json, risk_json, explain_json, created_at, updated_at \
              FROM request_context WHERE request_id = ?1",
@@ -72,7 +72,7 @@ impl ContextRepo for SqliteContextRepo {
         status: &str,
         now: &str,
     ) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE request_context SET explain_json = ?1, status = ?2, updated_at = ?3 WHERE request_id = ?4",
             params![explain_json, status, now, request_id],
@@ -82,7 +82,7 @@ impl ContextRepo for SqliteContextRepo {
     }
 
     fn timeout_collecting(&self, cutoff: &str, now: &str) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn
             .execute(
                 "UPDATE request_context SET status = 'unavailable', updated_at = ?1 \
@@ -103,7 +103,7 @@ mod tests {
     fn setup() -> DbConn {
         let conn = open_memory().unwrap();
         {
-            let c = conn.lock().unwrap();
+            let c = conn.lock();
             initialize(&c).unwrap();
             c.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
         }

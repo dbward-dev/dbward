@@ -10,7 +10,7 @@ use super::{SqliteRequestRepo, database_id, map_err, populate_pending_approvers}
 
 impl RequestWriter for SqliteRequestRepo {
     fn insert(&self, req: &Request) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let tx = conn.unchecked_transaction().map_err(map_err)?;
         let db_id = database_id(&req.database, &req.environment);
         let share_with_json = serde_json::to_string(&req.share_with)
@@ -49,7 +49,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(())
     }
     fn create_and_dispatch(&self, req: &Request) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let tx = conn.unchecked_transaction().map_err(map_err)?;
         let db_id = database_id(&req.database, &req.environment);
         let share_with_json = serde_json::to_string(&req.share_with)
@@ -92,7 +92,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(())
     }
     fn mark_approved(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'approved', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
@@ -102,7 +102,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(affected > 0)
     }
     fn mark_rejected(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'rejected', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
@@ -118,7 +118,7 @@ impl RequestWriter for SqliteRequestRepo {
         reason: Option<&str>,
         now: DateTime<Utc>,
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'cancelled', cancelled_by = ?2, cancel_reason = ?3, updated_at = ?4, resolved_at = ?4
@@ -129,7 +129,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(affected > 0)
     }
     fn mark_dispatched(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'dispatched', updated_at = ?2 WHERE id = ?1 AND status IN ('approved', 'auto_approved', 'break_glass', 'executed', 'failed', 'execution_lost')",
@@ -139,7 +139,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(affected > 0)
     }
     fn mark_running(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'running', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
@@ -149,7 +149,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(affected > 0)
     }
     fn mark_executed(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'executed', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'running'",
@@ -159,7 +159,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(affected > 0)
     }
     fn mark_failed(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'failed', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'running'",
@@ -176,9 +176,7 @@ impl RequestWriter for SqliteRequestRepo {
         now: DateTime<Utc>,
         _audit_context: &dbward_domain::entities::AuditContext,
     ) -> Result<Vec<String>, AppError> {
-        use sha2::{Digest, Sha256};
-
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(map_err)?;
@@ -207,56 +205,46 @@ impl RequestWriter for SqliteRequestRepo {
 
         // 3. Individual audit events in same TX
         for id in &ids {
-            let outcome = "success";
-            let category = "approval";
-            let actor_type = "user";
-            let prev_hash: Option<String> = tx
-                .query_row(
-                    "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
-                    [],
-                    |row| row.get(0),
-                )
-                .ok();
-            let audit_id = uuid::Uuid::new_v4().to_string();
-            let hash_input = format!(
-                "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-                audit_id,
-                "request_cancelled",
-                actor_id,
-                now_str,
-                prev_hash.as_deref().unwrap_or(""),
-                outcome,
-                id,
-                "",
-                "",
-                "",
-                reason,
-                "",
-                "{}",
-            );
-            let event_hash = hex::encode(Sha256::digest(hash_input.as_bytes()));
-            tx.execute(
-                "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
-                params![
-                    audit_id, "request_cancelled", category,
-                    1, outcome,
-                    actor_id, actor_type,
-                    "request", id,
-                    "", "", "",
-                    id as &str, Option::<&str>::None,
-                    Option::<&str>::None, Option::<&str>::None,
-                    Option::<&str>::None, Option::<&str>::None, reason,
-                    "{}", prev_hash, event_hash,
-                    now_str,
-                ],
-            ).map_err(map_err)?;
+            let cancel_event = dbward_domain::entities::AuditEvent {
+                id: String::new(),
+                event_type: "request_cancelled".to_string(),
+                event_category: dbward_domain::entities::EventCategory::Approval,
+                event_version: 1,
+                outcome: dbward_domain::entities::EventOutcome::Success,
+                actor_id: actor_id.to_string(),
+                actor_type: dbward_domain::entities::ActorType::User,
+                resource_type: Some("request".to_string()),
+                resource_id: Some(id.clone()),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: Some(id.clone()),
+                operation: None,
+                database_name: None,
+                environment: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: Some(reason.to_string()),
+                metadata_json: "{}".to_string(),
+                prev_hash: None,
+                event_hash: String::new(),
+                created_at: chrono::DateTime::parse_from_rfc3339(&now_str)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            };
+            crate::sqlite::audit_helper::insert_audit_event_in_tx(
+                &tx,
+                &cancel_event,
+                crate::sqlite::audit_helper::IdPolicy::AlwaysGenerate,
+            )
+            .map_err(map_err)?;
         }
 
         tx.commit().map_err(map_err)?;
         Ok(ids)
     }
     fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute(
             "UPDATE requests SET status = 'approved', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
             params![id, now],
@@ -269,9 +257,7 @@ impl RequestWriter for SqliteRequestRepo {
         audit_event: &AuditEvent,
         now: &str,
     ) -> Result<bool, AppError> {
-        use sha2::{Digest, Sha256};
-
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(map_err)?;
@@ -284,49 +270,12 @@ impl RequestWriter for SqliteRequestRepo {
             return Ok(false);
         }
 
-        let outcome = crate::sqlite::audit_repo::outcome_str(audit_event.outcome);
-        let category = crate::sqlite::audit_repo::category_str(audit_event.event_category);
-        let actor_type = crate::sqlite::audit_repo::actor_type_str(audit_event.actor_type);
-        let prev_hash: Option<String> = tx
-            .query_row(
-                "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-            .ok();
-        let audit_id = uuid::Uuid::new_v4().to_string();
-        let hash_input = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-            audit_id,
-            audit_event.event_type,
-            audit_event.actor_id,
-            audit_event.created_at.to_rfc3339(),
-            prev_hash.as_deref().unwrap_or(""),
-            outcome,
-            audit_event.request_id.as_deref().unwrap_or(""),
-            audit_event.operation.as_deref().unwrap_or(""),
-            audit_event.database_name.as_deref().unwrap_or(""),
-            audit_event.environment.as_deref().unwrap_or(""),
-            audit_event.reason.as_deref().unwrap_or(""),
-            audit_event.detail_raw.as_deref().unwrap_or(""),
-            audit_event.metadata_json,
-        );
-        let event_hash = hex::encode(Sha256::digest(hash_input.as_bytes()));
-        tx.execute(
-            "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
-            params![
-                audit_id, audit_event.event_type, category,
-                audit_event.event_version, outcome,
-                audit_event.actor_id, actor_type,
-                audit_event.resource_type, audit_event.resource_id,
-                audit_event.peer_ip, audit_event.client_ip, audit_event.client_ip_source,
-                audit_event.request_id, audit_event.operation,
-                audit_event.database_name, audit_event.environment,
-                audit_event.detail_fingerprint, audit_event.detail_raw, audit_event.reason,
-                audit_event.metadata_json, prev_hash, event_hash,
-                audit_event.created_at.to_rfc3339(),
-            ],
-        ).map_err(map_err)?;
+        crate::sqlite::audit_helper::insert_audit_event_in_tx(
+            &tx,
+            audit_event,
+            crate::sqlite::audit_helper::IdPolicy::AlwaysGenerate,
+        )
+        .map_err(map_err)?;
 
         tx.commit().map_err(map_err)?;
         Ok(true)

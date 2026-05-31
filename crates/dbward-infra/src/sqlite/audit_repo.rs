@@ -15,63 +15,17 @@ impl SqliteAuditLogger {
 
 impl AuditLogger for SqliteAuditLogger {
     fn record(&self, event: &AuditEvent) -> Result<(), AppError> {
-        use sha2::{Digest, Sha256};
-
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
-        // Get last hash for chain continuity
-        let prev_hash: Option<String> = tx
-            .query_row(
-                "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-            .ok();
-
-        // Infra generates id if caller left it empty
-        let id = if event.id.is_empty() {
-            uuid::Uuid::new_v4().to_string()
-        } else {
-            event.id.clone()
-        };
-
-        // Infra computes event_hash from ALL content fields (tamper detection)
-        let hash_input = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-            id,
-            event.event_type,
-            event.actor_id,
-            event.created_at.to_rfc3339(),
-            prev_hash.as_deref().unwrap_or(""),
-            outcome_str(event.outcome),
-            event.request_id.as_deref().unwrap_or(""),
-            event.operation.as_deref().unwrap_or(""),
-            event.database_name.as_deref().unwrap_or(""),
-            event.environment.as_deref().unwrap_or(""),
-            event.reason.as_deref().unwrap_or(""),
-            event.detail_raw.as_deref().unwrap_or(""),
-            event.metadata_json,
-        );
-        let event_hash = hex::encode(Sha256::digest(hash_input.as_bytes()));
-
-        tx.execute(
-            "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
-            rusqlite::params![
-                id, event.event_type, category_str(event.event_category),
-                event.event_version, outcome_str(event.outcome),
-                event.actor_id, actor_type_str(event.actor_type),
-                event.resource_type, event.resource_id,
-                event.peer_ip, event.client_ip, event.client_ip_source,
-                event.request_id, event.operation,
-                event.database_name, event.environment,
-                event.detail_fingerprint, event.detail_raw, event.reason,
-                event.metadata_json, prev_hash, event_hash,
-                event.created_at.to_rfc3339(),
-            ],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        super::audit_helper::insert_audit_event_in_tx(
+            &tx,
+            event,
+            super::audit_helper::IdPolicy::UseExisting,
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
         tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(())
@@ -90,7 +44,7 @@ impl SqliteAuditRepo {
 
 impl AuditRepo for SqliteAuditRepo {
     fn list(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
 
         let mut conditions: Vec<String> = Vec::new();
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -167,7 +121,7 @@ impl AuditRepo for SqliteAuditRepo {
     fn verify_chain(&self) -> Result<AuditVerifyResult, AppError> {
         use sha2::{Digest, Sha256};
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, event_type, actor_id, created_at, prev_hash, event_hash, outcome, request_id, operation, database_name, environment, reason, detail_raw, metadata_json FROM audit_events ORDER BY rowid ASC"
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -276,7 +230,7 @@ impl AuditRepo for SqliteAuditRepo {
     }
 
     fn purge_old(&self, before: &str) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn
             .execute(
                 "DELETE FROM audit_events WHERE created_at < ?1",
