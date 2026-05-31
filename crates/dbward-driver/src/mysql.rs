@@ -41,13 +41,7 @@ impl MysqlDriver {
 }
 
 fn classify_mysql_connect_error(e: sqlx::Error) -> DriverError {
-    if let sqlx::Error::Database(ref db_err) = e
-        && let Some(code) = db_err.code()
-        && code == "1045"
-    {
-        return DriverError::AuthenticationFailed(e.to_string());
-    }
-    DriverError::ConnectionFailed(e.to_string())
+    crate::common::classify_connect_error(e, &["1045"])
 }
 
 #[async_trait::async_trait]

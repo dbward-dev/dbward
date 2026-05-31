@@ -19,6 +19,28 @@ use dbward_app::use_cases::sync_config::{
     ApproverInput, ExecutionPolicyInput, SyncConfig, WebhookInput, WorkflowInput, WorkflowStepInput,
 };
 use dbward_domain::values::{DatabaseName, Environment};
+
+/// Convert a TOML RoleConfig into a domain RoleDefinition.
+fn build_role_definition(rc: &dbward_config::server::RoleConfig) -> dbward_domain::auth::RoleDefinition {
+    let perms: Vec<dbward_domain::auth::Permission> =
+        rc.permissions.iter().map(|s| s.parse().unwrap()).collect();
+    let databases = if rc.databases.is_empty() {
+        vec![DatabaseName::new("*").unwrap()]
+    } else {
+        rc.databases.iter().map(|d| DatabaseName::new(d).unwrap()).collect()
+    };
+    let environments = if rc.environments.is_empty() {
+        vec![Environment::new("*").unwrap()]
+    } else {
+        rc.environments.iter().map(|e| Environment::new(e).unwrap()).collect()
+    };
+    dbward_domain::auth::RoleDefinition {
+        name: rc.name.clone(),
+        permissions: perms,
+        databases,
+        environments,
+    }
+}
 use state::AppState;
 use tokio::time::Duration;
 
@@ -150,36 +172,7 @@ pub async fn run_from_args(
             }
         }
         dbward_infra::auth::ConfigRoleResolver::with_policy_repo(
-            cfg.auth
-                .roles
-                .iter()
-                .map(|rc| {
-                    let perms: Vec<dbward_domain::auth::Permission> =
-                        rc.permissions.iter().map(|s| s.parse().unwrap()).collect();
-                    let databases = if rc.databases.is_empty() {
-                        vec![DatabaseName::new("*").unwrap()]
-                    } else {
-                        rc.databases
-                            .iter()
-                            .map(|d| DatabaseName::new(d).unwrap())
-                            .collect()
-                    };
-                    let environments = if rc.environments.is_empty() {
-                        vec![Environment::new("*").unwrap()]
-                    } else {
-                        rc.environments
-                            .iter()
-                            .map(|e| Environment::new(e).unwrap())
-                            .collect()
-                    };
-                    dbward_domain::auth::RoleDefinition {
-                        name: rc.name.clone(),
-                        permissions: perms,
-                        databases,
-                        environments,
-                    }
-                })
-                .collect(),
+            cfg.auth.roles.iter().map(build_role_definition).collect(),
             group_bindings,
             user_bindings,
             cfg.auth.default_role.clone(),
@@ -200,30 +193,7 @@ pub async fn run_from_args(
     {
         let active_names: Vec<String> = cfg.auth.roles.iter().map(|r| r.name.clone()).collect();
         for rc in &cfg.auth.roles {
-            let perms: Vec<dbward_domain::auth::Permission> =
-                rc.permissions.iter().map(|s| s.parse().unwrap()).collect();
-            let databases = if rc.databases.is_empty() {
-                vec![DatabaseName::new("*").unwrap()]
-            } else {
-                rc.databases
-                    .iter()
-                    .map(|d| DatabaseName::new(d).unwrap())
-                    .collect()
-            };
-            let environments = if rc.environments.is_empty() {
-                vec![Environment::new("*").unwrap()]
-            } else {
-                rc.environments
-                    .iter()
-                    .map(|e| Environment::new(e).unwrap())
-                    .collect()
-            };
-            let def = dbward_domain::auth::RoleDefinition {
-                name: rc.name.clone(),
-                permissions: perms,
-                databases,
-                environments,
-            };
+            let def = build_role_definition(rc);
             if let Err(e) = policy_repo.upsert_config_role(&def) {
                 return Err(
                     format!("failed to sync config role '{}' to DB: {}", rc.name, e).into(),
