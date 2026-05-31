@@ -17,22 +17,30 @@ pub struct DryRunClaim {
 impl DryRunClaim {
     /// Claim a dry-run job for the given agent. Returns the claim token.
     pub fn execute(&self, job_id: &str, agent_id: &str) -> Result<String, AppError> {
-        // Scope check: verify job belongs to agent's registered databases
-        if let Some(request_id) = self.dry_run_repo.get_request_id(job_id)?
-            && let Ok(jobs) = self.dry_run_repo.find_for_request(&request_id)
-            && let Some(job) = jobs.iter().find(|j| j.id == job_id)
-            && let Some(agent) = self.agent_repo.get(agent_id)?
-        {
-            let scope_ok = agent.databases.iter().any(|d| {
-                d.database.as_str() == job.database_name
-                    && d.environment.as_str() == job.environment
-            });
-            if !scope_ok {
-                return Err(AppError::Forbidden(AuthzError::Forbidden {
-                    permission: Permission::AgentClaim,
-                    reason: "agent not authorized for this job".into(),
-                }));
-            }
+        // Fail-closed scope check: agent must be registered and authorized for the job's db/env
+        let request_id = self
+            .dry_run_repo
+            .get_request_id(job_id)?
+            .ok_or_else(|| AppError::Validation("dry-run job not found".into()))?;
+        let jobs = self.dry_run_repo.find_for_request(&request_id)?;
+        let job = jobs
+            .iter()
+            .find(|j| j.id == job_id)
+            .ok_or_else(|| AppError::Validation("dry-run job not found".into()))?;
+        let agent = self.agent_repo.get(agent_id)?.ok_or_else(|| {
+            AppError::Forbidden(AuthzError::Forbidden {
+                permission: Permission::AgentClaim,
+                reason: "agent not registered".into(),
+            })
+        })?;
+        let scope_ok = agent.databases.iter().any(|d| {
+            d.database.as_str() == job.database_name && d.environment.as_str() == job.environment
+        });
+        if !scope_ok {
+            return Err(AppError::Forbidden(AuthzError::Forbidden {
+                permission: Permission::AgentClaim,
+                reason: "agent not authorized for this job".into(),
+            }));
         }
 
         let claim_token = self.id_gen.generate();
@@ -88,14 +96,14 @@ impl DryRunSubmitResult {
         }
 
         // Check if all jobs for this request are done → aggregate EXPLAIN → update context
-        if let Some(request_id) = self.dry_run_repo.get_request_id(input.job_id)?
-            && let Ok(jobs) = self.dry_run_repo.find_for_request(&request_id)
-        {
-            let all_done = jobs
-                .iter()
-                .all(|j| j.status != "pending" && j.status != "claimed");
-            if all_done {
-                let results: Vec<serde_json::Value> = jobs
+        if let Some(request_id) = self.dry_run_repo.get_request_id(input.job_id)? {
+            match self.dry_run_repo.find_for_request(&request_id) {
+                Ok(jobs) => {
+                    let all_done = jobs
+                        .iter()
+                        .all(|j| j.status != "pending" && j.status != "claimed");
+                    if all_done {
+                        let results: Vec<serde_json::Value> = jobs
                     .iter()
                     .map(|j| {
                         if j.status == "completed" {
@@ -118,20 +126,25 @@ impl DryRunSubmitResult {
                         }
                     })
                     .collect();
-                let explain_json = serde_json::to_string(&results).unwrap_or_default();
-                let ctx_status = if jobs.iter().all(|j| j.status == "completed") {
-                    "ready"
-                } else {
-                    "partial"
-                };
-                let now_str = self.clock.now().to_rfc3339();
-                if let Err(e) = self.context_repo.update_explain(
-                    &request_id,
-                    &explain_json,
-                    ctx_status,
-                    &now_str,
-                ) {
-                    tracing::warn!(%e, %request_id, "failed to update request context after dry-run");
+                        let explain_json = serde_json::to_string(&results).unwrap_or_default();
+                        let ctx_status = if jobs.iter().all(|j| j.status == "completed") {
+                            "ready"
+                        } else {
+                            "partial"
+                        };
+                        let now_str = self.clock.now().to_rfc3339();
+                        if let Err(e) = self.context_repo.update_explain(
+                            &request_id,
+                            &explain_json,
+                            ctx_status,
+                            &now_str,
+                        ) {
+                            tracing::warn!(%e, %request_id, "failed to update request context after dry-run");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(%e, %request_id, "failed to load dry-run jobs for context aggregation");
                 }
             }
         }

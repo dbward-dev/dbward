@@ -72,7 +72,18 @@ pending_ttl_secs = 86400                 # Request expires if not approved (opti
 statement_timeout_secs = 60              # Override agent timeout (optional)
 
 [[workflows.steps]]
-approvers = [{ selector = "role:dba", min = 1 }]
+approvers = [{ role = "dba", min = 1 }]
+
+# Steps define approval requirements:
+#   mode = "all" (default) — all approver groups must approve
+#   mode = "any" — any one approver group is sufficient
+#
+# Approver selectors (use one per entry):
+#   { role = "dba", min = 1 }     — any user with role "dba"
+#   { group = "backend", min = 2 } — any member of group "backend"
+#   { user = "alice@co.com" }      — specific user
+#
+# Empty steps [] = auto-approve (no human approval needed)
 
 # Auto-approve workflow (empty steps)
 [[workflows]]
@@ -235,7 +246,7 @@ operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "mi
 | `drain_timeout_secs` | 60 |
 | `statement_timeout_secs` | 30 |
 | `lease_duration_secs` | 300 |
-| `operations` | all (select, dml, migrate_up, migrate_down) |
+| `operations` | all (select, dml, migrate_up, migrate_down, migrate_status) |
 
 ---
 
@@ -278,7 +289,6 @@ migrations_dir = "analytics/migrations"
 | Variable | Purpose |
 |----------|---------|
 | `DBWARD_CONFIG` | Path to CLI config file (standalone mode) |
-| `DBWARD_GLOBAL_CONFIG` | Path to global config file |
 | `DBWARD_SERVER_URL` | Override server URL |
 | `DBWARD_TOKEN` | Override API token |
 | `DBWARD_DATABASE` | Default database |
@@ -302,7 +312,9 @@ All config files error on undefined variables. Use `${VAR:-default}` to provide 
 
 ---
 
-## Additional Supported Fields
+## Advanced Settings
+
+The settings below are optional and most users won't need to change them.
 
 ### Server: `trusted_proxies`
 
