@@ -348,7 +348,11 @@ pub async fn run_from_args(
         }
         #[cfg(not(feature = "commercial"))]
         {
-            let _ = (license_key, license_file);
+            if license_key.is_some() || license_file.is_some() {
+                tracing::warn!(
+                    "license_key/license_file configured but commercial feature not compiled. Ignored."
+                );
+            }
             Arc::new(dbward_infra::FreePlanChecker)
         }
     };

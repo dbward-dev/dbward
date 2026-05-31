@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 
 use dbward_app::ports::LicenseChecker;
+use dbward_domain::license::PlanLimits;
 
 /// Free plan checker — always returns Free plan limits.
 /// Used when no commercial license feature is enabled.
@@ -8,19 +9,19 @@ pub struct FreePlanChecker;
 
 impl LicenseChecker for FreePlanChecker {
     fn max_databases(&self) -> u32 {
-        3
+        PlanLimits::FREE.max_databases
     }
     fn max_workflows(&self) -> u32 {
-        5
+        PlanLimits::FREE.max_workflows
     }
     fn max_webhooks(&self) -> u32 {
-        3
+        PlanLimits::FREE.max_webhooks
     }
     fn max_tokens(&self) -> u32 {
-        10
+        PlanLimits::FREE.max_tokens
     }
     fn max_roles(&self) -> u32 {
-        8
+        PlanLimits::FREE.max_roles
     }
     fn is_enterprise(&self) -> bool {
         false
