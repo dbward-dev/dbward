@@ -13,10 +13,10 @@ use tower::Service;
 
 use dbward_app::error::AuthError;
 use dbward_app::ports::*;
+use dbward_commercial_license::LicenseCheckerImpl;
 use dbward_domain::auth::*;
 use dbward_domain::license::{License, Plan};
 use dbward_domain::values::*;
-use dbward_commercial_license::LicenseCheckerImpl;
 use dbward_infra::sqlite::{self, *};
 use dbward_server::build_app;
 use dbward_server::state::AppState;
