@@ -125,12 +125,14 @@ impl DryRunSubmitResult {
                     "partial"
                 };
                 let now_str = self.clock.now().to_rfc3339();
-                let _ = self.context_repo.update_explain(
+                if let Err(e) = self.context_repo.update_explain(
                     &request_id,
                     &explain_json,
                     ctx_status,
                     &now_str,
-                );
+                ) {
+                    tracing::warn!(%e, %request_id, "failed to update request context after dry-run");
+                }
             }
         }
 

@@ -107,3 +107,6 @@ impl SchemaSync {
         Ok(())
     }
 }
+
+// Tests for schema_sync validation are covered by integration tests (dev/e2e/agent.sh).
+// Unit tests require a full AgentRepo fake which is deferred to a follow-up.
