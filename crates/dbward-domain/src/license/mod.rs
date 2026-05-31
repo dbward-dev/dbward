@@ -26,13 +26,6 @@ impl PlanLimits {
         max_tokens: 10,
         max_roles: 8,
     };
-    pub const PRO: Self = Self {
-        max_workflows: 20,
-        max_databases: 10,
-        max_webhooks: 10,
-        max_tokens: 50,
-        max_roles: 20,
-    };
 }
 
 /// License payload for key verification (serialized in license keys)
@@ -53,14 +46,6 @@ pub struct License {
 }
 
 impl License {
-    pub fn limits(&self) -> Option<&'static PlanLimits> {
-        match self.plan {
-            Plan::Free => Some(&PlanLimits::FREE),
-            Plan::Pro => Some(&PlanLimits::PRO),
-            Plan::Enterprise => None,
-        }
-    }
-
     pub fn is_enterprise(&self) -> bool {
         self.plan == Plan::Enterprise
     }
@@ -93,38 +78,6 @@ impl From<LicensePayload> for License {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn free_has_limits() {
-        let lic = License::default();
-        let limits = lic.limits().unwrap();
-        assert_eq!(limits.max_workflows, 5);
-        assert_eq!(limits.max_databases, 3);
-        assert_eq!(limits.max_tokens, 10);
-    }
-
-    #[test]
-    fn pro_has_limits() {
-        let lic = License {
-            plan: Plan::Pro,
-            issued_to: None,
-            expires_at: None,
-        };
-        let limits = lic.limits().unwrap();
-        assert_eq!(limits.max_workflows, 20);
-        assert_eq!(limits.max_databases, 10);
-    }
-
-    #[test]
-    fn enterprise_no_limits() {
-        let lic = License {
-            plan: Plan::Enterprise,
-            issued_to: None,
-            expires_at: None,
-        };
-        assert!(lic.limits().is_none());
-        assert!(lic.is_enterprise());
-    }
 
     #[test]
     fn expiry_check() {

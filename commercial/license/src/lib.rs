@@ -9,6 +9,15 @@ use chrono::{DateTime, Utc};
 use dbward_app::ports::LicenseChecker;
 use dbward_domain::license::{License, Plan, PlanLimits};
 
+/// Pro plan limits (commercial-only constant).
+const PRO: PlanLimits = PlanLimits {
+    max_workflows: 20,
+    max_databases: 10,
+    max_webhooks: 10,
+    max_tokens: 50,
+    max_roles: 20,
+};
+
 pub struct LicenseCheckerImpl {
     license: License,
     expired: AtomicBool,
@@ -44,7 +53,11 @@ impl LicenseCheckerImpl {
         if self.expired.load(Ordering::Relaxed) {
             Some(&PlanLimits::FREE)
         } else {
-            self.license.limits()
+            match self.license.plan {
+                Plan::Free => Some(&PlanLimits::FREE),
+                Plan::Pro => Some(&PRO),
+                Plan::Enterprise => None,
+            }
         }
     }
 }
