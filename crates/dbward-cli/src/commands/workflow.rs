@@ -1,9 +1,19 @@
+use std::time::Duration;
+
 use serde_json::Value;
 
 use crate::error::CliError;
 use crate::server_client::{CreateRequest, ServerClient};
 
 const REQUEST_STATUS_WAIT_SECS: u64 = 30;
+
+/// Trait for obtaining a reason from the user when the workflow requires one.
+/// MCP implements this via elicitation; CLI can skip or prompt interactively.
+#[allow(dead_code)]
+#[async_trait::async_trait]
+pub trait ReasonProvider: Send + Sync {
+    async fn provide_reason(&self, prompt: &str) -> Option<String>;
+}
 
 /// Outcome of a request lifecycle orchestration.
 pub enum Outcome {
@@ -16,6 +26,8 @@ pub enum Outcome {
     },
     /// Request is approved but not yet resumed (caller should resume or inform user).
     Approved { request_id: String },
+    /// Request is still executing but timed out waiting.
+    TimedOut { request_id: String },
 }
 
 /// Result of request creation (before orchestration).
@@ -98,6 +110,105 @@ pub async fn submit_and_orchestrate(
             "unexpected status: {}",
             cr.status
         ))),
+    }
+}
+
+/// Submit a request with optional reason provider and timeout.
+///
+/// If the server returns "reason is required" and a `reason_provider` is given,
+/// it will ask for a reason and retry once. If `timeout` is specified, waiting
+/// for completion will time out and return `Outcome::TimedOut`.
+#[allow(dead_code)]
+pub async fn submit_and_orchestrate_with_options(
+    sc: &ServerClient,
+    params: CreateRequest<'_>,
+    verbose: bool,
+    reason_provider: Option<&dyn ReasonProvider>,
+    timeout: Option<Duration>,
+) -> Result<Outcome, CliError> {
+    // Try create; if reason_required and provider available, retry with reason
+    let cr = match create_request(sc, params.clone()).await {
+        Ok(cr) => cr,
+        Err(e) if reason_provider.is_some() => {
+            let err_str = e.to_string();
+            if err_str.contains("reason_required") || err_str.contains("reason is required") {
+                let provider = reason_provider.unwrap();
+                if let Some(reason) = provider
+                    .provide_reason(
+                        "This workflow requires a reason. Why is this operation needed?",
+                    )
+                    .await
+                {
+                    let mut retry_params = params.clone();
+                    // Safety: we need owned reason but params borrows — use leaked str
+                    // This is fine for short-lived MCP tool calls
+                    let reason_str: &str = Box::leak(reason.into_boxed_str());
+                    retry_params.reason = Some(reason_str);
+                    create_request(sc, retry_params).await?
+                } else {
+                    return Err(e);
+                }
+            } else {
+                return Err(e);
+            }
+        }
+        Err(e) => return Err(e),
+    };
+
+    // Status-based routing (same as submit_and_orchestrate)
+    match cr.status.as_str() {
+        "dispatched" | "break_glass" | "running" => {
+            let wait_fut = wait_and_resolve(sc, &cr.request_id, verbose);
+            match apply_timeout(wait_fut, timeout).await {
+                Ok(result) => Ok(Outcome::Completed {
+                    request_id: cr.request_id,
+                    result,
+                }),
+                Err(TimeoutOrError::Timeout) => Ok(Outcome::TimedOut {
+                    request_id: cr.request_id.clone(),
+                }),
+                Err(TimeoutOrError::Error(e)) => Err(e),
+            }
+        }
+        "executed" | "failed" => {
+            let result = resolve_terminal_result(sc, &cr.request_id).await?;
+            Ok(Outcome::Completed {
+                request_id: cr.request_id,
+                result,
+            })
+        }
+        "approved" | "auto_approved" => Ok(Outcome::Approved {
+            request_id: cr.request_id,
+        }),
+        "pending" => Ok(Outcome::Pending {
+            request_id: cr.request_id,
+            approvers: cr.approvers,
+        }),
+        _ => Err(CliError::Server(format!(
+            "unexpected status: {}",
+            cr.status
+        ))),
+    }
+}
+
+#[allow(dead_code)]
+enum TimeoutOrError {
+    Timeout,
+    Error(CliError),
+}
+
+#[allow(dead_code)]
+async fn apply_timeout(
+    fut: impl std::future::Future<Output = Result<Value, CliError>>,
+    timeout: Option<Duration>,
+) -> Result<Value, TimeoutOrError> {
+    match timeout {
+        Some(dur) => match tokio::time::timeout(dur, fut).await {
+            Ok(Ok(v)) => Ok(v),
+            Ok(Err(e)) => Err(TimeoutOrError::Error(e)),
+            Err(_) => Err(TimeoutOrError::Timeout),
+        },
+        None => fut.await.map_err(TimeoutOrError::Error),
     }
 }
 
