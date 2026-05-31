@@ -130,7 +130,7 @@ async fn free_database_limit_blocks_at_max() {
     };
     let state = state_with_license(license);
 
-    // Free allows 3 databases
+    // Free allows 3 databases — register 3 successfully
     let registry = state.database_registry.clone();
     for i in 0..3 {
         let db = DatabaseName::new(format!("db{i}")).unwrap();
@@ -138,13 +138,19 @@ async fn free_database_limit_blocks_at_max() {
         registry.register(&db, &env).unwrap();
     }
 
-    // Verify limit is 3
     assert_eq!(state.license_checker.max_databases(), 3);
-    let count = registry.list().unwrap().len() as u32;
-    assert_eq!(count, 3);
 
-    // 4th registration should be blocked by the limit check
-    assert!(count >= state.license_checker.max_databases());
+    // 4th database via register_databases should fail
+    let dbs = vec![dbward_config::server::DatabaseDef {
+        name: "db_over_limit".into(),
+        environments: vec!["production".into()],
+    }];
+    let result = dbward_server::register_databases(&state, &dbs);
+    assert!(result.is_err(), "4th database should be rejected");
+    assert!(
+        result.unwrap_err().to_string().contains("database limit"),
+        "error should mention database limit"
+    );
 }
 
 // === Test 2: Free plan — workflow creation blocked at max_workflows ===
@@ -217,8 +223,13 @@ async fn pro_database_limit_blocks_at_11() {
         registry.register(&db, &env).unwrap();
     }
 
-    let count = registry.list().unwrap().len() as u32;
-    assert!(count >= state.license_checker.max_databases());
+    // 11th database via register_databases should fail
+    let dbs = vec![dbward_config::server::DatabaseDef {
+        name: "db_over_limit".into(),
+        environments: vec!["production".into()],
+    }];
+    let result = dbward_server::register_databases(&state, &dbs);
+    assert!(result.is_err(), "11th database should be rejected for Pro");
 }
 
 // === Test 5: Enterprise — no database limit ===
@@ -244,27 +255,26 @@ async fn enterprise_no_database_limit() {
     assert!(state.license_checker.is_enterprise());
 }
 
-// === Test 6: Expired license falls back to Free limits ===
+// === Test 6: Expired license falls back to Free limits via LicenseCheckerImpl ===
 
 #[tokio::test]
 async fn expired_license_falls_back_to_free() {
+    // Pass expired license directly to LicenseCheckerImpl — it should detect
+    // expiry in the constructor and apply Free limits.
     let expired = License {
         plan: Plan::Pro,
         issued_to: Some("org".into()),
         expires_at: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
     };
 
-    // When expired, the system should use Free limits
-    assert!(expired.is_expired_at(chrono::Utc::now()));
+    let state = state_with_license(expired);
 
-    // Simulate fallback: if expired, construct Free license
-    let effective = if expired.is_expired_at(chrono::Utc::now()) {
-        License::default()
-    } else {
-        expired
-    };
+    // LicenseCheckerImpl should have detected expiry
+    assert!(state.license_checker.is_expired());
+    assert_eq!(state.license_checker.effective_plan(), "free");
+    assert_eq!(state.license_checker.configured_plan(), "pro");
+    assert_eq!(state.license_checker.max_workflows(), 5);
 
-    let state = state_with_license(effective);
     let mut app = build_app(state, vec![]);
 
     // Free limit: 5 workflows

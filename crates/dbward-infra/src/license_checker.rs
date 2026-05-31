@@ -65,6 +65,15 @@ mod tests {
     fn check_expiry_is_noop() {
         let checker = FreePlanChecker;
         checker.check_expiry(Utc::now());
+        // All getters unchanged after check_expiry
         assert!(!checker.is_expired());
+        assert!(!checker.is_enterprise());
+        assert_eq!(checker.configured_plan(), "free");
+        assert_eq!(checker.effective_plan(), "free");
+        assert_eq!(checker.max_databases(), 3);
+        assert_eq!(checker.max_workflows(), 5);
+        assert_eq!(checker.max_webhooks(), 3);
+        assert_eq!(checker.max_tokens(), 10);
+        assert_eq!(checker.max_roles(), 8);
     }
 }

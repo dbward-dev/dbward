@@ -110,6 +110,11 @@ mod tests {
         assert_eq!(checker.configured_plan(), "pro");
         assert_eq!(checker.effective_plan(), "pro");
         assert_eq!(checker.max_databases(), 10);
+        assert_eq!(checker.max_workflows(), 20);
+        assert_eq!(checker.max_webhooks(), 10);
+        assert_eq!(checker.max_tokens(), 50);
+        assert_eq!(checker.max_roles(), 20);
+        assert!(!checker.is_enterprise());
     }
 
     #[test]
@@ -173,5 +178,29 @@ mod tests {
         assert_eq!(checker.effective_plan(), "free");
         checker.check_expiry_at(Utc::now() + Duration::days(365));
         assert!(!checker.is_expired());
+    }
+
+    #[test]
+    fn check_expiry_concurrent_only_flips_once() {
+        let future = Utc::now() + Duration::hours(1);
+        let lic = License {
+            plan: Plan::Pro,
+            issued_to: None,
+            expires_at: Some(future),
+        };
+        let checker = std::sync::Arc::new(LicenseCheckerImpl::new(lic, Utc::now()));
+        let after = future + Duration::seconds(1);
+
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let c = checker.clone();
+                std::thread::spawn(move || c.check_expiry_at(after))
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert!(checker.is_expired());
+        assert_eq!(checker.effective_plan(), "free");
     }
 }

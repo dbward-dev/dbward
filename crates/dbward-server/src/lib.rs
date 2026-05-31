@@ -486,7 +486,7 @@ pub async fn run_from_args(
     start(addr, state, cfg.retention, trusted).await
 }
 
-fn register_databases(
+pub fn register_databases(
     state: &AppState,
     databases: &[config::DatabaseDef],
 ) -> Result<(), Box<dyn std::error::Error>> {

@@ -22,7 +22,6 @@ echo "" > "$SCRIPT_DIR/../secrets/license.key"
 # Start full environment in Free mode (clean slate)
 docker compose down -v 2>/dev/null
 docker compose up -d 2>/dev/null
-sleep 5
 wait_for_server
 
 TS=$(date +%s)
@@ -65,7 +64,6 @@ if [ -f "$LICENSE_DIR/pro.key" ] && [ -f "$LICENSE_DIR/test.pub.hex" ]; then
   echo "DBWARD_SERVER_CONFIG=server.toml" > dev/.env
   docker compose down -v 2>/dev/null
   docker compose up -d 2>/dev/null
-  sleep 5
   wait_for_server
 
   # Re-create admin token (server restarted)
@@ -85,7 +83,6 @@ if [ -f "$LICENSE_DIR/pro.key" ] && [ -f "$LICENSE_DIR/test.pub.hex" ]; then
   echo "DBWARD_SERVER_CONFIG=server-free.toml" > dev/.env
   docker compose down -v 2>/dev/null
   docker compose up -d 2>/dev/null
-  sleep 5
   wait_for_server
 
   ADMIN_TOKEN=$(create_token "e2e-license-exp-$TS" admin)
@@ -98,7 +95,6 @@ if [ -f "$LICENSE_DIR/pro.key" ] && [ -f "$LICENSE_DIR/test.pub.hex" ]; then
   echo "DBWARD_SERVER_CONFIG=server-free.toml" > dev/.env
   docker compose down -v 2>/dev/null
   docker compose up -d 2>/dev/null
-  sleep 5
   wait_for_server
 
   # Cleanup: delete workflows created during this test

@@ -97,4 +97,43 @@ mod tests {
         let with = GroupRoleResolver::new(bindings);
         assert!(with.has_bindings());
     }
+
+    #[test]
+    fn case_sensitive_group_matching() {
+        let mut bindings = HashMap::new();
+        bindings.insert("Engineering".to_string(), vec!["dev".to_string()]);
+        let resolver = GroupRoleResolver::new(bindings);
+        // Lowercase does not match
+        assert!(
+            resolver
+                .resolve_roles(&["engineering".to_string()])
+                .is_empty()
+        );
+        // Exact case matches
+        assert_eq!(
+            resolver.resolve_roles(&["Engineering".to_string()]),
+            vec!["dev"]
+        );
+    }
+
+    #[test]
+    fn empty_group_name_handled() {
+        let mut bindings = HashMap::new();
+        bindings.insert("".to_string(), vec!["admin".to_string()]);
+        let resolver = GroupRoleResolver::new(bindings);
+        let roles = resolver.resolve_roles(&["".to_string()]);
+        assert_eq!(roles, vec!["admin"]);
+    }
+
+    #[test]
+    fn many_groups_performance() {
+        let mut bindings = HashMap::new();
+        for i in 0..50 {
+            bindings.insert(format!("group-{i}"), vec![format!("role-{i}")]);
+        }
+        let resolver = GroupRoleResolver::new(bindings);
+        let groups: Vec<String> = (0..50).map(|i| format!("group-{i}")).collect();
+        let roles = resolver.resolve_roles(&groups);
+        assert_eq!(roles.len(), 50);
+    }
 }
