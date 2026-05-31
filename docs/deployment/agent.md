@@ -54,7 +54,7 @@ url = "https://dbward.internal:3000"
 agent_token = "${DBWARD_AGENT_TOKEN}"   # Agent token (created with --agent flag)
 ```
 
-The agent token must be created with `--agent` flag:
+The agent token must be created with `--subject-type agent`:
 
 ```bash
 dbward token create --subject prod-agent-1 --subject-type agent --role agent-default
