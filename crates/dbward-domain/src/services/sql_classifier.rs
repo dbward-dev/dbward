@@ -270,10 +270,10 @@ fn classify_query_node(query: &sqlparser::ast::Query) -> InternalClass {
     let mut result = InternalClass::Select;
 
     // Layer 2: SELECT ... INTO
-    if let SetExpr::Select(select) = query.body.as_ref() {
-        if select.into.is_some() {
-            result = result.escalate(InternalClass::Dml(DmlReason::SemanticEscalation));
-        }
+    if let SetExpr::Select(select) = query.body.as_ref()
+        && select.into.is_some()
+    {
+        result = result.escalate(InternalClass::Dml(DmlReason::SemanticEscalation));
     }
 
     // Layer 2: Writable CTE inspection
