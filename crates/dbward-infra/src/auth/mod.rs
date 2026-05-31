@@ -1,6 +1,5 @@
 mod api_token;
 mod config_role_resolver;
-mod oidc;
 mod rbac_authorizer;
 
 pub use api_token::ApiTokenVerifier;

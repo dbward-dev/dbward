@@ -762,7 +762,6 @@ dependencies = [
  "futures-util",
  "hex",
  "hmac",
- "jsonwebtoken",
  "object_store",
  "parking_lot",
  "rand 0.8.6",

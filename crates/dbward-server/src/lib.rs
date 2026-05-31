@@ -139,8 +139,6 @@ pub async fn run_from_args(
         policy_repo.clone(),
     );
 
-    // C-10: OIDC injection moved after license_checker initialization (see below)
-
     // token_verifier is finalized after OIDC injection below
     let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new({
         // H-31: Build bindings from config
@@ -731,6 +729,7 @@ pub async fn start(
     Ok(())
 }
 
+#[cfg(feature = "commercial")]
 pub(crate) fn resolve_license(
     key: Option<&str>,
     file: Option<&str>,
@@ -789,7 +788,7 @@ async fn wait_for_signal() {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "commercial"))]
 mod tests {
     use super::*;
 
