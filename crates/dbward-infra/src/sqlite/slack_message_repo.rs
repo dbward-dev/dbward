@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use dbward_app::error::AppError;
-use rusqlite::Connection;
 use parking_lot::Mutex;
+use rusqlite::Connection;
 
 use crate::slack::{SlackMessageRef, SlackMessageRepo};
 

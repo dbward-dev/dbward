@@ -1,5 +1,5 @@
 use dbward_domain::entities::AuditEvent;
-use rusqlite::{params, Transaction};
+use rusqlite::{Transaction, params};
 use sha2::{Digest, Sha256};
 
 use super::audit_repo::{actor_type_str, category_str, outcome_str};

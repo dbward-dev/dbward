@@ -21,18 +21,32 @@ use dbward_app::use_cases::sync_config::{
 use dbward_domain::values::{DatabaseName, Environment};
 
 /// Convert a TOML RoleConfig into a domain RoleDefinition.
-fn build_role_definition(rc: &dbward_config::server::RoleConfig) -> dbward_domain::auth::RoleDefinition {
-    let perms: Vec<dbward_domain::auth::Permission> =
-        rc.permissions.iter().map(|s| s.parse().unwrap()).collect();
+fn build_role_definition(
+    rc: &dbward_config::server::RoleConfig,
+) -> dbward_domain::auth::RoleDefinition {
+    let perms: Vec<dbward_domain::auth::Permission> = rc
+        .permissions
+        .iter()
+        .map(|s| {
+            s.parse()
+                .unwrap_or_else(|_| panic!("invalid permission '{}' in role '{}'", s, rc.name))
+        })
+        .collect();
     let databases = if rc.databases.is_empty() {
         vec![DatabaseName::new("*").unwrap()]
     } else {
-        rc.databases.iter().map(|d| DatabaseName::new(d).unwrap()).collect()
+        rc.databases
+            .iter()
+            .map(|d| DatabaseName::new(d).unwrap())
+            .collect()
     };
     let environments = if rc.environments.is_empty() {
         vec![Environment::new("*").unwrap()]
     } else {
-        rc.environments.iter().map(|e| Environment::new(e).unwrap()).collect()
+        rc.environments
+            .iter()
+            .map(|e| Environment::new(e).unwrap())
+            .collect()
     };
     dbward_domain::auth::RoleDefinition {
         name: rc.name.clone(),

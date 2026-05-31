@@ -15,9 +15,7 @@ pub(crate) fn classify_connect_error(e: sqlx::Error, auth_codes: &[&str]) -> Dri
 pub(crate) fn validate_migration_version(version: &str) -> Result<(), DriverError> {
     const FORBIDDEN: &[char] = &['\'', ';', '\\', '\n', '\r', '\0'];
     if version.contains(FORBIDDEN) {
-        return Err(DriverError::QueryFailed(
-            "invalid migration version".into(),
-        ));
+        return Err(DriverError::QueryFailed("invalid migration version".into()));
     }
     Ok(())
 }

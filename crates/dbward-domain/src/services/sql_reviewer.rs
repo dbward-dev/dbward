@@ -406,19 +406,21 @@ mod tests {
     #[test]
     fn create_index_not_concurrently_pg() {
         let r = review_pg("CREATE INDEX idx ON users(email)");
-        assert!(r
-            .findings
-            .iter()
-            .any(|f| f.rule == RuleId::CreateIndexNotConcurrently));
+        assert!(
+            r.findings
+                .iter()
+                .any(|f| f.rule == RuleId::CreateIndexNotConcurrently)
+        );
     }
 
     #[test]
     fn create_index_not_concurrently_skipped_for_mysql() {
         let r = review_mysql("CREATE INDEX idx ON users(email)");
-        assert!(!r
-            .findings
-            .iter()
-            .any(|f| f.rule == RuleId::CreateIndexNotConcurrently));
+        assert!(
+            !r.findings
+                .iter()
+                .any(|f| f.rule == RuleId::CreateIndexNotConcurrently)
+        );
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Request, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
-use dbward_domain::services::approval_progress::{build_progress, ApprovalProgress};
+use dbward_domain::services::approval_progress::{ApprovalProgress, build_progress};
 
 use crate::error::AppError;
 use crate::ports::*;

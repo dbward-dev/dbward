@@ -72,9 +72,9 @@ pub trait RequestWriter: Send + Sync {
     fn insert(&self, req: &Request) -> Result<(), AppError>;
     fn create_and_dispatch(&self, request: &Request) -> Result<(), AppError>;
     fn mark_approved(&self, id: &str, now: chrono::DateTime<chrono::Utc>)
-        -> Result<bool, AppError>;
+    -> Result<bool, AppError>;
     fn mark_rejected(&self, id: &str, now: chrono::DateTime<chrono::Utc>)
-        -> Result<bool, AppError>;
+    -> Result<bool, AppError>;
     fn mark_cancelled(
         &self,
         id: &str,
@@ -89,7 +89,7 @@ pub trait RequestWriter: Send + Sync {
     ) -> Result<bool, AppError>;
     fn mark_running(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn mark_executed(&self, id: &str, now: chrono::DateTime<chrono::Utc>)
-        -> Result<bool, AppError>;
+    -> Result<bool, AppError>;
     fn mark_failed(&self, id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn cancel_all_for_user(
         &self,
@@ -235,7 +235,7 @@ pub trait UserRepo: Send + Sync {
     fn list(&self) -> Result<Vec<User>, AppError>;
     fn suspend(&self, user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError>;
     fn activate(&self, user_id: &str, now: chrono::DateTime<chrono::Utc>)
-        -> Result<bool, AppError>;
+    -> Result<bool, AppError>;
     fn is_suspended(&self, user_id: &str) -> Result<bool, AppError>;
     /// Auto-create user record on first auth if not exists.
     fn ensure_exists(&self, subject_id: &str) -> Result<(), AppError>;
@@ -437,7 +437,7 @@ pub struct AuditVerifyResult {
 pub trait PolicyRepo: Send + Sync {
     fn create_workflow(&self, wf: &dbward_domain::policies::Workflow) -> Result<(), AppError>;
     fn get_workflow(&self, id: &str)
-        -> Result<Option<dbward_domain::policies::Workflow>, AppError>;
+    -> Result<Option<dbward_domain::policies::Workflow>, AppError>;
     fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError>;
     fn delete_workflow(&self, id: &str) -> Result<bool, AppError>;
     fn count_workflows(&self) -> Result<u32, AppError>;
