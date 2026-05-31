@@ -808,6 +808,8 @@ dependencies = [
  "clap",
  "dbward-api-types",
  "dbward-app",
+ "dbward-commercial-license",
+ "dbward-commercial-oidc",
  "dbward-config",
  "dbward-domain",
  "dbward-infra",

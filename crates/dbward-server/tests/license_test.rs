@@ -1,5 +1,8 @@
 //! License limit integration tests.
 //! Verifies that Free/Pro/Enterprise plan limits are enforced correctly.
+//! These tests require the `commercial` feature (LicenseCheckerImpl).
+
+#![cfg(feature = "commercial")]
 
 use std::sync::atomic::AtomicBool;
 
@@ -13,7 +16,7 @@ use dbward_app::ports::*;
 use dbward_domain::auth::*;
 use dbward_domain::license::{License, Plan};
 use dbward_domain::values::*;
-use dbward_infra::LicenseCheckerImpl;
+use dbward_commercial_license::LicenseCheckerImpl;
 use dbward_infra::sqlite::{self, *};
 use dbward_server::build_app;
 use dbward_server::state::AppState;

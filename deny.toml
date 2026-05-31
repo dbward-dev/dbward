@@ -14,12 +14,17 @@ allow = [
     "Zlib",
     "OpenSSL",
     "BSL-1.0",
-    "BUSL-1.1",
     "CC0-1.0",
     "MPL-2.0",
     "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
+
+exceptions = [
+    { allow = ["LicenseRef-dbward-commercial"], crate = "dbward-commercial-license" },
+    { allow = ["LicenseRef-dbward-commercial"], crate = "dbward-commercial-oidc" },
+    { allow = ["LicenseRef-dbward-commercial"], crate = "dbward-commercial-group-auth" },
+]
 
 [bans]
 multiple-versions = "warn"
