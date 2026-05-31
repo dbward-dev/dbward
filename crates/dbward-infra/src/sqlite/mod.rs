@@ -1,6 +1,7 @@
 mod schema;
 
 mod agent_repo;
+mod audit_helper;
 mod audit_repo;
 mod context_repo;
 mod database_repo;
