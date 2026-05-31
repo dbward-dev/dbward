@@ -11,12 +11,15 @@ members = [
     "crates/dbward-server",
     "crates/dbward-agent",
     "crates/dbward-cli",
+    "commercial/license",
+    "commercial/oidc",
+    "commercial/group-auth",
 ]
 
 [workspace.package]
 version = "0.1.4"
 edition = "2024"
-license = "Apache-2.0 OR MIT"
+license = "Apache-2.0"
 repository = "https://github.com/dbward-dev/dbward"
 rust-version = "1.88"
 

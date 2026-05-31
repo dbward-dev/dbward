@@ -4,14 +4,14 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 use dbward_app::error::AuthError;
-use dbward_app::ports::{PolicyRepo, TokenRepo, TokenVerifier, UserRepo};
+use dbward_app::ports::{OidcTokenVerifier, PolicyRepo, TokenRepo, TokenVerifier, UserRepo};
 use dbward_domain::auth::{AuthUser, ResolvedRole};
 
 pub struct ApiTokenVerifier {
     token_repo: Arc<dyn TokenRepo>,
     user_repo: Arc<dyn UserRepo>,
     policy_repo: Arc<dyn PolicyRepo>,
-    oidc: Option<Arc<super::OidcVerifier>>,
+    oidc: Option<Arc<dyn OidcTokenVerifier>>,
 }
 
 impl ApiTokenVerifier {
@@ -28,8 +28,8 @@ impl ApiTokenVerifier {
         }
     }
 
-    pub fn with_oidc(mut self, oidc: super::OidcVerifier) -> Self {
-        self.oidc = Some(Arc::new(oidc));
+    pub fn with_oidc(mut self, oidc: Arc<dyn OidcTokenVerifier>) -> Self {
+        self.oidc = Some(oidc);
         self
     }
 }

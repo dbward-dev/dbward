@@ -152,7 +152,7 @@ pub async fn run_from_args(
             "groups".to_string(),
             oidc_cfg.jwks_uri.clone(),
         );
-        token_verifier_impl = token_verifier_impl.with_oidc(oidc);
+        token_verifier_impl = token_verifier_impl.with_oidc(Arc::new(oidc));
     }
 
     let token_verifier: Arc<dyn dbward_app::ports::TokenVerifier> = Arc::new(token_verifier_impl);
@@ -353,10 +353,7 @@ pub async fn run_from_args(
     let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> =
         Arc::new(dbward_infra::webhook::SsrfGuard);
     let license_checker: Arc<dyn dbward_app::ports::LicenseChecker> =
-        Arc::new(dbward_infra::LicenseCheckerImpl::new(
-            resolve_license(license_key, license_file),
-            clock.now(),
-        ));
+        Arc::new(dbward_infra::FreePlanChecker);
     let token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator> =
         Arc::new(dbward_infra::SecureTokenGenerator);
 

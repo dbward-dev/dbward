@@ -2,7 +2,7 @@
 name = "dbward-server"
 version.workspace = true
 edition.workspace = true
-license = "BUSL-1.1"
+license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Thin axum HTTP layer wiring dbward-app use cases"

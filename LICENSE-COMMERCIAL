@@ -1,0 +1,80 @@
+The dbward Commercial License
+
+Copyright (c) 2026 Takumi Minami (d/b/a dbward-dev).
+
+1. DEFINITIONS
+
+   "Licensed Code" means any file in this repository that contains the header
+   "Licensed under the dbward Commercial License" or is located under a
+   directory designated as commercially licensed (e.g., commercial/).
+
+   "Production Use" means any use that (a) processes real user or business
+   data, or (b) is accessible by end users of your organization, or
+   (c) runs in an environment designated as staging or production.
+   Development, testing, and evaluation with synthetic data do not
+   constitute Production Use.
+
+   "Subscription" means a valid dbward Pro or Enterprise subscription
+   purchased from dbward-dev or its authorized resellers.
+
+2. GRANT
+
+   Subject to an active Subscription, Licensor grants you a non-exclusive,
+   non-transferable, non-sublicensable license to use the Licensed Code in
+   Production Use. Your Subscription plan determines which features and
+   resource limits are enabled.
+
+3. PERMITTED WITHOUT SUBSCRIPTION
+
+   You may, without a Subscription:
+   - View and read the source code
+   - Copy, modify, and build the Licensed Code for development, testing,
+     and evaluation purposes
+   - Submit patches to the Licensor (subject to a Contributor License
+     Agreement if applicable)
+
+4. RESTRICTIONS
+
+   Without a valid Subscription, you may NOT:
+   - Use the Licensed Code in Production Use
+   - Redistribute the Licensed Code (in source or binary form) to third
+     parties, except as part of unmodified official dbward releases
+   - Offer the Licensed Code to third parties as part of a hosted or
+     managed service
+   - Remove or alter any license headers or notices
+
+5. TERMINATION
+
+   This license terminates automatically if:
+   - Your Subscription expires or is cancelled, OR
+   - You materially breach these terms
+
+   Upon termination, you have a 14-day grace period to cease Production Use
+   of the Licensed Code. Data processed before termination remains yours.
+
+6. DISCLAIMER OF WARRANTIES
+
+   THE LICENSED CODE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+7. LIMITATION OF LIABILITY
+
+   IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
+   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES ARISING OUT OF OR IN
+   CONNECTION WITH THE LICENSED CODE. LICENSOR'S TOTAL AGGREGATE LIABILITY
+   SHALL NOT EXCEED THE FEES PAID BY YOU IN THE 12 MONTHS PRECEDING THE
+   CLAIM.
+
+8. GOVERNING LAW
+
+   This License is governed by the laws of Japan. Any disputes arising
+   under this License shall be subject to the exclusive jurisdiction of
+   the Tokyo District Court.
+
+9. ENTIRE AGREEMENT
+
+   This License constitutes the entire agreement between you and Licensor
+   regarding the Licensed Code and supersedes all prior agreements.
+
+For commercial licensing inquiries: hello@dbward.dev

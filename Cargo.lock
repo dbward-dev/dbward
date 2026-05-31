@@ -674,6 +674,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbward-commercial-group-auth"
+version = "0.1.0"
+dependencies = [
+ "dbward-app",
+ "dbward-domain",
+]
+
+[[package]]
+name = "dbward-commercial-license"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dbward-app",
+ "dbward-domain",
+ "tracing",
+]
+
+[[package]]
+name = "dbward-commercial-oidc"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dbward-app",
+ "dbward-domain",
+ "jsonwebtoken",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "dbward-config"
 version = "0.1.4"
 dependencies = [

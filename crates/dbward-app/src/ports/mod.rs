@@ -3,7 +3,7 @@ mod clock;
 pub mod repos;
 mod services;
 
-pub use authorizer::{Authorizer, PolicyEvaluator, RoleResolver, TokenVerifier};
+pub use authorizer::{Authorizer, OidcTokenVerifier, PolicyEvaluator, RoleResolver, TokenVerifier};
 pub use clock::{Clock, IdGenerator, TokenValueGenerator};
 pub use repos::{
     AgentRepo, ApprovalRepo, AuditFilter, AuditLogger, AuditRepo, AuditVerifyResult,
