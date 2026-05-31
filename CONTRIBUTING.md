@@ -86,6 +86,14 @@ By submitting a pull request, you certify under the
 [Developer Certificate of Origin](https://developercertificate.org/) (DCO) that you
 have the right to submit it under the project's license terms.
 
+All commits must include a `Signed-off-by` trailer:
+
+```bash
+git commit -s -m "feat(server): add feature X"
+```
+
+This adds a line like `Signed-off-by: Your Name <your@email.com>` to the commit message.
+
 - **`crates/`** — contributions are licensed under [Apache-2.0](LICENSE-APACHE).
 - **`commercial/`** — external contributions are not accepted without a separate agreement.
   If you'd like to contribute to commercial components, contact hello@dbward.dev.
