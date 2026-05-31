@@ -17,7 +17,7 @@ impl SqliteDryRunRepo {
 
 impl DryRunRepo for SqliteDryRunRepo {
     fn create_jobs(&self, jobs: &[DryRunJobRecord]) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         for job in jobs {
             conn.execute(
                 "INSERT INTO dry_run_jobs (id, request_id, database_name, environment, sql_text, status, created_at) \
@@ -36,7 +36,7 @@ impl DryRunRepo for SqliteDryRunRepo {
         if databases.is_empty() {
             return Ok(vec![]);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         // Build parameterized WHERE clause for (database_name, environment) pairs
         let placeholders: Vec<String> = databases
             .iter()
@@ -98,7 +98,7 @@ impl DryRunRepo for SqliteDryRunRepo {
         claim_token: &str,
         now: &str,
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn.execute(
             "UPDATE dry_run_jobs SET status = 'claimed', claimed_by = ?1, claimed_at = ?2, claim_token = ?3 \
              WHERE id = ?4 AND status = 'pending'",
@@ -116,7 +116,7 @@ impl DryRunRepo for SqliteDryRunRepo {
         result_json: &str,
         now: &str,
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE dry_run_jobs SET status = 'completed', result_json = ?1, completed_at = ?2 \
@@ -135,7 +135,7 @@ impl DryRunRepo for SqliteDryRunRepo {
         error: &str,
         now: &str,
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE dry_run_jobs SET status = 'failed', error_message = ?1, completed_at = ?2 \
@@ -147,7 +147,7 @@ impl DryRunRepo for SqliteDryRunRepo {
     }
 
     fn reclaim_stale(&self, cutoff: &str) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn.execute(
             "UPDATE dry_run_jobs SET status = 'pending', claimed_by = NULL, claimed_at = NULL, claim_token = NULL \
              WHERE status = 'claimed' AND claimed_at < ?1",
@@ -158,7 +158,7 @@ impl DryRunRepo for SqliteDryRunRepo {
     }
 
     fn find_for_request(&self, request_id: &str) -> Result<Vec<DryRunJobRecord>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, request_id, database_name, environment, sql_text, status, \
              claimed_by, claimed_at, claim_token, result_json, error_message, created_at, completed_at \
@@ -189,7 +189,7 @@ impl DryRunRepo for SqliteDryRunRepo {
     }
 
     fn get_request_id(&self, job_id: &str) -> Result<Option<String>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let result = conn.query_row(
             "SELECT request_id FROM dry_run_jobs WHERE id = ?1",
             params![job_id],
@@ -212,7 +212,7 @@ mod tests {
     fn setup() -> DbConn {
         let conn = open_memory().unwrap();
         {
-            let c = conn.lock().unwrap();
+            let c = conn.lock();
             initialize(&c).unwrap();
             // Disable FK for test isolation (initialize enables it)
             c.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();

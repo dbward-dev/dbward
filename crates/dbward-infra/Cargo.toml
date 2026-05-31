@@ -8,6 +8,7 @@ rust-version.workspace = true
 description = "Infrastructure layer for dbward — port trait implementations"
 
 [dependencies]
+parking_lot = "0.12"
 dbward-domain = { path = "../dbward-domain" }
 dbward-app = { path = "../dbward-app" }
 

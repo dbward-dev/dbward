@@ -15,7 +15,7 @@ impl SqliteDatabaseRegistry {
 
 impl DatabaseRegistry for SqliteDatabaseRegistry {
     fn register(&self, db: &DatabaseName, env: &Environment) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let id = format!("{}:{}", db, env);
         conn.execute(
             "INSERT OR IGNORE INTO databases (id, name, environment, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -26,7 +26,7 @@ impl DatabaseRegistry for SqliteDatabaseRegistry {
     }
 
     fn exists(&self, db: &DatabaseName, env: &Environment) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let id = format!("{}:{}", db, env);
         let result: Result<String, _> = conn.query_row(
             "SELECT id FROM databases WHERE id = ?1",
@@ -41,7 +41,7 @@ impl DatabaseRegistry for SqliteDatabaseRegistry {
     }
 
     fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT name, environment FROM databases")
             .map_err(|e| AppError::Internal(e.to_string()))?;

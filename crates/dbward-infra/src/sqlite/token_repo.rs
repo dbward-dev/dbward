@@ -17,7 +17,7 @@ impl SqliteTokenRepo {
 
 impl TokenRepo for SqliteTokenRepo {
     fn create(&self, token: &Token) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             rusqlite::params![
@@ -39,7 +39,7 @@ impl TokenRepo for SqliteTokenRepo {
     }
 
     fn verify(&self, prefix: &str, hash: &str) -> Result<Option<Token>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE token_prefix = ?1 AND status = 'active'",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -58,7 +58,7 @@ impl TokenRepo for SqliteTokenRepo {
     }
 
     fn list(&self) -> Result<Vec<Token>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -70,7 +70,7 @@ impl TokenRepo for SqliteTokenRepo {
     }
 
     fn get(&self, token_id: &str) -> Result<Option<Token>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE id = ?1",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -83,7 +83,7 @@ impl TokenRepo for SqliteTokenRepo {
     }
 
     fn revoke(&self, token_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute(
             "UPDATE tokens SET status = 'revoked', revoked_at = ?1 WHERE id = ?2 AND status = 'active'",
             rusqlite::params![now.to_rfc3339(), token_id],
@@ -92,7 +92,7 @@ impl TokenRepo for SqliteTokenRepo {
     }
 
     fn revoke_all_for_user(&self, subject_id: &str, now: DateTime<Utc>) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute(
             "UPDATE tokens SET status = 'revoked', revoked_at = ?1 WHERE subject_id = ?2 AND status = 'active'",
             rusqlite::params![now.to_rfc3339(), subject_id],
@@ -101,7 +101,7 @@ impl TokenRepo for SqliteTokenRepo {
     }
 
     fn count_active(&self) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let count: u32 = conn
             .query_row(
                 "SELECT COUNT(*) FROM tokens WHERE status = 'active'",
@@ -113,7 +113,7 @@ impl TokenRepo for SqliteTokenRepo {
     }
 
     fn purge_revoked(&self, before: &str) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn
             .execute(
                 "DELETE FROM tokens WHERE status = 'revoked' AND revoked_at < ?1",

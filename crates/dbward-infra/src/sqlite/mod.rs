@@ -34,7 +34,7 @@ pub use webhook_repo::SqliteWebhookRepo;
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use std::sync::Arc;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 /// Parse an RFC3339 datetime string from the database without panicking.
 pub(crate) fn parse_datetime(s: &str) -> Result<DateTime<Utc>, rusqlite::Error> {

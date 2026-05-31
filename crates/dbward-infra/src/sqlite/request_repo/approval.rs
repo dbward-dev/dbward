@@ -25,7 +25,7 @@ fn compute_current_step(
 
 impl ApprovalRepo for SqliteRequestRepo {
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let tx = conn.unchecked_transaction().map_err(map_err)?;
         tx.execute(
             "INSERT INTO approvals (id, request_id, action, actor_id, matched_selector, step_index, comment, created_at)
@@ -90,7 +90,7 @@ impl ApprovalRepo for SqliteRequestRepo {
         Ok(())
     }
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT * FROM approvals WHERE request_id = ?1 ORDER BY created_at ASC")
             .map_err(map_err)?;
@@ -133,7 +133,7 @@ impl ApprovalRepo for SqliteRequestRepo {
         request_id: &str,
         now: DateTime<Utc>,
     ) -> Result<bool, AppError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(map_err)?;
@@ -179,7 +179,7 @@ impl ApprovalRepo for SqliteRequestRepo {
         approval: &Approval,
         now: DateTime<Utc>,
     ) -> Result<bool, AppError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(map_err)?;

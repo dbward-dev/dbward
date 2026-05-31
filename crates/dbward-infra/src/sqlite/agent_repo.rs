@@ -20,7 +20,7 @@ impl SqliteAgentRepo {
 
 impl AgentRepo for SqliteAgentRepo {
     fn upsert(&self, agent: &Agent) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let databases_json = serde_json::to_string(&agent.databases)
             .map_err(|e| AppError::Internal(e.to_string()))?;
         let active_jobs_json = serde_json::to_string(&agent.active_jobs)
@@ -47,7 +47,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn get(&self, agent_id: &str) -> Result<Option<Agent>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.query_row(
             "SELECT id, token_id, databases_json, status, max_concurrent, in_flight, uptime_secs, active_jobs_json, last_seen_at, created_at FROM agents WHERE id = ?1",
             params![agent_id],
@@ -73,7 +73,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn list(&self) -> Result<Vec<Agent>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, token_id, databases_json, status, max_concurrent, in_flight, uptime_secs, active_jobs_json, last_seen_at, created_at FROM agents ORDER BY last_seen_at DESC",
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -102,7 +102,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn create_execution(&self, execution: &Execution) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let status = execution_status_str(execution.status);
         let lease = execution.lease_expires_at.to_rfc3339();
         let started = execution.started_at.map(|t| t.to_rfc3339());
@@ -118,7 +118,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn get_execution(&self, execution_id: &str) -> Result<Option<Execution>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.query_row(
             "SELECT id, request_id, agent_id, status, token, lease_expires_at, started_at, finished_at, error_message, created_at
              FROM executions WHERE id = ?1",
@@ -134,7 +134,7 @@ impl AgentRepo for SqliteAgentRepo {
         execution_id: &str,
         status: ExecutionStatus,
     ) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         // Set finished_at when execution reaches a terminal state
         let finished = matches!(status, ExecutionStatus::Completed | ExecutionStatus::Failed);
         if finished {
@@ -158,7 +158,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn extend_lease(&self, execution_id: &str, new_expiry: DateTime<Utc>) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE executions SET lease_expires_at = ?1 WHERE id = ?2",
             params![new_expiry.to_rfc3339(), execution_id],
@@ -174,7 +174,7 @@ impl AgentRepo for SqliteAgentRepo {
         if databases.is_empty() {
             return Ok(vec![]);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let placeholders: Vec<String> = databases
             .iter()
             .enumerate()
@@ -243,7 +243,7 @@ impl AgentRepo for SqliteAgentRepo {
         env: &Environment,
         exclude_request_id: &str,
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let database_id = format!("{}:{}", db, env);
         let count: u32 = conn
             .query_row(
@@ -260,7 +260,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn find_executions_for_request(&self, request_id: &str) -> Result<Vec<Execution>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, request_id, agent_id, status, token, lease_expires_at, started_at, finished_at, error_message, created_at
              FROM executions WHERE request_id = ?1 ORDER BY created_at ASC",
@@ -283,7 +283,7 @@ impl AgentRepo for SqliteAgentRepo {
         request_id: &str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let tx = conn
             .unchecked_transaction()
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -328,7 +328,7 @@ impl AgentRepo for SqliteAgentRepo {
     ) -> Result<dbward_app::ports::CompletionOutcome, AppError> {
         use dbward_app::ports::CompletionOutcome;
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -397,7 +397,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn find_expired_leases(&self, now: &str) -> Result<Vec<(String, String)>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, request_id FROM executions WHERE status IN ('claimed', 'running') AND datetime(lease_expires_at) < datetime(?1)"
         ).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -416,7 +416,7 @@ impl AgentRepo for SqliteAgentRepo {
         request_id: &str,
         now: &str,
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let tx = conn
             .unchecked_transaction()
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -444,7 +444,7 @@ impl AgentRepo for SqliteAgentRepo {
     ) -> Result<bool, AppError> {
         use sha2::{Digest, Sha256};
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -473,7 +473,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn find_expired_results(&self, now: &str) -> Result<Vec<(String, String)>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT id, storage_key FROM results WHERE datetime(expires_at) < datetime(?1)",
@@ -489,7 +489,7 @@ impl AgentRepo for SqliteAgentRepo {
     }
 
     fn delete_result(&self, result_id: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "DELETE FROM result_access WHERE result_id = ?1",
             rusqlite::params![result_id],

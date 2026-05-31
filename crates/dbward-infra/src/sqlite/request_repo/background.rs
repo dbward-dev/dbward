@@ -8,7 +8,7 @@ use super::{SqliteRequestRepo, map_err};
 
 impl BackgroundTaskRepo for SqliteRequestRepo {
     fn find_expired_approved(&self, now: &str) -> Result<Vec<String>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id FROM requests WHERE status = 'approved' \
              AND resolved_at IS NOT NULL \
@@ -20,7 +20,7 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
     }
     fn find_expired_pending(&self, now: &str) -> Result<Vec<String>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare(
                 "SELECT id FROM requests WHERE status = 'pending' \
@@ -34,7 +34,7 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
     }
     fn find_dispatched_older_than(&self, cutoff: &str) -> Result<Vec<String>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id FROM requests WHERE status = 'dispatched' AND datetime(updated_at) < datetime(?1)"
         ).map_err(map_err)?;
@@ -44,7 +44,7 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
         rows.collect::<Result<Vec<String>, _>>().map_err(map_err)
     }
     fn mark_expired(&self, id: &str, now: &str) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute(
             "UPDATE requests SET status = 'expired', updated_at = ?2 WHERE id = ?1 AND status IN ('approved', 'pending')",
             params![id, now],
@@ -59,7 +59,7 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
     ) -> Result<bool, AppError> {
         use sha2::{Digest, Sha256};
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(map_err)?;
@@ -83,7 +83,7 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
         Ok(true)
     }
     fn purge_old_requests(&self, before: &str) -> Result<u32, AppError> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(map_err)?;

@@ -107,7 +107,7 @@ fn workflow_state() -> AppState {
 
     // Register databases
     {
-        let c = conn.lock().unwrap();
+        let c = conn.lock();
         c.execute(
             "INSERT INTO databases (id, name, environment, created_at) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![

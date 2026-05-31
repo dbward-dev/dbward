@@ -66,7 +66,7 @@ fn row_to_delivery(row: &rusqlite::Row<'_>) -> Result<WebhookDelivery, rusqlite:
 
 impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
     fn insert(&self, d: &WebhookDelivery) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO webhook_deliveries (id, webhook_id, event_type, payload, status, attempts, max_attempts, next_retry_at, last_error, created_at, last_attempted_at, claimed_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             params![
@@ -89,7 +89,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
     }
 
     fn claim_for_retry(&self, now: &str, limit: u32) -> Result<Vec<WebhookDelivery>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         // Atomically claim rows
         conn.execute(
             "UPDATE webhook_deliveries SET status = 'in_progress', claimed_at = ?1 WHERE id IN (SELECT id FROM webhook_deliveries WHERE status = 'pending' AND next_retry_at <= ?1 ORDER BY next_retry_at ASC LIMIT ?2)",
@@ -110,7 +110,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
     }
 
     fn mark_delivered(&self, id: &str, now: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE webhook_deliveries SET status = 'delivered', last_attempted_at = ?2 WHERE id = ?1",
             params![id, now],
@@ -126,7 +126,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
         next_retry_at: &str,
         attempts: u32,
     ) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE webhook_deliveries SET status = 'pending', last_error = ?2, next_retry_at = ?3, attempts = ?4, last_attempted_at = ?3, claimed_at = NULL WHERE id = ?1",
             params![id, error, next_retry_at, attempts],
@@ -136,7 +136,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
     }
 
     fn mark_dead(&self, id: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE webhook_deliveries SET status = 'dead', claimed_at = NULL WHERE id = ?1",
             params![id],
@@ -146,7 +146,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
     }
 
     fn reclaim_stale(&self, older_than: &str) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let changed = conn
             .execute(
                 "UPDATE webhook_deliveries SET status = 'pending', claimed_at = NULL WHERE status = 'in_progress' AND claimed_at < ?1",
@@ -162,7 +162,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<WebhookDelivery>, u32), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let (count_sql, query_sql) = if let Some(s) = status {
             (
                 format!("SELECT COUNT(*) FROM webhook_deliveries WHERE status = '{s}'"),
@@ -193,7 +193,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
     }
 
     fn purge_old(&self, before: &str) -> Result<u32, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let changed = conn
             .execute(
                 "DELETE FROM webhook_deliveries WHERE status IN ('delivered', 'dead') AND created_at < ?1",

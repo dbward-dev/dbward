@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use dbward_app::error::AppError;
 use rusqlite::Connection;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use crate::slack::{SlackMessageRef, SlackMessageRepo};
 
@@ -18,7 +18,7 @@ impl SqliteSlackMessageRepo {
 
 impl SlackMessageRepo for SqliteSlackMessageRepo {
     fn save(&self, request_id: &str, channel: &str, message_ts: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO slack_messages (request_id, channel, message_ts, created_at) VALUES (?1, ?2, ?3, datetime('now'))",
             rusqlite::params![request_id, channel, message_ts],
@@ -28,7 +28,7 @@ impl SlackMessageRepo for SqliteSlackMessageRepo {
     }
 
     fn get(&self, request_id: &str) -> Result<Option<SlackMessageRef>, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT channel, message_ts FROM slack_messages WHERE request_id = ?1")
             .map_err(|e| AppError::Internal(format!("sqlite: {e}")))?;

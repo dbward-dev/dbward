@@ -10,7 +10,7 @@ use super::{SqliteRequestRepo, database_id, map_err, populate_pending_approvers}
 
 impl RequestWriter for SqliteRequestRepo {
     fn insert(&self, req: &Request) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let tx = conn.unchecked_transaction().map_err(map_err)?;
         let db_id = database_id(&req.database, &req.environment);
         let share_with_json = serde_json::to_string(&req.share_with)
@@ -49,7 +49,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(())
     }
     fn create_and_dispatch(&self, req: &Request) -> Result<(), AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let tx = conn.unchecked_transaction().map_err(map_err)?;
         let db_id = database_id(&req.database, &req.environment);
         let share_with_json = serde_json::to_string(&req.share_with)
@@ -92,7 +92,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(())
     }
     fn mark_approved(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'approved', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
@@ -102,7 +102,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(affected > 0)
     }
     fn mark_rejected(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'rejected', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
@@ -118,7 +118,7 @@ impl RequestWriter for SqliteRequestRepo {
         reason: Option<&str>,
         now: DateTime<Utc>,
     ) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'cancelled', cancelled_by = ?2, cancel_reason = ?3, updated_at = ?4, resolved_at = ?4
@@ -129,7 +129,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(affected > 0)
     }
     fn mark_dispatched(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'dispatched', updated_at = ?2 WHERE id = ?1 AND status IN ('approved', 'auto_approved', 'break_glass', 'executed', 'failed', 'execution_lost')",
@@ -139,7 +139,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(affected > 0)
     }
     fn mark_running(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'running', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
@@ -149,7 +149,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(affected > 0)
     }
     fn mark_executed(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'executed', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'running'",
@@ -159,7 +159,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(affected > 0)
     }
     fn mark_failed(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let affected = conn
             .execute(
                 "UPDATE requests SET status = 'failed', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'running'",
@@ -178,7 +178,7 @@ impl RequestWriter for SqliteRequestRepo {
     ) -> Result<Vec<String>, AppError> {
         use sha2::{Digest, Sha256};
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(map_err)?;
@@ -246,7 +246,7 @@ impl RequestWriter for SqliteRequestRepo {
         Ok(ids)
     }
     fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let n = conn.execute(
             "UPDATE requests SET status = 'approved', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
             params![id, now],
@@ -261,7 +261,7 @@ impl RequestWriter for SqliteRequestRepo {
     ) -> Result<bool, AppError> {
         use sha2::{Digest, Sha256};
 
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(map_err)?;
