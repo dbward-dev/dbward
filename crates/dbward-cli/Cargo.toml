@@ -14,7 +14,6 @@ name = "dbward"
 path = "src/main.rs"
 
 [dependencies]
-async-trait = "0.1"
 dbward-api-types = { path = "../dbward-api-types" }
 dbward-config = { path = "../dbward-config" }
 dbward-domain = { path = "../dbward-domain" }

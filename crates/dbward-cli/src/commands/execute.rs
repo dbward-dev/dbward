@@ -103,10 +103,6 @@ pub async fn run_execute(
             eprintln!("Request {request_id} is approved but not yet resumed.");
             eprintln!("Run: dbward request resume {request_id}");
         }
-        Outcome::TimedOut { request_id, .. } => {
-            eprintln!("Request {request_id} is still executing (timed out).");
-            eprintln!("Run: dbward request resume {request_id}");
-        }
     }
     Ok(())
 }

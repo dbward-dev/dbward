@@ -99,7 +99,6 @@ pub struct ServerClient {
     client: Client,
 }
 
-#[derive(Clone)]
 pub struct CreateRequest<'a> {
     pub operation: &'a str,
     pub environment: &'a str,
