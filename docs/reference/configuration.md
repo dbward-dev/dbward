@@ -235,7 +235,7 @@ operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "mi
 | `drain_timeout_secs` | 60 |
 | `statement_timeout_secs` | 30 |
 | `lease_duration_secs` | 300 |
-| `operations` | all (select, dml, migrate_up, migrate_down) |
+| `operations` | all (select, dml, migrate_up, migrate_down, migrate_status) |
 
 ---
 
