@@ -9,7 +9,7 @@ Choose how you want to try dbward:
 
 | Path | Best for | Time | Requirements |
 |------|----------|------|--------------|
-| [**Connect your database**](quickstart-local.md) | You already have PostgreSQL or MySQL running | 3 min | macOS or Linux |
+| [**Connect your database**](quickstart-local.md) | You already have PostgreSQL or MySQL running | 1 min | macOS or Linux |
 | [**Try with Docker**](quickstart-docker.md) | You want a self-contained demo with a test database | 5 min | Docker + Docker Compose |
 
 Both paths end with a working approval flow you can test.

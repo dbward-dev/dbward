@@ -46,6 +46,8 @@ services:
       - ./tokens:/tokens:ro
       - ./config/cli.toml:/config/dbward-cli.toml:ro
       - ./scripts/dev-entrypoint.sh:/scripts/dev-entrypoint.sh:ro
+    tmpfs:
+      - /tmp:size=16M
     profiles: [dev]
 
   bob:
@@ -67,6 +69,8 @@ services:
       - ./tokens:/tokens:ro
       - ./config/cli.toml:/config/dbward-cli.toml:ro
       - ./scripts/dev-entrypoint.sh:/scripts/dev-entrypoint.sh:ro
+    tmpfs:
+      - /tmp:size=16M
     profiles: [dev]
 
   # === S3 Profile (MinIO) ===

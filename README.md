@@ -54,49 +54,28 @@ $ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
 
 ## Quick Start
 
+**Try the approval flow in 5 minutes (Docker):**
+
 ```bash
-# Install (downloads dbward, dbward-server, dbward-agent)
+git clone https://github.com/dbward-dev/dbward.git && cd dbward
+./dev/scripts/dev-setup.sh
+DBWARD_SERVER_CONFIG=server-quickstart.toml \
+  docker compose -f dev/compose.yml -f dev/compose.override.yml up -d
+./dev/scripts/quickstart-init.sh
+```
+
+Then submit → approve → execute → audit. Full walkthrough: **[Quickstart with Docker](https://dbward.dev/docs/quickstart-docker/)**
+
+**Quick smoke test (local install):**
+
+```bash
 curl -fsSL https://dbward.dev/install.sh | sh
-
-# Or CLI only (for developers connecting to an existing server):
-# DBWARD_COMPONENTS=cli curl -fsSL https://dbward.dev/install.sh | sh
-
-# Start local server + agent (development mode)
 dbward dev --database-url "postgres://user:pass@localhost:5432/mydb"
-
-# In another terminal — run a query
+# In another terminal:
 dbward --config ~/.dbward/dev/client.toml --database app execute "SELECT 1"
 ```
 
-> **See also:** [Quickstart with Docker](https://dbward.dev/quickstart-docker/) for a self-contained demo with a test database.
-
-### Team Setup
-
-```bash
-# 1. Generate config for your team
-dbward init --preset small-team
-
-# 2. Start server (auto-initializes on first run)
-dbward-server --listen 0.0.0.0:3000 --config server.toml
-# → Tokens written to ./data/admin-token, ./data/agent-token, ./data/developer-token
-
-# 3. Start agent (connects to your database)
-DBWARD_AGENT_TOKEN=$(cat ./data/agent-token) dbward-agent --config agent.toml
-
-# 4. Configure CLI for developer
-export DBWARD_TOKEN=$(cat ./data/developer-token)
-# Or edit ~/.config/dbward/config.toml → token = "dbw_..."
-
-# 5. Developer submits a request
-dbward execute "DELETE FROM old_data" --reason "cleanup"
-# → "Request abc12345 requires approval."
-
-# 6. Approver approves (using admin token)
-DBWARD_TOKEN=$(cat ./data/admin-token) dbward request approve abc12345 --comment "LGTM"
-
-# 7. Developer resumes execution
-dbward request resume abc12345
-```
+Dev mode auto-approves everything for fast iteration. See [Connect Your Database](https://dbward.dev/docs/quickstart-local/) for details.
 
 ### MCP Mode (AI agents)
 
