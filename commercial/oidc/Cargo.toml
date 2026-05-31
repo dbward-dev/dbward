@@ -1,0 +1,18 @@
+[package]
+name = "dbward-commercial-oidc"
+version = "0.1.0"
+edition = "2024"
+license = "LicenseRef-dbward-commercial"
+publish = false
+description = "dbward commercial OIDC/SSO authentication (Pro feature)"
+
+[dependencies]
+dbward-app = { path = "../../crates/dbward-app" }
+dbward-domain = { path = "../../crates/dbward-domain" }
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+jsonwebtoken = "9"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde_json = "1"
+tokio = { version = "1", features = ["sync"] }
+tracing = "0.1"

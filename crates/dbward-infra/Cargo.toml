@@ -41,7 +41,6 @@ object_store = { version = "0.11", features = ["aws"] }
 futures-util = "0.3"
 
 # JWT / OIDC
-jsonwebtoken = "9"
 
 # Utilities
 uuid = { workspace = true }

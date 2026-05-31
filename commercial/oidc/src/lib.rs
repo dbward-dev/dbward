@@ -1,3 +1,7 @@
+// Copyright (c) 2026 dbward-dev.
+// Licensed under the dbward Commercial License.
+// Production use requires a valid Pro or Enterprise subscription.
+
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -193,6 +197,13 @@ impl TokenVerifier for OidcVerifier {
             }
             Err(e) => Err(e),
         }
+    }
+}
+
+#[async_trait]
+impl dbward_app::ports::OidcTokenVerifier for OidcVerifier {
+    async fn verify_oidc_token(&self, token: &str) -> Result<(String, Vec<String>), AuthError> {
+        <Self as TokenVerifier>::verify_oidc_token(self, token).await
     }
 }
 

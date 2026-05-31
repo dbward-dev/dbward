@@ -1,0 +1,13 @@
+[package]
+name = "dbward-commercial-license"
+version = "0.1.0"
+edition = "2024"
+license = "LicenseRef-dbward-commercial"
+publish = false
+description = "dbward commercial license checker (Pro/Enterprise plan enforcement)"
+
+[dependencies]
+dbward-app = { path = "../../crates/dbward-app" }
+dbward-domain = { path = "../../crates/dbward-domain" }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"

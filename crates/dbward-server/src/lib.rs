@@ -139,23 +139,7 @@ pub async fn run_from_args(
         policy_repo.clone(),
     );
 
-    // C-10: Inject OIDC verifier if configured
-    if (cfg.auth.mode == "oidc" || cfg.auth.mode == "both")
-        && let Some(ref oidc_cfg) = cfg.auth.oidc
-    {
-        let oidc = dbward_infra::auth::OidcVerifier::new(
-            oidc_cfg.issuer_url.clone(),
-            oidc_cfg
-                .client_id
-                .clone()
-                .unwrap_or_else(|| oidc_cfg.audience.clone()),
-            "groups".to_string(),
-            oidc_cfg.jwks_uri.clone(),
-        );
-        token_verifier_impl = token_verifier_impl.with_oidc(oidc);
-    }
-
-    let token_verifier: Arc<dyn dbward_app::ports::TokenVerifier> = Arc::new(token_verifier_impl);
+    // token_verifier is finalized after OIDC injection below
     let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new({
         // H-31: Build bindings from config
         let mut group_bindings: HashMap<String, Vec<String>> = HashMap::new();
@@ -352,11 +336,58 @@ pub async fn run_from_args(
         });
     let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> =
         Arc::new(dbward_infra::webhook::SsrfGuard);
-    let license_checker: Arc<dyn dbward_app::ports::LicenseChecker> =
-        Arc::new(dbward_infra::LicenseCheckerImpl::new(
-            resolve_license(license_key, license_file),
-            clock.now(),
-        ));
+    let license_checker: Arc<dyn dbward_app::ports::LicenseChecker> = {
+        #[cfg(feature = "commercial")]
+        {
+            Arc::new(dbward_commercial_license::LicenseCheckerImpl::new(
+                resolve_license(license_key, license_file),
+                clock.now(),
+            ))
+        }
+        #[cfg(not(feature = "commercial"))]
+        {
+            if license_key.is_some() || license_file.is_some() {
+                tracing::warn!(
+                    "license_key/license_file configured but commercial feature not compiled. Ignored."
+                );
+            }
+            Arc::new(dbward_infra::FreePlanChecker)
+        }
+    };
+
+    // C-10: Inject OIDC verifier (requires commercial feature + Pro license)
+    #[cfg(feature = "commercial")]
+    if (cfg.auth.mode == "oidc" || cfg.auth.mode == "both")
+        && let Some(ref oidc_cfg) = cfg.auth.oidc
+    {
+        if license_checker.effective_plan() == "free" {
+            tracing::warn!(
+                "auth.mode = {:?} requires a Pro license. Falling back to token-only auth.",
+                cfg.auth.mode
+            );
+        } else {
+            let oidc = dbward_commercial_oidc::OidcVerifier::new(
+                oidc_cfg.issuer_url.clone(),
+                oidc_cfg
+                    .client_id
+                    .clone()
+                    .unwrap_or_else(|| oidc_cfg.audience.clone()),
+                "groups".to_string(),
+                oidc_cfg.jwks_uri.clone(),
+            );
+            token_verifier_impl = token_verifier_impl.with_oidc(Arc::new(oidc));
+        }
+    }
+    #[cfg(not(feature = "commercial"))]
+    if cfg.auth.mode == "oidc" || cfg.auth.mode == "both" {
+        tracing::warn!(
+            "auth.mode = {:?} requires a Pro license (commercial feature not compiled). Using token-only auth.",
+            cfg.auth.mode
+        );
+    }
+
+    let token_verifier: Arc<dyn dbward_app::ports::TokenVerifier> = Arc::new(token_verifier_impl);
+
     let token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator> =
         Arc::new(dbward_infra::SecureTokenGenerator);
 
@@ -455,7 +486,7 @@ pub async fn run_from_args(
     start(addr, state, cfg.retention, trusted).await
 }
 
-fn register_databases(
+pub fn register_databases(
     state: &AppState,
     databases: &[config::DatabaseDef],
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -698,6 +729,7 @@ pub async fn start(
     Ok(())
 }
 
+#[cfg(feature = "commercial")]
 pub(crate) fn resolve_license(
     key: Option<&str>,
     file: Option<&str>,
@@ -756,7 +788,7 @@ async fn wait_for_signal() {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "commercial"))]
 mod tests {
     use super::*;
 

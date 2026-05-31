@@ -15,6 +15,13 @@ pub trait TokenVerifier: Send + Sync {
     async fn verify_oidc_token(&self, token: &str) -> Result<(String, Vec<String>), AuthError>;
 }
 
+/// OIDC token verification — separated from TokenVerifier to allow commercial
+/// implementations without coupling the core auth layer to a specific OIDC library.
+#[async_trait]
+pub trait OidcTokenVerifier: Send + Sync {
+    async fn verify_oidc_token(&self, token: &str) -> Result<(String, Vec<String>), AuthError>;
+}
+
 /// Role resolution: maps groups/user_bindings to ResolvedRoles.
 pub trait RoleResolver: Send + Sync {
     fn resolve(

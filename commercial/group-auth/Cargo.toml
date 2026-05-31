@@ -1,0 +1,11 @@
+[package]
+name = "dbward-commercial-group-auth"
+version = "0.1.0"
+edition = "2024"
+license = "LicenseRef-dbward-commercial"
+publish = false
+description = "dbward commercial group-based authorization (Pro feature)"
+
+[dependencies]
+dbward-app = { path = "../../crates/dbward-app" }
+dbward-domain = { path = "../../crates/dbward-domain" }

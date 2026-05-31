@@ -2,7 +2,7 @@
 name = "dbward-server"
 version.workspace = true
 edition.workspace = true
-license = "BUSL-1.1"
+license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Thin axum HTTP layer wiring dbward-app use cases"
@@ -17,6 +17,8 @@ dbward-api-types = { path = "../dbward-api-types" }
 dbward-config = { path = "../dbward-config" }
 dbward-domain = { path = "../dbward-domain" }
 dbward-infra = { path = "../dbward-infra" }
+dbward-commercial-license = { path = "../../commercial/license", optional = true }
+dbward-commercial-oidc = { path = "../../commercial/oidc", optional = true }
 clap = { version = "4", features = ["derive", "env"] }
 axum = "0.8"
 chrono.workspace = true
@@ -37,6 +39,7 @@ subtle = "2"
 form_urlencoded = "1"
 
 [dev-dependencies]
+dbward-commercial-license = { path = "../../commercial/license" }
 tower = { version = "0.5", features = ["util"] }
 hyper = "1"
 http-body-util = "0.1"
@@ -46,3 +49,7 @@ futures-core = "0.3"
 dbward-domain = { path = "../dbward-domain" }
 rusqlite = { version = "0.35", features = ["bundled"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+
+[features]
+default = ["commercial"]
+commercial = ["dep:dbward-commercial-license", "dep:dbward-commercial-oidc"]

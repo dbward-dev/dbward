@@ -6,11 +6,22 @@
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR/.."
+cd "$SCRIPT_DIR/../.."
+export COMPOSE_FILE="dev/compose.yml:dev/compose.override.yml"
 source "$SCRIPT_DIR/helpers.sh"
 
 echo "=== License / Pro Plan E2E ==="
 echo ""
+
+# Use server-free.toml (1 DB) so Free plan can start
+echo "DBWARD_SERVER_CONFIG=server-free.toml" > dev/.env
+
+# Ensure empty license key (Free plan)
+echo "" > "$SCRIPT_DIR/../secrets/license.key"
+
+# Start full environment in Free mode (clean slate)
+docker compose down -v 2>/dev/null
+docker compose up -d 2>/dev/null
 wait_for_server
 
 TS=$(date +%s)
@@ -23,9 +34,9 @@ python3 "$(dirname "$0")/../scripts/generate-test-license.py" > /dev/null 2>&1 |
 # --- 1. Free plan: workflow limit ---
 echo "--- Free plan workflow limit ---"
 
-# server.toml already syncs 3 workflows at startup.
-# Free limit is 5, so we can create 2 more before hitting the limit.
-for i in $(seq 1 2); do
+# server-free.toml syncs 1 workflow at startup.
+# Free limit is 5, so we can create 4 more before hitting the limit.
+for i in $(seq 1 4); do
   STATUS=$(api_status POST /api/workflows "$ADMIN_TOKEN" \
     -d "{\"database\":\"app\",\"environment\":\"lic-env-$i\",\"operations\":[\"execute_select\"],\"steps\":[]}")
   if [ "$STATUS" != "201" ]; then
@@ -33,7 +44,7 @@ for i in $(seq 1 2); do
     summary
   fi
 done
-pass "Created 2 additional workflows (total now at Free limit)"
+pass "Created 4 additional workflows (total now at Free limit)"
 
 # Next one should fail with 402
 STATUS=$(api_status POST /api/workflows "$ADMIN_TOKEN" \
@@ -48,10 +59,11 @@ if [ -f "$LICENSE_DIR/pro.key" ] && [ -f "$LICENSE_DIR/test.pub.hex" ]; then
   PUB_KEY=$(cat "$LICENSE_DIR/test.pub.hex" | tr -d '\n')
   PRO_KEY=$(cat "$LICENSE_DIR/pro.key" | tr -d '\n')
 
-  # Restart server with Pro license
-  DBWARD_LICENSE_KEY="$PRO_KEY" DBWARD_LICENSE_PUBLIC_KEY="$PUB_KEY" \
-    docker compose -f dev/compose.yml -f dev/compose.override.yml up -d dbward-server 2>/dev/null
-  sleep 3
+  # Write Pro key to secrets file and restart
+  echo "$PRO_KEY" > "$SCRIPT_DIR/../secrets/license.key"
+  echo "DBWARD_SERVER_CONFIG=server.toml" > dev/.env
+  docker compose down -v 2>/dev/null
+  docker compose up -d 2>/dev/null
   wait_for_server
 
   # Re-create admin token (server restarted)
@@ -67,9 +79,10 @@ if [ -f "$LICENSE_DIR/pro.key" ] && [ -f "$LICENSE_DIR/test.pub.hex" ]; then
   echo "--- Expired license fallback ---"
   EXPIRED_KEY=$(cat "$LICENSE_DIR/expired.key" | tr -d '\n')
 
-  DBWARD_LICENSE_KEY="$EXPIRED_KEY" DBWARD_LICENSE_PUBLIC_KEY="$PUB_KEY" \
-    docker compose -f dev/compose.yml -f dev/compose.override.yml up -d dbward-server 2>/dev/null
-  sleep 3
+  echo "$EXPIRED_KEY" > "$SCRIPT_DIR/../secrets/license.key"
+  echo "DBWARD_SERVER_CONFIG=server-free.toml" > dev/.env
+  docker compose down -v 2>/dev/null
+  docker compose up -d 2>/dev/null
   wait_for_server
 
   ADMIN_TOKEN=$(create_token "e2e-license-exp-$TS" admin)
@@ -77,15 +90,16 @@ if [ -f "$LICENSE_DIR/pro.key" ] && [ -f "$LICENSE_DIR/test.pub.hex" ]; then
   STATUS=$(api_status GET /health "$ADMIN_TOKEN")
   [ "$STATUS" = "200" ] && pass "Expired license: server starts (Free fallback)" || fail "Expired startup" "got $STATUS"
 
-  # Restore original (no license)
-  DBWARD_LICENSE_KEY="" DBWARD_LICENSE_PUBLIC_KEY="" \
-    docker compose -f dev/compose.yml -f dev/compose.override.yml up -d dbward-server 2>/dev/null
-  sleep 2
+  # Restore Free plan
+  echo "" > "$SCRIPT_DIR/../secrets/license.key"
+  echo "DBWARD_SERVER_CONFIG=server-free.toml" > dev/.env
+  docker compose down -v 2>/dev/null
+  docker compose up -d 2>/dev/null
   wait_for_server
 
   # Cleanup: delete workflows created during this test
   ADMIN_TOKEN=$(create_token "e2e-license-cleanup-$TS" admin)
-  for i in $(seq 1 2); do
+  for i in $(seq 1 4); do
     api DELETE "/api/workflows/app:lic-env-$i" "$ADMIN_TOKEN" > /dev/null 2>&1 || true
   done
   api DELETE "/api/workflows/app:lic-env-over" "$ADMIN_TOKEN" > /dev/null 2>&1 || true

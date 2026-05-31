@@ -13,6 +13,6 @@ mod token_signer;
 
 pub use clock::UtcClock;
 pub use id_generator::{SecureTokenGenerator, UuidGenerator};
-pub use license_checker::LicenseCheckerImpl;
+pub use license_checker::FreePlanChecker;
 pub use result_channel::InMemoryResultChannel;
 pub use token_signer::Ed25519TokenSigner;

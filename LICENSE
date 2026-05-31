@@ -1,0 +1,15 @@
+dbward — Database Workflow & Approval Engine
+
+Unless otherwise noted, this repository is licensed under the Apache License 2.0.
+See LICENSE-APACHE for the full text.
+
+Files under commercial/ and files containing the header
+"Licensed under the dbward Commercial License" are licensed under the
+dbward Commercial License. See LICENSE-COMMERCIAL for details.
+
+Pre-built binaries distributed via GitHub Releases and Docker images include
+commercial-licensed code. Using commercial features in production requires a
+valid license key.
+
+Your license key determines your plan and enabled features.
+No license key = Free plan (fully functional core, with resource limits).
