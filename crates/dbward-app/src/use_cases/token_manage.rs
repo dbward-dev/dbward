@@ -77,12 +77,12 @@ impl TokenManage {
                 "subject_type must be 'user' or 'agent'".into(),
             ));
         }
-        if let Some(ref exp) = input.expires_at {
-            if *exp <= self.clock.now() {
-                return Err(AppError::Validation(
-                    "expires_at must be in the future".into(),
-                ));
-            }
+        if let Some(ref exp) = input.expires_at
+            && *exp <= self.clock.now()
+        {
+            return Err(AppError::Validation(
+                "expires_at must be in the future".into(),
+            ));
         }
 
         // Suspended user check

@@ -55,10 +55,10 @@ impl WebhookManage {
                 "format must be 'generic' or 'slack'".into(),
             ));
         }
-        if let Some(ref s) = input.secret {
-            if s.is_empty() {
-                return Err(AppError::Validation("secret must not be empty".into()));
-            }
+        if let Some(ref s) = input.secret
+            && s.is_empty()
+        {
+            return Err(AppError::Validation("secret must not be empty".into()));
         }
 
         // SSRF validation
@@ -135,10 +135,10 @@ impl WebhookManage {
             };
         }
         if let Some(secret_opt) = input.secret {
-            if let Some(ref s) = secret_opt {
-                if s.is_empty() {
-                    return Err(AppError::Validation("secret must not be empty".into()));
-                }
+            if let Some(ref s) = secret_opt
+                && s.is_empty()
+            {
+                return Err(AppError::Validation("secret must not be empty".into()));
             }
             webhook.secret = secret_opt;
         }

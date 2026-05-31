@@ -152,10 +152,10 @@ mod tests {
                 &dbward_domain::entities::AuditContext::System,
             );
             ev.detail_raw = Some("SELECT 1".into());
-            if let Some(ref actor) = filter.actor_id {
-                if actor != "alice" {
-                    return Ok(vec![]);
-                }
+            if let Some(ref actor) = filter.actor_id
+                && actor != "alice"
+            {
+                return Ok(vec![]);
             }
             Ok(vec![ev])
         }

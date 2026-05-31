@@ -34,12 +34,12 @@ impl CancelRequest {
         user: &AuthUser,
         ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<CancelRequestOutput, AppError> {
-        if let Some(ref r) = input.reason {
-            if r.len() > 1024 {
-                return Err(AppError::Validation(
-                    "reason too long (max 1024 bytes)".into(),
-                ));
-            }
+        if let Some(ref r) = input.reason
+            && r.len() > 1024
+        {
+            return Err(AppError::Validation(
+                "reason too long (max 1024 bytes)".into(),
+            ));
         }
 
         let request = self

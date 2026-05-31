@@ -92,10 +92,10 @@ impl CreateRequest {
         if input.detail.len() > MAX_QUERY_BYTES {
             return Err(AppError::Validation("query too long (max 100KB)".into()));
         }
-        if let Some(ref reason) = input.reason {
-            if reason.len() > MAX_REASON_BYTES {
-                return Err(AppError::Validation("reason too long (max 1KB)".into()));
-            }
+        if let Some(ref reason) = input.reason
+            && reason.len() > MAX_REASON_BYTES
+        {
+            return Err(AppError::Validation("reason too long (max 1KB)".into()));
         }
 
         // Resolve dialect once (used for classify, parse, review, risk)
@@ -381,38 +381,37 @@ impl CreateRequest {
         }
 
         // 3. Idempotency
-        if let Some(key) = &input.idempotency_key {
-            if let Some(existing) = self.request_reader.find_by_idempotency_key(key)? {
-                return Ok(CreateRequestOutput {
-                    id: existing.id,
-                    status: existing.status,
-                    operation: existing.operation,
-                    is_existing: true,
-                    expires_at: existing.expires_at,
-                    approvers: if existing.status == dbward_domain::entities::RequestStatus::Pending
-                    {
-                        existing
-                            .workflow_snapshot_json
-                            .as_ref()
-                            .and_then(|json| {
-                                serde_json::from_str::<serde_json::Value>(json)
-                                    .ok()
-                                    .and_then(|v| {
-                                        v["steps"][0]["approvers"].as_array().map(|arr| {
-                                            arr.iter()
-                                                .filter_map(|a| {
-                                                    a["selector"].as_str().map(String::from)
-                                                })
-                                                .collect()
-                                        })
+        if let Some(key) = &input.idempotency_key
+            && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
+        {
+            return Ok(CreateRequestOutput {
+                id: existing.id,
+                status: existing.status,
+                operation: existing.operation,
+                is_existing: true,
+                expires_at: existing.expires_at,
+                approvers: if existing.status == dbward_domain::entities::RequestStatus::Pending {
+                    existing
+                        .workflow_snapshot_json
+                        .as_ref()
+                        .and_then(|json| {
+                            serde_json::from_str::<serde_json::Value>(json)
+                                .ok()
+                                .and_then(|v| {
+                                    v["steps"][0]["approvers"].as_array().map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|a| {
+                                                a["selector"].as_str().map(String::from)
+                                            })
+                                            .collect()
                                     })
-                            })
-                            .unwrap_or_default()
-                    } else {
-                        vec![]
-                    },
-                });
-            }
+                                })
+                        })
+                        .unwrap_or_default()
+                } else {
+                    vec![]
+                },
+            });
         }
 
         // 4. Workflow evaluation
@@ -445,10 +444,11 @@ impl CreateRequest {
         let status = status_machine::initial_status(needs_approval, input.emergency);
 
         // 5b. Workflow require_reason check
-        if let Some(ref wf) = workflow {
-            if wf.require_reason && input.reason.is_none() {
-                return Err(AppError::Validation("reason_required".into()));
-            }
+        if let Some(ref wf) = workflow
+            && wf.require_reason
+            && input.reason.is_none()
+        {
+            return Err(AppError::Validation("reason_required".into()));
         }
 
         // 6. Serialize workflow snapshot for approve/reject

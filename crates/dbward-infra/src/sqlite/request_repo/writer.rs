@@ -176,7 +176,7 @@ impl RequestWriter for SqliteRequestRepo {
         now: DateTime<Utc>,
         _audit_context: &dbward_domain::entities::AuditContext,
     ) -> Result<Vec<String>, AppError> {
-        use sha2::{Digest, Sha256};
+        use sha2::Digest;
 
         let mut conn = self.conn.lock();
         let tx = conn
@@ -259,8 +259,6 @@ impl RequestWriter for SqliteRequestRepo {
         audit_event: &AuditEvent,
         now: &str,
     ) -> Result<bool, AppError> {
-        use sha2::{Digest, Sha256};
-
         let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)

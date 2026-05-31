@@ -57,8 +57,6 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
         audit_event: &AuditEvent,
         now: &str,
     ) -> Result<bool, AppError> {
-        use sha2::{Digest, Sha256};
-
         let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
