@@ -82,9 +82,13 @@ Key principles:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under:
-- `dbward-server`: [BSL 1.1](LICENSE-BSL) (converts to Apache-2.0 on 2029-05-08)
-- All other crates: [Apache-2.0](LICENSE-APACHE) OR [MIT](LICENSE-MIT)
+By submitting a pull request, you certify under the
+[Developer Certificate of Origin](https://developercertificate.org/) (DCO) that you
+have the right to submit it under the project's license terms.
+
+- **`crates/`** — contributions are licensed under [Apache-2.0](LICENSE-APACHE).
+- **`commercial/`** — external contributions are not accepted without a separate agreement.
+  If you'd like to contribute to commercial components, contact hello@dbward.dev.
 
 ## Breaking Change Policy
 

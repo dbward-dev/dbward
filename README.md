@@ -516,5 +516,14 @@ DROP TABLE users;
 
 ## License
 
-- **dbward-server**: [Business Source License 1.1](LICENSE-BSL) (converts to Apache-2.0 on 2029-05-08)
-- **All other crates**: [Apache-2.0](LICENSE-APACHE) OR [MIT](LICENSE-MIT) (dual-licensed)
+dbward uses an open-core licensing model.
+
+- **Core** (`crates/`): [Apache-2.0](LICENSE-APACHE) — approval workflows, audit logs, MCP,
+  SQL review, agent execution, break-glass. Use, modify, and redistribute freely.
+- **Commercial** (`commercial/`): [dbward Commercial License](LICENSE-COMMERCIAL) — OIDC/SSO,
+  group authorization, Pro/Enterprise plan enforcement. Requires a paid subscription for
+  production use.
+
+No license key = Free plan. All core features work without restriction.
+
+See [LICENSE](LICENSE) for the full structure.
