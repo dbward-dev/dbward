@@ -36,6 +36,19 @@ pub struct CreateRequest {
 const MAX_QUERY_BYTES: usize = 100_000;
 const MAX_REASON_BYTES: usize = 1024;
 
+/// Result of SQL classification, review, and risk assessment.
+struct AssessmentResult {
+    risk_level: Option<risk_scorer::RiskLevel>,
+    review_json: Option<String>,
+    risk_json: Option<String>,
+    parsed_stmt_texts: Option<Vec<String>>,
+    tables_json: Option<String>,
+    schema_collected_at: Option<String>,
+    trace_findings_count: usize,
+    trace_risk_factors: Vec<String>,
+    trace_schema_status: dt::SchemaStatus,
+}
+
 #[derive(Clone)]
 pub struct CreateRequestInput {
     pub database: DatabaseName,
@@ -113,17 +126,7 @@ impl CreateRequest {
         };
 
         // 1a. SQL Review + Risk assessment (best-effort, never blocks request creation)
-        let (
-            risk_level,
-            review_json,
-            risk_json,
-            parsed_stmts,
-            tables_json,
-            schema_collected_at,
-            trace_findings_count,
-            trace_risk_factors,
-            trace_schema_status,
-        ) = {
+        let assessment = {
             use dbward_domain::services::{risk_scorer, sql_parser, sql_reviewer, table_extractor};
             let parse_result = sql_parser::parse_statements(&input.detail, dialect);
             if let Ok(stmts) = parse_result {
@@ -282,29 +285,29 @@ impl CreateRequest {
                     risk_scorer::SchemaStatus::Failed => dt::SchemaStatus::Failed,
                     risk_scorer::SchemaStatus::NotSynced => dt::SchemaStatus::NotSynced,
                 };
-                (
-                    Some(assessment.level),
-                    Some(rev_json.to_string()),
-                    Some(r_json.to_string()),
-                    Some(stmts),
-                    t_json,
+                AssessmentResult {
+                    risk_level: Some(assessment.level),
+                    review_json: Some(rev_json.to_string()),
+                    risk_json: Some(r_json.to_string()),
+                    parsed_stmt_texts: Some(stmts.iter().map(|s| s.to_string()).collect()),
+                    tables_json: t_json,
                     schema_collected_at,
-                    review.findings.len(),
-                    trace_factors,
-                    trace_ss,
-                )
+                    trace_findings_count: review.findings.len(),
+                    trace_risk_factors: trace_factors,
+                    trace_schema_status: trace_ss,
+                }
             } else {
-                (
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    0,
-                    vec![],
-                    dt::SchemaStatus::Unavailable,
-                )
+                AssessmentResult {
+                    risk_level: None,
+                    review_json: None,
+                    risk_json: None,
+                    parsed_stmt_texts: None,
+                    tables_json: None,
+                    schema_collected_at: None,
+                    trace_findings_count: 0,
+                    trace_risk_factors: vec![],
+                    trace_schema_status: dt::SchemaStatus::Unavailable,
+                }
             }
         };
 
@@ -434,7 +437,7 @@ impl CreateRequest {
                 &input.database,
                 &input.environment,
             );
-            workflow_matcher::evaluate(workflow.as_ref(), risk_level, auto_approve_entry)
+            workflow_matcher::evaluate(workflow.as_ref(), assessment.risk_level, auto_approve_entry)
         };
 
         // 5. Determine initial status
@@ -468,13 +471,13 @@ impl CreateRequest {
             None
         };
         // 6b. Build decision trace
-        let parse_failed = parsed_stmts.is_none();
+        let parse_failed = assessment.parsed_stmt_texts.is_none();
         let auto_approve_entry_for_trace = workflow_matcher::find_auto_approve(
             &self.auto_approve_entries,
             &input.database,
             &input.environment,
         );
-        let trace_risk_level = match risk_level {
+        let trace_risk_level = match assessment.risk_level {
             None => dt::RiskLevel::Unavailable,
             Some(risk_scorer::RiskLevel::Low) => dt::RiskLevel::Low,
             Some(risk_scorer::RiskLevel::Medium) => dt::RiskLevel::Medium,
@@ -499,7 +502,7 @@ impl CreateRequest {
                     .is_none()
                 {
                     vec![dt::DecisionReason::AutoApproveDisabled]
-                } else if risk_level.is_none() {
+                } else if assessment.risk_level.is_none() {
                     vec![dt::DecisionReason::RiskUnavailable]
                 } else {
                     vec![dt::DecisionReason::RiskAboveThreshold]
@@ -538,7 +541,7 @@ impl CreateRequest {
                 resolved_operation: operation.into(),
             },
             sql_review: dt::SqlReview {
-                findings_count: trace_findings_count,
+                findings_count: assessment.trace_findings_count,
                 parse_failed,
             },
             risk: dt::Risk {
@@ -546,12 +549,12 @@ impl CreateRequest {
                 factors: if parse_failed {
                     vec![]
                 } else {
-                    trace_risk_factors
+                    assessment.trace_risk_factors
                 },
                 schema_status: if parse_failed {
                     dt::SchemaStatus::Unavailable
                 } else {
-                    trace_schema_status
+                    assessment.trace_schema_status
                 },
             },
             workflow: dt::WorkflowMatch {
@@ -674,8 +677,8 @@ impl CreateRequest {
         {
             let now_str = now.to_rfc3339();
             // Per-statement jobs (or single job if parse failed)
-            let sql_texts: Vec<String> = if let Some(ref stmts) = parsed_stmts {
-                stmts.iter().map(|s| s.to_string()).collect()
+            let sql_texts: Vec<String> = if let Some(ref stmts) = assessment.parsed_stmt_texts {
+                stmts.clone()
             } else {
                 vec![request.detail.clone()]
             };
@@ -715,10 +718,10 @@ impl CreateRequest {
             let ctx_record = RequestContextRecord {
                 request_id: id.clone(),
                 status: ctx_status.into(),
-                schema_snapshot_collected_at: schema_collected_at,
-                tables_json,
-                sql_review_json: review_json,
-                risk_json,
+                schema_snapshot_collected_at: assessment.schema_collected_at,
+                tables_json: assessment.tables_json,
+                sql_review_json: assessment.review_json,
+                risk_json: assessment.risk_json,
                 explain_json: None,
                 created_at: now_str.clone(),
                 updated_at: now_str,
