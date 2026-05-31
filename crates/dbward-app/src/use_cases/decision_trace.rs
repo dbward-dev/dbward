@@ -53,16 +53,8 @@ pub struct Risk {
     pub schema_status: SchemaStatus,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RiskLevel {
-    Low,
-    Medium,
-    High,
-    Critical,
-    Unknown,
-    Unavailable,
-}
+#[allow(unused_imports)]
+pub use dbward_domain::services::risk_scorer::RiskLevel;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

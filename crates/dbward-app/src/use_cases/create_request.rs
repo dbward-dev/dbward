@@ -477,14 +477,9 @@ impl CreateRequest {
             &input.database,
             &input.environment,
         );
-        let trace_risk_level = match assessment.risk_level {
-            None => dt::RiskLevel::Unavailable,
-            Some(risk_scorer::RiskLevel::Low) => dt::RiskLevel::Low,
-            Some(risk_scorer::RiskLevel::Medium) => dt::RiskLevel::Medium,
-            Some(risk_scorer::RiskLevel::High) => dt::RiskLevel::High,
-            Some(risk_scorer::RiskLevel::Critical) => dt::RiskLevel::Critical,
-            Some(risk_scorer::RiskLevel::Unknown) => dt::RiskLevel::Unknown,
-        };
+        let trace_risk_level = assessment
+            .risk_level
+            .unwrap_or(risk_scorer::RiskLevel::Unavailable);
         let trace_reasons = match &decision {
             workflow_matcher::ApprovalDecision::AutoApproved { reason } => match reason {
                 workflow_matcher::AutoApproveReason::EmptySteps => {
@@ -526,15 +521,7 @@ impl CreateRequest {
         } else {
             (trace_outcome, trace_reasons)
         };
-        let trace_threshold = auto_approve_entry_for_trace
-            .and_then(|e| e.max_risk_level)
-            .map(|l| match l {
-                risk_scorer::RiskLevel::Low => dt::RiskLevel::Low,
-                risk_scorer::RiskLevel::Medium => dt::RiskLevel::Medium,
-                risk_scorer::RiskLevel::High => dt::RiskLevel::High,
-                risk_scorer::RiskLevel::Critical => dt::RiskLevel::Critical,
-                risk_scorer::RiskLevel::Unknown => dt::RiskLevel::Unknown,
-            });
+        let trace_threshold = auto_approve_entry_for_trace.and_then(|e| e.max_risk_level);
         let decision_trace = dt::DecisionTrace {
             version: 1,
             classification: dt::Classification {

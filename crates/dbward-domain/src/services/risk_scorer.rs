@@ -1,16 +1,21 @@
 use crate::services::sql_reviewer::{Finding, RuleId};
 use crate::values::Operation;
 
-/// Risk levels ordered from lowest to highest. Unknown is intentionally last
-/// so that `PartialOrd` derive treats it as the highest value (most restrictive).
-/// DO NOT reorder variants without updating workflow_matcher's Unknown exclusion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// Risk levels ordered from lowest to highest. Unknown and Unavailable are intentionally last
+/// so that `PartialOrd` derive treats them as the highest values (most restrictive).
+/// DO NOT reorder variants without updating workflow_matcher's exclusion logic.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum RiskLevel {
     Low,
     Medium,
     High,
     Critical,
     Unknown,
+    /// Parse failed or assessment unavailable — used in DecisionTrace only.
+    Unavailable,
 }
 
 #[derive(Debug, Clone)]
