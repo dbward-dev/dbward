@@ -15,7 +15,7 @@ regex = "1"
 thiserror = { workspace = true }
 hostname = "0.4"
 dirs = "6"
-sha2 = "0.10"
+sha2 = "0.11"
 dbward-domain = { path = "../dbward-domain" }
 
 [dev-dependencies]
