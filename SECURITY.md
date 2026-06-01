@@ -68,3 +68,4 @@ The following RustSec advisories are acknowledged and ignored in `deny.toml`:
 | RUSTSEC-2026-0113 | tar | Dev-dependency only (testcontainers). Not in release binary. |
 | RUSTSEC-2023-0071 | rsa | Transitive via rustls. dbward does not use RSA key exchange. |
 | RUSTSEC-2025-0134 | rustls-pemfile | Unmaintained. Transitive via reqwest/rustls. No direct usage. |
+| RUSTSEC-2026-0145 | astral-tokio-tar | Dev-dependency only (testcontainers). Not in release binary. |

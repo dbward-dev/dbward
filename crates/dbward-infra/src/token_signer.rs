@@ -46,6 +46,11 @@ impl Ed25519TokenSigner {
             #[cfg(not(unix))]
             {
                 std::fs::write(&key_path, key.to_bytes())?;
+                tracing::warn!(
+                    path = %key_path.display(),
+                    "Signing key written without restrictive permissions. \
+                     On Windows, manually restrict access to this file."
+                );
             }
             key
         };

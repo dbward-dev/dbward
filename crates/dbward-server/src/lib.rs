@@ -340,7 +340,8 @@ pub async fn run_from_args(
         #[cfg(feature = "commercial")]
         {
             Arc::new(dbward_commercial_license::LicenseCheckerImpl::new(
-                resolve_license(license_key, license_file),
+                resolve_license(license_key, license_file)
+                    .map_err(dbward_app::error::AppError::Internal)?,
                 clock.now(),
             ))
         }
@@ -733,15 +734,14 @@ pub async fn start(
 pub(crate) fn resolve_license(
     key: Option<&str>,
     file: Option<&str>,
-) -> dbward_domain::license::License {
+) -> Result<dbward_domain::license::License, String> {
     let raw = match (key, file) {
         (Some(k), _) if !k.trim().is_empty() => Some(k.to_string()),
         (_, Some(path)) if !path.trim().is_empty() => match std::fs::read_to_string(path) {
             Ok(content) if !content.trim().is_empty() => Some(content),
             Ok(_) => None,
             Err(e) => {
-                eprintln!("fatal: failed to read license file '{}': {}", path, e);
-                std::process::exit(1);
+                return Err(format!("failed to read license file '{path}': {e}"));
             }
         },
         _ => None,
@@ -749,7 +749,7 @@ pub(crate) fn resolve_license(
 
     let Some(raw) = raw else {
         tracing::info!(plan = "free", "License: no key provided, using Free plan");
-        return dbward_domain::license::License::default();
+        return Ok(dbward_domain::license::License::default());
     };
 
     match dbward_infra::license_key::verify_license_key(&raw) {
@@ -760,12 +760,9 @@ pub(crate) fn resolve_license(
                 expires_at = ?license.expires_at,
                 "License loaded"
             );
-            license
+            Ok(license)
         }
-        Err(e) => {
-            eprintln!("fatal: license key verification failed: {e}");
-            std::process::exit(1);
-        }
+        Err(e) => Err(format!("license key verification failed: {e}")),
     }
 }
 
@@ -794,19 +791,19 @@ mod tests {
 
     #[test]
     fn resolve_license_none_returns_free() {
-        let license = resolve_license(None, None);
+        let license = resolve_license(None, None).unwrap();
         assert_eq!(license.plan, dbward_domain::license::Plan::Free);
     }
 
     #[test]
     fn resolve_license_empty_string_returns_free() {
-        let license = resolve_license(Some(""), None);
+        let license = resolve_license(Some(""), None).unwrap();
         assert_eq!(license.plan, dbward_domain::license::Plan::Free);
     }
 
     #[test]
     fn resolve_license_whitespace_only_returns_free() {
-        let license = resolve_license(Some("  \n"), None);
+        let license = resolve_license(Some("  \n"), None).unwrap();
         assert_eq!(license.plan, dbward_domain::license::Plan::Free);
     }
 }
