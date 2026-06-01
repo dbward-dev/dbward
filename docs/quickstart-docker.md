@@ -1,13 +1,13 @@
 ---
 title: "Quickstart: Try with Docker"
-description: Run the full dbward stack with a test database in 5 minutes
+description: Experience the full approval workflow in 5 minutes — no install required
 ---
 
 # Quickstart: Try with Docker
 
-Run server, agent, and PostgreSQL together. Experience the full approval flow without touching your own database.
+Submit a query, get it approved, see the result, verify the audit trail. All in Docker — nothing to install on your machine.
 
-**Prerequisites:** Docker and Docker Compose.
+**Prerequisites:** Docker, Docker Compose v2, and python3 (for the token setup script).
 
 ## 1. Clone and set up
 
@@ -20,89 +20,135 @@ cd dbward
 ## 2. Start the stack
 
 ```bash
-docker compose -f dev/compose.yml up -d
+DBWARD_SERVER_CONFIG=server-quickstart.toml \
+  docker compose -f dev/compose.yml -f dev/compose.override.yml up -d
 ```
 
-This starts:
-- **PostgreSQL** — test database (`dbward_dev`)
-- **dbward-server** — approval engine
-- **dbward-agent** — connected to PostgreSQL
+This starts PostgreSQL, the dbward server (approval engine), and an agent (connected to PostgreSQL). Wait ~15 seconds for all services to become healthy.
 
-Wait for all services to become healthy (~15 seconds):
+## 3. Create user tokens
 
 ```bash
-docker compose -f dev/compose.yml ps
+./dev/scripts/quickstart-init.sh
 ```
 
-## 3. Get your CLI token
+This creates two users:
+- **alice** — developer (can submit queries)
+- **bob** — admin (can approve requests)
 
-The dev environment auto-generates tokens on first start:
+## 4. Submit a query (alice)
+
+Alice submits a query to the staging environment:
 
 ```bash
-# Admin token (can approve requests)
-docker compose -f dev/compose.yml exec dbward-server cat /data/admin-token
-
-# Developer token (can submit requests)
-docker compose -f dev/compose.yml exec dbward-server cat /data/developer-token
+docker compose -f dev/compose.yml -f dev/compose.override.yml \
+  --profile dev run --rm alice \
+  execute "SELECT version()" \
+  --database app --environment staging
 ```
 
-Configure your CLI:
-
-```bash
-export DBWARD_SERVER_URL="http://localhost:3000"
-export DBWARD_TOKEN="<dev-token from above>"
+Output:
+```
+Request a1b2c3d4-... requires approval.
+  Approvers: role:admin
+Run: dbward request resume a1b2c3d4-...
 ```
 
-## 4. Submit a query
+The request is **pending** — it won't execute until approved.
+
+## 5. Approve (bob)
+
+Copy the request ID from the output above, then:
 
 ```bash
-dbward execute "SELECT version()"
+docker compose -f dev/compose.yml -f dev/compose.override.yml \
+  --profile dev run --rm bob \
+  request approve <REQUEST_ID> --comment "Looks good"
 ```
 
-In the Docker dev environment, safe queries are auto-approved. You should see the result immediately.
-
-## 5. Experience the approval flow
-
-Submit something that requires approval:
-
-```bash
-dbward execute "DELETE FROM pg_catalog.pg_class WHERE 1=1"
+Output:
+```
+Approved step 1/1
+Request: a1b2c3d4
+All steps complete. Agent has been dispatched.
 ```
 
-This will be rejected by SQL safety review. Try a real table:
+## 6. Get the result (alice)
 
 ```bash
-# Create a test table first
-dbward execute "CREATE TABLE test_orders (id serial, amount int)"
-dbward execute "INSERT INTO test_orders (amount) SELECT generate_series(1, 1000)"
-
-# Now submit a DELETE — this requires approval in staging/production workflows
-dbward execute --environment production "DELETE FROM test_orders WHERE amount < 500"
+docker compose -f dev/compose.yml -f dev/compose.override.yml \
+  --profile dev run --rm alice \
+  request resume <REQUEST_ID>
 ```
 
-The request will show as `pending`. Approve it with the admin token:
-
-```bash
-export DBWARD_TOKEN="<admin-token>"
-dbward request approve <request-id> --comment "Test cleanup"
+Output:
+```
+Waiting for agent to execute...
+ version
+---------
+ PostgreSQL 17.x ...
+(1 row)
 ```
 
-Then resume execution (the original requester or any admin can do this):
+The agent executed the query on PostgreSQL after approval.
+
+## 7. Check the audit trail (bob)
 
 ```bash
-dbward request resume <request-id>
+docker compose -f dev/compose.yml -f dev/compose.override.yml \
+  --profile dev run --rm bob audit
 ```
 
-## 6. Stop
+Output:
+```
+ID         TIMESTAMP              USER    EVENT              ENV      DATABASE  OUTCOME
+96af1a07   2026-05-31T12:55:30    agent   request_completed  staging  app       success
+c646583f   2026-05-31T12:55:25    bob     request_approved   staging  app       success
+8f8c35a4   2026-05-31T12:55:16    alice   request_created    staging  app       success
+...
+```
+
+Every action is recorded. Verify the tamper-evident hash chain:
 
 ```bash
-docker compose -f dev/compose.yml down
+docker compose -f dev/compose.yml -f dev/compose.override.yml \
+  --profile dev run --rm bob audit --verify
+```
+
+```
+✓ Hash chain intact (15 events verified)
+```
+
+## 8. Stop
+
+```bash
+docker compose -f dev/compose.yml -f dev/compose.override.yml down
 ```
 
 Add `-v` to also remove the database volume.
 
+## What just happened?
+
+```
+alice (developer)          bob (admin)              agent
+     │                          │                      │
+     ├─ execute SELECT ─────────►│                      │
+     │  "pending"               │                      │
+     │                          ├─ approve ───────────►│
+     │                          │                      ├─ execute on DB
+     ├─ resume ────────────────►│                      │
+     │  "PostgreSQL 17.x ..."   │                      │
+     │                          │                      │
+     └──────── audit trail records everything ─────────┘
+```
+
+- **Development** environment auto-approves everything (for fast iteration)
+- **Staging** requires 1 admin approval (what you just tried)
+- **Production** can require multi-step approval with distinct approvers
+
 ## Next steps
 
-- [Connect your own database](quickstart-local.md) — use dbward with your real DB
+- [Connect your own database](quickstart-local.md) — use dbward with your real PostgreSQL or MySQL
 - [Workflows Guide](guides/workflows.md) — customize approval policies
+- [MCP Integration](guides/mcp-integration.md) — connect AI agents (Claude, Cursor)
 - [Deployment Overview](deployment/overview.md) — production architecture
