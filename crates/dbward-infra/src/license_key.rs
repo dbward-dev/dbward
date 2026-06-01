@@ -25,7 +25,14 @@ pub enum LicenseKeyError {
 pub fn verify_license_key(key: &str) -> Result<License, LicenseKeyError> {
     let public_key_bytes: [u8; 32] = std::env::var("DBWARD_LICENSE_PUBLIC_KEY")
         .ok()
-        .and_then(|h| hex::decode(&h).ok())
+        .and_then(|h| {
+            #[cfg(not(debug_assertions))]
+            tracing::warn!(
+                "DBWARD_LICENSE_PUBLIC_KEY override active — \
+                 this bypasses production license verification"
+            );
+            hex::decode(&h).ok()
+        })
         .and_then(|bytes| bytes.try_into().ok())
         .unwrap_or(DEFAULT_PUBLIC_KEY);
 
