@@ -389,12 +389,6 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
 
     let (server_url, api_token) = authenticate(&cfg).await?;
     let sc = ServerClient::new(&server_url, &api_token);
-    let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
-    let env_str = cli
-        .environment
-        .as_deref()
-        .or(cfg.default_environment.as_deref())
-        .unwrap_or("development");
     let json_output = cli.format == "json";
 
     match cli.command {
@@ -412,6 +406,12 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             result_format,
             timeout,
         } => {
+            let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
+            let env_str = cli
+                .environment
+                .as_deref()
+                .or(cfg.default_environment.as_deref())
+                .unwrap_or("development");
             execute::run_execute(
                 &sc,
                 &db_name,
@@ -433,6 +433,12 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             .await
         }
         Command::Migrate { ref action } => {
+            let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
+            let env_str = cli
+                .environment
+                .as_deref()
+                .or(cfg.default_environment.as_deref())
+                .unwrap_or("development");
             migrate::run_migrate(
                 &sc,
                 &cfg,
