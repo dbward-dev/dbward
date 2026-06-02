@@ -384,33 +384,14 @@ impl CreateRequest {
         if let Some(key) = &input.idempotency_key
             && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
         {
+            let approvers = extract_approvers(&existing);
             return Ok(CreateRequestOutput {
                 id: existing.id,
                 status: existing.status,
                 operation: existing.operation,
                 is_existing: true,
                 expires_at: existing.expires_at,
-                approvers: if existing.status == dbward_domain::entities::RequestStatus::Pending {
-                    existing
-                        .workflow_snapshot_json
-                        .as_ref()
-                        .and_then(|json| {
-                            serde_json::from_str::<serde_json::Value>(json)
-                                .ok()
-                                .and_then(|v| {
-                                    v["steps"][0]["approvers"].as_array().map(|arr| {
-                                        arr.iter()
-                                            .filter_map(|a| {
-                                                a["selector"].as_str().map(String::from)
-                                            })
-                                            .collect()
-                                    })
-                                })
-                        })
-                        .unwrap_or_default()
-                } else {
-                    vec![]
-                },
+                approvers,
             });
         }
 
@@ -588,7 +569,26 @@ impl CreateRequest {
             status,
             RequestStatus::AutoApproved | RequestStatus::BreakGlass
         ) {
-            self.request_writer.create_and_dispatch(&request)?;
+            match self.request_writer.create_and_dispatch(&request) {
+                Ok(()) => {}
+                Err(AppError::Conflict(ref msg)) if msg == "idempotency_key" => {
+                    if let Some(ref key) = request.idempotency_key
+                        && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
+                    {
+                        let approvers = extract_approvers(&existing);
+                        return Ok(CreateRequestOutput {
+                            id: existing.id,
+                            status: existing.status,
+                            operation: existing.operation,
+                            is_existing: true,
+                            expires_at: existing.expires_at,
+                            approvers,
+                        });
+                    }
+                    return Err(AppError::Conflict("idempotency_key".into()));
+                }
+                Err(e) => return Err(e),
+            }
 
             // Emit creation event
             let create_result = status_machine::create_event(
@@ -632,7 +632,26 @@ impl CreateRequest {
             dispatch_result.commit(&*self.event_dispatcher);
             s
         } else {
-            self.request_writer.insert(&request)?;
+            match self.request_writer.insert(&request) {
+                Ok(()) => {}
+                Err(AppError::Conflict(ref msg)) if msg == "idempotency_key" => {
+                    if let Some(ref key) = request.idempotency_key
+                        && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
+                    {
+                        let approvers = extract_approvers(&existing);
+                        return Ok(CreateRequestOutput {
+                            id: existing.id,
+                            status: existing.status,
+                            operation: existing.operation,
+                            is_existing: true,
+                            expires_at: existing.expires_at,
+                            approvers,
+                        });
+                    }
+                    return Err(AppError::Conflict("idempotency_key".into()));
+                }
+                Err(e) => return Err(e),
+            }
 
             let create_result = status_machine::create_event(
                 status,
@@ -739,6 +758,27 @@ impl CreateRequest {
                 vec![]
             },
         })
+    }
+}
+
+fn extract_approvers(req: &dbward_domain::entities::Request) -> Vec<String> {
+    if req.status == dbward_domain::entities::RequestStatus::Pending {
+        req.workflow_snapshot_json
+            .as_ref()
+            .and_then(|json| {
+                serde_json::from_str::<serde_json::Value>(json)
+                    .ok()
+                    .and_then(|v| {
+                        v["steps"][0]["approvers"].as_array().map(|arr| {
+                            arr.iter()
+                                .filter_map(|a| a["selector"].as_str().map(String::from))
+                                .collect()
+                        })
+                    })
+            })
+            .unwrap_or_default()
+    } else {
+        vec![]
     }
 }
 

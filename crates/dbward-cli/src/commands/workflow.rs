@@ -211,18 +211,26 @@ async fn poll_until_terminal(
     sc: &ServerClient,
     request_id: &str,
 ) -> Result<Option<Value>, CliError> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
     let mut req = sc.get_request(request_id).await?;
 
     loop {
+        if std::time::Instant::now() > deadline {
+            return Err(CliError::Server(format!(
+                "Timed out waiting for execution (5m). Check status: dbward request show {request_id}"
+            )));
+        }
+        let remaining_secs = deadline
+            .saturating_duration_since(std::time::Instant::now())
+            .as_secs();
         let status = req["status"].as_str().unwrap_or("");
         match status {
             "executed" | "failed" => {
                 return resolve_from_request(sc, request_id, &req).await.map(Some);
             }
             "dispatched" | "running" => {
-                req = sc
-                    .get_request_with_wait(request_id, REQUEST_STATUS_WAIT_SECS)
-                    .await?;
+                let wait = remaining_secs.min(REQUEST_STATUS_WAIT_SECS);
+                req = sc.get_request_with_wait(request_id, wait).await?;
             }
             "approved" | "auto_approved" | "break_glass" => {
                 // Stream failed and resume lease expired. Re-resume.

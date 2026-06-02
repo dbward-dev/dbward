@@ -16,7 +16,7 @@ impl RequestWriter for SqliteRequestRepo {
         let share_with_json = serde_json::to_string(&req.share_with)
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
-        tx.execute(
+        let insert_result = tx.execute(
             "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, decision_trace_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
@@ -41,7 +41,14 @@ impl RequestWriter for SqliteRequestRepo {
                 req.resolved_at.map(|t| t.to_rfc3339()),
                 req.expires_at.map(|t| t.to_rfc3339()),
             ],
-        ).map_err(map_err)?;
+        );
+        if let Err(rusqlite::Error::SqliteFailure(err, _)) = &insert_result
+            && err.code == rusqlite::ffi::ErrorCode::ConstraintViolation
+            && req.idempotency_key.is_some()
+        {
+            return Err(AppError::Conflict("idempotency_key".into()));
+        }
+        insert_result.map_err(map_err)?;
         if req.status == RequestStatus::Pending {
             populate_pending_approvers(&tx, &req.id, &req.workflow_snapshot_json, 0)?;
         }
@@ -55,7 +62,7 @@ impl RequestWriter for SqliteRequestRepo {
         let share_with_json = serde_json::to_string(&req.share_with)
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
-        tx.execute(
+        let insert_result = tx.execute(
             "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, decision_trace_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
@@ -80,7 +87,14 @@ impl RequestWriter for SqliteRequestRepo {
                 req.resolved_at.map(|t| t.to_rfc3339()),
                 req.expires_at.map(|t| t.to_rfc3339()),
             ],
-        ).map_err(map_err)?;
+        );
+        if let Err(rusqlite::Error::SqliteFailure(err, _)) = &insert_result
+            && err.code == rusqlite::ffi::ErrorCode::ConstraintViolation
+            && req.idempotency_key.is_some()
+        {
+            return Err(AppError::Conflict("idempotency_key".into()));
+        }
+        insert_result.map_err(map_err)?;
 
         tx.execute(
             "UPDATE requests SET status = 'dispatched', updated_at = ?2 WHERE id = ?1",
