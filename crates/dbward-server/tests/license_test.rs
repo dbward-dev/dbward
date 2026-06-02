@@ -153,10 +153,10 @@ async fn free_database_limit_blocks_at_max() {
     );
 }
 
-// === Test 2: Free plan — workflow creation blocked at max_workflows ===
+// === Test 2: Free plan — workflows are unlimited ===
 
 #[tokio::test]
-async fn free_workflow_limit_blocks_at_max() {
+async fn free_workflow_unlimited() {
     let license = License {
         plan: Plan::Free,
         issued_to: None,
@@ -165,8 +165,8 @@ async fn free_workflow_limit_blocks_at_max() {
     let state = state_with_license(license);
     let mut app = build_app(state, vec![]);
 
-    // Create 5 workflows (Free limit)
-    for i in 0..5 {
+    // Can create many workflows without hitting a limit
+    for i in 0..10 {
         let resp = app
             .call(wf_request(&format!("db{i}"), "production"))
             .await
@@ -177,16 +177,12 @@ async fn free_workflow_limit_blocks_at_max() {
             "workflow {i} should succeed"
         );
     }
-
-    // 6th should fail with 402
-    let resp = app.call(wf_request("db99", "staging")).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
 }
 
-// === Test 3: Pro plan — DB up to 10 OK ===
+// === Test 3: Pro plan — DB up to 20 OK ===
 
 #[tokio::test]
-async fn pro_database_limit_allows_10() {
+async fn pro_database_limit_allows_20() {
     let license = License {
         plan: Plan::Pro,
         issued_to: None,
@@ -195,20 +191,20 @@ async fn pro_database_limit_allows_10() {
     let state = state_with_license(license);
 
     let registry = state.database_registry.clone();
-    for i in 0..10 {
+    for i in 0..20 {
         let db = DatabaseName::new(format!("db{i}")).unwrap();
         let env = Environment::new("production").unwrap();
         registry.register(&db, &env).unwrap();
     }
 
-    assert_eq!(registry.list().unwrap().len(), 10);
-    assert_eq!(state.license_checker.max_databases(), 10);
+    assert_eq!(registry.list().unwrap().len(), 20);
+    assert_eq!(state.license_checker.max_databases(), 20);
 }
 
-// === Test 4: Pro plan — DB 11 blocked ===
+// === Test 4: Pro plan — DB 21 blocked ===
 
 #[tokio::test]
-async fn pro_database_limit_blocks_at_11() {
+async fn pro_database_limit_blocks_at_21() {
     let license = License {
         plan: Plan::Pro,
         issued_to: None,
@@ -217,19 +213,19 @@ async fn pro_database_limit_blocks_at_11() {
     let state = state_with_license(license);
 
     let registry = state.database_registry.clone();
-    for i in 0..10 {
+    for i in 0..20 {
         let db = DatabaseName::new(format!("db{i}")).unwrap();
         let env = Environment::new("production").unwrap();
         registry.register(&db, &env).unwrap();
     }
 
-    // 11th database via register_databases should fail
+    // 21st database via register_databases should fail
     let dbs = vec![dbward_config::server::DatabaseDef {
         name: "db_over_limit".into(),
         environments: vec!["production".into()],
     }];
     let result = dbward_server::register_databases(&state, &dbs);
-    assert!(result.is_err(), "11th database should be rejected for Pro");
+    assert!(result.is_err(), "21st database should be rejected for Pro");
 }
 
 // === Test 5: Enterprise — no database limit ===
@@ -273,20 +269,16 @@ async fn expired_license_falls_back_to_free() {
     assert!(state.license_checker.is_expired());
     assert_eq!(state.license_checker.effective_plan(), "free");
     assert_eq!(state.license_checker.configured_plan(), "pro");
-    assert_eq!(state.license_checker.max_workflows(), 5);
+    assert_eq!(state.license_checker.max_workflows(), u32::MAX);
 
     let mut app = build_app(state, vec![]);
 
-    // Free limit: 5 workflows
-    for i in 0..5 {
+    // Workflows are unlimited even on Free plan
+    for i in 0..10 {
         let resp = app
             .call(wf_request(&format!("db{i}"), "production"))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::CREATED);
     }
-
-    // 6th blocked
-    let resp = app.call(wf_request("extra", "staging")).await.unwrap();
-    assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
 }

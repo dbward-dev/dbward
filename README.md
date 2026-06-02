@@ -161,7 +161,7 @@ execution_window_secs = 3600
 retry_on_failure = false
 ```
 
-### Result Policies (Pro)
+### Result Policies
 
 Control who can access results and storage:
 
@@ -173,7 +173,7 @@ delivery_mode = "stream"
 access = ["requester", "admin"]
 ```
 
-### Notification Policies (Pro)
+### Notification Policies
 
 Route webhooks per database × environment:
 
@@ -260,10 +260,10 @@ Global Options:
 | GET/PUT/DELETE | `/api/workflows/:id` | Get / update / delete |
 | GET/POST | `/api/execution-policies` | List / create execution policies |
 | GET/PUT/DELETE | `/api/execution-policies/:id` | Get / update / delete |
-| GET/POST | `/api/result-policies` | List / create result policies (Pro) |
-| GET/PUT/DELETE | `/api/result-policies/:id` | Get / update / delete (Pro) |
-| GET/POST | `/api/notification-policies` | List / create notification policies (Pro) |
-| GET/PUT/DELETE | `/api/notification-policies/:id` | Get / update / delete (Pro) |
+| GET/POST | `/api/result-policies` | List / create result policies |
+| GET/PUT/DELETE | `/api/result-policies/:id` | Get / update / delete |
+| GET/POST | `/api/notification-policies` | List / create notification policies |
+| GET/PUT/DELETE | `/api/notification-policies/:id` | Get / update / delete |
 
 ### Audit
 
@@ -352,7 +352,7 @@ secret = "whsec_xxxx"  # HMAC-SHA256 in X-Dbward-Signature header
 
 Events: `request_created`, `request_approved`, `request_rejected`, `request_completed`, `break_glass`.
 
-Free: up to 3 webhook destinations (global). Pro: unlimited + per-database routing via notification policies.
+Free: unlimited webhook destinations. Pro: adds OIDC/SSO, group authorization, and audit export.
 
 ## Break-Glass (Emergency Bypass)
 
@@ -458,22 +458,22 @@ output = "stderr"              # "stderr" (default) or "file"
 
 ## Free / Pro
 
-| | Free | Pro (planned) |
+| | Free | Pro ($149/mo) |
 |---|---|---|
-| Workflow rules | 5 | Unlimited |
-| Execution policies | 3 | Unlimited |
-| DB connections | 3 | Unlimited |
-| Agents | 3 | Unlimited |
-| Webhooks | 3 | Unlimited |
+| Database connections | 3 | 20 |
+| API tokens | 10 | 50 |
+| Workflow rules | Unlimited | Unlimited |
+| Webhooks | Unlimited | Unlimited |
+| Agents | Unlimited | Unlimited |
 | Approval + Audit + MCP + Break-glass | ✅ | ✅ |
+| Slack approval UI | ✅ | ✅ |
+| Result policies | ✅ | ✅ |
+| Notification policies | ✅ | ✅ |
 | OIDC / SSO | — | ✅ |
 | Group-based authorization | — | ✅ |
-| Result policies (access control) | — | ✅ |
-| Notification policies (routing) | — | ✅ |
-| Result sharing (share-with) | — | ✅ |
-| Audit export | — | TBD |
+| Audit export (CSV/JSON) | — | ✅ |
 
-Safety features are always free. Pro pricing and availability are not yet determined.
+Safety features are always free. You pay for scale and organizational complexity.
 
 ## Migration File Format
 

@@ -144,7 +144,7 @@ If a request with the same key already exists, dbward returns the existing reque
 
 ## Result sharing
 
-Share migration results with your team (Pro):
+Share migration results with your team:
 
 ```bash
 dbward migrate up --share-with "group:backend-team"
