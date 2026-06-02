@@ -11,11 +11,11 @@ use dbward_domain::license::{License, Plan, PlanLimits};
 
 /// Pro plan limits (commercial-only constant).
 const PRO: PlanLimits = PlanLimits {
-    max_workflows: 20,
-    max_databases: 10,
-    max_webhooks: 10,
+    max_workflows: u32::MAX,
+    max_databases: 20,
+    max_webhooks: u32::MAX,
     max_tokens: 50,
-    max_roles: 20,
+    max_roles: u32::MAX,
 };
 
 pub struct LicenseCheckerImpl {
@@ -122,11 +122,11 @@ mod tests {
         assert!(!checker.is_expired());
         assert_eq!(checker.configured_plan(), "pro");
         assert_eq!(checker.effective_plan(), "pro");
-        assert_eq!(checker.max_databases(), 10);
-        assert_eq!(checker.max_workflows(), 20);
-        assert_eq!(checker.max_webhooks(), 10);
+        assert_eq!(checker.max_databases(), 20);
+        assert_eq!(checker.max_workflows(), u32::MAX);
+        assert_eq!(checker.max_webhooks(), u32::MAX);
         assert_eq!(checker.max_tokens(), 50);
-        assert_eq!(checker.max_roles(), 20);
+        assert_eq!(checker.max_roles(), u32::MAX);
         assert!(!checker.is_enterprise());
     }
 

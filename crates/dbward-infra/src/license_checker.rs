@@ -46,10 +46,10 @@ mod tests {
     fn free_plan_limits() {
         let checker = FreePlanChecker;
         assert_eq!(checker.max_databases(), 3);
-        assert_eq!(checker.max_workflows(), 5);
-        assert_eq!(checker.max_webhooks(), 3);
+        assert_eq!(checker.max_workflows(), u32::MAX);
+        assert_eq!(checker.max_webhooks(), u32::MAX);
         assert_eq!(checker.max_tokens(), 10);
-        assert_eq!(checker.max_roles(), 8);
+        assert_eq!(checker.max_roles(), u32::MAX);
     }
 
     #[test]
@@ -71,9 +71,9 @@ mod tests {
         assert_eq!(checker.configured_plan(), "free");
         assert_eq!(checker.effective_plan(), "free");
         assert_eq!(checker.max_databases(), 3);
-        assert_eq!(checker.max_workflows(), 5);
-        assert_eq!(checker.max_webhooks(), 3);
+        assert_eq!(checker.max_workflows(), u32::MAX);
+        assert_eq!(checker.max_webhooks(), u32::MAX);
         assert_eq!(checker.max_tokens(), 10);
-        assert_eq!(checker.max_roles(), 8);
+        assert_eq!(checker.max_roles(), u32::MAX);
     }
 }

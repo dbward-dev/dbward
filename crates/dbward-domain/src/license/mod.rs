@@ -20,11 +20,11 @@ pub struct PlanLimits {
 
 impl PlanLimits {
     pub const FREE: Self = Self {
-        max_workflows: 5,
+        max_workflows: u32::MAX,
         max_databases: 3,
-        max_webhooks: 3,
+        max_webhooks: u32::MAX,
         max_tokens: 10,
-        max_roles: 8,
+        max_roles: u32::MAX,
     };
 }
 
