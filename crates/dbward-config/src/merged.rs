@@ -45,14 +45,27 @@ struct RawServerSection {
 }
 
 /// Platform-aware global config directory.
+/// macOS: $XDG_CONFIG_HOME/dbward or ~/.config/dbward
+/// Linux/Windows: dirs::config_dir()/dbward
 pub fn global_config_dir() -> PathBuf {
-    dirs::config_dir()
-        .unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".config")
-        })
-        .join("dbward")
+    if cfg!(target_os = "macos") {
+        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
+            && !xdg.is_empty()
+        {
+            return PathBuf::from(xdg).join("dbward");
+        }
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".config/dbward")
+    } else {
+        dirs::config_dir()
+            .unwrap_or_else(|| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join(".config")
+            })
+            .join("dbward")
+    }
 }
 
 /// Load merged config with source tracking.
@@ -73,11 +86,14 @@ pub fn load_merged(
     // --- Load global layer ---
     let global_dir = global_config_dir();
     let global_path = global_dir.join("config.toml");
-    let global_layer = if use_global && global_path.exists() {
+    let (global_layer, global_path) = if use_global && global_path.exists() {
         sources.push((Source::Global, global_path.clone()));
-        Some(load_raw_layer(&global_path, &global_dir)?)
+        (
+            Some(load_raw_layer(&global_path, &global_dir)?),
+            global_path,
+        )
     } else {
-        None
+        (None, global_path)
     };
 
     // --- Load project/explicit layer ---
@@ -105,9 +121,16 @@ pub fn load_merged(
     };
 
     // --- Check we have at least one source ---
-    if global_layer.is_none() && project_layer.is_none() {
+    let has_env_config = std::env::var("DBWARD_SERVER_URL")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
+        && std::env::var("DBWARD_TOKEN")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+    if global_layer.is_none() && project_layer.is_none() && !has_env_config {
         return Err(ConfigError::Validation(
-            "no configuration found. Run: dbward init".into(),
+            "no configuration found. Set DBWARD_SERVER_URL + DBWARD_TOKEN, or run: dbward init"
+                .into(),
         ));
     }
 
@@ -171,8 +194,10 @@ pub fn load_merged(
             {
                 server_token = Some(t.clone());
                 auth_source = Some(Source::Project);
-                // Warn about token in project config
-                if let Some(ref pp) = project_path {
+                // Warn about token in project config (only for auto-detected, not --config)
+                if let Some(ref pp) = project_path
+                    && auto_detect
+                {
                     eprintln!(
                         "warning: server.token in project config may be committed to VCS: {}",
                         pp.display()

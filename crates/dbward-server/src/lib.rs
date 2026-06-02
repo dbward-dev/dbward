@@ -230,9 +230,15 @@ pub async fn run_from_args(
                 s3_store.health_check().await?;
                 Arc::new(s3_store)
             }
-            _ => Arc::new(dbward_infra::storage::LocalResultStore::new(
-                &cfg.result_storage.root_dir,
-            )?),
+            _ => {
+                let root_dir = match cfg.result_storage.root_dir {
+                    Some(ref p) => config_dir.join(p),
+                    None => state_dir.join("results"),
+                };
+                Arc::new(dbward_infra::storage::LocalResultStore::new(
+                    root_dir.to_str().unwrap_or("results"),
+                )?)
+            }
         };
 
     // Services

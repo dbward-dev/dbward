@@ -14,6 +14,7 @@ use crate::state::AppState;
 pub struct SchemaQuery {
     pub table: Option<String>,
     pub summary: Option<bool>,
+    pub environment: Option<String>,
 }
 
 const ENV_PRIORITY: &[&str] = &["production", "staging", "development"];
@@ -41,18 +42,31 @@ pub async fn get_schema(
 
     // 2. Resolve env: ready + authorized, sorted by priority
     let mut candidates: Vec<&str> = Vec::new();
-    for &p in ENV_PRIORITY {
-        if envs_for_db.contains(&p) {
-            candidates.push(p);
+    if let Some(ref env_override) = query.environment {
+        if envs_for_db.contains(&env_override.as_str()) {
+            candidates.push(env_override);
+        } else {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(
+                    json!({"error": format!("environment '{}' not registered for database '{}'", env_override, db), "code": "not_found"}),
+                ),
+            ));
         }
+    } else {
+        for &p in ENV_PRIORITY {
+            if envs_for_db.contains(&p) {
+                candidates.push(p);
+            }
+        }
+        let mut remaining: Vec<&str> = envs_for_db
+            .iter()
+            .copied()
+            .filter(|e| !candidates.contains(e))
+            .collect();
+        remaining.sort_unstable();
+        candidates.extend(remaining);
     }
-    let mut remaining: Vec<&str> = envs_for_db
-        .iter()
-        .copied()
-        .filter(|e| !candidates.contains(e))
-        .collect();
-    remaining.sort_unstable();
-    candidates.extend(remaining);
 
     let mut any_ready = false;
     let mut resolved = None;

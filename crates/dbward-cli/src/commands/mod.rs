@@ -41,7 +41,7 @@ pub struct Cli {
     pub database: Option<String>,
 
     /// Override environment for this request
-    #[arg(long, env = "DBWARD_ENV", global = true)]
+    #[arg(short = 'e', long, env = "DBWARD_ENV", global = true)]
     pub environment: Option<String>,
 
     /// Output format: human (default) or json

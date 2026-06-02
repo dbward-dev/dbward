@@ -65,6 +65,11 @@ pub async fn run_stdio(
 ) -> Result<(), crate::error::CliError> {
     let db_name = config.resolve_database_name(database)?;
     let migrations_dir = config.migrations_dir_for(&db_name);
+    let default_env: String = std::env::var("DBWARD_ENV")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or(config.default_environment.clone())
+        .unwrap_or_default();
     let client = Arc::new(client);
 
     let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<Value>(64);
@@ -208,6 +213,7 @@ pub async fn run_stdio(
                         let params = request["params"].clone();
                         let id = id.clone();
                         let method = method.clone();
+                        let denv = default_env.clone();
                         let elicit = ElicitHandle {
                             tx: elicit_tx.clone(),
                             id_counter: elicit_id_counter.clone(),
@@ -215,7 +221,7 @@ pub async fn run_stdio(
                         let supports_elicit = client_supports_elicitation;
                         workers.spawn(async move {
                             if method == "tools/call" {
-                                handle_tools_call(id.clone(), &params, &c, &db, &mdir, &elicit, supports_elicit).await
+                                handle_tools_call(id.clone(), &params, &c, &db, &mdir, &denv, &elicit, supports_elicit).await
                             } else {
                                 handle_resources_read(id.clone(), &params, &c, &db).await
                             }
@@ -306,18 +312,39 @@ pub(crate) fn jsonrpc_error(id: Option<Value>, code: i64, message: impl Into<Str
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_tools_call(
     id: Option<Value>,
     params: &Value,
     client: &crate::server_client::ServerClient,
     db_name: &str,
     migrations_dir: &std::path::Path,
+    default_env: &str,
     elicit: &ElicitHandle,
     client_supports_elicitation: bool,
 ) -> Value {
     let tool_name = params["name"].as_str().unwrap_or("");
     let args = &params["arguments"];
-    let env = args["environment"].as_str().unwrap_or("development");
+    let env = args["environment"].as_str().unwrap_or(default_env);
+
+    // Guard: environment must be set for tools that need it
+    let needs_env = !matches!(
+        tool_name,
+        "dbward_migrate_create"
+            | "dbward_wait_request"
+            | "dbward_list_pending"
+            | "dbward_who_can_approve"
+            | "dbward_find_similar_requests"
+            | "dbward_inspect_schema"
+            | "dbward_explain_policy_failure"
+    );
+    if needs_env && env.is_empty() {
+        return jsonrpc_error(
+            id,
+            -32602,
+            "environment is required. Set DBWARD_ENV or default_environment in config.",
+        );
+    }
 
     let result = match tool_name {
         "dbward_execute_query" => {
@@ -561,11 +588,10 @@ async fn handle_tools_call(
             let req_id = args["request_id"].as_str().unwrap_or("");
             if req_id.is_empty() {
                 let op = args["operation"].as_str().unwrap_or("execute_select");
-                let env_arg = args["environment"].as_str().unwrap_or(env);
                 let db = args["database"].as_str().unwrap_or(db_name);
                 Ok(format!(
-                    "To execute '{op}' on {db} ({env_arg}):\n\
-                     Check if a workflow exists: [[workflows]] with database=\"{db}\" or \"*\", environment=\"{env_arg}\" or \"*\"\n\
+                    "To execute '{op}' on {db} ({env}):\n\
+                     Check if a workflow exists: [[workflows]] with database=\"{db}\" or \"*\", environment=\"{env}\" or \"*\"\n\
                      If no workflow matches → rejected (fail-closed).\n\
                      If workflow has steps → approval required from specified roles/groups.\n\
                      Use 'dbward_who_can_approve' with a request_id for specific approval path."
@@ -598,7 +624,11 @@ async fn handle_tools_call(
 
             // Use server schema API (same source as MCP resource)
             let path = if table.is_empty() {
-                format!("/api/schemas/{db}")
+                if env.is_empty() {
+                    format!("/api/schemas/{db}")
+                } else {
+                    format!("/api/schemas/{db}?environment={env}")
+                }
             } else {
                 // Simple percent-encode for query param safety
                 let encoded: String = table
@@ -610,7 +640,11 @@ async fn handle_tools_call(
                         _ => format!("%{b:02X}").chars().collect(),
                     })
                     .collect();
-                format!("/api/schemas/{db}?table={encoded}")
+                if env.is_empty() {
+                    format!("/api/schemas/{db}?table={encoded}")
+                } else {
+                    format!("/api/schemas/{db}?environment={env}&table={encoded}")
+                }
             };
 
             match client.get_json_with_status(&path).await {
