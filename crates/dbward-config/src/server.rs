@@ -378,8 +378,7 @@ pub enum LogFormat {
 pub struct ResultStorageConfig {
     #[serde(default = "default_backend")]
     pub backend: String,
-    #[serde(default = "default_root_dir")]
-    pub root_dir: String,
+    pub root_dir: Option<String>,
     pub bucket: Option<String>,
     pub region: Option<String>,
     pub endpoint: Option<String>,
@@ -395,9 +394,6 @@ pub struct ResultStorageConfig {
 
 fn default_backend() -> String {
     "local".into()
-}
-fn default_root_dir() -> String {
-    "./data/results".into()
 }
 fn default_max_persist_bytes() -> usize {
     10 * 1024 * 1024

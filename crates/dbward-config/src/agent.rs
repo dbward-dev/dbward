@@ -109,7 +109,7 @@ impl AgentConfig {
     }
 
     pub fn startup_max_wait_secs(&self) -> u64 {
-        self.startup_max_wait_secs.unwrap_or(0)
+        self.startup_max_wait_secs.unwrap_or(60)
     }
 }
 
@@ -269,5 +269,35 @@ agent_token = "tok"
 "#;
         let err = AgentConfig::from_str(toml, "test").unwrap_err();
         assert!(err.to_string().contains("database"));
+    }
+
+    #[test]
+    fn startup_max_wait_secs_defaults_to_60() {
+        let toml = r#"
+[server]
+url = "http://localhost:8080"
+agent_token = "tok"
+
+[databases.db.dev]
+url = "postgres://localhost/x"
+"#;
+        let cfg = AgentConfig::from_str(toml, "test").unwrap();
+        assert_eq!(cfg.startup_max_wait_secs(), 60);
+    }
+
+    #[test]
+    fn startup_max_wait_secs_explicit_zero() {
+        let toml = r#"
+startup_max_wait_secs = 0
+
+[server]
+url = "http://localhost:8080"
+agent_token = "tok"
+
+[databases.db.dev]
+url = "postgres://localhost/x"
+"#;
+        let cfg = AgentConfig::from_str(toml, "test").unwrap();
+        assert_eq!(cfg.startup_max_wait_secs(), 0);
     }
 }

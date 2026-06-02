@@ -2,8 +2,14 @@ use crate::display::*;
 use crate::error::CliError;
 use crate::server_client::ServerClient;
 
-pub async fn run_databases(sc: &ServerClient, _json_output: bool) -> Result<(), CliError> {
+pub async fn run_databases(sc: &ServerClient, json_output: bool) -> Result<(), CliError> {
     let resp = sc.get_json("/api/databases").await?;
+    if json_output {
+        let json =
+            serde_json::to_string_pretty(&resp).map_err(|e| CliError::Other(e.to_string()))?;
+        println!("{json}");
+        return Ok(());
+    }
     if let Some(dbs) = resp["databases"].as_array() {
         if dbs.is_empty() {
             eprintln!("No databases registered.");

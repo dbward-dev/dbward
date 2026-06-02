@@ -87,16 +87,27 @@ fn parse_migration_file(filename: &str, content: &str) -> Option<Migration> {
 
 /// Create a new migration file with the given name.
 pub fn create_migration_file(dir: &Path, name: &str) -> Result<std::path::PathBuf, MigrateError> {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
     std::fs::create_dir_all(dir)?;
 
-    let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-    let filename = format!("{timestamp}_{name}.sql");
-    let path = dir.join(&filename);
-
-    let content = "-- migrate:up\n\n-- migrate:down\n";
-    std::fs::write(&path, content)?;
-
-    Ok(path)
+    let mut ts = chrono::Utc::now();
+    loop {
+        let timestamp = ts.format("%Y%m%d%H%M%S").to_string();
+        let filename = format!("{timestamp}_{name}.sql");
+        let path = dir.join(&filename);
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut f) => {
+                f.write_all(b"-- migrate:up\n\n-- migrate:down\n")?;
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                ts += chrono::Duration::seconds(1);
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
 }
 
 #[cfg(test)]
