@@ -7,7 +7,7 @@ Parameters:
     Description: VPC to deploy into
   SubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
-    Description: Subnets for Fargate tasks (private recommended)
+    Description: Public subnets for Fargate tasks and ALB (tasks need outbound for ECR/CloudWatch)
   AllowedIngressCidr:
     Type: String
     Default: "10.0.0.0/8"
@@ -33,7 +33,19 @@ Parameters:
       [result_storage]
       backend = "local"
       root_dir = "/data/results"
-    Description: "server.toml content. result_storage section is normalized by ResultStorageBackend at runtime."
+    Description: "server.toml content (used when ConfigSource=inline). result_storage section is normalized by ResultStorageBackend at runtime."
+
+  ConfigSource:
+    Type: String
+    Default: "inline"
+    AllowedValues: ["inline", "ssm"]
+    Description: "Config source: 'inline' uses ServerConfigToml parameter, 'ssm' fetches from SSM Parameter Store."
+
+  SsmConfigParameter:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^/.*"
+    Description: "SSM parameter name containing server.toml (required when ConfigSource=ssm). Must start with /. Supports SecureString (aws/ssm managed key only)."
 
   EnableAlb:
     Type: String
@@ -62,11 +74,17 @@ Rules:
     Assertions:
       - Assert: !Not [!Equals [!Ref ResultBucketName, ""]]
         AssertDescription: ResultBucketName is required when ResultStorageBackend=s3
+  SsmRequiresParameter:
+    RuleCondition: !Equals [!Ref ConfigSource, "ssm"]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref SsmConfigParameter, ""]]
+        AssertDescription: SsmConfigParameter is required when ConfigSource=ssm
 
 Conditions:
   CreateAlb: !Equals [!Ref EnableAlb, "true"]
   UseEcr: !Not [!Equals [!Ref EcrRepositoryName, ""]]
   UseS3Storage: !Equals [!Ref ResultStorageBackend, "s3"]
+  UseSsmConfig: !Equals [!Ref ConfigSource, "ssm"]
 
 Resources:
   # --- Cluster with Service Connect namespace ---
@@ -207,6 +225,20 @@ Resources:
               - ecr:BatchGetImage
             Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${EcrRepositoryName}"
 
+  SsmPolicy:
+    Type: AWS::IAM::Policy
+    Condition: UseSsmConfig
+    Properties:
+      PolicyName: ssm-config
+      Roles: [!Ref ExecutionRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - ssm:GetParameters
+            Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmConfigParameter}"
+
   ServerTaskRole:
     Type: AWS::IAM::Role
     Properties:
@@ -297,9 +329,13 @@ Resources:
           Command:
             - Fn::Sub:
                 - |
-                  cat > /tmp/server.toml.raw << 'TOMLEOF'
+                  if [ -n "$DBWARD_CONFIG_TOML" ]; then
+                    printf '%s\n' "$DBWARD_CONFIG_TOML" > /tmp/server.toml.raw
+                  else
+                    cat > /tmp/server.toml.raw << 'TOMLEOF'
                   ${ConfigContent}
                   TOMLEOF
+                  fi
                   awk '
                     BEGIN { skip = 0 }
                     /^\[result_storage\]$/ { skip = 1; next }
@@ -322,6 +358,11 @@ Resources:
                         [result_storage]
                         backend = "local"
                         root_dir = "/data/results"
+          Secrets: !If
+            - UseSsmConfig
+            - - Name: DBWARD_CONFIG_TOML
+                ValueFrom: !Ref SsmConfigParameter
+            - !Ref "AWS::NoValue"
           PortMappings:
             - ContainerPort: 3000
               Name: http

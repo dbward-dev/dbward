@@ -73,6 +73,35 @@ aws cloudformation deploy --stack-name dbward --template-file template.yaml \
   --capabilities CAPABILITY_NAMED_IAM
 ```
 
+## SSM Parameter Store Config (Recommended)
+
+Store server config in SSM instead of inline to avoid heredoc issues and enable config changes without template updates:
+
+```bash
+# 1. Create parameter
+aws ssm put-parameter --name /dbward/server-config --type SecureString --value '
+state_dir = "/data"
+[auth]
+mode = "token"
+[[databases]]
+name = "app"
+environments = ["production"]
+'
+
+# 2. Deploy with SSM
+aws cloudformation deploy --stack-name dbward --template-file template.yaml \
+  --parameter-overrides \
+    VpcId=vpc-xxx \
+    SubnetIds=subnet-aaa \
+    ConfigSource=ssm \
+    SsmConfigParameter=/dbward/server-config \
+  --capabilities CAPABILITY_NAMED_IAM
+
+# 3. Update config (no redeploy needed, just restart)
+aws ssm put-parameter --name /dbward/server-config --overwrite --value '...'
+aws ecs update-service --cluster dbward --service server --force-new-deployment
+```
+
 ## S3 Result Storage (Recommended for Production)
 
 Deploy the storage stack separately (long-lived, independent of app lifecycle):
