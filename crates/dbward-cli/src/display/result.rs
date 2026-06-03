@@ -12,6 +12,18 @@ pub enum ResultFormat {
     Vertical,
 }
 
+impl From<dbward_config::client::ResultFormatConfig> for ResultFormat {
+    fn from(c: dbward_config::client::ResultFormatConfig) -> Self {
+        use dbward_config::client::ResultFormatConfig;
+        match c {
+            ResultFormatConfig::Table => Self::Table,
+            ResultFormatConfig::Json => Self::Json,
+            ResultFormatConfig::Csv => Self::Csv,
+            ResultFormatConfig::Vertical => Self::Vertical,
+        }
+    }
+}
+
 pub(crate) fn format_result_cell_value(val: &serde_json::Value) -> String {
     let raw = if val.is_null() {
         "NULL".to_string()

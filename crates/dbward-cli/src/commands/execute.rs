@@ -17,7 +17,7 @@ pub async fn run_execute(
     emergency: bool,
     reason: Option<&str>,
     output: Option<&Path>,
-    no_save: bool,
+    config_results_dir: Option<&Path>,
     ticket: Option<&str>,
     repo: Option<&str>,
     idempotency_key: Option<&str>,
@@ -86,7 +86,7 @@ pub async fn run_execute(
             } else {
                 print_execution_result_formatted(&result, result_format);
             }
-            save_result(&request_id, &result, output, no_save);
+            save_result(&request_id, &result, output, config_results_dir);
         }
         Outcome::Pending {
             request_id,

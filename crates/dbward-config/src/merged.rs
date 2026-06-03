@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::ConfigError;
-use crate::client::{ClientConfig, DatabaseSection, OidcSection, ServerSection};
+use crate::client::{ClientConfig, DatabaseSection, OidcSection, ResultsSection, ServerSection};
 use crate::expand::expand_toml_value;
 
 /// Where a config value originated.
@@ -35,6 +35,8 @@ struct RawLayerConfig {
     server: Option<RawServerSection>,
     #[serde(default)]
     databases: Option<BTreeMap<String, DatabaseSection>>,
+    #[serde(default)]
+    results: Option<ResultsSection>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -227,6 +229,48 @@ pub fn load_merged(
         }
     }
 
+    // --- Results from either layer (project wins per-field) ---
+    let mut results = global_layer
+        .as_ref()
+        .and_then(|g| g.results.clone())
+        .unwrap_or_default();
+    if let Some(ref p) = project_layer
+        && let Some(ref pr) = p.results
+    {
+        if pr.dir.is_some() {
+            results.dir = pr.dir.clone();
+        }
+        if pr.format.is_some() {
+            results.format = pr.format;
+        }
+    }
+    // Resolve results.dir relative to the highest-priority config that set it
+    if let Some(ref mut dir) = results.dir {
+        let base = if project_layer
+            .as_ref()
+            .and_then(|p| p.results.as_ref())
+            .and_then(|r| r.dir.as_ref())
+            .is_some()
+        {
+            project_path
+                .as_ref()
+                .and_then(|p| p.parent())
+                .unwrap_or(Path::new("."))
+        } else {
+            global_path.parent().unwrap_or(Path::new("."))
+        };
+        // Expand ~/
+        if let Some(s) = dir.to_str() {
+            if let Some(rest) = s.strip_prefix("~/") {
+                if let Some(home) = dirs::home_dir() {
+                    *dir = home.join(rest);
+                }
+            } else if !dir.is_absolute() {
+                *dir = base.join(&*dir);
+            }
+        }
+    }
+
     // --- Env var overrides ---
     if let Ok(u) = std::env::var("DBWARD_SERVER_URL")
         && !u.is_empty()
@@ -280,6 +324,7 @@ pub fn load_merged(
             oidc: server_oidc,
         },
         databases,
+        results,
     };
 
     Ok(MergedConfig {

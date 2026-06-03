@@ -97,9 +97,6 @@ pub enum Command {
         /// Save result to a specific file
         #[arg(long)]
         output: Option<PathBuf>,
-        /// Do not save result locally
-        #[arg(long)]
-        no_save: bool,
         /// Ticket identifier to attach as metadata
         #[arg(long)]
         ticket: Option<String>,
@@ -115,9 +112,9 @@ pub enum Command {
         /// Do not persist result to server storage
         #[arg(long = "no-persist")]
         no_persist: bool,
-        /// Result display format
-        #[arg(long, value_enum, default_value = "table")]
-        result_format: crate::display::ResultFormat,
+        /// Result display format (default from config or table)
+        #[arg(long, value_enum)]
+        result_format: Option<crate::display::ResultFormat>,
         /// Timeout in seconds (no timeout if not specified)
         #[arg(long)]
         timeout: Option<u64>,
@@ -231,6 +228,19 @@ pub enum PolicyAction {
 // ---------------------------------------------------------------------------
 // Auth helper
 // ---------------------------------------------------------------------------
+
+fn resolve_result_format(
+    flag: Option<crate::display::ResultFormat>,
+    config: &ClientConfig,
+) -> crate::display::ResultFormat {
+    flag.unwrap_or_else(|| {
+        config
+            .results
+            .format
+            .map(crate::display::ResultFormat::from)
+            .unwrap_or(crate::display::ResultFormat::Table)
+    })
+}
 
 async fn authenticate(config: &ClientConfig) -> Result<(String, String), CliError> {
     let server_url = config.server.url.clone();
@@ -397,7 +407,6 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             emergency,
             ref reason,
             ref output,
-            no_save,
             ref ticket,
             ref repo,
             ref idempotency_key,
@@ -421,13 +430,13 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                 emergency,
                 reason.as_deref(),
                 output.as_deref(),
-                no_save,
+                cfg.results.dir.as_deref(),
                 ticket.as_deref(),
                 repo.as_deref(),
                 idempotency_key.as_deref(),
                 share_with,
                 no_persist,
-                result_format,
+                resolve_result_format(result_format, &cfg),
                 timeout,
             )
             .await
@@ -451,16 +460,29 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             .await
         }
         Command::Request { action } => {
+            let default_fmt = resolve_result_format(None, &cfg);
             request::run_request(
                 &sc,
                 json_output,
                 action,
                 cli.database.as_deref(),
                 cli.environment.as_deref(),
+                cfg.results.dir.as_deref(),
+                default_fmt,
             )
             .await
         }
-        Command::Result { action } => result::run_result(&sc, json_output, action).await,
+        Command::Result { action } => {
+            let default_fmt = resolve_result_format(None, &cfg);
+            result::run_result(
+                &sc,
+                json_output,
+                action,
+                cfg.results.dir.as_deref(),
+                default_fmt,
+            )
+            .await
+        }
         Command::Databases => misc::run_databases(&sc, json_output).await,
         Command::Mcp => crate::mcp::run_stdio(cfg, cli.database.as_deref(), sc).await,
         Command::Audit {

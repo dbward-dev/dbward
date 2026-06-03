@@ -539,6 +539,28 @@ migrations_dir = "db/migrations"
 
 A `[server]` section is also accepted in project config and overrides the global config.
 
+### [results]
+
+Controls local result file saving behavior. Can be placed in project or global config.
+
+```toml
+[results]
+dir = "~/.dbward/results"
+format = "table"
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| dir | Path? | — | Directory for auto-saving results. If unset, results are not saved locally (stdout only). Supports `~/` expansion. |
+| format | String? | `"table"` | Default display format for result rows. Values: `table`, `json`, `csv`, `vertical`. |
+
+**Behavior:**
+
+- Without `[results]` section: results go to stdout only (no local files).
+- With `dir` set: results are auto-saved to `<dir>/<request_id>.json` in addition to stdout display.
+- The `--output <path>` flag overrides `dir` for a single command.
+- Saved files are always canonical JSON regardless of `format`.
+
 ---
 
 ## Environment Variables
