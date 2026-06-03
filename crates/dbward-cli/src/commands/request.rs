@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
 
@@ -43,17 +43,15 @@ pub enum RequestAction {
         id: String,
         #[arg(long)]
         output: Option<PathBuf>,
-        #[arg(long)]
-        no_save: bool,
         /// Result display format
-        #[arg(long, value_enum, default_value = "table")]
-        result_format: ResultFormat,
+        #[arg(long, value_enum)]
+        result_format: Option<ResultFormat>,
     },
     Result {
         id: String,
         /// Result display format
-        #[arg(long, value_enum, default_value = "table")]
-        result_format: ResultFormat,
+        #[arg(long, value_enum)]
+        result_format: Option<ResultFormat>,
     },
 }
 
@@ -63,6 +61,8 @@ pub async fn run_request(
     action: RequestAction,
     database: Option<&str>,
     environment: Option<&str>,
+    config_results_dir: Option<&Path>,
+    default_format: ResultFormat,
 ) -> Result<(), CliError> {
     match action {
         RequestAction::Approve { id, comment } => {
@@ -99,7 +99,6 @@ pub async fn run_request(
         RequestAction::Resume {
             id,
             output,
-            no_save,
             result_format,
         } => {
             run_resume(
@@ -107,13 +106,20 @@ pub async fn run_request(
                 json_output,
                 &id,
                 output.as_deref(),
-                no_save,
-                result_format,
+                config_results_dir,
+                result_format.unwrap_or(default_format),
             )
             .await
         }
         RequestAction::Result { id, result_format } => {
-            run_result(sc, json_output, &id, result_format).await
+            run_result(
+                sc,
+                json_output,
+                &id,
+                result_format.unwrap_or(default_format),
+                config_results_dir,
+            )
+            .await
         }
     }
 }
@@ -274,7 +280,7 @@ async fn run_resume(
     json_output: bool,
     id: &str,
     output: Option<&std::path::Path>,
-    no_save: bool,
+    config_results_dir: Option<&Path>,
     result_format: ResultFormat,
 ) -> Result<(), CliError> {
     // DML re-resume warning
@@ -350,7 +356,7 @@ async fn run_resume(
     } else {
         print_execution_result_formatted(&resp, result_format);
     }
-    save_result(id, &resp, output, no_save);
+    save_result(id, &resp, output, config_results_dir);
     Ok(())
 }
 
@@ -359,8 +365,9 @@ async fn run_result(
     json_output: bool,
     id: &str,
     result_format: ResultFormat,
+    config_results_dir: Option<&Path>,
 ) -> Result<(), CliError> {
-    match load_result(id) {
+    match load_result(id, config_results_dir) {
         Ok(resp) => {
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&resp)?);

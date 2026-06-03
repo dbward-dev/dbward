@@ -1,17 +1,24 @@
+use std::path::{Path, PathBuf};
+
 use clap::Subcommand;
 
 use crate::display::{ResultFormat, print_execution_result_formatted};
 use crate::error::CliError;
 use crate::server_client::ServerClient;
 
+use super::helpers::save_result;
+
 #[derive(Subcommand)]
 pub enum ResultAction {
     List,
     Get {
         id: String,
+        /// Save result to a specific file
+        #[arg(long)]
+        output: Option<PathBuf>,
         /// Result display format
-        #[arg(long, value_enum, default_value = "table")]
-        result_format: ResultFormat,
+        #[arg(long, value_enum)]
+        result_format: Option<ResultFormat>,
     },
 }
 
@@ -19,6 +26,8 @@ pub async fn run_result(
     sc: &ServerClient,
     json_output: bool,
     action: ResultAction,
+    config_results_dir: Option<&Path>,
+    default_format: ResultFormat,
 ) -> Result<(), CliError> {
     match action {
         ResultAction::List => {
@@ -50,19 +59,22 @@ pub async fn run_result(
         }
         ResultAction::Get {
             ref id,
+            ref output,
             result_format,
         } => {
+            let fmt = result_format.unwrap_or(default_format);
             let body = sc.get_result_content(id).await?;
-            if json_output {
-                println!("{}", serde_json::to_string_pretty(&body)?);
+            let resp = if body.get("success").is_some() {
+                body
             } else {
-                let resp = if body.get("success").is_some() {
-                    body
-                } else {
-                    serde_json::json!({"success": true, "result": body})
-                };
-                print_execution_result_formatted(&resp, result_format);
+                serde_json::json!({"success": true, "result": body})
+            };
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                print_execution_result_formatted(&resp, fmt);
             }
+            save_result(id, &resp, output.as_deref(), config_results_dir);
             Ok(())
         }
     }

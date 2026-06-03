@@ -15,6 +15,8 @@ pub struct ClientConfig {
     pub server: ServerSection,
     #[serde(default)]
     pub databases: BTreeMap<String, DatabaseSection>,
+    #[serde(default)]
+    pub results: ResultsSection,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -36,6 +38,22 @@ pub struct OidcSection {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DatabaseSection {
     pub migrations_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResultFormatConfig {
+    #[default]
+    Table,
+    Json,
+    Csv,
+    Vertical,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ResultsSection {
+    pub dir: Option<PathBuf>,
+    pub format: Option<ResultFormatConfig>,
 }
 
 fn default_migrations_dir() -> PathBuf {
@@ -74,6 +92,9 @@ impl ClientConfig {
             if let Some(path) = db.migrations_dir.as_mut() {
                 *path = resolve_relative(base_dir, path);
             }
+        }
+        if let Some(dir) = self.results.dir.as_mut() {
+            *dir = expand_tilde_and_resolve(base_dir, dir);
         }
     }
 
@@ -125,6 +146,16 @@ fn resolve_relative(base: &Path, path: &Path) -> PathBuf {
     } else {
         base.join(path)
     }
+}
+
+fn expand_tilde_and_resolve(base: &Path, path: &Path) -> PathBuf {
+    if let Some(s) = path.to_str()
+        && let Some(rest) = s.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
+    }
+    resolve_relative(base, path)
 }
 
 #[cfg(test)]

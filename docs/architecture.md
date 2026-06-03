@@ -478,12 +478,12 @@ dbward migrate down [--count N]
 dbward migrate status
 dbward migrate create <name>
 dbward execute <SQL>            # --emergency --reason for break-glass
-                                # --output <path> / --no-save
+                                # --output <path>
 dbward request approve <ID>
 dbward request reject <ID>
 dbward request list             # Show requests
 dbward request resume <ID>     # Resume + wait for result
-                                # --output <path> / --no-save
+                                # --output <path>
 dbward result <ID>              # Show locally saved result
 dbward mcp                      # MCP stdio server
 dbward-server --config server.toml        # HTTP server (auto-initializes on first run)

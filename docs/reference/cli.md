@@ -61,8 +61,7 @@ dbward execute "DROP TABLE temp" --emergency --reason "Production incident"
 | `--reason <TEXT>` | Reason for this request |
 | `--emergency` | Break-glass bypass (requires `--reason`) |
 | `--timeout <SECS>` | Timeout in seconds (no timeout if not specified). Exit code 124 on timeout |
-| `--output <PATH>` | Save result to file |
-| `--no-save` | Do not save result locally |
+| `--output <PATH>` | Save result to a specific file (JSON) |
 | `--no-persist` | Do not persist result to server storage |
 | `--share-with <SELECTOR>` | Share result (e.g. `group:dba`, `user:bob`) |
 | `--ticket <ID>` | Attach ticket metadata |
@@ -160,12 +159,13 @@ Wait for a pending/running request to complete.
 
 ```bash
 dbward request resume <ID>
-dbward request resume <ID> --no-save
+dbward request resume <ID> --output ./result.json
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--no-save` | Do not save result locally |
+| `--output <PATH>` | Save result to a specific file (JSON) |
+| `--result-format <FORMAT>` | Result display format: `table` (default), `json`, `csv`, `vertical` |
 
 ---
 
@@ -183,7 +183,14 @@ dbward result list
 
 ```bash
 dbward result get <ID>
+dbward result get <ID> --output ./result.json
+dbward result get <ID> --result-format csv
 ```
+
+| Option | Description |
+|--------|-------------|
+| `--output <PATH>` | Save result to a specific file (JSON) |
+| `--result-format <FORMAT>` | Result display format: `table` (default), `json`, `csv`, `vertical` |
 
 ---
 
