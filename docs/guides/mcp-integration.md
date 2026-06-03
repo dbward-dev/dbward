@@ -123,18 +123,6 @@ When the AI executes a query that requires approval:
 5. AI calls `dbward_wait_request` to wait for approval and result
 6. Once complete, the result is returned directly
 
-### Elicitation (interactive approval prompt)
-
-On production operations without a `--reason`, dbward uses MCP elicitation to ask the user directly:
-
-```
-dbward: This operation targets production and requires a reason.
-Please provide a reason for this query:
-> [user types reason in IDE]
-```
-
-This works in IDEs that support MCP elicitation (protocol version 2025-11-05+).
-
 ## Resources
 
 The MCP server exposes read-only resources:
@@ -212,11 +200,24 @@ Pre-built prompts for common AI workflows:
 ## Security considerations
 
 - The AI tool authenticates as the **user's identity** (their token or OIDC session)
-- The AI cannot bypass approval workflows
+- The AI cannot bypass approval workflows — `--emergency` is blocked via MCP
 - All AI-initiated operations appear in the audit log
 - The AI never sees database credentials
 
+## Async approval (Elicitation)
+
+When a query requires approval, dbward uses MCP's **Elicitation** feature to pause and wait:
+
+1. AI calls `dbward_execute_query`
+2. Server responds: "approval required"
+3. MCP tool uses elicitation to inform the user and wait (timeout: 300 seconds)
+4. If a `reason` is required by the workflow, elicitation prompts the user for it
+5. Once approved (via CLI, API, or Slack), the tool resumes and returns the result
+
+If the IDE doesn't support elicitation, the tool falls back to polling with `dbward_wait_request`.
+
 ## Next steps
 
-- [Workflows](workflows.md) — Configure what requires approval
-- [Authentication](../deployment/authentication.md) — Token setup for MCP
+- [Workflows](policies/workflows.md) — Configure what requires approval
+- [Authentication](authentication.md) — Token setup for MCP
+- [MCP Reference](../reference/mcp.md) — Complete tools/resources/prompts list

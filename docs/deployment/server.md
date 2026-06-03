@@ -56,7 +56,7 @@ mode = "token"                    # "token" | "oidc" | "both"
 # break_glass: any user with --emergency flag  # Roles allowed to use --emergency
 ```
 
-For OIDC setup, see [Authentication](authentication.md).
+For OIDC setup, see [Authentication](../guides/authentication.md).
 
 ### Retention
 
@@ -80,16 +80,12 @@ redaction = "literals"            # "literals" (mask SQL values) | "none" (defau
 ### Result storage
 
 ```toml
-# Local (default) — results persisted to ./data/results/
-[result_storage]
-backend = "local"
-
-# Local filesystem
+# Local (default) — omit root_dir to use {state_dir}/results
 [result_storage]
 backend = "local"
 root_dir = "/var/lib/dbward/results"
 
-# S3 (Pro)
+# S3
 [result_storage]
 backend = "s3"
 bucket = "my-dbward-results"
@@ -142,7 +138,7 @@ format = "slack"
 
 ### Workflows
 
-See [Workflows guide](../guides/workflows.md) for full configuration.
+See [Workflows guide](../guides/policies/workflows.md) for full configuration.
 
 ```toml
 # Production: require admin approval
@@ -192,38 +188,13 @@ execution_window_secs = 3600     # Must execute within 1 hour of approval (defau
 retry_on_failure = false          # Allow re-execution on failure only (default: false)
 ```
 
-### Result policies (Pro)
+### Result policies
 
-```toml
-[[result_policies]]
-database = "primary"
-environment = "production"
-delivery_mode = "stream"          # "direct" (default) | "managed"
-access = ["requester", "admin"]   # Who can view results (default)
-```
+Result policies are managed via the REST API, not TOML. See [Result Policies](../guides/policies/result-policies.md).
 
-### Notification policies (Pro)
+### Notification policies
 
-```toml
-[[notification_policies]]
-database = "primary"
-environment = "production"
-
-[[notification_policies.webhooks]]
-url = "https://hooks.slack.com/services/..."
-events = ["request_created", "request_approved"]
-format = "slack"
-```
-
-### Access policies
-
-```toml
-[[access_policies]]
-database = "primary"
-environment = "production"
-allowed_roles = ["admin", "dba"]
-allowed_groups = ["backend-team"]
-```
+Notification policies are managed via the REST API, not TOML. See [Notification Policies](../guides/policies/notification-policies.md).
 
 ## Running with systemd
 
@@ -269,36 +240,13 @@ Create tokens for users and agents:
 cat /data/admin-token    # admin token
 cat /data/agent-token    # agent token
 
-# Additional tokens via API (requires admin token):
+# Additional tokens via CLI (requires admin token):
 dbward token create --subject alice --role admin
 dbward token create --subject bob --role developer
-dbward token create --subject prod-agent --role admin --agent
+dbward token create --subject prod-agent --role agent-default --subject-type agent
 ```
 
-Tokens can also be managed via the REST API:
-
-```bash
-# Create with TTL and metadata
-curl -X POST http://localhost:3000/api/tokens \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "subject_id": "bob",
-    "role": "developer",
-    "subject_type": "user",
-    "name": "Bob laptop",
-    "groups": ["backend-team"],
-    "expires_in": 7776000
-  }'
-# Also supports "expires_at": "2026-08-01T00:00:00Z" (RFC 3339)
-
-# List tokens (shows prefix, status, expires_at — never the raw token)
-curl http://localhost:3000/api/tokens -H "Authorization: Bearer $ADMIN_TOKEN"
-
-# Revoke (admin can revoke any token; users can revoke their own)
-curl -X DELETE http://localhost:3000/api/tokens/$TOKEN_ID \
-  -H "Authorization: Bearer $TOKEN"
-```
+For API-based token management, see [REST API Reference](../reference/api.md#tokens).
 
 ## Health checks
 
@@ -307,9 +255,9 @@ curl -X DELETE http://localhost:3000/api/tokens/$TOKEN_ID \
 curl http://localhost:3000/health
 # → {"status":"ok","version":"0.1.2","min_agent_version":"0.1.2"}
 
-# Readiness (returns 200 or 503, no body)
-curl -o /dev/null -w "%{http_code}" http://localhost:3000/ready
-# → 200
+# Readiness (returns 200 or 503 with checks status)
+curl http://localhost:3000/ready
+# → {"status":"ok","checks":{"sqlite":"ok","result_store":"ok"}}
 ```
 
 All responses include an `X-Dbward-Version` header with the server's version.
@@ -347,5 +295,5 @@ secret = "${WEBHOOK_SECRET}"
 ## Next steps
 
 - [Agent setup](agent.md) — Connect agents to your databases
-- [Authentication](authentication.md) — Configure OIDC or manage tokens
-- [Workflows](../guides/workflows.md) — Set up approval rules
+- [Authentication](../guides/authentication.md) — Configure OIDC or manage tokens
+- [Workflows](../guides/policies/workflows.md) — Set up approval rules

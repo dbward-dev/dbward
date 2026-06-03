@@ -31,6 +31,36 @@ export DATABASE_URL="postgres://dbward:pass@db.internal:5432/app"
 dbward agent --config dbward-agent.toml
 ```
 
+## How the Agent Works
+
+### Polling architecture
+
+The agent uses **outbound HTTP only**. It periodically polls the server for dispatched jobs — no inbound ports or firewall rules required. This simplifies deployment behind NATs, VPNs, and corporate firewalls.
+
+### Capabilities matching
+
+Each agent advertises its capabilities: `databases`, `environments`, and `operations`. The server uses these to route jobs to the correct agent. Only agents whose capabilities match a job will receive it during polling.
+
+### Multi-agent
+
+Multiple agents can connect to the same server simultaneously. When two agents poll and receive the same job, the `claim` endpoint resolves the race — only one agent wins the claim, the other receives a conflict response and moves on.
+
+### Lease and heartbeat
+
+After claiming a job, the agent has `lease_duration_secs` to complete it. During execution, the agent sends periodic heartbeats to extend the lease. If the agent crashes or loses connectivity, the lease expires and the job is marked `execution_lost`.
+
+### Schema sync
+
+On startup and periodically thereafter, the agent collects schema metadata (tables, columns, row estimates, foreign keys) from each configured database and sends it to the server. This powers risk scoring, SQL review, and `max_estimated_rows` checks.
+
+### Dry-run EXPLAIN
+
+For preview and approval context, the agent can execute `EXPLAIN` (read-only, no side effects) against the target database. The execution plan is attached to the request so approvers can assess impact before approving.
+
+### Degraded mode
+
+If a database connection is lost, the agent skips jobs targeting that database but continues serving other configured databases normally. It retries the failed connection each poll interval and resumes when connectivity is restored.
+
 ## Configuration reference
 
 ### Agent identity
@@ -62,15 +92,14 @@ dbward token create --subject prod-agent-1 --subject-type agent --role agent-def
 
 ### Capabilities
 
-Capabilities determine which jobs this agent can handle. The server matches jobs to agents based on these.
+Capabilities determine which jobs this agent can handle. **Databases and environments are derived automatically** from the `[databases]` section keys. Only `operations` is configurable:
 
 ```toml
-# Capabilities are derived from [databases] keys
-# operations (optional, defaults shown):
-operations = ["app"]               # Which databases this agent serves
-environments = ["production"]     # Which environments ("*" = all)
-operations = ["*"]                # Which operations ("*" = all)
+# Optional: limit which operations this agent handles (default: all)
+# operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "migrate_status"]
 ```
+
+For example, if the config has `[databases.app.production]` and `[databases.app.staging]`, the agent advertises capabilities for database `app`, environments `production` and `staging`.
 
 ### Database connections
 
@@ -105,11 +134,9 @@ Agent A   Agent B
 ```toml
 agent_id = "prod-agent"
 
-# Capabilities are derived from [databases] keys
-# operations (optional, defaults shown):
-operations = ["app"]
-environments = ["production"]
-operations = ["*"]
+[server]
+url = "https://dbward.internal:3000"
+agent_token = "${DBWARD_AGENT_TOKEN}"
 
 [databases.app.production]
 url = "postgres://...@prod-db:5432/app"
@@ -119,20 +146,18 @@ url = "postgres://...@prod-db:5432/app"
 ```toml
 agent_id = "staging-agent"
 
-# Capabilities are derived from [databases] keys
-# operations (optional, defaults shown):
-operations = ["app", "analytics"]
-environments = ["staging", "development"]
-operations = ["*"]
+[server]
+url = "https://dbward.internal:3000"
+agent_token = "${DBWARD_AGENT_TOKEN}"
 
-[databases.app.production]
+[databases.app.staging]
 url = "postgres://...@staging-db:5432/app"
 
-[databases.analytics.production]
+[databases.analytics.staging]
 url = "mysql://...@analytics:3306/warehouse"
 ```
 
-The server automatically routes jobs to the correct agent based on capabilities matching.
+The server automatically routes jobs based on each agent's `[databases]` keys.
 
 ## Job execution flow
 
@@ -210,7 +235,7 @@ During normal operation:
 ```toml
 startup_retry_initial_ms = 1000   # Initial retry delay (default: 1000)
 startup_retry_max_ms = 15000      # Max retry delay cap (default: 15000)
-startup_max_wait_secs = 0         # 0 = retry forever (default), >0 = exit after N seconds
+startup_max_wait_secs = 60        # default 60s, 0 = retry forever
 ```
 
 ## Graceful shutdown
@@ -230,5 +255,5 @@ On SIGTERM/SIGINT:
 ## Next steps
 
 - [Server setup](server.md) — Configure the server
-- [Authentication](authentication.md) — Token management and OIDC
-- [Workflows](../guides/workflows.md) — Configure approval rules
+- [Authentication](../guides/authentication.md) — Token management and OIDC
+- [Workflows](../guides/policies/workflows.md) — Configure approval rules

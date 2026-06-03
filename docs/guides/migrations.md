@@ -153,4 +153,4 @@ dbward migrate up --share-with "group:backend-team"
 ## Next steps
 
 - [CI/CD](ci-cd.md) — Automate migrations in pipelines
-- [Workflows](workflows.md) — Configure approval for migrations
+- [Workflows](policies/workflows.md) — Configure approval for migrations

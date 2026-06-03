@@ -27,22 +27,23 @@ mode = "token"   # "token" | "oidc" | "both"
 ### Creating tokens
 
 ```bash
-# Via CLI (requires access to the SQLite database file)
-dbward token create --subject alice --role admin 
-dbward token create --subject bob --role developer 
-dbward token create --subject prod-agent --role admin --subject-type agent 
+# Via CLI
+dbward token create --subject alice --role admin
+dbward token create --subject bob --role developer --groups "backend-team" --expires 90d
+dbward token create --subject prod-agent --role agent-default --subject-type agent
 ```
 
 ```bash
-# Via REST API (requires admin token)
+# Via REST API (requires token.manage permission)
 curl -X POST http://localhost:3000/api/tokens \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "subject_id": "bob",
-    "roles": "developer",
+    "roles": ["developer"],
+    "groups": ["backend-team"],
     "name": "Bob CI token",
-    "expires_at": 7776000
+    "expires_at": "2026-09-01T00:00:00Z"
   }'
 ```
 
@@ -50,13 +51,12 @@ curl -X POST http://localhost:3000/api/tokens \
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `subject_id` | string (required) | User or service identifier |
-| `role` | string | `admin`, `developer`, or `readonly` (default: `developer`) |
-| `subject_type` | string | `user` or `agent` (default: `user`) |
-| `name` | string | Human-readable label |
-| `groups` | string[] | Group memberships (for workflow approver matching) |
-| `expires_at` | integer | TTL in seconds (e.g., 7776000 = 90 days) |
-| `expires_at` | string | Absolute expiry (RFC 3339). Mutually exclusive with `expires_at`. |
+| `subject_id` | string | **Required.** User or service identifier. |
+| `roles` | string[] | Roles to assign. Default: `[]` (uses `default_role`). |
+| `subject_type` | string | `user` or `agent`. Default: `user`. |
+| `name` | string | Human-readable label. |
+| `groups` | string[] | Group memberships (for workflow approver matching). |
+| `expires_at` | datetime | Absolute expiry (RFC 3339). Unset = no expiration. |
 
 ### Token lifecycle
 
@@ -64,10 +64,10 @@ curl -X POST http://localhost:3000/api/tokens \
 Create → Active → [Expired | Revoked]
 ```
 
-- **Expiration:** Tokens with `expires_at` or `expires_at` are automatically rejected after the deadline. No background cleanup needed.
-- **Revocation:** Tokens can be revoked immediately via API.
-- **Self-revoke:** Any user can revoke their own token (no admin required).
-- **No re-issue:** There is no rotate API. Revoke the old token and create a new one.
+- **Expiration:** Tokens with `expires_at` are rejected after the deadline.
+- **Revocation:** Immediate via `DELETE /api/tokens/{id}`.
+- **Self-revoke:** Users with `token.revoke_own` permission can revoke their own tokens.
+- **No rotate API:** Revoke the old token and create a new one.
 
 ### Revoking tokens
 
@@ -162,17 +162,12 @@ role = "admin"
 claim = "groups"
 value = "backend-team"
 role = "developer"
-
-# Map by specific user
-[[auth.oidc.role_mappings]]
-# Use [[auth.role_bindings]] for subject-based role assignment
-role = "admin"
 ```
 
 **How it works:**
 - All matching mappings are collected (a user can have multiple roles)
-- If no mapping matches, `default_role` is used
-- Roles determine API access (admin > developer > readonly)
+- If no mapping matches, `[auth.oidc].default_role` is used, then `[auth].default_role`
+- Roles grant specific permissions (see [Authorization Reference](../reference/authorization.md))
 
 ### Supported IdPs
 
@@ -256,7 +251,7 @@ curl -X POST http://localhost:3000/api/tokens \
   -H "Content-Type: application/json" \
   -d '{
     "subject_id": "ci-bot",
-    "roles": "developer",
+    "roles": ["developer"],
     "groups": ["backend-team"]
   }'
 ```
@@ -268,7 +263,7 @@ curl -X POST http://localhost:3000/api/tokens \
 Agents use API tokens with `subject_type = "agent"`:
 
 ```bash
-dbward token create --subject prod-agent --role admin --subject-type agent 
+dbward token create --subject prod-agent --role agent-default --subject-type agent
 ```
 
 In OIDC mode (`mode = "oidc"`), agents are the only entities allowed to use API tokens. Human users must authenticate via OIDC.
@@ -299,6 +294,6 @@ In `mode = "both"`, both API tokens and OIDC JWTs are accepted for all users.
 
 ## Next steps
 
-- [Server setup](server.md) — Full server configuration
-- [Workflows](../guides/workflows.md) — Group-based approval rules
-- [Agent setup](agent.md) — Agent token configuration
+- [Server setup](../deployment/server.md) — Full server configuration
+- [Workflows](policies/workflows.md) — Group-based approval rules
+- [Agent setup](../deployment/agent.md) — Agent token configuration

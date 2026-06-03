@@ -84,7 +84,7 @@ Create a dedicated CI token with appropriate permissions:
 dbward token create \
   --subject "github-actions" \
   --role developer \
-  
+  --expires 90d
 ```
 
 Store the token as a repository secret (`DBWARD_TOKEN`).
@@ -154,4 +154,4 @@ When CI creates a migration request, the team gets a Slack message with the SQL 
 ## Next steps
 
 - [Migrations](migrations.md) — Migration file management
-- [Workflows](workflows.md) — Configure auto-approve for specific environments
+- [Workflows](policies/workflows.md) — Configure auto-approve for specific environments
