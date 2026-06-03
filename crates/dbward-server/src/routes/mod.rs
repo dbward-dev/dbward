@@ -124,6 +124,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/requests/{id}/result/content",
             axum::routing::get(requests::get_result),
         )
+        .route(
+            "/api/requests/{id}/executions",
+            axum::routing::get(requests::list_executions),
+        )
         // Agent
         .route("/api/agent/poll", axum::routing::post(agent::poll))
         .route(

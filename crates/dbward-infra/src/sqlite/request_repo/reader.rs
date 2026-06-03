@@ -264,6 +264,22 @@ impl RequestReader for SqliteRequestRepo {
             .map_err(map_err)?;
         Ok(count)
     }
+    fn find_stored_execution_ids(&self, request_id: &str) -> Result<Vec<String>, AppError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT execution_id FROM results WHERE request_id = ?1 AND status = 'stored'",
+            )
+            .map_err(map_err)?;
+        let rows = stmt
+            .query_map(params![request_id], |row| row.get(0))
+            .map_err(map_err)?;
+        let mut ids = Vec::new();
+        for row in rows {
+            ids.push(row.map_err(map_err)?);
+        }
+        Ok(ids)
+    }
     fn list_results_for_user(
         &self,
         user_id: &str,

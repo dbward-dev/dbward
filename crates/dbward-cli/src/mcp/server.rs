@@ -811,7 +811,10 @@ fn rewrite_error(msg: &str) -> String {
 
 fn format_result(resp: &Value) -> Result<String, String> {
     if resp["success"].as_bool() == Some(false) {
-        let err = resp["error"].as_str().unwrap_or("unknown error");
+        let err = resp["error_message"]
+            .as_str()
+            .or_else(|| resp["error"].as_str())
+            .unwrap_or("unknown error");
         return Err(format!("Execution failed: {err}"));
     }
     let result = &resp["result"];

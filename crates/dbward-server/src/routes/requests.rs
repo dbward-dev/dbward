@@ -182,6 +182,21 @@ pub struct GetRequestQuery {
     pub wait: Option<u64>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct GetResultQuery {
+    pub execution_id: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ListExecutionsQuery {
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ListResultsQuery {
+    pub limit: Option<u32>,
+}
+
 pub async fn get(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
@@ -441,13 +456,13 @@ pub async fn stream_result(
     };
 
     let input = stream_result::StreamResultInput {
-        request_id: id,
+        request_id: id.clone(),
         timeout_secs: Some(300),
     };
 
     match uc.execute(input, &user).await {
         Ok(out) => match out.data {
-            Some(summary) => Ok((
+            stream_result::StreamResultData::Result(summary) => Ok((
                 StatusCode::OK,
                 Json(json!({
                     "execution_id": summary.execution_id,
@@ -458,7 +473,42 @@ pub async fn stream_result(
                     "result_data": summary.result_data,
                 })),
             )),
-            None => Ok((StatusCode::NO_CONTENT, Json(json!({})))),
+            stream_result::StreamResultData::TerminalPlaceholder { success: _ } => {
+                // Fetch full result from storage
+                let get_uc = get_result::GetResult {
+                    authorizer: state.authorizer.clone(),
+                    request_reader: state.request_reader.clone(),
+                    agent_repo: state.agent_repo.clone(),
+                    result_store: state.result_store.clone(),
+                    policy_repo: state.policy_repo.clone(),
+                    clock: state.clock.clone(),
+                };
+                let get_input = get_result::GetResultInput {
+                    request_id: id.clone(),
+                    execution_id: None,
+                };
+                match get_uc.execute(get_input, &user).await {
+                    Ok(stored_out) => {
+                        let bytes = stored_out.stream.collect().await.map_err(map_error)?;
+                        Ok((
+                            StatusCode::OK,
+                            Json(build_result_envelope(
+                                &stored_out.execution_id,
+                                stored_out.success,
+                                &bytes,
+                            )),
+                        ))
+                    }
+                    Err(AppError::Gone(msg)) => {
+                        // no_store / stream-only / expired → return 410 (consistent with /result/content)
+                        Err(map_error(AppError::Gone(msg)))
+                    }
+                    Err(e) => Err(map_error(e)),
+                }
+            }
+            stream_result::StreamResultData::Timeout => {
+                Ok((StatusCode::NO_CONTENT, Json(json!({}))))
+            }
         },
         Err(e) => Err(map_error(e)),
     }
@@ -468,7 +518,8 @@ pub async fn get_result(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
-) -> Result<axum::http::Response<axum::body::Body>, (StatusCode, Json<serde_json::Value>)> {
+    axum::extract::Query(query): axum::extract::Query<GetResultQuery>,
+) -> ApiResult {
     let uc = get_result::GetResult {
         authorizer: state.authorizer.clone(),
         request_reader: state.request_reader.clone(),
@@ -478,27 +529,117 @@ pub async fn get_result(
         clock: state.clock.clone(),
     };
 
-    let input = get_result::GetResultInput { request_id: id };
+    let input = get_result::GetResultInput {
+        request_id: id,
+        execution_id: query.execution_id,
+    };
 
-    match uc.execute(input, &user).await {
-        Ok(out) => {
-            let mut builder =
-                axum::http::Response::builder().header("content-type", "application/octet-stream");
-            if let Some(len) = out.stream.content_length {
-                builder = builder.header("content-length", len);
-            }
-            Ok(builder
-                .body(axum::body::Body::from_stream(out.stream.stream))
-                .unwrap())
-        }
-        Err(e) => Err(map_error(e)),
+    let out = uc.execute(input, &user).await.map_err(map_error)?;
+
+    let bytes = out.stream.collect().await.map_err(map_error)?;
+    let envelope = build_result_envelope(&out.execution_id, out.success, &bytes);
+    Ok((StatusCode::OK, Json(envelope)))
+}
+
+fn build_result_envelope(execution_id: &str, success: bool, raw_bytes: &[u8]) -> serde_json::Value {
+    let raw_text = String::from_utf8_lossy(raw_bytes);
+
+    if !success {
+        // Failure: stored content is error JSON like {"success":false,"error":"..."}
+        let stored: serde_json::Value = serde_json::from_slice(raw_bytes).unwrap_or(json!(null));
+        return json!({
+            "_dbward_result": true,
+            "execution_id": execution_id,
+            "success": false,
+            "result_data": null,
+            "rows_affected": null,
+            "truncated": false,
+            "error_message": stored.get("error").or_else(|| stored.get("error_message")),
+        });
     }
+
+    // Success: stored content is the result_data string
+    let stored: serde_json::Value = serde_json::from_slice(raw_bytes).unwrap_or(json!(null));
+
+    json!({
+        "_dbward_result": true,
+        "execution_id": execution_id,
+        "success": true,
+        "result_data": raw_text.as_ref(),
+        "rows_affected": stored.get("rows_affected"),
+        "truncated": stored.get("truncated").and_then(|v| v.as_bool()).unwrap_or(false),
+        "error_message": null,
+    })
+}
+
+pub async fn list_executions(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<ListExecutionsQuery>,
+) -> ApiResult {
+    // Authorize: same as request visibility
+    let _request = state
+        .request_reader
+        .get(&id)
+        .map_err(map_error)?
+        .ok_or_else(|| map_error(AppError::NotFound("request not found".into())))?;
+
+    // Reuse request get authorization
+    let uc = get_request::GetRequest {
+        request_reader: state.request_reader.clone(),
+        approval_repo: state.approval_repo.clone(),
+        authorizer: state.authorizer.clone(),
+        context_repo: state.context_repo.clone(),
+    };
+    uc.execute(&id, &user).map_err(map_error)?;
+
+    let executions = state
+        .agent_repo
+        .find_executions_for_request(&id)
+        .map_err(map_error)?;
+
+    let limit = query.limit.unwrap_or(20).min(100) as usize;
+
+    // Sort by created_at DESC (most recent first) and limit
+    let mut sorted = executions;
+    sorted.sort_by_key(|e| std::cmp::Reverse(e.created_at));
+
+    // Check which executions actually have stored results
+    let stored_ids: std::collections::HashSet<String> = state
+        .request_reader
+        .find_stored_execution_ids(&id)
+        .map_err(map_error)?
+        .into_iter()
+        .collect();
+
+    let items: Vec<serde_json::Value> = sorted
+        .into_iter()
+        .take(limit)
+        .map(|e| {
+            let has_stored = stored_ids.contains(&e.id);
+            json!({
+                "id": e.id,
+                "status": format!("{:?}", e.status).to_lowercase(),
+                "agent_id": e.agent_id,
+                "created_at": e.created_at.to_rfc3339(),
+                "started_at": e.started_at.map(|t| t.to_rfc3339()),
+                "finished_at": e.finished_at.map(|t| t.to_rfc3339()),
+                "error_message": e.error_message,
+                "has_stored_result": has_stored,
+            })
+        })
+        .collect();
+
+    Ok((StatusCode::OK, Json(json!({ "executions": items }))))
 }
 
 pub async fn list_results(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    axum::extract::Query(query): axum::extract::Query<ListResultsQuery>,
 ) -> ApiResult {
+    let limit = query.limit.unwrap_or(50).min(100);
     let results = state
         .request_reader
         .list_results_for_user(
@@ -509,7 +650,7 @@ pub async fn list_results(
                 .iter()
                 .map(|r| r.name.clone())
                 .collect::<Vec<_>>(),
-            50,
+            limit,
         )
         .map_err(map_error)?;
     let items: Vec<serde_json::Value> = results

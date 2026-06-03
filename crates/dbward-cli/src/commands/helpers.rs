@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use crate::error::CliError;
-
 pub fn build_request_metadata(
     ticket: Option<&str>,
     repo: Option<&str>,
@@ -67,26 +65,6 @@ pub fn save_result(
             None
         }
     }
-}
-
-pub fn load_result(
-    request_id: &str,
-    config_dir: Option<&Path>,
-) -> Result<serde_json::Value, CliError> {
-    let dir = config_dir.ok_or_else(|| {
-        CliError::Server(format!(
-            "No results dir configured. Cannot load local result for {request_id}. Try: dbward result get {request_id}"
-        ))
-    })?;
-    let path = dir.join(format!("{request_id}.json"));
-    let content = std::fs::read_to_string(&path).map_err(|_| {
-        CliError::Server(format!(
-            "No saved result for {request_id}. Path: {}",
-            path.display()
-        ))
-    })?;
-    serde_json::from_str(&content)
-        .map_err(|e| CliError::Server(format!("Failed to parse saved result: {e}")))
 }
 
 #[cfg(unix)]
@@ -161,30 +139,5 @@ mod tests {
         let result = save_result("req_abc", &sample_result(), Some(&output_path), None);
         assert!(result.is_some());
         assert!(output_path.exists());
-    }
-
-    #[test]
-    fn load_result_from_config_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        // Write a file
-        save_result("req_load", &sample_result(), None, Some(dir.path()));
-        // Load it back
-        let loaded = load_result("req_load", Some(dir.path())).unwrap();
-        assert_eq!(loaded["success"], true);
-    }
-
-    #[test]
-    fn load_result_no_dir_returns_error() {
-        let result = load_result("req_missing", None);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No results dir"));
-    }
-
-    #[test]
-    fn load_result_file_not_found_returns_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let result = load_result("nonexistent", Some(dir.path()));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No saved result"));
     }
 }

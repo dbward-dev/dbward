@@ -17,10 +17,13 @@ pub struct GetResult {
 
 pub struct GetResultInput {
     pub request_id: String,
+    pub execution_id: Option<String>,
 }
 
 pub struct GetResultOutput {
     pub stream: ResultStream,
+    pub execution_id: String,
+    pub success: bool,
 }
 
 impl GetResult {
@@ -41,7 +44,7 @@ impl GetResult {
             return Err(AppError::NotFound("result not available".into()));
         }
 
-        if request.no_store {
+        if request.no_store && request.status != RequestStatus::Failed {
             return Err(AppError::Gone("result was not stored (no_store)".into()));
         }
 
@@ -91,17 +94,34 @@ impl GetResult {
         let executions = self
             .agent_repo
             .find_executions_for_request(&input.request_id)?;
-        let execution = executions
-            .into_iter()
-            .rev()
-            .find(|e| {
-                matches!(
-                    e.status,
-                    dbward_domain::entities::ExecutionStatus::Completed
-                        | dbward_domain::entities::ExecutionStatus::Failed
-                )
-            })
-            .ok_or_else(|| AppError::NotFound("no terminal execution found".into()))?;
+        let execution = if let Some(ref eid) = input.execution_id {
+            // Specific execution requested
+            let exec = executions
+                .into_iter()
+                .find(|e| e.id == *eid)
+                .ok_or_else(|| AppError::NotFound("execution not found".into()))?;
+            if !matches!(
+                exec.status,
+                dbward_domain::entities::ExecutionStatus::Completed
+                    | dbward_domain::entities::ExecutionStatus::Failed
+            ) {
+                return Err(AppError::Conflict("execution still in progress".into()));
+            }
+            exec
+        } else {
+            // Latest terminal execution
+            executions
+                .into_iter()
+                .rev()
+                .find(|e| {
+                    matches!(
+                        e.status,
+                        dbward_domain::entities::ExecutionStatus::Completed
+                            | dbward_domain::entities::ExecutionStatus::Failed
+                    )
+                })
+                .ok_or_else(|| AppError::NotFound("no terminal execution found".into()))?
+        };
 
         // Retention: use ResultPolicy.retention_days if available, else 30
         let retention_days = match self
@@ -122,6 +142,8 @@ impl GetResult {
             }
         }
 
+        let success = execution.status == dbward_domain::entities::ExecutionStatus::Completed;
+        let exec_id = execution.id.clone();
         let key = format!("results/{}/{}", input.request_id, execution.id);
         let stream = self
             .result_store
@@ -132,7 +154,11 @@ impl GetResult {
                 _ => AppError::Internal(format!("failed to read result from storage: {e}")),
             })?;
 
-        Ok(GetResultOutput { stream })
+        Ok(GetResultOutput {
+            stream,
+            execution_id: exec_id,
+            success,
+        })
     }
 }
 
@@ -237,6 +263,9 @@ mod tests {
         }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
+        }
+        fn find_stored_execution_ids(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
         }
         fn list_results_for_user(
             &self,
@@ -608,6 +637,7 @@ mod tests {
             .execute(
                 GetResultInput {
                     request_id: "req-1".into(),
+                    execution_id: None,
                 },
                 &make_user("alice"),
             )
@@ -653,6 +683,7 @@ mod tests {
             .execute(
                 GetResultInput {
                     request_id: "req-1".into(),
+                    execution_id: None,
                 },
                 &make_user("bob"),
             )
@@ -688,10 +719,154 @@ mod tests {
             .execute(
                 GetResultInput {
                     request_id: "req-1".into(),
+                    execution_id: None,
                 },
                 &make_user("alice"),
             )
             .await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn no_store_failed_request_returns_result() {
+        let now = Utc::now();
+        let mut req = make_request();
+        req.no_store = true;
+        req.status = RequestStatus::Failed;
+
+        let mut exec = make_execution();
+        exec.status = ExecutionStatus::Failed;
+        exec.error_message = Some("timeout".into());
+
+        let uc = GetResult {
+            authorizer: Arc::new(FakeAuthorizer),
+            request_reader: Arc::new(FakeRequestRepo {
+                request: Mutex::new(Some(req)),
+            }),
+            agent_repo: Arc::new(FakeAgentRepo {
+                execution: Mutex::new(Some(exec)),
+            }),
+            result_store: Arc::new(FakeResultStore {
+                data: Mutex::new(b"{\"success\":false,\"error\":\"timeout\"}".to_vec()),
+            }),
+            policy_repo: Arc::new(FakePolicyRepo {
+                policy: Mutex::new(None),
+            }),
+            clock: Arc::new(FakeClock { now }),
+        };
+
+        let result = uc
+            .execute(
+                GetResultInput {
+                    request_id: "req-1".into(),
+                    execution_id: None,
+                },
+                &make_user("alice"),
+            )
+            .await;
+        assert!(result.is_ok());
+        let out = result.unwrap();
+        assert!(!out.success);
+    }
+
+    #[tokio::test]
+    async fn no_store_success_returns_gone() {
+        let now = Utc::now();
+        let mut req = make_request();
+        req.no_store = true;
+        req.status = RequestStatus::Executed;
+
+        let uc = GetResult {
+            authorizer: Arc::new(FakeAuthorizer),
+            request_reader: Arc::new(FakeRequestRepo {
+                request: Mutex::new(Some(req)),
+            }),
+            agent_repo: Arc::new(FakeAgentRepo {
+                execution: Mutex::new(Some(make_execution())),
+            }),
+            result_store: Arc::new(FakeResultStore {
+                data: Mutex::new(vec![]),
+            }),
+            policy_repo: Arc::new(FakePolicyRepo {
+                policy: Mutex::new(None),
+            }),
+            clock: Arc::new(FakeClock { now }),
+        };
+
+        let result = uc
+            .execute(
+                GetResultInput {
+                    request_id: "req-1".into(),
+                    execution_id: None,
+                },
+                &make_user("alice"),
+            )
+            .await;
+        assert!(matches!(result, Err(AppError::Gone(_))));
+    }
+
+    #[tokio::test]
+    async fn specific_execution_id_returns_that_execution() {
+        let now = Utc::now();
+        let uc = GetResult {
+            authorizer: Arc::new(FakeAuthorizer),
+            request_reader: Arc::new(FakeRequestRepo {
+                request: Mutex::new(Some(make_request())),
+            }),
+            agent_repo: Arc::new(FakeAgentRepo {
+                execution: Mutex::new(Some(make_execution())),
+            }),
+            result_store: Arc::new(FakeResultStore {
+                data: Mutex::new(b"test data".to_vec()),
+            }),
+            policy_repo: Arc::new(FakePolicyRepo {
+                policy: Mutex::new(None),
+            }),
+            clock: Arc::new(FakeClock { now }),
+        };
+
+        let result = uc
+            .execute(
+                GetResultInput {
+                    request_id: "req-1".into(),
+                    execution_id: Some("exec-1".into()),
+                },
+                &make_user("alice"),
+            )
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().execution_id, "exec-1");
+    }
+
+    #[tokio::test]
+    async fn invalid_execution_id_returns_not_found() {
+        let now = Utc::now();
+        let uc = GetResult {
+            authorizer: Arc::new(FakeAuthorizer),
+            request_reader: Arc::new(FakeRequestRepo {
+                request: Mutex::new(Some(make_request())),
+            }),
+            agent_repo: Arc::new(FakeAgentRepo {
+                execution: Mutex::new(Some(make_execution())),
+            }),
+            result_store: Arc::new(FakeResultStore {
+                data: Mutex::new(vec![]),
+            }),
+            policy_repo: Arc::new(FakePolicyRepo {
+                policy: Mutex::new(None),
+            }),
+            clock: Arc::new(FakeClock { now }),
+        };
+
+        let result = uc
+            .execute(
+                GetResultInput {
+                    request_id: "req-1".into(),
+                    execution_id: Some("nonexistent".into()),
+                },
+                &make_user("alice"),
+            )
+            .await;
+        assert!(matches!(result, Err(AppError::NotFound(_))));
     }
 }
