@@ -654,6 +654,7 @@ fn sync_execution_policies(
             statement_timeout_secs: ep.statement_timeout_secs,
             max_statement_timeout_secs: ep.max_statement_timeout_secs,
             max_rows: ep.max_rows,
+            migration_lease_duration_secs: ep.migration_lease_duration_secs,
         })
         .collect();
 

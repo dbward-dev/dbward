@@ -219,6 +219,10 @@ fn compute_next_status(
         // Cancelled request accepts completion (ADR-003/004)
         (Cancelled, Complete { .. }) => Cancelled,
 
+        // Late completion: agent reports result after lease expired
+        (ExecutionLost, Complete { success: true }) => Executed,
+        (ExecutionLost, Complete { success: false }) => Failed,
+
         _ => {
             return Err(InvalidTransition {
                 current,
@@ -380,6 +384,18 @@ mod tests {
         assert_eq!(
             compute_next_status(Dispatched, &DispatchTimeout).unwrap(),
             Approved
+        );
+    }
+
+    #[test]
+    fn execution_lost_accepts_late_completion() {
+        assert_eq!(
+            compute_next_status(ExecutionLost, &Complete { success: true }).unwrap(),
+            Executed
+        );
+        assert_eq!(
+            compute_next_status(ExecutionLost, &Complete { success: false }).unwrap(),
+            Failed
         );
     }
 }

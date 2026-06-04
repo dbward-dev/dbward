@@ -495,6 +495,8 @@ pub struct ExecutionPolicyDef {
     pub max_statement_timeout_secs: Option<u32>,
     #[serde(default)]
     pub max_rows: Option<u32>,
+    #[serde(default)]
+    pub migration_lease_duration_secs: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]

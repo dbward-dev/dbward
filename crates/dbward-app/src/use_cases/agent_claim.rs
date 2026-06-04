@@ -156,10 +156,18 @@ impl AgentClaim {
             .get_execution_policy(&request.database, &request.environment);
 
         // 9. Create execution record
-        let lease_expires_at = now + chrono::Duration::seconds(exec_policy.lease_duration_secs());
+        let lease_expires_at = now
+            + chrono::Duration::seconds(
+                exec_policy.lease_duration_for_operation(request.operation),
+            );
 
-        // 10. Sign execution token (SHA-256 for detail_hash)
-        let detail_hash = sha256_hex(&request.detail);
+        // 10. Sign execution token (SHA-256 for detail_hash, canonicalized for migrations)
+        let canonical_detail = if request.operation.is_migration_mutation() {
+            canonicalize_json(&request.detail)
+        } else {
+            request.detail.clone()
+        };
+        let detail_hash = sha256_hex(&canonical_detail);
         let requester_groups = self
             .user_repo
             .get(&request.requester)?
@@ -224,6 +232,15 @@ fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+/// Canonicalize JSON for deterministic hashing regardless of field order.
+/// Relies on serde_json::Value using BTreeMap (alphabetical key sort).
+/// Server and agent must use the same serde_json version to guarantee identical output.
+fn canonicalize_json(input: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(input)
+        .and_then(|v| serde_json::to_string(&v))
+        .unwrap_or_else(|_| input.to_string())
 }
 
 #[cfg(test)]
@@ -292,6 +309,9 @@ mod tests {
             Ok(false)
         }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn count_completed_executions(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
         }
         fn find_stored_execution_ids(&self, _: &str) -> Result<Vec<String>, AppError> {
@@ -694,5 +714,18 @@ mod tests {
         assert_eq!(output.detail, "SELECT 1");
         assert_eq!(output.execution_token, "fake-token");
         assert!(!output.execution_id.is_empty());
+    }
+
+    #[test]
+    fn canonicalize_json_reorders_fields() {
+        let a = super::canonicalize_json(r#"{"b":2,"a":1}"#);
+        let b = super::canonicalize_json(r#"{"a":1,"b":2}"#);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn canonicalize_json_non_json_passthrough() {
+        let sql = "SELECT * FROM users WHERE id = 1";
+        assert_eq!(super::canonicalize_json(sql), sql);
     }
 }

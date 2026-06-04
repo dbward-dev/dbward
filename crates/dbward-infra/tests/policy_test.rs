@@ -219,6 +219,7 @@ fn execution_policy_crud() {
         statement_timeout_secs: 30,
         max_statement_timeout_secs: 300,
         max_rows: None,
+        migration_lease_duration_secs: None,
         created_at: None,
         updated_at: None,
     };

@@ -288,6 +288,33 @@ impl AgentRepo for SqliteAgentRepo {
             .unchecked_transaction()
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
+        // Migration exclusion check within TX (prevents TOCTOU race)
+        let (operation, database_id): (String, String) = tx
+            .query_row(
+                "SELECT operation, database_id FROM requests WHERE id = ?1",
+                params![request_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+
+        if operation == "migrate_up" || operation == "migrate_down" {
+            let conflict: u32 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM requests
+                     WHERE status IN ('dispatched','running')
+                       AND operation IN ('migrate_up','migrate_down')
+                       AND database_id = ?1
+                       AND id != ?2",
+                    params![database_id, request_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            if conflict > 0 {
+                drop(tx);
+                return Ok(false);
+            }
+        }
+
         let status = execution_status_str(execution.status);
         let lease = execution.lease_expires_at.to_rfc3339();
         let started = execution.started_at.map(|t| t.to_rfc3339());
@@ -307,7 +334,6 @@ impl AgentRepo for SqliteAgentRepo {
         ).map_err(|e| AppError::Internal(e.to_string()))?;
 
         if updated == 0 {
-            // Drop tx without commit → implicit rollback (reverts the INSERT)
             drop(tx);
             return Ok(false);
         }
@@ -342,12 +368,12 @@ impl AgentRepo for SqliteAgentRepo {
 
         let req_status = if success { "executed" } else { "failed" };
         let updated = tx.execute(
-            "UPDATE requests SET status = ?1, updated_at = ?2 WHERE id = ?3 AND status = 'running'",
+            "UPDATE requests SET status = ?1, updated_at = ?2 WHERE id = ?3 AND status IN ('running', 'execution_lost')",
             params![req_status, now.to_rfc3339(), request_id],
         ).map_err(|e| AppError::Internal(e.to_string()))?;
 
         if updated == 0 {
-            // Check if request was cancelled (allowed) or unexpected state (rollback)
+            // Check if request was cancelled or already completed
             let current_status: String = tx
                 .query_row(
                     "SELECT status FROM requests WHERE id = ?1",
@@ -356,13 +382,18 @@ impl AgentRepo for SqliteAgentRepo {
                 )
                 .map_err(|e| AppError::Internal(e.to_string()))?;
 
-            if current_status != "cancelled" {
-                // Unexpected state change — rollback entire TX
-                return Err(AppError::Conflict(format!(
-                    "request status changed to '{current_status}' during execution"
-                )));
+            match current_status.as_str() {
+                // Cancelled: store result/audit but don't update request status
+                "cancelled" => {}
+                // Already completed (idempotent retry): still store result
+                "executed" | "failed" => {}
+                _ => {
+                    return Err(AppError::Conflict(format!(
+                        "request status changed to '{current_status}' during execution"
+                    )));
+                }
             }
-            // Cancelled: still save result/audit but don't update request status
+            // Cancelled/already-completed: still save result/audit but don't update request status
         }
 
         // Insert result manifest

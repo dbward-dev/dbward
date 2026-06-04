@@ -39,16 +39,33 @@ impl MigrationRunner {
         let mut applied = vec![];
         for entry in &pending {
             if cancel.is_cancelled() {
-                return Err(MigrateError::Cancelled);
+                if applied.is_empty() {
+                    return Err(MigrateError::Cancelled);
+                }
+                return Err(MigrateError::PartialApplied {
+                    completed: applied,
+                    source: Box::new(MigrateError::Cancelled),
+                });
             }
-            if entry.transactional {
-                driver.apply_migration(&entry.sql, &entry.version).await?;
+            let result = if entry.transactional {
+                driver.apply_migration(&entry.sql, &entry.version).await
             } else {
                 driver
                     .apply_migration_no_tx(&entry.sql, &entry.version)
-                    .await?;
+                    .await
+            };
+            match result {
+                Ok(()) => applied.push(entry.version.clone()),
+                Err(e) => {
+                    if applied.is_empty() {
+                        return Err(e.into());
+                    }
+                    return Err(MigrateError::PartialApplied {
+                        completed: applied,
+                        source: Box::new(e.into()),
+                    });
+                }
             }
-            applied.push(entry.version.clone());
         }
         Ok(MigrationRunResult {
             applied,
@@ -81,16 +98,33 @@ impl MigrationRunner {
         let mut reverted = vec![];
         for entry in &to_revert {
             if cancel.is_cancelled() {
-                return Err(MigrateError::Cancelled);
+                if reverted.is_empty() {
+                    return Err(MigrateError::Cancelled);
+                }
+                return Err(MigrateError::PartialApplied {
+                    completed: reverted,
+                    source: Box::new(MigrateError::Cancelled),
+                });
             }
-            if entry.transactional {
-                driver.revert_migration(&entry.sql, &entry.version).await?;
+            let result = if entry.transactional {
+                driver.revert_migration(&entry.sql, &entry.version).await
             } else {
                 driver
                     .revert_migration_no_tx(&entry.sql, &entry.version)
-                    .await?;
+                    .await
+            };
+            match result {
+                Ok(()) => reverted.push(entry.version.clone()),
+                Err(e) => {
+                    if reverted.is_empty() {
+                        return Err(e.into());
+                    }
+                    return Err(MigrateError::PartialApplied {
+                        completed: reverted,
+                        source: Box::new(e.into()),
+                    });
+                }
             }
-            reverted.push(entry.version.clone());
         }
         Ok(MigrationRunResult {
             applied: vec![],

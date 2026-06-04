@@ -77,7 +77,31 @@ impl JobExecutor {
             }
             Err(ref e) => {
                 warn!(request_id = %claim.request_id, "execution failed: {e}");
-                let mut b = error_body(e.to_string());
+                let mut b = match e {
+                    AgentError::Migration(dbward_migrate::MigrateError::PartialApplied {
+                        completed,
+                        source,
+                    }) => {
+                        let direction = if claim.operation == "migrate_down" {
+                            "reverted_before_failure"
+                        } else {
+                            "applied_before_failure"
+                        };
+                        ResultBody {
+                            success: false,
+                            result_data: Some(
+                                serde_json::json!({ direction: completed, "error": source.to_string() })
+                                    .to_string(),
+                            ),
+                            error_message: Some(source.to_string()),
+                            rows_affected: None,
+                            truncated: None,
+                            total_rows: None,
+                            duration_ms: None,
+                        }
+                    }
+                    _ => error_body(e.to_string()),
+                };
                 b.duration_ms = Some(start.elapsed().as_millis() as u64);
                 b
             }
