@@ -273,6 +273,7 @@ async fn handle_block_actions(
             };
             let input = dbward_app::use_cases::get_result::GetResultInput {
                 request_id: request_id.clone(),
+                execution_id: None,
             };
             match uc.execute(input, &auth_user).await {
                 Ok(output) => {

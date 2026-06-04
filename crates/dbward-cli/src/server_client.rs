@@ -497,37 +497,49 @@ impl ServerClient {
         Ok((status, body))
     }
 
-    pub async fn get_result_content(&self, request_id: &str) -> Result<Value, CliError> {
+    pub async fn get_result_content(
+        &self,
+        request_id: &str,
+        execution_id: Option<&str>,
+    ) -> Result<Value, CliError> {
+        let mut url = format!(
+            "{}/api/requests/{}/result/content",
+            self.base_url, request_id
+        );
+        if let Some(eid) = execution_id {
+            url.push_str(&format!("?execution_id={eid}"));
+        }
         let resp = self
             .client
-            .get(format!(
-                "{}/api/requests/{}/result/content",
-                self.base_url, request_id
-            ))
+            .get(&url)
             .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .send()
             .await
             .map_err(|e| CliError::Server(format!("get result: {e}")))?;
         check_version_header(&resp);
-        let status = resp.status();
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| CliError::Server(format!("get result content: {e}")))?;
-        if !status.is_success() {
-            let text = String::from_utf8_lossy(&bytes).into_owned();
-            return Err(ServerError::from_response(status.as_u16(), text)
-                .into_cli_error("get result content"));
-        }
-        serde_json::from_slice(&bytes)
-            .map_err(|e| CliError::Server(format!("get result content: invalid JSON: {e}")))
+        self.parse_response(resp, "get result content").await
     }
 
-    pub async fn list_results(&self) -> Result<Value, CliError> {
+    pub async fn get_executions(&self, request_id: &str, limit: u32) -> Result<Value, CliError> {
         let resp = self
             .client
-            .get(format!("{}/api/results", self.base_url))
+            .get(format!(
+                "{}/api/requests/{}/executions?limit={limit}",
+                self.base_url, request_id
+            ))
+            .timeout(API_TIMEOUT)
+            .bearer_auth(&self.api_token)
+            .send()
+            .await
+            .map_err(|e| CliError::Server(format!("get executions: {e}")))?;
+        self.parse_response(resp, "get executions").await
+    }
+
+    pub async fn list_results(&self, limit: u32) -> Result<Value, CliError> {
+        let resp = self
+            .client
+            .get(format!("{}/api/results?limit={limit}", self.base_url))
             .timeout(API_TIMEOUT)
             .bearer_auth(&self.api_token)
             .send()

@@ -6,7 +6,7 @@ use crate::display::*;
 use crate::error::CliError;
 use crate::server_client::ServerClient;
 
-use super::helpers::{load_result, save_result};
+use super::helpers::save_result;
 use super::workflow;
 
 #[derive(Subcommand)]
@@ -49,9 +49,26 @@ pub enum RequestAction {
     },
     Result {
         id: String,
+        /// List execution history for this request
+        #[arg(long, conflicts_with_all = ["execution", "output", "result_format"])]
+        list: bool,
+        /// Specific execution ID (default: latest terminal)
+        #[arg(long, conflicts_with = "list")]
+        execution: Option<String>,
+        /// Save result to a specific file
+        #[arg(long, conflicts_with = "list")]
+        output: Option<PathBuf>,
         /// Result display format
-        #[arg(long, value_enum)]
+        #[arg(long, value_enum, conflicts_with = "list")]
         result_format: Option<ResultFormat>,
+        /// Limit for --list
+        #[arg(long, default_value = "20", requires = "list")]
+        limit: u32,
+    },
+    /// List shared results
+    Results {
+        #[arg(long, default_value = "50")]
+        limit: u32,
     },
 }
 
@@ -111,16 +128,30 @@ pub async fn run_request(
             )
             .await
         }
-        RequestAction::Result { id, result_format } => {
-            run_result(
-                sc,
-                json_output,
-                &id,
-                result_format.unwrap_or(default_format),
-                config_results_dir,
-            )
-            .await
+        RequestAction::Result {
+            id,
+            list,
+            execution,
+            output,
+            result_format,
+            limit,
+        } => {
+            if list {
+                run_executions(sc, json_output, &id, limit).await
+            } else {
+                run_result(
+                    sc,
+                    json_output,
+                    &id,
+                    execution.as_deref(),
+                    output.as_deref(),
+                    config_results_dir,
+                    result_format.unwrap_or(default_format),
+                )
+                .await
+            }
         }
+        RequestAction::Results { limit } => run_results(sc, json_output, limit).await,
     }
 }
 
@@ -311,7 +342,7 @@ async fn run_resume(
                 let status = req.get("status").and_then(|v| v.as_str()).unwrap_or("");
                 match status {
                     "executed" => {
-                        eprintln!("Already executed. Run: dbward result get {id}");
+                        eprintln!("Already executed. Run: dbward request result {id}");
                     }
                     "failed" => {
                         eprintln!("Request failed. Run: dbward request show {id}");
@@ -364,28 +395,81 @@ async fn run_result(
     sc: &ServerClient,
     json_output: bool,
     id: &str,
-    result_format: ResultFormat,
+    execution_id: Option<&str>,
+    output: Option<&std::path::Path>,
     config_results_dir: Option<&Path>,
+    result_format: ResultFormat,
 ) -> Result<(), CliError> {
-    match load_result(id, config_results_dir) {
-        Ok(resp) => {
-            if json_output {
-                println!("{}", serde_json::to_string_pretty(&resp)?);
-            } else {
-                print_execution_result_formatted(&resp, result_format);
+    let resp = sc.get_result_content(id, execution_id).await?;
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&resp)?);
+    } else {
+        print_execution_result_formatted(&resp, result_format);
+    }
+    save_result(id, &resp, output, config_results_dir);
+    Ok(())
+}
+
+async fn run_executions(
+    sc: &ServerClient,
+    json_output: bool,
+    id: &str,
+    limit: u32,
+) -> Result<(), CliError> {
+    let body = sc.get_executions(id, limit).await?;
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else if let Some(executions) = body["executions"].as_array() {
+        if executions.is_empty() {
+            println!("No executions.");
+        } else {
+            println!(
+                "{:<12} {:<12} {:<6} {:<24} ERROR",
+                "ID", "STATUS", "STORED", "FINISHED"
+            );
+            for e in executions {
+                let eid = e["id"].as_str().unwrap_or("");
+                let stored = if e["has_stored_result"].as_bool().unwrap_or(false) {
+                    "yes"
+                } else {
+                    "no"
+                };
+                println!(
+                    "{:<12} {:<12} {:<6} {:<24} {}",
+                    &eid[..12.min(eid.len())],
+                    e["status"].as_str().unwrap_or(""),
+                    stored,
+                    e["finished_at"].as_str().unwrap_or("-"),
+                    e["error_message"].as_str().unwrap_or(""),
+                );
             }
         }
-        Err(_) => {
-            let resp = sc.get_result_content(id).await?;
-            if json_output {
-                println!("{}", serde_json::to_string_pretty(&resp)?);
-            } else {
-                let wrapped = if resp.get("success").is_some() {
-                    resp
-                } else {
-                    serde_json::json!({"success": true, "result": resp})
-                };
-                print_execution_result_formatted(&wrapped, result_format);
+    }
+    Ok(())
+}
+
+async fn run_results(sc: &ServerClient, json_output: bool, limit: u32) -> Result<(), CliError> {
+    let body = sc.list_results(limit).await?;
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&body)?);
+    } else if let Some(results) = body["results"].as_array() {
+        if results.is_empty() {
+            println!("No shared results.");
+        } else {
+            println!(
+                "{:<10} {:<10} {:<12} {:<16} STORED AT",
+                "ID", "ENV", "DB", "OPERATION"
+            );
+            for r in results {
+                let rid = r["request_id"].as_str().unwrap_or("");
+                println!(
+                    "{:<10} {:<10} {:<12} {:<16} {}",
+                    &rid[..8.min(rid.len())],
+                    r["environment"].as_str().unwrap_or(""),
+                    r["database"].as_str().unwrap_or(""),
+                    r["operation"].as_str().unwrap_or(""),
+                    r["stored_at"].as_str().unwrap_or(""),
+                );
             }
         }
     }

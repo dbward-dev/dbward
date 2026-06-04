@@ -18,8 +18,17 @@ pub struct StreamResultInput {
     pub timeout_secs: Option<u64>,
 }
 
+pub enum StreamResultData {
+    /// Relay から受け取った完全な結果
+    Result(ResultSummary),
+    /// リクエストが Executed/Failed だが relay にデータなし
+    TerminalPlaceholder { success: bool },
+    /// タイムアウト（relay subscribe 時間切れ）
+    Timeout,
+}
+
 pub struct StreamResultOutput {
-    pub data: Option<ResultSummary>,
+    pub data: StreamResultData,
 }
 
 impl StreamResult {
@@ -54,25 +63,31 @@ impl StreamResult {
             )
             .map_err(AppError::Forbidden)?;
 
-        // Terminal state: return stored result if available
+        // Terminal state: signal handler to fetch from storage
         if request.status.is_terminal() {
-            let success = matches!(
-                request.status,
-                dbward_domain::entities::RequestStatus::Executed
-            );
-            let data = ResultSummary {
-                execution_id: String::new(),
-                success,
-                rows_affected: None,
-                truncated: false,
-                error_message: if !success {
-                    Some(format!("request {}", request.status.as_str()))
-                } else {
-                    None
-                },
-                result_data: None,
-            };
-            return Ok(StreamResultOutput { data: Some(data) });
+            use dbward_domain::entities::RequestStatus;
+            match request.status {
+                RequestStatus::Executed | RequestStatus::Failed => {
+                    let success = request.status == RequestStatus::Executed;
+                    return Ok(StreamResultOutput {
+                        data: StreamResultData::TerminalPlaceholder { success },
+                    });
+                }
+                _ => {
+                    // Rejected/Cancelled/Expired — no result exists, return status summary
+                    let data = ResultSummary {
+                        execution_id: String::new(),
+                        success: false,
+                        rows_affected: None,
+                        truncated: false,
+                        error_message: Some(format!("request {}", request.status.as_str())),
+                        result_data: None,
+                    };
+                    return Ok(StreamResultOutput {
+                        data: StreamResultData::Result(data),
+                    });
+                }
+            }
         }
 
         let timeout = input.timeout_secs.unwrap_or(300);
@@ -81,7 +96,12 @@ impl StreamResult {
             .subscribe(&input.request_id, timeout)
             .await?;
 
-        Ok(StreamResultOutput { data })
+        Ok(StreamResultOutput {
+            data: match data {
+                Some(summary) => StreamResultData::Result(summary),
+                None => StreamResultData::Timeout,
+            },
+        })
     }
 }
 
@@ -200,6 +220,9 @@ mod tests {
         }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
+        }
+        fn find_stored_execution_ids(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
         }
         fn list_results_for_user(
             &self,
@@ -399,8 +422,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(out.data.is_some());
-        assert!(out.data.unwrap().success);
+        assert!(matches!(
+            out.data,
+            StreamResultData::TerminalPlaceholder { success: true }
+        ));
     }
 
     #[tokio::test]
@@ -421,6 +446,51 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(out.data.is_none());
+        assert!(matches!(out.data, StreamResultData::Timeout));
+    }
+
+    #[tokio::test]
+    async fn failed_terminal_returns_placeholder_with_success_false() {
+        let uc = StreamResult {
+            authorizer: Arc::new(AllowAll),
+            request_reader: Arc::new(FakeRequestRepo::with_status(RequestStatus::Failed)),
+            result_channel: Arc::new(FakeResultChannel),
+            policy_repo: Arc::new(FakePolicyRepo),
+        };
+        let out = uc
+            .execute(
+                StreamResultInput {
+                    request_id: "req-1".into(),
+                    timeout_secs: Some(1),
+                },
+                &user(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            out.data,
+            StreamResultData::TerminalPlaceholder { success: false }
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejected_terminal_returns_result_not_placeholder() {
+        let uc = StreamResult {
+            authorizer: Arc::new(AllowAll),
+            request_reader: Arc::new(FakeRequestRepo::with_status(RequestStatus::Rejected)),
+            result_channel: Arc::new(FakeResultChannel),
+            policy_repo: Arc::new(FakePolicyRepo),
+        };
+        let out = uc
+            .execute(
+                StreamResultInput {
+                    request_id: "req-1".into(),
+                    timeout_secs: Some(1),
+                },
+                &user(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(out.data, StreamResultData::Result(_)));
     }
 }

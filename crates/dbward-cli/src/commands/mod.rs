@@ -9,7 +9,6 @@ mod migrate;
 mod misc;
 mod policy;
 mod request;
-mod result;
 mod server;
 mod token;
 mod user;
@@ -172,11 +171,6 @@ pub enum Command {
     Request {
         #[command(subcommand)]
         action: request::RequestAction,
-    },
-    /// Manage results
-    Result {
-        #[command(subcommand)]
-        action: result::ResultAction,
     },
     /// Update user profile
     User {
@@ -467,17 +461,6 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                 action,
                 cli.database.as_deref(),
                 cli.environment.as_deref(),
-                cfg.results.dir.as_deref(),
-                default_fmt,
-            )
-            .await
-        }
-        Command::Result { action } => {
-            let default_fmt = resolve_result_format(None, &cfg);
-            result::run_result(
-                &sc,
-                json_output,
-                action,
                 cfg.results.dir.as_deref(),
                 default_fmt,
             )

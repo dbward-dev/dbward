@@ -33,7 +33,6 @@ dbward execute --emergency --reason "outage fix" "UPDATE config SET v = 'x'"
 | `--emergency` | false | Break-glass bypass (requires --reason) |
 | `--reason <TEXT>` | | Reason for this request |
 | `--output <PATH>` | | Save result to file |
-| `--no-save` | false | Do not save result locally |
 | `--no-persist` | false | Do not persist result on server |
 | `--result-format <FMT>` | table | Display format: `table`, `json`, `csv`, `vertical` |
 | `--timeout <SECS>` | | Max wait time in seconds |
@@ -111,44 +110,43 @@ dbward request resume <ID> --result-format json --output results.json
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--output <PATH>` | | Save result to file |
-| `--no-save` | false | Do not save locally |
 | `--result-format <FMT>` | table | Display format: `table`, `json`, `csv`, `vertical` |
 
 ### dbward request result
 
-Retrieve a previously stored result.
+Retrieve execution result for a request.
 
 ```bash
 dbward request result <ID>
+dbward request result <ID> --execution <EXECUTION_ID>
+dbward request result <ID> --output ./result.json
+dbward request result <ID> --result-format csv
+dbward request result <ID> --list
+dbward request result <ID> --list --limit 10
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--result-format <FMT>` | table | Display format |
-
----
-
-## dbward result
-
-### dbward result list
-
-List stored results accessible to you.
-
-```bash
-dbward result list
-```
-
-### dbward result get
-
-```bash
-dbward result get <ID>
-dbward result get <ID> --result-format json --output results.json
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
+| `--execution <ID>` | latest | Retrieve a specific execution's result. Default: latest completed or failed execution |
+| `--output <PATH>` | | Save result to a specific file (JSON) |
 | `--result-format <FMT>` | table | Display format: `table`, `json`, `csv`, `vertical` |
-| `--output <PATH>` | | Save result to file |
+| `--list` | | List execution history for this request |
+| `--limit <N>` | 20 | Max results (with `--list`) |
+
+`--list` cannot be combined with `--execution`, `--output`, or `--result-format`.
+
+### dbward request results
+
+List shared results across requests.
+
+```bash
+dbward request results
+dbward request results --limit 20
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--limit <N>` | 50 | Max results |
 
 ---
 

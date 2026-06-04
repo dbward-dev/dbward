@@ -274,8 +274,8 @@ async fn resolve_from_request(
     }
 
     match status {
-        "executed" | "failed" => match sc.get_result_content(request_id).await {
-            Ok(result) => Ok(serde_json::json!({"success": true, "result": result})),
+        "executed" | "failed" => match sc.get_result_content(request_id, None).await {
+            Ok(result) => Ok(result),
             Err(err) if is_missing_result_content_error(&err) => {
                 Ok(synthesized_terminal_payload(status, request_id))
             }
@@ -316,13 +316,13 @@ fn synthesized_terminal_payload(status: &str, request_id: &str) -> Value {
         "failed" => serde_json::json!({
             "success": false,
             "error": format!(
-                "Request {request_id} failed. Result not available (relay expired, no storage configured). Check: dbward result {request_id}"
+                "Request {request_id} failed. Result not available (relay expired, no storage configured). Check: dbward request result {request_id}"
             )
         }),
         _ => serde_json::json!({
             "success": true,
             "error": format!(
-                "Request {request_id} executed successfully but result is no longer available. Check: dbward result {request_id}"
+                "Request {request_id} executed successfully but result is no longer available. Check: dbward request result {request_id}"
             ),
             "result": Value::Null
         }),
