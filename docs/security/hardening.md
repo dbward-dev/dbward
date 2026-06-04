@@ -1,9 +1,9 @@
 ---
-title: Deployment Security
+title: Security Hardening
 description: Production hardening guide for dbward
 ---
 
-# Deployment Security
+# Security Hardening
 
 Recommendations for running dbward securely in production.
 
@@ -68,11 +68,13 @@ Configure separate agent instances or capabilities per privilege level.
 
 ## Authentication
 
+For setup instructions, see [Authentication Guide](../guides/authentication.md).
+
 ### OIDC (Recommended)
 
 - Inherits your IdP's MFA, session management, and offboarding
 - No token rotation needed on the dbward side
-- Configure `groups_claim` to map IdP groups → dbward roles
+- Configure `auth.oidc.role_mappings` to map IdP groups → dbward roles
 - Test: disabling a user in IdP immediately blocks dbward access
 
 ### API Tokens
@@ -159,8 +161,8 @@ To immediately revoke an agent's ability to execute:
 
 ### Retention
 
-- Audit events: retained indefinitely by default
-- Configure `retention_days` on results for automatic cleanup
+- Audit events: default 365 days (`audit_ttl_days`), configurable
+- Configure `result_ttl_days` for automatic result cleanup
 - Export audit logs to external SIEM for long-term retention and independent verification
 
 ## Backup & Recovery
@@ -168,8 +170,7 @@ To immediately revoke an agent's ability to execute:
 ### SQLite State
 
 - **Litestream** (recommended): continuous replication to S3/GCS
-- Manual: stop server → copy `data/state.db*` → restart
-- `PRAGMA journal_mode = PERSIST` — safe to copy when server is stopped
+- Manual: copy `data/dbward.db` while running (SQLite WAL mode is safe for hot copy)
 - Test restore procedures regularly
 
 ### Integrity After Restore

@@ -27,15 +27,14 @@ The server container stops gracefully (drains active requests), restarts with th
 - `ghcr.io/dbward-dev/dbward-agent`
 
 **Tag options:**
-- `v0.1.2` — pinned to a specific release (recommended for production)
-- `0.1` — tracks the latest patch within a minor version
+- `v0.1.5` — pinned to a specific release (recommended for production)
 - `latest` — latest release (for development)
 
 ```yaml
 # compose.yml example
 services:
   dbward-server:
-    image: ghcr.io/dbward-dev/dbward-server:0.1
+    image: ghcr.io/dbward-dev/dbward-server:v0.1.5
     # ...
 ```
 
@@ -86,12 +85,6 @@ cp dbward.db.bak.v7 dbward.db
 - SQLite schema changes are forward-compatible within a minor version
 - Downgrade is not supported for SQLite schema; use Litestream PITR or file backup
 
-### Breaking changes in v0.1.3
-
-- `skip_approval_for` and `require_approval` workflow fields have been removed. If present in your config, the server will refuse to start with a clear error message explaining the migration.
-- Auto-approve configuration moved from `[auto_approve]` (single global) to `[[auto_approve]]` (scoped array). See [Configuration Reference](../reference/configuration.md).
-- SQLite schema V8 drops two columns from the `workflows` table. This migration runs automatically on startup. **Downgrade to v0.1.2 after this migration is not possible** without a backup.
-
 ## Rollback
 
 ```bash
@@ -100,34 +93,10 @@ systemctl stop dbward-server dbward-agent
 
 # 2. Restore previous binary
 cp /usr/local/bin/dbward.bak /usr/local/bin/dbward
-# Or: docker compose pull dbward-dev/dbward:v0.1.0
 
 # 3. Restore SQLite (only if schema changed)
 cp dbward.db.bak.v7 dbward.db
 
 # 4. Restart
 systemctl start dbward-server dbward-agent
-```
-
-## v0.1.2 Breaking Changes
-
-### Helm chart: image values restructured
-
-The single `image.*` block has been replaced with per-component image configuration:
-
-```yaml
-# Before (v0.1.1)
-image:
-  repository: ghcr.io/dbward-dev/dbward
-  tag: "0.1.1"
-
-# After (v0.1.2+)
-server:
-  image:
-    repository: ghcr.io/dbward-dev/dbward-server
-    tag: "0.1.2"
-agent:
-  image:
-    repository: ghcr.io/dbward-dev/dbward-agent
-    tag: "0.1.2"
 ```

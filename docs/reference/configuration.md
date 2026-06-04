@@ -11,8 +11,8 @@ dbward uses TOML configuration files for its three binaries:
 
 | Binary | Config file | Purpose |
 |---|---|---|
-| `dbward-server` | `server.toml` (via `--config`) | Approval engine, policies, audit |
-| `dbward-agent` | `agent.toml` (via `--config`) | Database execution, polling |
+| `dbward-server` | `dbward-server.toml` (via `--config`) | Approval engine, policies, audit |
+| `dbward-agent` | `dbward-agent.toml` (via `--config`) | Database execution, polling |
 | `dbward` (CLI) | `~/.config/dbward/config.toml` + `./dbward.toml` | Server connection, project defaults |
 
 All files support [variable expansion](#variable-expansion) for secrets and environment-specific values.
@@ -33,10 +33,10 @@ environments = ["production"]
 
 ### Top-level
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| state_dir* | String | — | Directory for SQLite state and keys. Created on first start. |
-| trusted_proxies | String[] | `[]` | CIDR ranges trusted for `X-Forwarded-For`. See [trusted_proxies](#trusted_proxies). |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `state_dir` | String | ✓ | — | Directory for SQLite state and keys. Created on first start. |
+| `trusted_proxies` | String[] | | `[]` | CIDR ranges trusted for `X-Forwarded-For`. See [trusted_proxies](#trusted_proxies). |
 
 ### [[databases]]
 
@@ -48,23 +48,23 @@ name = "analytics"
 environments = ["staging", "production"]
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| name* | String | — | Logical database identifier. Referenced in workflows and policies. |
-| environments* | String[] | — | Environments this database operates in. Requests must match one of these. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | String | ✓ | — | Logical database identifier. Referenced in workflows and policies. |
+| `environments` | String[] | ✓ | — | Environments this database operates in. |
 
 ### [auth]
 
 ```toml
 [auth]
-mode = "token"
+mode = "both"
 default_role = "readonly"
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| mode | String | `"both"` | Authentication mode. Options: `"token"`, `"oidc"`, `"both"`. |
-| default_role | String? | — | Role assigned when no role binding matches. If unset, unmatched users are rejected. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `mode` | String | | `"both"` | Authentication mode: `"token"`, `"oidc"`, `"both"`. |
+| `default_role` | String | | — | Role assigned when no binding matches. Unset = reject unmatched users. |
 
 ### [auth.oidc]
 
@@ -74,13 +74,13 @@ issuer_url = "https://auth.example.com/realms/dbward"
 audience = "dbward"
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| issuer_url* | String | — | OIDC issuer URL for token validation. Alias: `issuer`. |
-| audience | String | `""` | Expected `aud` claim. Empty string disables audience validation. |
-| jwks_uri | String? | — | Override JWKS endpoint. Useful when the issuer URL is not reachable from the server (Docker, internal networks). |
-| client_id | String? | — | Client ID for PKCE flows. Defaults to `audience` if unset. |
-| default_role | String? | — | Role for OIDC-authenticated users when no role mapping matches. Falls back to `[auth].default_role`. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `issuer_url` | String | ✓ | — | OIDC issuer URL for token validation. Alias: `issuer`. |
+| `audience` | String | | `""` | Expected `aud` claim. Empty string disables audience validation. |
+| `jwks_uri` | String | | — | Override JWKS endpoint (useful in Docker/internal networks). |
+| `client_id` | String | | — | Client ID for PKCE flows. Defaults to `audience` if unset. |
+| `default_role` | String | | — | Role for OIDC users when no mapping matches. Falls back to `[auth].default_role`. |
 
 ### [[auth.oidc.role_mappings]]
 
@@ -93,11 +93,11 @@ value = "dba-team"
 role = "admin"
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| claim* | String | — | OIDC token claim name to inspect. |
-| value* | String | — | Claim value that triggers the mapping. Exact match. |
-| role* | String | — | dbward role to assign when matched. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `claim` | String | ✓ | — | OIDC token claim name to inspect. |
+| `value` | String | ✓ | — | Claim value that triggers the mapping. Exact match. |
+| `role` | String | ✓ | — | dbward role to assign when matched. |
 
 ### [[auth.role_bindings]]
 
@@ -109,11 +109,11 @@ role = "admin"
 subjects = ["alice", "bob"]
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| role* | String | — | Role to assign. Must be a builtin or custom role. |
-| subjects | String[] | `[]` | Token subject identifiers to bind. |
-| groups | String[] | `[]` | Group names to bind. All members of listed groups receive this role. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `role` | String | ✓ | — | Role to assign. Must be a built-in or custom role. |
+| `subjects` | String[] | | `[]` | Token subject identifiers to bind. |
+| `groups` | String[] | | `[]` | Group names. All members receive this role. |
 
 ### [[auth.roles]] / [[auth.groups]]
 
@@ -131,17 +131,19 @@ members = ["alice", "bob", "carol"]
 
 **[[auth.roles]]**
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| name* | String | — | Role identifier. Cannot redefine builtins: `admin`, `developer`, `readonly`, `agent-default`. |
-| permissions* | String[] | — | Granted permissions. Use `"*"` for all. Values: `request.create`, `request.approve`, `request.break_glass`, `audit.view`, etc. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | String | ✓ | — | Role identifier. Cannot redefine built-ins: `admin`, `developer`, `readonly`, `agent-default`. |
+| `permissions` | String[] | ✓ | — | Granted permissions (e.g. `"request.create"`, `"request.approve"`, `"*"`). [Full list →](authorization.md#permissions) |
+| `databases` | String[] | | `[]` | Restrict to specific databases. Empty = all. |
+| `environments` | String[] | | `[]` | Restrict to specific environments. Empty = all. |
 
 **[[auth.groups]]**
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| name* | String | — | Group identifier. Referenced in role_bindings and workflow approvers. |
-| members* | String[] | — | Token subject identifiers belonging to this group. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | String | ✓ | — | Group identifier. Referenced in role_bindings and workflow approvers. |
+| `members` | String[] | ✓ | — | Token subject identifiers belonging to this group. |
 
 ### [[workflows]]
 
@@ -162,55 +164,38 @@ role = "admin"
 min = 1
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| database | String | `"*"` | Scope filter. `"*"` matches all databases. |
-| environment | String | `"*"` | Scope filter. `"*"` matches all environments. |
-| operations | String[] | `[]` | Operations requiring this workflow. Empty = all operations. Options: `execute_select`, `execute_dml`, `migrate_up`, `migrate_down`, `migrate_status`. |
-| steps | Step[] | `[]` | Approval steps. Empty = auto-approve (no human approval required). |
-| require_reason | bool | `false` | Reject requests submitted without `--reason`. |
-| allow_self_approve | bool | `false` | Whether the requester can approve their own request. |
-| allow_same_approver_across_steps | bool | `true` | Whether the same person can approve multiple steps. |
-| explain | bool | `true` | Run EXPLAIN via agent on request creation. Disable for non-query operations. |
-| pending_ttl_secs | u64? | — | Request expires if not approved within this window. Falls back to `retention.approval_ttl_secs`. |
-| statement_timeout_secs | u64? | — | Override agent's default statement timeout for this workflow. Capped by `execution_policies.max_statement_timeout_secs`. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `database` | String | | `"*"` | Scope filter. `"*"` matches all databases. |
+| `environment` | String | | `"*"` | Scope filter. `"*"` matches all environments. |
+| `operations` | String[] | | `[]` | Operations filter. Empty = all. Values: `execute_select`, `execute_dml`, `migrate_up`, `migrate_down`, `migrate_status`. |
+| `steps` | Step[] | | `[]` | Approval steps. Empty = auto-approve. |
+| `require_reason` | bool | | `false` | Reject requests without `--reason`. |
+| `allow_self_approve` | bool | | `false` | Allow requester to approve own request. |
+| `allow_same_approver_across_steps` | bool | | `true` | Allow same person to approve multiple steps. |
+| `explain` | bool | | `true` | Auto-run EXPLAIN on request creation. |
+| `pending_ttl_secs` | u64 | | — | Request expires if not approved within this window. Falls back to `retention.approval_ttl_secs`. |
+| `statement_timeout_secs` | u64 | | — | Override agent's statement timeout. Capped by `execution_policies.max_statement_timeout_secs`. |
 
 ### Workflow Steps
 
-Each entry in `steps[]` defines one approval gate.
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `mode` | String | | `"all"` | `"all"`: every approver entry satisfied. `"any"`: any single entry suffices. |
+| `approvers` | Approver[] | ✓ | — | Approver requirements. |
 
-```toml
-[[workflows.steps]]
-mode = "any"
+**Approver entry** (use exactly one of `role`, `group`, or `user`):
 
-[[workflows.steps.approvers]]
-role = "admin"
-min = 1
-
-[[workflows.steps.approvers]]
-group = "dba-team"
-min = 2
-```
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| mode | String | `"all"` | `"all"`: every approver entry must be satisfied. `"any"`: any single entry suffices. |
-| approvers | Approver[] | — | List of approver requirements. Each entry uses exactly one of `role`, `group`, or `user`. |
-
-**Approver entry:**
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| role | String? | — | Role whose members can approve. |
-| group | String? | — | Group whose members can approve. |
-| user | String? | — | Specific user subject. |
-| min | u32 | `1` | Minimum approvals needed from this entry. |
-
-Priority when multiple fields are set (avoid this): `role` > `group` > `user`.
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `role` | String | | — | Role whose members can approve. |
+| `group` | String | | — | Group whose members can approve. |
+| `user` | String | | — | Specific user subject. |
+| `min` | u32 | | `1` | Minimum approvals needed from this entry. |
 
 ### [[auto_approve]]
 
-Risk-based automatic approval. Most specific scope wins: `(db, env)` > `(*, env)` > `(db, *)` > `(*, *)`.
+Risk-based automatic approval.
 
 ```toml
 [[auto_approve]]
@@ -219,18 +204,18 @@ environment = "staging"
 risk = "low"
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| database | String | `"*"` | Scope filter. |
-| environment | String | `"*"` | Scope filter. |
-| risk | String | `"none"` | Maximum risk level for auto-approval. Options: `"none"`, `"low"`, `"medium"`, `"high"`. `"none"` = never auto-approve for this scope. |
-| allow_read_only | bool | `true` | Classify SELECT statements as Low risk. |
-| allow_safe_ddl | bool | `true` | Classify CREATE TABLE/INDEX/VIEW as Low risk. |
-| max_estimated_rows | u64 | `1000` | Tables with estimated rows above this threshold get risk increase. `0` = any rows increase risk. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `database` | String | | `"*"` | Scope filter. |
+| `environment` | String | | `"*"` | Scope filter. |
+| `risk` | String | | `"none"` | Max risk level: `"none"`, `"low"`, `"medium"`, `"high"`. `"none"` = disabled. |
+| `allow_read_only` | bool | | `true` | SELECT counts as Low risk. |
+| `allow_safe_ddl` | bool | | `true` | CREATE TABLE/INDEX/VIEW counts as Low risk. |
+| `max_estimated_rows` | u64 | | `1000` | Threshold for large-table risk increase. |
 
 ### [sql_review]
 
-Static SQL analysis rules applied at request creation. Uses `deny_unknown_fields` — typos in field names cause a startup error.
+Static SQL analysis rules. Typos in field names cause startup error (`deny_unknown_fields`).
 
 ```toml
 [sql_review]
@@ -239,18 +224,18 @@ drop_table = "block"
 truncate = "warn"
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| no_where_delete | String | `"warn"` | DELETE without WHERE clause. Options: `"block"`, `"warn"`, `"off"`. |
-| no_where_update | String | `"warn"` | UPDATE without WHERE clause. |
-| drop_table | String | `"warn"` | DROP TABLE statements. |
-| drop_column | String | `"warn"` | ALTER TABLE DROP COLUMN. |
-| not_null_without_default | String | `"warn"` | Adding NOT NULL column without DEFAULT. |
-| create_index_not_concurrently | String | `"warn"` | CREATE INDEX without CONCURRENTLY (PostgreSQL). |
-| alter_column_type | String | `"warn"` | ALTER COLUMN TYPE (potential table rewrite). |
-| truncate | String | `"warn"` | TRUNCATE statements. |
-| mixed_ddl_dml | String | `"warn"` | Mixing DDL and DML in one request. |
-| large_in_list | String | `"warn"` | IN clauses with excessive values. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `no_where_delete` | String | | `"warn"` | DELETE without WHERE. Values: `"block"`, `"warn"`, `"off"`. |
+| `no_where_update` | String | | `"warn"` | UPDATE without WHERE. |
+| `drop_table` | String | | `"warn"` | DROP TABLE. |
+| `drop_column` | String | | `"warn"` | ALTER TABLE DROP COLUMN. |
+| `not_null_without_default` | String | | `"warn"` | NOT NULL column without DEFAULT. |
+| `create_index_not_concurrently` | String | | `"warn"` | CREATE INDEX without CONCURRENTLY (PostgreSQL). |
+| `alter_column_type` | String | | `"warn"` | ALTER COLUMN TYPE. |
+| `truncate` | String | | `"warn"` | TRUNCATE. |
+| `mixed_ddl_dml` | String | | `"warn"` | DDL and DML in same request. |
+| `large_in_list` | String | | `"warn"` | IN clause with excessive values. |
 
 ### [[webhooks]]
 
@@ -258,18 +243,19 @@ truncate = "warn"
 [[webhooks]]
 url = "https://hooks.slack.com/services/T.../B.../xxx"
 format = "slack"
+secret = "${WEBHOOK_SECRET}"
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| url* | String | — | Webhook destination URL. |
-| secret | String? | — | HMAC-SHA256 signing key. Signature sent in `X-Dbward-Signature` header. |
-| events | String[] | `[]` | Filter events. Empty = all events. Options: `request_created`, `request_approved`, `request_rejected`, `execution_completed`, `break_glass`. |
-| format | String | `"generic"` | Payload format. `"generic"`: JSON. `"slack"`: Slack Block Kit. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `url` | String | ✓ | — | Webhook destination URL. |
+| `secret` | String | | — | HMAC-SHA256 key. Sent in `X-Dbward-Signature`. |
+| `events` | String[] | | `[]` | Filter events. Empty = all. |
+| `format` | String | | `"generic"` | Payload format: `"generic"` (JSON) or `"slack"` (Block Kit). |
 
 ### [[execution_policies]]
 
-Rate limiting and timeout configuration per scope.
+Rate limiting and timeout per scope.
 
 ```toml
 [[execution_policies]]
@@ -279,16 +265,16 @@ max_executions = 3
 statement_timeout_secs = 60
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| database | String | `"*"` | Scope filter. |
-| environment | String | `"*"` | Scope filter. |
-| max_executions | u32 | `1` | Maximum times the same request can be executed within the window. |
-| execution_window_secs | u64 | `86400` | Time window (seconds) for counting executions. |
-| retry_on_failure | bool | `false` | Allow re-dispatch after execution failure. |
-| statement_timeout_secs | u32 | `30` | SQL statement timeout in seconds. Applied by agent. |
-| max_statement_timeout_secs | u32 | `600` | Upper cap for workflow-level `statement_timeout_secs` override. |
-| max_rows | u32? | — | Maximum result row count. Unset = no limit. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `database` | String | | `"*"` | Scope filter. |
+| `environment` | String | | `"*"` | Scope filter. |
+| `max_executions` | u32 | | — | Max executions per window. Unset = no limit. |
+| `execution_window_secs` | u64 | | — | Time window for `max_executions`. |
+| `retry_on_failure` | bool | | — | Allow re-dispatch on failure. Unset = no retry. |
+| `statement_timeout_secs` | u32 | | — | SQL timeout. Unset = use agent default (30s). |
+| `max_statement_timeout_secs` | u32 | | — | Cap for workflow-level timeout override. |
+| `max_rows` | u32 | | — | Max result rows. Unset = no limit. |
 
 ### [retention]
 
@@ -298,12 +284,12 @@ request_ttl_days = 90
 audit_ttl_days = 365
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| request_ttl_days | u64 | `90` | Auto-delete completed requests after this many days. |
-| audit_ttl_days | u64 | `365` | Auto-delete audit events after this many days. |
-| result_ttl_days | u64 | `30` | Auto-delete stored results after this many days. |
-| approval_ttl_secs | u64 | `86400` | Approved requests must be resumed within this window or they expire. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `request_ttl_days` | u64 | | `90` | Auto-delete completed requests after N days. |
+| `audit_ttl_days` | u64 | | `365` | Auto-delete audit events after N days. |
+| `result_ttl_days` | u64 | | `30` | Auto-delete stored results after N days. |
+| `approval_ttl_secs` | u64 | | `86400` | Approved requests expire if not resumed within this window. |
 
 ### [audit]
 
@@ -312,86 +298,71 @@ audit_ttl_days = 365
 redaction = "literals"
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| redaction | String | `"literals"` | SQL redaction in webhooks and audit responses. `"literals"`: mask values. `"full"`: hide entire SQL. `"none"`: no redaction. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `redaction` | String | | `"literals"` | SQL redaction: `"literals"` (mask values), `"full"` (hide SQL), `"none"`. |
 
 ### [result_storage]
 
 ```toml
 [result_storage]
 backend = "local"
-root_dir = "./data/results"
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| backend | String | `"local"` | Storage backend. Options: `"local"`, `"s3"`. |
-| root_dir | String | `"./data/results"` | Directory for local backend. Ignored when backend is `"s3"`. |
-| max_persist_bytes | usize | `10485760` | Results larger than 10 MB are not persisted to storage. |
-| bucket | String? | — | S3 bucket name. Required when backend is `"s3"`. |
-| region | String? | — | AWS region for S3. |
-| endpoint | String? | — | Custom S3 endpoint (for MinIO or localstack). |
-| access_key_id | String? | — | S3 access key. Prefer environment variables or IAM roles. |
-| secret_access_key | String? | — | S3 secret key. |
-| path_style | bool | `false` | Use path-style S3 URLs. Set `true` for MinIO. |
-| prefix | String? | — | Key prefix for S3 objects. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `backend` | String | | `"local"` | Storage backend: `"local"` or `"s3"`. |
+| `root_dir` | String | | `"{state_dir}/results"` | Local backend directory. |
+| `max_persist_bytes` | usize | | `10485760` | Results above 10 MB are not persisted. |
+| `bucket` | String | | — | S3 bucket name. Required when `backend = "s3"`. |
+| `region` | String | | — | AWS region for S3. |
+| `endpoint` | String | | — | Custom S3 endpoint (MinIO, localstack). |
+| `access_key_id` | String | | — | S3 access key. Prefer IAM roles. |
+| `secret_access_key` | String | | — | S3 secret key. |
+| `path_style` | bool | | `false` | Path-style S3 URLs (set `true` for MinIO). |
+| `prefix` | String | | — | Key prefix for S3 objects. |
 
 ### [result_channel]
 
-In-memory relay for streaming results to waiting clients.
+In-memory relay for streaming results.
 
-```toml
-[result_channel]
-max_slots = 10000
-slot_ttl_secs = 600
-```
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| max_slots | usize | `10000` | Maximum concurrent in-memory result slots. |
-| slot_ttl_secs | u64 | `600` | Slot removed after 10 minutes even if unclaimed by client. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `max_slots` | usize | | `10000` | Max concurrent result slots. |
+| `slot_ttl_secs` | u64 | | `600` | Slot removed after 10 min if unclaimed. |
 
 ### [logging]
 
-```toml
-[logging]
-level = "info"
-format = "json"
-```
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| level | String | `"info"` | Log level filter. Options: `debug`, `info`, `warn`, `error`. |
-| format | String | `"text"` | Log output format. `"json"` recommended for production. Overridden by `DBWARD_LOG_FORMAT` env var. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `level` | String | | `"info"` | Log level: `debug`, `info`, `warn`, `error`. |
+| `format` | String | | `"text"` | Output format: `"text"` or `"json"`. Overridden by `DBWARD_LOG_FORMAT`. |
 
 ### [slack]
 
-Slack integration for approval notifications and interactive approve/reject.
+Slack integration for notifications and interactive approve/reject.
 
 ```toml
 [slack]
 bot_token = "${SLACK_BOT_TOKEN}"
 signing_secret = "${SLACK_SIGNING_SECRET}"
-channel = "#db-approvals"
+channel = "C02C1EUJ0EN"
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| bot_token* | String | — | Slack Bot OAuth token (`xoxb-...`). Required for Slack integration. |
-| signing_secret* | String | — | Slack app signing secret for request verification. Empty string disables Slack integration entirely. |
-| channel | String | `"#db-approvals"` | Default channel for notifications. |
-| channels | Map\<String, String\> | `{}` | Per-environment channel override. Key = environment name, value = channel. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `bot_token` | String | ✓ | — | Slack Bot OAuth token (`xoxb-...`). |
+| `signing_secret` | String | ✓ | — | Slack signing secret for request verification. |
+| `channel` | String | | `"#db-approvals"` | Default channel (ID or name). |
+| `channels` | Map | | `{}` | Per-environment override. Key = env, value = channel. |
 
 ### trusted_proxies
-
-List of CIDR ranges whose `X-Forwarded-For` headers are trusted for client IP extraction.
 
 ```toml
 trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12"]
 ```
 
-When empty (default), the direct connection IP is used. Required when running behind a load balancer to get accurate client IPs in audit logs.
+When empty (default), the direct connection IP is used. Required behind a load balancer for accurate audit log IPs.
 
 ---
 
@@ -410,156 +381,94 @@ url = "${DATABASE_URL}"
 
 ### Top-level
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| agent_id | String? | hostname | Unique agent identifier. Auto-detected from hostname if unset. |
-| poll_interval_ms | u64 | `1000` | Milliseconds between poll requests to the server. |
-| max_concurrent_tasks | u32 | `2` | Maximum parallel SQL executions. |
-| drain_timeout_secs | u64 | `60` | Seconds to wait for in-flight tasks during graceful shutdown. |
-| statement_timeout_secs | u64 | `30` | Default SQL statement timeout. Overridden by execution policy or workflow. |
-| lease_duration_secs | u64 | `300` | How long the agent holds a job before the server reclaims it. |
-| operations | String[]? | all | Limit which operation types this agent handles. Unset = all operations. |
-| startup_retry_initial_ms | u64 | `1000` | Initial backoff delay when server is unreachable at startup. |
-| startup_retry_max_ms | u64 | `15000` | Maximum backoff delay cap. |
-| startup_max_wait_secs | u64 | `0` | Maximum total time to wait for server. `0` = wait forever. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `agent_id` | String | | hostname | Unique agent identifier. |
+| `poll_interval_ms` | u64 | | `1000` | Milliseconds between poll requests. |
+| `max_concurrent_tasks` | u32 | | `2` | Max parallel executions. |
+| `drain_timeout_secs` | u64 | | `60` | Graceful shutdown wait. |
+| `statement_timeout_secs` | u64 | | `30` | Default SQL timeout. |
+| `lease_duration_secs` | u64 | | `300` | Job lease before server reclaims. |
+| `operations` | String[] | | all | Operation types to handle. Unset = all. |
+| `startup_retry_initial_ms` | u64 | | `1000` | Initial retry backoff. |
+| `startup_retry_max_ms` | u64 | | `15000` | Max retry backoff. |
+| `startup_max_wait_secs` | u64 | | `60` | Max startup wait. `0` = wait forever. |
 
 ### [server]
 
-```toml
-[server]
-url = "https://dbward.internal:3000"
-agent_token = "${DBWARD_AGENT_TOKEN}"
-```
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| url* | String | — | Server URL the agent polls for jobs. |
-| agent_token* | String | — | Authentication token. Use `${DBWARD_AGENT_TOKEN}` expansion to avoid hardcoding. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `url` | String | ✓ | — | Server URL to poll. |
+| `agent_token` | String | ✓ | — | Auth token. Use `${DBWARD_AGENT_TOKEN}` expansion. |
 
 ### [databases.\<name\>.\<env\>]
-
-Database connections keyed by logical name and environment.
 
 ```toml
 [databases.app.production]
 url = "postgres://user:pass@db:5432/app"
-
-[databases.app.staging]
-url = "postgres://user:pass@db-staging:5432/app"
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| url* | String | — | Database connection URL. Supports `${VAR}` expansion. Scheme determines driver: `postgres://` or `mysql://`. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `url` | String | ✓ | — | Database connection URL. Scheme = driver (`postgres://` or `mysql://`). |
 
 ### [schema_sync]
 
-Controls automatic schema snapshot collection.
-
-```toml
-[schema_sync]
-enabled = true
-interval_secs = 3600
-```
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| enabled | bool | `true` | Enable schema sync. When disabled, no schema snapshots are collected. |
-| sync_on_startup | bool | `true` | Collect schema immediately on agent startup. |
-| interval_secs | u64 | `0` | Periodic sync interval. `0` = sync only on startup and after migrations. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `enabled` | bool | | `true` | Enable schema collection. |
+| `sync_on_startup` | bool | | `true` | Collect on agent startup. |
+| `interval_secs` | u64 | | `0` | Periodic interval. `0` = startup + after migrations only. |
 
 ---
 
 ## CLI Configuration
 
-### Resolution Model
-
-The CLI merges configuration from multiple sources (highest priority first):
+### Resolution Order
 
 1. Environment variables (`DBWARD_SERVER_URL`, `DBWARD_TOKEN`, etc.)
-2. `--config` flag (enables standalone mode — single file, no merging)
+2. `--config` flag (standalone mode — no merging)
 3. Project config (`./dbward.toml` or `DBWARD_CONFIG`)
 4. Global config (`~/.config/dbward/config.toml`)
 
-### Global Config
+### [server] (Global/Project)
 
-Located at `~/.config/dbward/config.toml`. Stores server connection and authentication.
-
-```toml
-[server]
-url = "https://dbward.example.com:3000"
-token = "dbw_abc123..."
-```
-
-### [server]
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| url* | String | — | Server URL for API calls. |
-| token | String? | — | API token for authentication. Mutually exclusive with `[server.oidc]`. |
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `url` | String | ✓ | — | Server URL. |
+| `token` | String | | — | API token. Mutually exclusive with `[server.oidc]`. |
 
 ### [server.oidc]
 
-OIDC authentication for CLI login flows.
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `issuer` | String | ✓ | — | OIDC issuer URL. |
+| `client_id` | String | ✓ | — | OIDC client ID for PKCE. |
+| `discovery_url` | String | | — | Override discovery endpoint. |
+| `backchannel_url` | String | | — | Override token endpoint. |
+| `browser_url` | String | | — | Override authorize URL. |
 
-```toml
-[server.oidc]
-issuer = "https://auth.example.com/realms/dbward"
-client_id = "dbward-cli"
-```
+### Project Config (dbward.toml)
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| issuer* | String | — | OIDC issuer URL. Used for discovery. |
-| client_id* | String | — | OIDC client ID for PKCE flow. |
-| discovery_url | String? | — | Override OpenID Connect discovery endpoint. |
-| backchannel_url | String? | — | Token endpoint URL override (when issuer is not reachable from CLI host). |
-| browser_url | String? | — | Authorization URL override for browser redirect. |
-
-### Project Config
-
-Located at `./dbward.toml` in the project root. Defines database and migration defaults.
-
-```toml
-default_database = "app"
-migrations_dir = "db/migrations"
-```
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| default_database | String? | — | Database used when `--database` is not specified. |
-| default_environment | String? | — | Environment used when `--environment` is not specified. |
-| migrations_dir | Path | `"./migrations"` | Directory containing migration SQL files. |
-
-**[databases.\<name\>]** in project config:
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| migrations_dir | Path? | — | Per-database migration directory override. |
-
-A `[server]` section is also accepted in project config and overrides the global config.
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `default_database` | String | | — | Database when `--database` omitted. |
+| `default_environment` | String | | — | Environment when `-e` omitted. |
+| `migrations_dir` | Path | | `"./migrations"` | Migration SQL directory. |
 
 ### [results]
 
-Controls local result file saving behavior. Can be placed in project or global config.
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `dir` | Path | | `"~/.dbward/results"` | Local directory for saving query results. |
+| `format` | String | | `"table"` | Default result format: `table`, `json`, `csv`, `vertical`. |
+
+Per-database override:
 
 ```toml
-[results]
-dir = "~/.dbward/results"
-format = "table"
+[databases.analytics]
+migrations_dir = "migrations/analytics"
 ```
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| dir | Path? | — | Directory for auto-saving results. If unset, results are not saved locally (stdout only). Supports `~/` expansion. |
-| format | String? | `"table"` | Default display format for result rows. Values: `table`, `json`, `csv`, `vertical`. |
-
-**Behavior:**
-
-- Without `[results]` section: results go to stdout only (no local files).
-- With `dir` set: results are auto-saved to `<dir>/<request_id>.json` in addition to stdout display.
-- The `--output <path>` flag overrides `dir` for a single command.
-- Saved files are always canonical JSON regardless of `format`.
 
 ---
 
@@ -567,28 +476,27 @@ format = "table"
 
 | Variable | Description |
 |---|---|
-| `DBWARD_CONFIG` | Path to project config file. Enables standalone mode (no global config merging). |
-| `DBWARD_SERVER_URL` | Override server URL from any config file. |
+| `DBWARD_CONFIG` | Project config path. Enables standalone mode. |
+| `DBWARD_SERVER_URL` | Override server URL. |
 | `DBWARD_TOKEN` | Override API token. |
-| `DBWARD_DATABASE` | Default database when `--database` is omitted. |
-| `DBWARD_ENV` | Default environment when `--environment` is omitted. |
-| `DBWARD_AGENT_TOKEN` | Agent authentication token. Typically referenced via `${DBWARD_AGENT_TOKEN}` in agent config. |
-| `DBWARD_LOG_FORMAT` | Set to `"json"` to force JSON log output (server and agent). Overrides `[logging].format`. |
+| `DBWARD_DATABASE` | Default database. |
+| `DBWARD_ENV` | Default environment. |
+| `DBWARD_AGENT_TOKEN` | Agent token (referenced via `${DBWARD_AGENT_TOKEN}`). |
+| `DBWARD_LOG_FORMAT` | Force `"json"` log output. Overrides `[logging].format`. |
 
 ---
 
 ## Variable Expansion
 
-All TOML config files support shell-style variable expansion for secrets and environment-specific values.
+All TOML config files support shell-style variable expansion:
 
 | Syntax | Behavior |
 |---|---|
-| `${VAR}` | Required — startup error if `VAR` is not set. |
-| `${VAR:-default}` | Uses `default` if `VAR` is not set. |
-| `${VAR:-}` | Empty string if `VAR` is not set. |
+| `${VAR}` | Required — startup error if unset. |
+| `${VAR:-default}` | Use `default` if unset. |
+| `${VAR:-}` | Empty string if unset. |
 
 ```toml
-# Examples
 [server]
 agent_token = "${DBWARD_AGENT_TOKEN}"
 

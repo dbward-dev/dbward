@@ -256,6 +256,9 @@ operations = ["execute_select", "execute_dml"]  # Filter by operation (omitted =
 require_reason = true                # Force users to provide --reason (default: false)
 allow_self_approve = false           # Requester cannot approve own request (default: false)
 allow_same_approver_across_steps = false  # Same person can't approve in multiple steps (default: true)
+pending_ttl_secs = 3600             # Pending request expires after this duration (default: none)
+approval_ttl_secs = 600             # Approved request must execute within this duration (default: none)
+explain = true                      # Run EXPLAIN before approval for preview context (default: false)
 ```
 
 ### `operations` filter
@@ -348,9 +351,9 @@ When a request comes in, dbward finds the most specific matching workflow:
 
 ## Next steps
 
-- [Configuration Reference](../reference/configuration.md) — All workflow, auto_approve, and execution_policies options
-- [Authentication](../deployment/authentication.md) — Set up groups and role mappings
-- [CLI Reference](../reference/cli.md) — Request and approval commands
+- [Configuration Reference](../../reference/configuration.md) — All workflow, auto_approve, and execution_policies options
+- [Authentication](../authentication.md) — Set up groups and role mappings
+- [CLI Reference](../../reference/cli.md) — Request and approval commands
 
 ## Related: Execution Policies
 
@@ -359,4 +362,4 @@ After a request is approved, **execution policies** control how it runs:
 - `max_executions` — How many times a request can be re-executed
 - `max_rows` — Maximum rows returned
 
-Configure in `[[execution_policies]]` in `dbward-server.toml`. See [Configuration Reference](../reference/configuration.md).
+Configure in `[[execution_policies]]` in `dbward-server.toml`. See [Execution Policies](execution-policies.md).

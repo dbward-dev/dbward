@@ -26,9 +26,8 @@ Both paths end with a working approval flow you can test.
 | **Server** | Central coordinator for approval state, audit logs, and request routing |
 | **Break-glass** | Emergency bypass mechanism to skip approval in critical situations |
 
-## What's next after getting started
+## Next Steps
 
-- [Team Setup](deployment/overview.md) — deploy server + agent for your team
-- [Workflows Guide](guides/workflows.md) — approval policies and conditions
-- [MCP Integration](guides/mcp-integration.md) — use dbward as an MCP server for AI tools
-- [Configuration Reference](reference/configuration.md) — all config options
+1. [Executing Queries](guides/executing-queries.md) — Learn the day-to-day workflow
+2. [Policies Overview](guides/policies/overview.md) — Understand approval rules
+3. [Architecture](architecture.md) — How the components fit together

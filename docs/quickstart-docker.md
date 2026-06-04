@@ -149,6 +149,6 @@ alice (developer)          bob (admin)              agent
 ## Next steps
 
 - [Connect your own database](quickstart-local.md) — use dbward with your real PostgreSQL or MySQL
-- [Workflows Guide](guides/workflows.md) — customize approval policies
+- [Workflows Guide](guides/policies/workflows.md) — customize approval policies
 - [MCP Integration](guides/mcp-integration.md) — connect AI agents (Claude, Cursor)
 - [Deployment Overview](deployment/overview.md) — production architecture

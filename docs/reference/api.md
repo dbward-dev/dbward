@@ -7,495 +7,494 @@ description: All dbward REST API endpoints
 
 Base URL: `http://localhost:3000` (or your server address)
 
-Authentication: `Authorization: Bearer <token>` (API token or OIDC JWT)
+Authentication: `Authorization: Bearer <token>` (API token or OIDC JWT), unless noted otherwise.
+
+---
 
 ## Requests
 
-### Create request
+### POST /api/requests
 
-```
-POST /api/requests
-```
+Create a new SQL execution or migration request. The server classifies the SQL, resolves the applicable workflow, and determines approval requirements.
 
-```json
-{
-  "operation": "execute_select",
-  "environment": "production",
-  "database": "app",
-  "detail": "SELECT count(*) FROM users",
-  "reason": "Monthly report",
-  "ticket": "JIRA-123",
-  "idempotency_key": "deploy-abc123"
-}
-```
+Permission: `request.create` or `request.create_select`
 
-**Multi-statement rules for `detail`:**
+### GET /api/requests
 
-- Single statements are always allowed: `SELECT * FROM users`
-- SET prelude + one query is allowed: `SET statement_timeout = 5000; SELECT * FROM users`
-- Multiple result-producing statements are rejected: `SELECT 1; SELECT 2` → 400
-- Statements after the query are rejected: `SELECT 1; SET timeout = 5000` → 400
+List requests with optional filtering by status, user, or pending-for-me.
 
-Response (201):
-```json
-{
-  "id": "req_a1b2c3",
-  "status": "pending",
-  "operation": "execute_select",
-  "environment": "production",
-  "database": "app",
-  "created_at": "2026-05-08T12:00:00Z"
-}
-```
+| Param | Default | Description |
+|-------|---------|-------------|
+| `limit` | 50 | Max results |
+| `offset` | 0 | Pagination offset |
+| `status` | | Filter by request status |
+| `user` | | Filter by requester subject ID |
+| `pending_for_me` | | Only show requests the caller can approve |
 
-### List requests
+Permission: `request.view`
 
-```
-GET /api/requests?status=pending&limit=20&user=alice
-```
+### GET /api/requests/{id}
 
-### Get request
+Get full request details including approval progress, decision trace, and context. Supports long-polling with `?wait=<seconds>` (max 120s) to wait for status changes.
 
-```
-GET /api/requests/{id}
-```
+Permission: `request.view`
 
-Response includes a `context` field with automatically collected information:
+### POST /api/requests/{id}/approve
 
-```json
-{
-  "id": "0da70e0e-...",
-  "status": "pending",
-  "database": "app",
-  "environment": "production",
-  "operation": "execute_dml",
-  "detail": "DELETE FROM orders WHERE status = 'pending'",
-  "reason": "Cleanup",
-  "requester": "alice",
-  "context": {
-    "status": "ready",
-    "risk": {
-      "level": "High",
-      "factors": ["CascadeDelete { targets: [\"users\"] }"]
-    },
-    "sql_review": {
-      "findings": [],
-      "blocked": false
-    },
-    "tables": ["orders"],
-    "explain": [
-      {
-        "sql": "DELETE FROM orders WHERE status = 'pending'",
-        "plan": [{"Plan": {"Node Type": "ModifyTable", "..."}}]
-      }
-    ]
-  },
-  "approval_progress": {
-    "current_step": 0,
-    "total_steps": 2,
-    "steps": [...]
-  }
-}
-```
+Approve a pending request. If multi-step, advances to the next step. Accepts an optional comment.
 
-Context fields:
-| Field | Description |
-|-------|-------------|
-| `context.status` | `"collecting"`, `"ready"`, `"partial"`, `"unavailable"` |
-| `context.risk.level` | `"Low"`, `"Medium"`, `"High"`, `"Critical"`, `"Unknown"` |
-| `context.risk.factors` | Array of risk factor descriptions |
-| `context.sql_review` | SQL review findings and block status |
-| `context.tables` | Affected table names |
-| `context.explain` | Per-statement EXPLAIN plans (JSON format, PG/MySQL) |
+Permission: `request.approve`
 
-Decision trace fields (present for requests created after v0.1.3):
-| Field | Description |
-|-------|-------------|
-| `decision_trace.version` | Trace schema version (currently 1) |
-| `decision_trace.classification.resolved_operation` | Final classified operation (`execute_select`, `execute_dml`, `migrate_up`, etc.) |
-| `decision_trace.sql_review.findings_count` | Number of SQL review warnings |
-| `decision_trace.sql_review.parse_failed` | `true` if SQL could not be parsed |
-| `decision_trace.risk.level` | `"low"`, `"medium"`, `"high"`, `"critical"`, `"unknown"`, `"unavailable"` |
-| `decision_trace.risk.factors` | Array of risk factor descriptions |
-| `decision_trace.risk.schema_status` | `"ready"`, `"not_synced"`, `"failed"`, `"unavailable"` |
-| `decision_trace.workflow.matched` | Matched workflow info (`null` if none matched) |
-| `decision_trace.workflow.matched.id` | Workflow ID |
-| `decision_trace.workflow.matched.step_count` | Number of approval steps |
-| `decision_trace.decision.outcome` | `"auto_approved"` or `"needs_approval"` |
-| `decision_trace.decision.reasons` | Array: `"empty_steps"`, `"risk_below_threshold"`, `"break_glass"`, `"auto_approve_disabled"`, `"risk_above_threshold"`, `"no_auto_approve_rule"`, `"risk_unavailable"` |
-| `decision_trace.decision.auto_approve_threshold` | Matched auto-approve rule's max risk level (`null` if no rule) |
+### POST /api/requests/{id}/reject
 
-### Approve
+Reject a pending request. Accepts an optional comment or reason.
 
-```
-POST /api/requests/{id}/approve
-```
+Permission: `request.approve`
 
-```json
-{
-  "comment": "Looks good",
-  "as_role": "dba"
-}
-```
+### POST /api/requests/{id}/cancel
 
-### Reject
+Cancel a request. Only the requester or an admin can cancel. Accepts an optional reason.
 
-```
-POST /api/requests/{id}/reject
-```
+Permission: `request.cancel`
 
-```json
-{
-  "reason": "Wrong table"
-}
-```
+### POST /api/requests/{id}/resume
 
-### Cancel
+Resume an approved request, triggering agent dispatch. The client should then call the stream endpoint to receive the result.
 
-```
-POST /api/requests/{id}/cancel
-```
+Permission: `request.resume`
 
-### Resume
+### GET /api/requests/{id}/result/stream
 
-```
-POST /api/requests/{id}/resume
-```
+Long-poll for execution result. Returns the result when the agent completes, or 204 if not yet available.
 
-Resumes execution by an agent. Returns the execution token.
+Permission: `result.view`
 
-### Stream result
+### GET /api/requests/{id}/result/content
 
-```
-GET /api/requests/{id}/result/stream
-```
+Download the stored result as binary content. Only available if the result was persisted to storage.
 
-Long-poll endpoint. Blocks until the result is available (timeout: 5 minutes).
-
-### Get stored result
-
-```
-GET /api/requests/{id}/result/content
-```
-
-Returns the stored result (requires result_storage to be configured).
+Permission: `result.view` + result policy access check
 
 ---
 
 ## Results
 
-### List shared results
+### GET /api/results
 
-```
-GET /api/results
-```
+List stored results accessible to the current user (filtered by result policy access rules).
 
-### Get storage config
-
-```
-### `GET /api/schemas/{db}`
-
-Returns the agent-collected schema snapshot for a database. The server automatically resolves the best available environment (production > staging > development) from snapshots with `status=ready` that the caller is authorized to view.
-
-**Query parameters:**
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `summary` | `true` | When true, returns table names and counts only. Set to `false` for full column/constraint/index details. |
-| `table` | — | Filter to a single table. Supports `schema.table` format (e.g., `public.users`). Overrides `summary`. |
-
-**Response (200):**
-
-```json
-{
-  "database": "app",
-  "environment": "production",
-  "dialect": "postgresql",
-  "status": "ready",
-  "collected_at": "2026-05-23T01:00:00Z",
-  "tables": [
-    { "name": "users", "schema_name": "public", "estimated_rows": 50000, "column_count": 12 }
-  ]
-}
-```
-
-**Errors:**
-
-| Code | Condition |
-|------|-----------|
-| 404 | Database not registered, no ready snapshot, or table not found |
-| 403 | No authorized environment available |
+Permission: Any authenticated user
 
 ---
 
-## Agents
+## Schemas
 
-### Poll for jobs
+### GET /api/schemas/{db}
 
-```
-POST /api/agent/poll
-```
+Get the agent-collected schema snapshot for a database. The server auto-resolves the best available environment unless explicitly specified.
 
-```json
-{
-  "agent_id": "prod-agent-1",
-  "capabilities": {
-    "databases": ["app"],
-    "environments": ["production"],
-    "operations": ["*"]
-  }
-}
-```
+| Param | Default | Description |
+|-------|---------|-------------|
+| `summary` | true | When true, returns table names and row counts only |
+| `table` | | Filter to a single table (supports `schema.table` format) |
+| `environment` | | Explicit environment (auto-resolved if omitted) |
 
-### List agents
+Permission: `request.view` (scoped to the resolved database/environment)
 
-```
-GET /api/agents
-```
+---
 
-### Claim job
+## Me
 
-```
-POST /api/agent/jobs/{id}/claim
-```
+### GET /api/me
 
-### Heartbeat
+Get the current authenticated user's profile, resolved roles, and group memberships.
 
-```
-POST /api/agent/jobs/{id}/heartbeat
-```
+Permission: Any authenticated user
 
-### Submit result
+---
 
-```
-POST /api/agent/jobs/{id}/result
-```
+## Users
+
+### GET /api/users
+
+List all registered users with their status and roles.
+
+Permission: `user.manage`
+
+### PATCH /api/users/{id}
+
+Update a user's profile fields. Currently only `slack_user_id` can be set or cleared.
+
+Permission: Self-update allowed; otherwise `user.manage`
+
+### POST /api/users/{id}/suspend
+
+Suspend a user. Revokes all active tokens and cancels pending requests.
+
+Permission: `user.manage`
+
+### POST /api/users/{id}/activate
+
+Reactivate a previously suspended user.
+
+Permission: `user.manage`
 
 ---
 
 ## Tokens
 
-### Create token
+### POST /api/tokens
 
-```
-POST /api/tokens
-```
+Create a new API token. The token value is returned only once in the response — store it securely.
 
-```json
-{
-  "subject_id": "bob",
-  "role": "developer",
-  "subject_type": "user",
-  "name": "Bob laptop",
-  "groups": ["backend-team"],
-  "expires_in": 7776000
-}
-```
+Permission: `token.manage`
 
-Response (201):
-```json
-{
-  "id": "tok_abc123",
-  "token": "dbw_...",
-  "subject_id": "bob",
-  "role": "developer",
-  "expires_at": "2026-08-06T12:00:00Z",
-  "created_at": "2026-05-08T12:00:00Z"
-}
-```
+### GET /api/tokens
 
-> The raw `token` value is only returned once at creation time.
+List all tokens with their metadata, status, and expiration.
 
-### List tokens
+Permission: `token.manage`
 
-```
-GET /api/tokens
-```
+### DELETE /api/tokens/{id}
 
-### Revoke token
+Revoke a token immediately. The token becomes invalid for all future requests.
 
-```
-DELETE /api/tokens/{id}
-```
-
-Admin can revoke any token. Users can revoke their own.
+Permission: `token.manage` or `token.revoke_own` (for own tokens)
 
 ---
 
 ## Webhooks
 
-### List webhooks
+### POST /api/webhooks
 
-```
-GET /api/webhooks
-```
+Register a new webhook endpoint for event notifications.
 
-### Create webhook
+Permission: `webhook.manage`
 
-```
-POST /api/webhooks
-```
+### GET /api/webhooks
 
-```json
-{
-  "url": "https://hooks.slack.com/...",
-  "events": ["request_created", "request_approved"],
-  "format": "slack",
-  "secret": "whsec_..."
-}
-```
+List all registered webhooks.
 
-### Get / Update / Delete webhook
+Permission: `webhook.manage`
 
-```
-GET    /api/webhooks/{id}
-PUT    /api/webhooks/{id}
-DELETE /api/webhooks/{id}
-```
+### GET /api/webhooks/{id}
+
+Get a webhook's configuration and delivery statistics.
+
+Permission: `webhook.manage`
+
+### PUT /api/webhooks/{id}
+
+Update a webhook's URL, events filter, format, or secret. Only provided fields are changed.
+
+Permission: `webhook.manage`
+
+### DELETE /api/webhooks/{id}
+
+Delete a webhook. Pending deliveries are cancelled.
+
+Response: 204
+
+Permission: `webhook.manage`
+
+### GET /api/webhook-deliveries
+
+List webhook delivery attempts with status and retry information.
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `status` | | Filter: `pending`, `in_progress`, `delivered`, `dead` |
+| `limit` | 50 | Max results (max: 100) |
+| `offset` | 0 | Pagination offset |
+
+Permission: `metrics.view`
+
+---
+
+## Roles
+
+### POST /api/roles
+
+Create a custom role with specific permissions and optional database/environment scope.
+
+Permission: `role.manage`
+
+### GET /api/roles
+
+List all roles (built-in and custom) with their permissions.
+
+Permission: `role.manage`
+
+### DELETE /api/roles/{name}
+
+Delete a custom role. Built-in roles (`admin`, `developer`, `readonly`, `agent-default`) cannot be deleted.
+
+Response: 204
+
+Permission: `role.manage`
 
 ---
 
 ## Policies
 
-### Workflows
+### POST /api/workflows
 
-```
-GET    /api/workflows
-POST   /api/workflows
-GET    /api/workflows/{id}
-PUT    /api/workflows/{id}
-DELETE /api/workflows/{id}
-```
+Create an approval workflow scoped to a database/environment/operation combination.
 
-### Execution policies
+Permission: `workflow.manage`
 
-```
-GET    /api/execution-policies
-POST   /api/execution-policies
-GET    /api/execution-policies/{id}
-PUT    /api/execution-policies/{id}
-DELETE /api/execution-policies/{id}
-```
+### GET /api/workflows
 
-### Result policies (Pro)
+List all configured workflows.
 
-```
-GET    /api/result-policies
-POST   /api/result-policies
-GET    /api/result-policies/{id}
-PUT    /api/result-policies/{id}
-DELETE /api/result-policies/{id}
-```
+Permission: `workflow.manage`
 
-### Notification policies (Pro)
+### DELETE /api/workflows/{id}
 
-```
-GET    /api/notification-policies
-POST   /api/notification-policies
-GET    /api/notification-policies/{id}
-PUT    /api/notification-policies/{id}
-DELETE /api/notification-policies/{id}
-```
+Delete a workflow.
 
-### Policy resolution
+Response: 204
 
-Resolve the effective policy for a database/environment combination. Shows which workflow matches, auto-approve rules, execution policy, and predicted decision.
+Permission: `workflow.manage`
 
-```
-GET /api/policy-resolution?database=<name>&environment=<env>[&operation=<op>]
-```
+### POST /api/execution-policies
 
-Query parameters:
-- `database` (required): Database name
-- `environment` (required): Environment name  
-- `operation` (optional): Specific operation (`execute_select`, `execute_dml`, `migrate_up`, `migrate_down`, `migrate_status`). Omit for all operations.
+Create an execution policy (timeout, row limit, rate limit) for a scope.
 
-Auth: scoped `RequestView` permission.
+Permission: `policy.manage`
 
-Returns `decision_preview`: `auto_approved`, `needs_approval`, or `deny`.
+### GET /api/execution-policies
 
-### Access policies
+List all execution policies.
 
-```
-GET    /api/access-policies
-POST   /api/access-policies
-DELETE /api/access-policies/{id}
-```
+Permission: `policy.manage`
+
+### DELETE /api/execution-policies/{id}
+
+Delete an execution policy.
+
+Response: 204
+
+Permission: `policy.manage`
+
+### POST /api/result-policies
+
+Create a result policy controlling retention, delivery mode, and access for a scope.
+
+Permission: `policy.manage`
+
+### GET /api/result-policies
+
+List all result policies.
+
+Permission: `policy.manage`
+
+### GET /api/result-policies/{id}
+
+Get a specific result policy.
+
+Permission: `policy.manage`
+
+### PUT /api/result-policies/{id}
+
+Update a result policy. Only provided fields are changed.
+
+Permission: `policy.manage`
+
+### DELETE /api/result-policies/{id}
+
+Delete a result policy.
+
+Response: 204
+
+Permission: `policy.manage`
+
+### POST /api/notification-policies
+
+Create a notification policy that maps events to webhooks for a specific scope.
+
+Permission: `policy.manage`
+
+### GET /api/notification-policies
+
+List all notification policies.
+
+Permission: `policy.manage`
+
+### GET /api/notification-policies/{id}
+
+Get a specific notification policy.
+
+Permission: `policy.manage`
+
+### PUT /api/notification-policies/{id}
+
+Update a notification policy. Only provided fields are changed.
+
+Permission: `policy.manage`
+
+### DELETE /api/notification-policies/{id}
+
+Delete a notification policy.
+
+Response: 204
+
+Permission: `policy.manage`
+
+### GET /api/policy-resolution
+
+Resolve the effective policy for a database/environment. Shows which workflow matches, auto-approve rules, and the predicted decision.
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `database` | ✓ | Database name |
+| `environment` | ✓ | Environment name |
+| `operation` | | Specific operation (omit for all) |
+
+Permission: `request.view` (scoped)
 
 ---
 
 ## Audit
 
-### List audit events
+### GET /api/audit/events
 
-```
-GET /api/audit/events?limit=50&user=alice&category=auth&since=2026-05-01
-```
+Search audit log events with filtering.
 
-### Verify hash chain
+| Param | Default | Description |
+|-------|---------|-------------|
+| `actor_id` | | Filter by user |
+| `event_type` | | Filter by event type |
+| `event_category` | | Filter by category |
+| `outcome` | | Filter by outcome |
+| `database` | | Filter by database |
+| `environment` | | Filter by environment |
+| `since` | | Start time (ISO 8601) |
+| `until` | | End time (ISO 8601) |
+| `limit` | 50 | Max results (max: 200) |
+| `offset` | 0 | Pagination offset |
 
-```
-GET /api/audit/verify
-```
+Permission: `audit.view`
 
----
+### GET /api/audit/verify
 
-## Infrastructure
+Verify the audit log hash chain integrity. Returns whether the chain is valid and the first broken event ID if not.
 
-### Health check
-
-```
-GET /health
-```
-
-Response: `{"status": "ok"}`
-
-### Readiness
-
-```
-GET /ready
-```
-
-Returns 200 (ready) or 503 (not ready). No response body.
-
-### Metrics
-
-```
-GET /metrics
-```
-
-Requires admin authentication. Returns Prometheus text format.
-
-### Public key
-
-```
-GET /api/public-key
-```
-
-Returns the Ed25519 public key used for execution token verification.
+Permission: `audit.view`
 
 ---
 
-## Error format
+## Agents
 
-All errors return a structured JSON response:
+### POST /api/agent/poll
+
+Agent reports capabilities and polls for pending jobs. Returns available jobs and dry-run requests.
+
+Permission: `agent.poll`
+
+### POST /api/agent/jobs/{id}/claim
+
+Agent claims a specific job for execution. Returns the execution token, SQL, timeout, and lease expiry.
+
+Permission: `agent.claim`
+
+### POST /api/agent/jobs/{id}/heartbeat
+
+Agent extends its lease on a running job. Returns whether the job has been cancelled.
+
+Permission: `agent.heartbeat`
+
+### POST /api/agent/jobs/{id}/result
+
+Agent submits execution result (success/failure, data, rows affected, duration).
+
+Body limit: ~12 MB
+
+Permission: `agent.submit_result`
+
+### GET /api/agents
+
+List connected agents with their status, capabilities, and active jobs.
+
+Permission: `metrics.view`
+
+### POST /api/agent/schema-sync
+
+Agent reports a database schema snapshot (tables, columns, row estimates) used for risk scoring.
+
+Body limit: 10 MB
+
+Permission: Agent token required
+
+### POST /api/agent/dry-run/{id}/claim
+
+Agent claims a dry-run job to execute EXPLAIN for impact preview.
+
+Permission: Agent token required
+
+### POST /api/agent/dry-run/{id}/result
+
+Agent submits EXPLAIN output for a dry-run job.
+
+Permission: Agent token required
+
+---
+
+## Databases
+
+### GET /api/databases
+
+List all registered databases and their environments.
+
+Permission: `request.view`
+
+---
+
+## Infrastructure (Public)
+
+### GET /health
+
+Health check. Always returns 200 if the server process is running.
+
+### GET /ready
+
+Readiness check. Returns 200 when all subsystems (SQLite, result store) are operational, 503 otherwise.
+
+### POST /api/slack/interactions
+
+Receives Slack interaction payloads (button clicks, modal submissions). Verified by Slack signing secret — no Bearer token required.
+
+---
+
+## Infrastructure (Authenticated)
+
+### GET /metrics
+
+Prometheus metrics in text format.
+
+Permission: `*` (admin only)
+
+### GET /api/public-key
+
+Ed25519 public key used by agents to verify execution tokens.
+
+Permission: Agent token required
+
+---
+
+## Error Format
+
+All errors return:
 
 ```json
-{
-  "error": {
-    "code": "validation_error",
-    "message": "subject_id is required"
-  }
-}
+{"error": {"code": "validation_error", "message": "subject_id is required"}}
 ```
 
-Common HTTP status codes:
-| Code | Meaning |
-|------|---------|
-| 400 | Bad request (validation error) |
-| 401 | Unauthorized (invalid/expired token) |
-| 402 | Payment required (Pro feature) |
-| 403 | Forbidden (insufficient permissions) |
-| 404 | Not found |
-| 409 | Conflict (e.g., workflow has pending requests) |
-| 500 | Internal server error |
+| HTTP Status | Meaning |
+|-------------|---------|
+| 400 | Validation error |
+| 401 | Not authenticated |
+| 403 | Not authorized |
+| 404 | Resource not found |
+| 409 | Conflict (idempotency key race) |
+| 422 | Business logic error |

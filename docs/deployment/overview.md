@@ -63,23 +63,35 @@ Then use Docker Compose:
 ```yaml
 services:
   server:
-    image: dbward-server (built from source or Docker)
+    image: ghcr.io/dbward-dev/dbward-server:latest
     ports:
       - "3000:3000"
     volumes:
-      - ./server.toml:/etc/dbward/server.toml
+      - ./server.toml:/etc/dbward/server.toml:ro
       - server-data:/var/lib/dbward
 
   agent:
-    image: dbward-agent (built from source or Docker)
+    image: ghcr.io/dbward-dev/dbward-agent:latest
     volumes:
-      - ./agent.toml:/etc/dbward/agent.toml
+      - ./agent.toml:/etc/dbward/agent.toml:ro
     depends_on:
       - server
 
 volumes:
   server-data:
 ```
+
+## Deployment templates
+
+Pre-built templates are available in the `deploy/` directory:
+
+| Method | Directory | Description |
+|--------|-----------|-------------|
+| Docker | `deploy/docker/` | Dockerfile and entrypoint script |
+| ECS (CloudFormation) | `deploy/ecs/` | Fargate with EFS, ALB, Service Connect |
+| Kubernetes | `deploy/kubernetes/` | Raw manifests (namespace, deployments, PVC, NetworkPolicy) |
+| Helm | `deploy/helm/dbward/` | Helm chart with configurable values |
+| Backup | `deploy/scripts/` | Litestream config and backup cron scripts |
 
 ## Configuration files
 
@@ -110,6 +122,6 @@ volumes:
 ## Next steps
 
 - [Getting Started](../getting-started.md) — run dbward locally in 5 minutes
-- [Workflows Guide](../guides/workflows.md) — configure approval policies
+- [Workflows Guide](../guides/policies/workflows.md) — configure approval policies
 - [MCP Integration](../guides/mcp-integration.md) — connect AI tools via MCP
 - [Configuration Reference](../reference/configuration.md) — full config options

@@ -123,7 +123,7 @@ This document provides a STRIDE-based threat analysis of dbward's architecture.
 
 | Scenario | Behavior | Recovery |
 |----------|----------|----------|
-| Server crash during execution | Agent detects heartbeat timeout, lease expires | Agent stops execution attempt; request stays "dispatched"; manual resume after restart |
+| Server crash during execution | Agent detects heartbeat response failure | Agent marks job failed; on server restart, request can be re-dispatched via resume |
 | OIDC IdP unavailable | All OIDC auth fails (fail-closed) | API token auth still works; IdP recovery restores OIDC |
 | Agent loses DB connection | Execution fails with error | Result reported as failed; can be retried after resume |
 | Signing key unavailable | Token issuance fails | No new executions possible; existing in-flight tokens still valid until expiry |
