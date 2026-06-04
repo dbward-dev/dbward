@@ -10,4 +10,11 @@ pub enum MigrateError {
     Config(String),
     #[error("migration cancelled")]
     Cancelled,
+    #[error("migration partially applied: {source}")]
+    PartialApplied {
+        /// Versions successfully completed before the failure (applied for up, reverted for down).
+        completed: Vec<String>,
+        #[source]
+        source: Box<MigrateError>,
+    },
 }

@@ -62,6 +62,7 @@ pub struct ExecutionPolicyInput {
     pub statement_timeout_secs: Option<u32>,
     pub max_statement_timeout_secs: Option<u32>,
     pub max_rows: Option<u32>,
+    pub migration_lease_duration_secs: Option<u32>,
 }
 
 impl SyncConfig {
@@ -240,6 +241,7 @@ impl SyncConfig {
                     .max_statement_timeout_secs
                     .unwrap_or(defaults.max_statement_timeout_secs),
                 max_rows: ep.max_rows,
+                migration_lease_duration_secs: ep.migration_lease_duration_secs,
                 created_at: None,
                 updated_at: None,
             });

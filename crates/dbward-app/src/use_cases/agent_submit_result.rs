@@ -72,19 +72,21 @@ impl AgentSubmitResult {
             )
             .map_err(AppError::Forbidden)?;
 
-        // 4. Verify execution is still active
-        if execution.status != ExecutionStatus::Claimed {
+        // 4. Get request (needed for late-completion check below)
+        let request = self
+            .request_reader
+            .get(&execution.request_id)?
+            .ok_or_else(|| AppError::Internal("request not found for execution".into()))?;
+
+        // 5. Verify execution is still active (or eligible for late completion)
+        let is_late_completion = execution.status == ExecutionStatus::Failed
+            && request.status == RequestStatus::ExecutionLost;
+        if execution.status != ExecutionStatus::Claimed && !is_late_completion {
             return Err(AppError::Conflict(format!(
                 "execution is {:?}, cannot submit result",
                 execution.status
             )));
         }
-
-        // 5. Get request
-        let request = self
-            .request_reader
-            .get(&execution.request_id)?
-            .ok_or_else(|| AppError::Internal("request not found for execution".into()))?;
 
         // 6. Determine final status via status_machine
         // (Cancelled, Complete) → Cancelled is handled by status_machine (ADR-003/004)
@@ -136,10 +138,11 @@ impl AgentSubmitResult {
             dbward_domain::policies::DeliveryMode::StoreOnly
         ) || !input.success;
 
-        // 7. Store result to external storage
+        // 7. Store result to external storage (success results, or failure with partial data)
         let mut result_manifest: Option<ExecutionResult> = None;
         let data_len: u64;
-        if input.success && !request.no_store {
+        let has_result_data = !request.no_store && input.result_data.is_some();
+        if (input.success || has_result_data) && !request.no_store {
             if let Some(data) = &input.result_data {
                 if data.len() > self.max_persist_bytes {
                     return Err(AppError::PayloadTooLarge(format!(
@@ -547,6 +550,9 @@ mod tests {
             Ok(false)
         }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn count_completed_executions(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
         }
         fn find_stored_execution_ids(&self, _: &str) -> Result<Vec<String>, AppError> {
@@ -965,6 +971,50 @@ mod tests {
             )
             .await,
             Err(AppError::PayloadTooLarge(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn late_completion_execution_lost_accepts_result() {
+        let uc = make_uc(ExecutionStatus::Failed, RequestStatus::ExecutionLost);
+        let input = AgentSubmitResultInput {
+            execution_id: "exec-1".into(),
+            success: true,
+            result_data: Some(b"ok".to_vec()),
+            error_message: None,
+            rows_affected: None,
+            duration_ms: Some(100),
+        };
+        let out = uc
+            .execute(
+                input,
+                &agent_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.status, RequestStatus::Executed);
+    }
+
+    #[tokio::test]
+    async fn late_completion_rejects_if_not_execution_lost() {
+        let uc = make_uc(ExecutionStatus::Failed, RequestStatus::Failed);
+        let input = AgentSubmitResultInput {
+            execution_id: "exec-1".into(),
+            success: true,
+            result_data: None,
+            error_message: None,
+            rows_affected: None,
+            duration_ms: None,
+        };
+        assert!(matches!(
+            uc.execute(
+                input,
+                &agent_user(),
+                &dbward_domain::entities::AuditContext::System,
+            )
+            .await,
+            Err(AppError::Conflict(_))
         ));
     }
 }

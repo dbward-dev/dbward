@@ -100,6 +100,9 @@ impl RequestReader for SharedRepo {
     fn count_executions(&self, _: &str) -> Result<u32, AppError> {
         Ok(0)
     }
+    fn count_completed_executions(&self, _: &str) -> Result<u32, AppError> {
+        Ok(0)
+    }
     fn find_stored_execution_ids(&self, _: &str) -> Result<Vec<String>, AppError> {
         Ok(vec![])
     }

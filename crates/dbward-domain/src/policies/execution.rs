@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::values::{DatabaseName, Environment};
+use crate::values::{DatabaseName, Environment, Operation};
 
 /// Controls re-execution limits and statement timeout.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,6 +16,9 @@ pub struct ExecutionPolicy {
     pub max_statement_timeout_secs: u32,
     #[serde(default)]
     pub max_rows: Option<u32>,
+    /// Override lease duration for migration mutations (MigrateUp/Down).
+    #[serde(default)]
+    pub migration_lease_duration_secs: Option<u32>,
     #[serde(default)]
     pub created_at: Option<DateTime<Utc>>,
     #[serde(default)]
@@ -34,6 +37,7 @@ impl Default for ExecutionPolicy {
             statement_timeout_secs: 30,
             max_statement_timeout_secs: 600,
             max_rows: None,
+            migration_lease_duration_secs: None,
             created_at: None,
             updated_at: None,
         }
@@ -49,11 +53,22 @@ impl ExecutionPolicy {
         let cap = self.max_statement_timeout_secs as i64 + BUFFER;
         base.min(cap).max(60)
     }
+
+    /// Lease duration that accounts for migration-specific override.
+    pub fn lease_duration_for_operation(&self, operation: Operation) -> i64 {
+        if operation.is_migration_mutation()
+            && let Some(duration) = self.migration_lease_duration_secs
+        {
+            return duration as i64;
+        }
+        self.lease_duration_secs()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::values::Operation;
 
     #[test]
     fn lease_duration_default_policy() {
@@ -93,5 +108,37 @@ mod tests {
         };
         // 5+30=35, cap=40, min(35,40)=35, max(60)=60
         assert_eq!(p.lease_duration_secs(), 60);
+    }
+
+    #[test]
+    fn lease_duration_for_migration_mutation_with_override() {
+        let p = ExecutionPolicy {
+            migration_lease_duration_secs: Some(600),
+            ..Default::default()
+        };
+        assert_eq!(p.lease_duration_for_operation(Operation::MigrateUp), 600);
+        assert_eq!(p.lease_duration_for_operation(Operation::MigrateDown), 600);
+    }
+
+    #[test]
+    fn lease_duration_for_migration_status_ignores_override() {
+        let p = ExecutionPolicy {
+            migration_lease_duration_secs: Some(600),
+            ..Default::default()
+        };
+        // MigrateStatus is not a mutation — uses standard calculation
+        assert_eq!(
+            p.lease_duration_for_operation(Operation::MigrateStatus),
+            p.lease_duration_secs()
+        );
+    }
+
+    #[test]
+    fn lease_duration_for_operation_without_override() {
+        let p = ExecutionPolicy::default();
+        assert_eq!(
+            p.lease_duration_for_operation(Operation::MigrateUp),
+            p.lease_duration_secs()
+        );
     }
 }

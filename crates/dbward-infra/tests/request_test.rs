@@ -2,7 +2,6 @@ mod common;
 use common::*;
 
 use chrono::Utc;
-use dbward_app::error::AppError;
 use dbward_app::ports::*;
 use dbward_domain::entities::*;
 use dbward_domain::values::*;
@@ -375,12 +374,8 @@ fn complete_execution_already_completed() {
         None,
         &[],
     );
-    assert!(result.is_err());
-    assert!(matches!(result, Err(AppError::Conflict(_))));
-
-    // Execution NOT updated (TX rolled back)
-    let fetched_exec = agent_repo.get_execution("exec-ce-done").unwrap().unwrap();
-    assert_eq!(fetched_exec.status, ExecutionStatus::Running);
+    // Idempotent: already-completed request accepts result without error
+    assert!(result.is_ok());
 }
 
 #[test]

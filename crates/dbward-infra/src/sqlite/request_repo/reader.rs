@@ -264,6 +264,21 @@ impl RequestReader for SqliteRequestRepo {
             .map_err(map_err)?;
         Ok(count)
     }
+
+    fn count_completed_executions(&self, request_id: &str) -> Result<u32, AppError> {
+        let conn = self.conn.lock();
+        let count: u32 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT e.id) FROM executions e
+                 INNER JOIN results r ON r.execution_id = e.id
+                 WHERE e.request_id = ?1",
+                params![request_id],
+                |row| row.get(0),
+            )
+            .map_err(map_err)?;
+        Ok(count)
+    }
+
     fn find_stored_execution_ids(&self, request_id: &str) -> Result<Vec<String>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn
@@ -280,6 +295,7 @@ impl RequestReader for SqliteRequestRepo {
         }
         Ok(ids)
     }
+
     fn list_results_for_user(
         &self,
         user_id: &str,

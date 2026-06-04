@@ -13,6 +13,8 @@ x-dbward-build: &dbward-build
 networks:
   backend:
     internal: true
+  db:
+    internal: true
   frontend:
 
 services:
@@ -24,7 +26,7 @@ services:
     tmpfs:
       - /tmp:size=64M
       - /run/postgresql:size=16M
-    networks: [backend]
+    networks: [backend, db]
     environment:
       POSTGRES_USER: dbward
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
@@ -88,7 +90,7 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    networks: [backend]
+    networks: [backend, db]
     volumes:
       - ../db/migrations:/workspace/db/migrations:ro
       - ./config/agent.toml:/config/dbward-agent.toml:ro

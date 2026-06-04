@@ -30,6 +30,12 @@ impl Operation {
     pub fn is_mutation(&self) -> bool {
         !self.is_read_only()
     }
+
+    /// Returns true for state-changing migration operations (Up/Down).
+    /// MigrateStatus is excluded as it is a read-only SELECT.
+    pub fn is_migration_mutation(&self) -> bool {
+        matches!(self, Self::MigrateUp | Self::MigrateDown)
+    }
 }
 
 impl fmt::Display for Operation {
@@ -79,5 +85,14 @@ mod tests {
         assert!(Operation::ExecuteSelect.is_read_only());
         assert!(Operation::MigrateStatus.is_read_only());
         assert!(!Operation::ExecuteDml.is_read_only());
+    }
+
+    #[test]
+    fn is_migration_mutation() {
+        assert!(Operation::MigrateUp.is_migration_mutation());
+        assert!(Operation::MigrateDown.is_migration_mutation());
+        assert!(!Operation::MigrateStatus.is_migration_mutation());
+        assert!(!Operation::ExecuteSelect.is_migration_mutation());
+        assert!(!Operation::ExecuteDml.is_migration_mutation());
     }
 }

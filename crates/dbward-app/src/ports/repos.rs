@@ -52,6 +52,8 @@ pub trait RequestReader: Send + Sync {
         roles: &[String],
     ) -> Result<bool, AppError>;
     fn count_executions(&self, request_id: &str) -> Result<u32, AppError>;
+    /// Count executions that actually submitted results (excludes execution_lost without result).
+    fn count_completed_executions(&self, request_id: &str) -> Result<u32, AppError>;
     fn find_stored_execution_ids(&self, request_id: &str) -> Result<Vec<String>, AppError>;
     fn list_results_for_user(
         &self,

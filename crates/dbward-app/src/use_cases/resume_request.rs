@@ -92,7 +92,9 @@ impl ResumeRequest {
         let exec_policy = self
             .policy
             .get_execution_policy(&request.database, &request.environment);
-        let exec_count = self.request_reader.count_executions(&request.id)?;
+        let exec_count = self
+            .request_reader
+            .count_completed_executions(&request.id)?;
 
         if exec_count >= exec_policy.max_executions {
             return Err(AppError::Conflict("max executions reached".into()));
@@ -110,6 +112,9 @@ impl ResumeRequest {
                 }
             }
 
+            // retry_on_failure only blocks re-dispatch of genuinely Failed requests.
+            // ExecutionLost is an infrastructure failure (lease expiry), not a logical failure,
+            // so it is always eligible for re-dispatch regardless of this setting.
             if !exec_policy.retry_on_failure && request.status == RequestStatus::Failed {
                 return Err(AppError::Conflict("retry on failure disabled".into()));
             }
@@ -357,6 +362,9 @@ mod tests {
             Ok(false)
         }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn count_completed_executions(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
         }
         fn find_stored_execution_ids(&self, _: &str) -> Result<Vec<String>, AppError> {
@@ -623,6 +631,9 @@ mod tests {
             Ok(false)
         }
         fn count_executions(&self, _: &str) -> Result<u32, AppError> {
+            Ok(self.exec_count)
+        }
+        fn count_completed_executions(&self, _: &str) -> Result<u32, AppError> {
             Ok(self.exec_count)
         }
         fn find_stored_execution_ids(&self, _: &str) -> Result<Vec<String>, AppError> {

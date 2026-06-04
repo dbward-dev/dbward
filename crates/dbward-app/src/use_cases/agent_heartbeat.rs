@@ -61,7 +61,7 @@ impl AgentHeartbeat {
             )));
         }
 
-        // 5. Extend lease using execution policy
+        // 5. Extend lease using execution policy (migration-aware)
         let request = self.request_reader.get(&execution.request_id)?;
         let req = request.as_ref();
         let exec_policy = req
@@ -70,8 +70,10 @@ impl AgentHeartbeat {
                     .get_execution_policy(&r.database, &r.environment)
             })
             .unwrap_or_default();
-        let new_expiry =
-            self.clock.now() + chrono::Duration::seconds(exec_policy.lease_duration_secs());
+        let lease_secs = req
+            .map(|r| exec_policy.lease_duration_for_operation(r.operation))
+            .unwrap_or_else(|| exec_policy.lease_duration_secs());
+        let new_expiry = self.clock.now() + chrono::Duration::seconds(lease_secs);
         self.agent_repo.extend_lease(&execution.id, new_expiry)?;
 
         // 6. Check if request was cancelled
