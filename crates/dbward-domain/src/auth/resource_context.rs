@@ -27,4 +27,6 @@ pub enum ResourceContext {
     AuditQuery { requested_actor_id: Option<String> },
     /// Token operations: ownership check.
     Token { owner_id: String },
+    /// User operations: self-edit vs admin-edit.
+    User { target_id: String },
 }

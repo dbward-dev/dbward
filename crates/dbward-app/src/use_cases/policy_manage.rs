@@ -15,6 +15,7 @@ pub struct PolicyManage {
     pub audit: Arc<dyn AuditLogger>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
+    pub ssrf_validator: Arc<dyn SsrfValidator>,
 }
 
 pub struct CreateWorkflowInput {
@@ -61,7 +62,7 @@ impl PolicyManage {
         ctx: &AuditContext,
     ) -> Result<Workflow, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::WorkflowManage)
+            .authorize_global(user, Permission::WorkflowWrite)
             .map_err(AppError::Forbidden)?;
         let count = self.policy_repo.count_workflows()?;
         if count >= self.license.max_workflows() {
@@ -98,7 +99,7 @@ impl PolicyManage {
 
     pub fn list_workflows(&self, user: &AuthUser) -> Result<Vec<Workflow>, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::WorkflowManage)
+            .authorize_global(user, Permission::WorkflowRead)
             .map_err(AppError::Forbidden)?;
         self.policy_repo.list_workflows()
     }
@@ -110,7 +111,7 @@ impl PolicyManage {
         ctx: &AuditContext,
     ) -> Result<(), AppError> {
         self.authorizer
-            .authorize_global(user, Permission::WorkflowManage)
+            .authorize_global(user, Permission::WorkflowWrite)
             .map_err(AppError::Forbidden)?;
         let deleted = self.policy_repo.delete_workflow(id)?;
         if !deleted {
@@ -136,7 +137,7 @@ impl PolicyManage {
         ctx: &AuditContext,
     ) -> Result<ExecutionPolicy, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         self.policy_repo.create_execution_policy(&ep)?;
         self.audit.record(&AuditEvent::simple(
@@ -155,14 +156,14 @@ impl PolicyManage {
         user: &AuthUser,
     ) -> Result<Vec<ExecutionPolicy>, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         self.policy_repo.list_execution_policies()
     }
 
     pub fn delete_execution_policy(&self, id: &str, user: &AuthUser) -> Result<(), AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         let deleted = self.policy_repo.delete_execution_policy(id)?;
         if !deleted {
@@ -180,7 +181,7 @@ impl PolicyManage {
         ctx: &AuditContext,
     ) -> Result<RoleDefinition, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::RoleManage)
+            .authorize_global(user, Permission::RoleWrite)
             .map_err(AppError::Forbidden)?;
         if matches!(role.name.as_str(), "admin" | "agent-default") {
             return Err(AppError::Validation("cannot use built-in role name".into()));
@@ -203,14 +204,14 @@ impl PolicyManage {
 
     pub fn list_roles(&self, user: &AuthUser) -> Result<Vec<RoleDefinition>, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::RoleManage)
+            .authorize_global(user, Permission::RoleWrite)
             .map_err(AppError::Forbidden)?;
         self.policy_repo.list_roles()
     }
 
     pub fn delete_role(&self, name: &str, user: &AuthUser) -> Result<(), AppError> {
         self.authorizer
-            .authorize_global(user, Permission::RoleManage)
+            .authorize_global(user, Permission::RoleWrite)
             .map_err(AppError::Forbidden)?;
         if matches!(name, "admin" | "agent-default") {
             return Err(AppError::Validation("cannot delete built-in role".into()));
@@ -231,7 +232,7 @@ impl PolicyManage {
         ctx: &AuditContext,
     ) -> Result<dbward_domain::policies::ResultPolicy, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         if input.retention_days == 0 || input.retention_days > 3650 {
             return Err(AppError::Validation(
@@ -267,7 +268,7 @@ impl PolicyManage {
         user: &AuthUser,
     ) -> Result<dbward_domain::policies::ResultPolicy, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         self.policy_repo
             .get_result_policy(id)?
@@ -279,7 +280,7 @@ impl PolicyManage {
         user: &AuthUser,
     ) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         self.policy_repo.list_result_policies()
     }
@@ -292,7 +293,7 @@ impl PolicyManage {
         ctx: &AuditContext,
     ) -> Result<dbward_domain::policies::ResultPolicy, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         let mut policy = self
             .policy_repo
@@ -332,7 +333,7 @@ impl PolicyManage {
         ctx: &AuditContext,
     ) -> Result<(), AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         let deleted = self.policy_repo.delete_result_policy(id)?;
         if !deleted {
@@ -358,7 +359,7 @@ impl PolicyManage {
         ctx: &AuditContext,
     ) -> Result<dbward_domain::policies::NotificationPolicy, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         if input.webhooks.is_empty() {
             return Err(AppError::Validation("webhooks must not be empty".into()));
@@ -367,6 +368,7 @@ impl PolicyManage {
             if !url.starts_with("http://") && !url.starts_with("https://") {
                 return Err(AppError::Validation(format!("invalid webhook URL: {url}")));
             }
+            self.ssrf_validator.validate_url(url)?;
         }
         let policy = dbward_domain::policies::NotificationPolicy {
             id: format!("np-{}", self.id_gen.generate()),
@@ -393,7 +395,7 @@ impl PolicyManage {
         user: &AuthUser,
     ) -> Result<dbward_domain::policies::NotificationPolicy, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         self.policy_repo
             .get_notification_policy(id)?
@@ -405,7 +407,7 @@ impl PolicyManage {
         user: &AuthUser,
     ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         self.policy_repo.list_notification_policies()
     }
@@ -418,7 +420,7 @@ impl PolicyManage {
         ctx: &AuditContext,
     ) -> Result<dbward_domain::policies::NotificationPolicy, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         let mut policy = self
             .policy_repo
@@ -432,6 +434,7 @@ impl PolicyManage {
                 if !url.starts_with("http://") && !url.starts_with("https://") {
                     return Err(AppError::Validation(format!("invalid webhook URL: {url}")));
                 }
+                self.ssrf_validator.validate_url(url)?;
             }
             policy.webhooks = webhooks;
         }
@@ -457,7 +460,7 @@ impl PolicyManage {
         ctx: &AuditContext,
     ) -> Result<(), AppError> {
         self.authorizer
-            .authorize_global(user, Permission::PolicyManage)
+            .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
         let deleted = self.policy_repo.delete_notification_policy(id)?;
         if !deleted {
@@ -504,7 +507,7 @@ mod tests {
     impl Authorizer for DenyAll {
         fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
             Err(AuthzError::Forbidden {
-                permission: P::WorkflowManage,
+                permission: P::WorkflowWrite,
                 reason: "denied".into(),
             })
         }
@@ -517,7 +520,7 @@ mod tests {
             _: &ResourceContext,
         ) -> Result<(), AuthzError> {
             Err(AuthzError::Forbidden {
-                permission: P::WorkflowManage,
+                permission: P::WorkflowWrite,
                 reason: "denied".into(),
             })
         }
@@ -694,7 +697,7 @@ mod tests {
             subject_type: SubjectType::User,
             roles: vec![ResolvedRole {
                 name: "admin".into(),
-                permissions: [P::WorkflowManage, P::PolicyManage, P::RoleManage]
+                permissions: [P::WorkflowWrite, P::PolicyWrite, P::RoleWrite]
                     .into_iter()
                     .collect(),
                 databases: vec![],
@@ -732,6 +735,13 @@ mod tests {
         }
     }
 
+    struct AllowSsrf;
+    impl SsrfValidator for AllowSsrf {
+        fn validate_url(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
     fn make_uc(authz: Arc<dyn Authorizer>) -> PolicyManage {
         PolicyManage {
             authorizer: authz,
@@ -740,6 +750,7 @@ mod tests {
             audit: Arc::new(FakeAudit),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),
+            ssrf_validator: Arc::new(AllowSsrf),
         }
     }
 
@@ -774,6 +785,7 @@ mod tests {
             audit: Arc::new(FakeAudit),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),
+            ssrf_validator: Arc::new(AllowSsrf),
         };
         assert!(matches!(
             uc.create_workflow(

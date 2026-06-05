@@ -30,38 +30,19 @@ impl AuditQuery {
         input: AuditListInput,
         user: &AuthUser,
     ) -> Result<AuditListOutput, AppError> {
-        // audit.view_all → all events; audit.view → own events only
-        let has_view_all = self
-            .authorizer
-            .authorize_global(user, Permission::AuditViewAll)
-            .is_ok();
-        if !has_view_all {
-            self.authorizer
-                .authorize_global(user, Permission::AuditView)
-                .map_err(AppError::Forbidden)?;
-        }
+        // audit.read grants full access to all audit events
+        self.authorizer
+            .authorize_global(user, Permission::AuditRead)
+            .map_err(AppError::Forbidden)?;
 
-        let mut filter = input.filter;
-        if !has_view_all {
-            // Force filter to own events only
-            filter.actor_id = Some(user.subject_id.clone());
-        }
-
-        let mut events = self.audit_repo.list(&filter)?;
-
-        // Redact detail_raw for non-admin viewers
-        if !has_view_all {
-            for event in &mut events {
-                event.detail_raw = None;
-            }
-        }
+        let events = self.audit_repo.list(&input.filter)?;
 
         Ok(AuditListOutput { events })
     }
 
     pub fn verify(&self, user: &AuthUser) -> Result<AuditVerifyOutput, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::AuditViewAll)
+            .authorize_global(user, Permission::AuditRead)
             .map_err(AppError::Forbidden)?;
         let result = self.audit_repo.verify_chain()?;
         Ok(AuditVerifyOutput {
@@ -97,7 +78,7 @@ mod tests {
     struct AllowViewOnly;
     impl Authorizer for AllowViewOnly {
         fn authorize_global(&self, _: &AuthUser, perm: Permission) -> Result<(), AuthzError> {
-            if perm == Permission::AuditView {
+            if perm == Permission::AuditRead {
                 Ok(())
             } else {
                 Err(AuthzError::Forbidden {
@@ -134,7 +115,7 @@ mod tests {
             _: &ResourceContext,
         ) -> Result<(), AuthzError> {
             Err(AuthzError::Forbidden {
-                permission: Permission::AuditView,
+                permission: Permission::AuditRead,
                 reason: "denied".into(),
             })
         }
@@ -176,7 +157,7 @@ mod tests {
             subject_type: SubjectType::User,
             roles: vec![ResolvedRole {
                 name: "admin".into(),
-                permissions: [P::AuditViewAll].into_iter().collect(),
+                permissions: [P::AuditRead].into_iter().collect(),
                 databases: vec![],
                 environments: vec![],
             }],
@@ -224,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn user_sees_own_events_redacted() {
+    fn audit_read_sees_all_with_detail_raw() {
         let uc = AuditQuery {
             authorizer: Arc::new(AllowViewOnly),
             audit_repo: Arc::new(FakeAuditRepo),
@@ -249,7 +230,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out.events.len(), 1);
-        assert!(out.events[0].detail_raw.is_none());
+        assert!(out.events[0].detail_raw.is_some());
     }
 
     #[test]

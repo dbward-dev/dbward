@@ -30,7 +30,10 @@ impl Authorizer for RbacAuthorizer {
         context: &ResourceContext,
     ) -> Result<(), AuthzError> {
         // Layer 1: role-based scope check
-        if !user.has_scoped_permission(permission, database, environment) {
+        // User context: self-edit bypasses Layer 1 (no UserWrite needed)
+        let skip_scope =
+            matches!(context, ResourceContext::User { target_id } if *target_id == user.subject_id);
+        if !skip_scope && !user.has_scoped_permission(permission, database, environment) {
             return Err(AuthzError::ScopeDenied {
                 database: database.as_str().to_string(),
                 environment: environment.as_str().to_string(),
@@ -115,14 +118,12 @@ impl RbacAuthorizer {
                 Err(denied(permission, "no access to this result"))
             }
 
-            ResourceContext::AuditQuery { requested_actor_id } => {
-                if user.has_permission(Permission::AuditViewAll) {
+            ResourceContext::AuditQuery { .. } => {
+                // audit.read grants access to all audit events
+                if user.has_permission(Permission::AuditRead) {
                     return Ok(());
                 }
-                match requested_actor_id {
-                    Some(actor_id) if *actor_id == user.subject_id => Ok(()),
-                    _ => Err(denied(permission, "can only view own audit events")),
-                }
+                Err(denied(permission, "audit.read required"))
             }
 
             ResourceContext::Token { owner_id } => {
@@ -133,8 +134,23 @@ impl RbacAuthorizer {
                         Err(denied(permission, "not the token owner"))
                     }
                 } else {
-                    // TokenManage: Layer 1 already passed
+                    // TokenWrite: Layer 1 already passed
                     Ok(())
+                }
+            }
+
+            ResourceContext::User { target_id } =>
+            {
+                #[allow(clippy::if_same_then_else)]
+                if *target_id == user.subject_id {
+                    Ok(())
+                } else if user.has_permission(Permission::UserWrite) {
+                    Ok(())
+                } else {
+                    Err(denied(
+                        permission,
+                        "not the target user and lacks user.write",
+                    ))
                 }
             }
         }
@@ -170,10 +186,10 @@ mod tests {
 
     #[test]
     fn global_allows_with_permission() {
-        let u = user_with("alice", &[Permission::WorkflowManage], &["*"], &["*"]);
+        let u = user_with("alice", &[Permission::WorkflowWrite], &["*"], &["*"]);
         assert!(
             RbacAuthorizer
-                .authorize_global(&u, Permission::WorkflowManage)
+                .authorize_global(&u, Permission::WorkflowWrite)
                 .is_ok()
         );
     }
@@ -183,19 +199,19 @@ mod tests {
         let u = user_with("alice", &[Permission::RequestView], &["*"], &["*"]);
         assert!(
             RbacAuthorizer
-                .authorize_global(&u, Permission::WorkflowManage)
+                .authorize_global(&u, Permission::WorkflowWrite)
                 .is_err()
         );
     }
 
     #[test]
     fn scoped_denies_wrong_db() {
-        let u = user_with("alice", &[Permission::RequestCreate], &["app"], &["*"]);
+        let u = user_with("alice", &[Permission::RequestExecute], &["app"], &["*"]);
         let db = DatabaseName::new("other").unwrap();
         let env = Environment::new("production").unwrap();
         let r = RbacAuthorizer.authorize_scoped(
             &u,
-            Permission::RequestCreate,
+            Permission::RequestExecute,
             &db,
             &env,
             &ResourceContext::Global,
@@ -235,7 +251,7 @@ mod tests {
 
     #[test]
     fn agent_context_allows_matching_agent() {
-        let u = user_with("agent-1", &[Permission::AgentClaim], &["*"], &["*"]);
+        let u = user_with("agent-1", &[Permission::AgentOperate], &["*"], &["*"]);
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("production").unwrap();
         let ctx = ResourceContext::AgentExecution {
@@ -243,7 +259,7 @@ mod tests {
         };
         assert!(
             RbacAuthorizer
-                .authorize_scoped(&u, Permission::AgentClaim, &db, &env, &ctx)
+                .authorize_scoped(&u, Permission::AgentOperate, &db, &env, &ctx)
                 .is_ok()
         );
     }
@@ -264,8 +280,8 @@ mod tests {
     }
 
     #[test]
-    fn audit_view_restricts_to_own() {
-        let u = user_with("alice", &[Permission::AuditView], &["*"], &["*"]);
+    fn audit_read_grants_full_access() {
+        let u = user_with("alice", &[Permission::AuditRead], &["*"], &["*"]);
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("production").unwrap();
         let ctx = ResourceContext::AuditQuery {
@@ -273,8 +289,8 @@ mod tests {
         };
         assert!(
             RbacAuthorizer
-                .authorize_scoped(&u, Permission::AuditView, &db, &env, &ctx)
-                .is_err()
+                .authorize_scoped(&u, Permission::AuditRead, &db, &env, &ctx)
+                .is_ok()
         );
 
         let ctx_own = ResourceContext::AuditQuery {
@@ -282,7 +298,7 @@ mod tests {
         };
         assert!(
             RbacAuthorizer
-                .authorize_scoped(&u, Permission::AuditView, &db, &env, &ctx_own)
+                .authorize_scoped(&u, Permission::AuditRead, &db, &env, &ctx_own)
                 .is_ok()
         );
     }
@@ -301,6 +317,51 @@ mod tests {
             RbacAuthorizer
                 .authorize_scoped(&u, Permission::ResultView, &db, &env, &ctx)
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn user_context_allows_self_edit() {
+        let u = user_with("alice", &[Permission::RequestView], &["*"], &["*"]);
+        let db = DatabaseName::new("app").unwrap();
+        let env = Environment::new("production").unwrap();
+        let ctx = ResourceContext::User {
+            target_id: "alice".to_string(),
+        };
+        assert!(
+            RbacAuthorizer
+                .authorize_scoped(&u, Permission::UserWrite, &db, &env, &ctx)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn user_context_allows_admin_edit_other() {
+        let u = user_with("admin", &[Permission::UserWrite], &["*"], &["*"]);
+        let db = DatabaseName::new("app").unwrap();
+        let env = Environment::new("production").unwrap();
+        let ctx = ResourceContext::User {
+            target_id: "bob".to_string(),
+        };
+        assert!(
+            RbacAuthorizer
+                .authorize_scoped(&u, Permission::UserWrite, &db, &env, &ctx)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn user_context_denies_other_without_permission() {
+        let u = user_with("alice", &[Permission::RequestView], &["*"], &["*"]);
+        let db = DatabaseName::new("app").unwrap();
+        let env = Environment::new("production").unwrap();
+        let ctx = ResourceContext::User {
+            target_id: "bob".to_string(),
+        };
+        assert!(
+            RbacAuthorizer
+                .authorize_scoped(&u, Permission::UserWrite, &db, &env, &ctx)
+                .is_err()
         );
     }
 }

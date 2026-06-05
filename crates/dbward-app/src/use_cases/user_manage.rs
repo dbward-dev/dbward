@@ -32,7 +32,7 @@ pub struct UserSuspendOutput {
 impl UserManage {
     pub fn list(&self, user: &AuthUser) -> Result<UserListOutput, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::UserManage)
+            .authorize_global(user, Permission::UserWrite)
             .map_err(AppError::Forbidden)?;
         let users = self.user_repo.list()?;
         Ok(UserListOutput { users })
@@ -45,7 +45,7 @@ impl UserManage {
         ctx: &AuditContext,
     ) -> Result<UserSuspendOutput, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::UserManage)
+            .authorize_global(user, Permission::UserWrite)
             .map_err(AppError::Forbidden)?;
 
         // Check user exists
@@ -95,7 +95,7 @@ impl UserManage {
         ctx: &AuditContext,
     ) -> Result<(), AppError> {
         self.authorizer
-            .authorize_global(user, Permission::UserManage)
+            .authorize_global(user, Permission::UserWrite)
             .map_err(AppError::Forbidden)?;
 
         self.user_repo
@@ -148,7 +148,7 @@ mod tests {
     impl Authorizer for DenyAll {
         fn authorize_global(&self, _: &AuthUser, _: Permission) -> Result<(), AuthzError> {
             Err(AuthzError::Forbidden {
-                permission: P::UserManage,
+                permission: P::UserWrite,
                 reason: "denied".into(),
             })
         }
@@ -161,7 +161,7 @@ mod tests {
             _: &ResourceContext,
         ) -> Result<(), AuthzError> {
             Err(AuthzError::Forbidden {
-                permission: P::UserManage,
+                permission: P::UserWrite,
                 reason: "denied".into(),
             })
         }

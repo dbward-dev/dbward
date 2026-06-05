@@ -420,7 +420,7 @@ fn make_user(id: &str, roles: &[&str]) -> AuthUser {
             .map(|name| ResolvedRole {
                 name: name.to_string(),
                 permissions: [
-                    Permission::RequestCreate,
+                    Permission::RequestExecute,
                     Permission::RequestApprove,
                     Permission::RequestResume,
                     Permission::RequestCancel,
@@ -1467,14 +1467,7 @@ fn make_agent_user(id: &str) -> AuthUser {
         subject_type: SubjectType::Agent,
         roles: vec![ResolvedRole {
             name: "agent-default".into(),
-            permissions: [
-                Permission::AgentPoll,
-                Permission::AgentClaim,
-                Permission::AgentHeartbeat,
-                Permission::AgentSubmitResult,
-            ]
-            .into_iter()
-            .collect(),
+            permissions: [Permission::AgentOperate].into_iter().collect(),
             databases: vec![],
             environments: vec![],
         }],

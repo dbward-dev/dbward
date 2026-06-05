@@ -315,9 +315,9 @@ impl CreateRequest {
         let perm = if input.emergency {
             Permission::RequestBreakGlass
         } else if operation == Operation::ExecuteSelect {
-            Permission::RequestCreateSelect
+            Permission::RequestQuery
         } else {
-            Permission::RequestCreate
+            Permission::RequestExecute
         };
         self.authorizer
             .authorize_scoped(
@@ -814,7 +814,7 @@ mod tests {
             subject_type: SubjectType::User,
             roles: vec![ResolvedRole {
                 name: "app-dev".into(),
-                permissions: [Permission::RequestCreate, Permission::RequestView]
+                permissions: [Permission::RequestExecute, Permission::RequestView]
                     .into_iter()
                     .collect(),
                 databases: vec![DatabaseName::new("app").unwrap()],

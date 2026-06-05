@@ -10,7 +10,7 @@ use dbward_app::use_cases::{
     approve_request, cancel_request, create_request, get_request, get_result, list_requests,
     reject_request, resume_request, stream_result,
 };
-use dbward_domain::auth::AuthUser;
+use dbward_domain::auth::{AuthUser, Permission};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::middleware::trusted_proxies::ClientIp;
@@ -639,6 +639,10 @@ pub async fn list_results(
     Extension(user): Extension<AuthUser>,
     axum::extract::Query(query): axum::extract::Query<ListResultsQuery>,
 ) -> ApiResult {
+    state
+        .authorizer
+        .authorize_global(&user, Permission::ResultView)
+        .map_err(|e| map_error(AppError::Forbidden(e)))?;
     let limit = query.limit.unwrap_or(50).min(100);
     let results = state
         .request_reader

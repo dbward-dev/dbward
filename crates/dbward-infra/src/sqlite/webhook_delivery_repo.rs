@@ -163,29 +163,34 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
         offset: u32,
     ) -> Result<(Vec<WebhookDelivery>, u32), AppError> {
         let conn = self.conn.lock();
-        let (count_sql, query_sql) = if let Some(s) = status {
+        let (count_sql, query_sql, has_status) = if status.is_some() {
             (
-                format!("SELECT COUNT(*) FROM webhook_deliveries WHERE status = '{s}'"),
-                format!(
-                    "SELECT * FROM webhook_deliveries WHERE status = '{s}' ORDER BY created_at DESC LIMIT ?1 OFFSET ?2"
-                ),
+                "SELECT COUNT(*) FROM webhook_deliveries WHERE status = ?1",
+                "SELECT * FROM webhook_deliveries WHERE status = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+                true,
             )
         } else {
             (
-                "SELECT COUNT(*) FROM webhook_deliveries".into(),
-                "SELECT * FROM webhook_deliveries ORDER BY created_at DESC LIMIT ?1 OFFSET ?2"
-                    .into(),
+                "SELECT COUNT(*) FROM webhook_deliveries",
+                "SELECT * FROM webhook_deliveries ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+                false,
             )
         };
-        let total: u32 = conn
-            .query_row(&count_sql, [], |r| r.get(0))
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let total: u32 = if has_status {
+            conn.query_row(count_sql, params![status.unwrap()], |r| r.get(0))
+        } else {
+            conn.query_row(count_sql, [], |r| r.get(0))
+        }
+        .map_err(|e| AppError::Internal(e.to_string()))?;
         let mut stmt = conn
-            .prepare(&query_sql)
+            .prepare(query_sql)
             .map_err(|e| AppError::Internal(e.to_string()))?;
-        let rows = stmt
-            .query_and_then(params![limit, offset], row_to_delivery)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let rows = if has_status {
+            stmt.query_and_then(params![status.unwrap(), limit, offset], row_to_delivery)
+        } else {
+            stmt.query_and_then(params![limit, offset], row_to_delivery)
+        }
+        .map_err(|e| AppError::Internal(e.to_string()))?;
         let items = rows
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| AppError::Internal(e.to_string()))?;

@@ -116,7 +116,7 @@ pub async fn patch(
     Path(id): Path<String>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    use dbward_domain::auth::Permission;
+    use dbward_domain::auth::{Permission, ResourceContext};
 
     // Forbid dangerous fields
     for field in ["role", "roles", "groups", "subject_type", "status"] {
@@ -127,13 +127,16 @@ pub async fn patch(
         }
     }
 
-    // Auth: self or UserManage
-    if user.subject_id != id {
-        state
-            .authorizer
-            .authorize_global(&user, Permission::UserManage)
-            .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
-    }
+    // Auth: self-edit allowed, otherwise requires user.write
+    let ctx = ResourceContext::User {
+        target_id: id.clone(),
+    };
+    let db = dbward_domain::values::DatabaseName::wildcard();
+    let env = dbward_domain::values::Environment::wildcard();
+    state
+        .authorizer
+        .authorize_scoped(&user, Permission::UserWrite, &db, &env, &ctx)
+        .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
 
     // Extract and validate slack_user_id
     let slack_user_id = match body.get("slack_user_id") {

@@ -46,8 +46,8 @@ impl TokenVerifier for MultiUserVerifier {
                 roles: vec![ResolvedRole {
                     name: "developer".into(),
                     permissions: std::collections::HashSet::from([
-                        Permission::RequestCreate,
-                        Permission::RequestCreateSelect,
+                        Permission::RequestExecute,
+                        Permission::RequestQuery,
                         Permission::RequestView,
                         Permission::RequestCancel,
                         Permission::RequestResume,

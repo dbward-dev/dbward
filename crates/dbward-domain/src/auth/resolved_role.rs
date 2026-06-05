@@ -52,28 +52,28 @@ mod tests {
         let role = make_role(&[Permission::All], &["*"], &["*"]);
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("production").unwrap();
-        assert!(role.allows(Permission::RequestCreate, &db, &env));
-        assert!(role.allows(Permission::AuditViewAll, &db, &env));
+        assert!(role.allows(Permission::RequestExecute, &db, &env));
+        assert!(role.allows(Permission::AuditRead, &db, &env));
     }
 
     #[test]
     fn scoped_database() {
-        let role = make_role(&[Permission::RequestCreate], &["app"], &["*"]);
+        let role = make_role(&[Permission::RequestExecute], &["app"], &["*"]);
         let app = DatabaseName::new("app").unwrap();
         let analytics = DatabaseName::new("analytics").unwrap();
         let env = Environment::new("production").unwrap();
-        assert!(role.allows(Permission::RequestCreate, &app, &env));
-        assert!(!role.allows(Permission::RequestCreate, &analytics, &env));
+        assert!(role.allows(Permission::RequestExecute, &app, &env));
+        assert!(!role.allows(Permission::RequestExecute, &analytics, &env));
     }
 
     #[test]
     fn scoped_environment() {
-        let role = make_role(&[Permission::RequestCreate], &["*"], &["development"]);
+        let role = make_role(&[Permission::RequestExecute], &["*"], &["development"]);
         let db = DatabaseName::new("app").unwrap();
         let dev = Environment::new("development").unwrap();
         let prod = Environment::new("production").unwrap();
-        assert!(role.allows(Permission::RequestCreate, &db, &dev));
-        assert!(!role.allows(Permission::RequestCreate, &db, &prod));
+        assert!(role.allows(Permission::RequestExecute, &db, &dev));
+        assert!(!role.allows(Permission::RequestExecute, &db, &prod));
     }
 
     #[test]
@@ -81,6 +81,6 @@ mod tests {
         let role = make_role(&[Permission::RequestView], &["*"], &["*"]);
         let db = DatabaseName::new("app").unwrap();
         let env = Environment::new("production").unwrap();
-        assert!(!role.allows(Permission::RequestCreate, &db, &env));
+        assert!(!role.allows(Permission::RequestExecute, &db, &env));
     }
 }

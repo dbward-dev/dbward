@@ -36,12 +36,13 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
             ResolvedRole {
                 name: "developer".to_string(),
                 permissions: [
-                    Permission::RequestCreate,
-                    Permission::RequestCreateSelect,
+                    Permission::RequestExecute,
+                    Permission::RequestQuery,
                     Permission::RequestView,
                     Permission::RequestCancel,
                     Permission::RequestResume,
                     Permission::ResultView,
+                    Permission::WorkflowRead,
                     Permission::TokenRevokeOwn,
                 ]
                 .into_iter()
@@ -55,9 +56,10 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
             ResolvedRole {
                 name: "readonly".to_string(),
                 permissions: [
-                    Permission::RequestCreateSelect,
+                    Permission::RequestQuery,
                     Permission::RequestView,
                     Permission::ResultView,
+                    Permission::WorkflowRead,
                 ]
                 .into_iter()
                 .collect(),
@@ -69,14 +71,7 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
             "agent-default".to_string(),
             ResolvedRole {
                 name: "agent-default".to_string(),
-                permissions: [
-                    Permission::AgentPoll,
-                    Permission::AgentClaim,
-                    Permission::AgentHeartbeat,
-                    Permission::AgentSubmitResult,
-                ]
-                .into_iter()
-                .collect(),
+                permissions: [Permission::AgentOperate].into_iter().collect(),
                 databases: vec![wildcard_db],
                 environments: vec![wildcard_env],
             },
@@ -279,7 +274,7 @@ mod tests {
     fn developer_def() -> RoleDefinition {
         RoleDefinition {
             name: "developer".to_string(),
-            permissions: vec![Permission::RequestCreate, Permission::RequestView],
+            permissions: vec![Permission::RequestExecute, Permission::RequestView],
             databases: vec![DatabaseName::new("app").unwrap()],
             environments: vec![Environment::new("development").unwrap()],
         }
