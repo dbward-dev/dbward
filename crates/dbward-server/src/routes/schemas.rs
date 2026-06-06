@@ -27,7 +27,7 @@ pub async fn get_schema(
     Query(query): Query<SchemaQuery>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     // 1. Check DB is registered
-    let all_pairs = state.database_registry.list().map_err(map_error)?;
+    let all_pairs = state.database_registry().list().map_err(map_error)?;
     let envs_for_db: Vec<&str> = all_pairs
         .iter()
         .filter(|(d, _)| d.as_str() == db)
@@ -72,7 +72,7 @@ pub async fn get_schema(
     let mut resolved = None;
     for env in &candidates {
         let snapshot = state
-            .schema_repo
+            .schema_repo()
             .get_snapshot(&db, env)
             .map_err(map_error)?;
         if let Some(ref s) = snapshot.filter(|s| s.status == "ready") {
@@ -133,7 +133,6 @@ pub async fn get_schema(
     });
 
     if let Some(table_filter) = &query.table {
-        // Table detail mode
         let (schema_filter, name_filter) = if let Some((s, t)) = table_filter.split_once('.') {
             (Some(s), t)
         } else {
@@ -179,7 +178,6 @@ pub async fn get_schema(
             }
         }
     } else if query.summary.unwrap_or(true) {
-        // Summary mode (default)
         let summary_tables: Vec<Value> = tables
             .iter()
             .map(|t| {
@@ -197,7 +195,6 @@ pub async fn get_schema(
         resp["tables"] = json!(summary_tables);
         Ok((StatusCode::OK, Json(resp)))
     } else {
-        // Full mode
         let mut resp = base;
         resp["tables"] = json!(tables);
         Ok((StatusCode::OK, Json(resp)))

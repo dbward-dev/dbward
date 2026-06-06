@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
 };
 use dbward_app::use_cases::webhook_manage::{
-    WebhookCreateInput, WebhookDeleteInput, WebhookManage, WebhookUpdateInput,
+    WebhookCreateInput, WebhookDeleteInput, WebhookUpdateInput,
 };
 use dbward_domain::auth::AuthUser;
 use serde::Deserialize;
@@ -36,19 +36,6 @@ pub struct UpdateBody {
     pub secret: Option<Option<String>>,
 }
 
-fn make_uc(state: &AppState) -> WebhookManage {
-    WebhookManage {
-        authorizer: state.authorizer.clone(),
-        webhook_repo: state.webhook_repo.clone(),
-        ssrf_validator: state.ssrf_validator.clone(),
-        license: state.license_checker.clone(),
-        audit: state.audit_logger.clone(),
-        notifier: state.notifier.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
-    }
-}
-
 pub async fn create(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
@@ -60,7 +47,7 @@ pub async fn create(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = make_uc(&state);
+    let uc = state.admin().webhook_manage();
     let webhook = uc
         .create(
             WebhookCreateInput {
@@ -81,7 +68,7 @@ pub async fn list(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = make_uc(&state);
+    let uc = state.admin().webhook_manage();
     let webhooks = uc.list(&user).map_err(map_error)?;
     Ok((
         StatusCode::OK,
@@ -94,7 +81,7 @@ pub async fn get(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = make_uc(&state);
+    let uc = state.admin().webhook_manage();
     let webhook = uc.get(&id, &user).map_err(map_error)?;
     Ok((StatusCode::OK, Json(serde_json::json!(webhook))))
 }
@@ -111,7 +98,7 @@ pub async fn update(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = make_uc(&state);
+    let uc = state.admin().webhook_manage();
     let webhook = uc
         .update(
             WebhookUpdateInput {
@@ -140,7 +127,7 @@ pub async fn delete(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = make_uc(&state);
+    let uc = state.admin().webhook_manage();
     uc.delete(WebhookDeleteInput { id }, &user, &ctx)
         .map_err(map_error)?;
     Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
@@ -166,7 +153,7 @@ pub(super) async fn list_deliveries(
     let limit = params.limit.unwrap_or(50).min(100);
     let offset = params.offset.unwrap_or(0);
 
-    if let Some(ref repo) = state.webhook_delivery_repo {
+    if let Some(repo) = state.admin().webhook_delivery_repo() {
         let (deliveries, total) = repo
             .list_by_status(params.status.as_deref(), limit, offset)
             .map_err(map_error)?;

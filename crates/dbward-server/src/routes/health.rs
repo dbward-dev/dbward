@@ -28,8 +28,7 @@ pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<serde_jso
     let mut checks = serde_json::Map::new();
     let mut all_ok = true;
 
-    // SQLite check
-    match state.database_registry.list() {
+    match state.database_registry().list() {
         Ok(_) => {
             checks.insert("sqlite".into(), serde_json::json!("ok"));
         }
@@ -40,8 +39,7 @@ pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<serde_jso
         }
     }
 
-    // ResultStore check
-    match state.result_store.health_check().await {
+    match state.result_store().health_check().await {
         Ok(()) => {
             checks.insert("result_store".into(), serde_json::json!("ok"));
         }
@@ -75,6 +73,6 @@ pub async fn public_key(
         ));
     }
     Ok(Json(
-        serde_json::json!({"public_key": state.token_signer.public_key_hex()}),
+        serde_json::json!({"public_key": state.token_signer().public_key_hex()}),
     ))
 }

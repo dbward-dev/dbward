@@ -261,9 +261,10 @@ async fn lease_reclaim_loop(state: AppState, shutdown: CancellationToken) {
 
 pub(crate) async fn run_lease_reclaim_once(state: &AppState) -> TickResult {
     let mut result = TickResult::default();
-    let now_str = state.clock.now().to_rfc3339();
+    let bg = state.background();
+    let now_str = bg.clock().now().to_rfc3339();
 
-    let expired = match state.agent_repo.find_expired_leases(&now_str) {
+    let expired = match bg.agent_repo().find_expired_leases(&now_str) {
         Ok(v) => v,
         Err(e) => {
             error!(task = "lease_reclaim", error = %e, "db query failed");
@@ -274,8 +275,8 @@ pub(crate) async fn run_lease_reclaim_once(state: &AppState) -> TickResult {
 
     for (exec_id, req_id) in expired {
         let audit = make_audit_event("execution_lost", EventCategory::Agent, &req_id, state);
-        match state
-            .agent_repo
+        match bg
+            .agent_repo()
             .mark_execution_lost_and_record(&exec_id, &req_id, &audit, &now_str)
         {
             Ok(true) => {
@@ -311,16 +312,17 @@ async fn ttl_expiry_loop(state: AppState, shutdown: CancellationToken) {
 
 pub(crate) async fn run_ttl_expiry_once(state: &AppState) -> TickResult {
     let mut result = TickResult::default();
-    let now_str = state.clock.now().to_rfc3339();
+    let bg = state.background();
+    let now_str = bg.clock().now().to_rfc3339();
 
     // Approval TTL
-    match state.background_task_repo.find_expired_approved(&now_str) {
+    match bg.background_task_repo().find_expired_approved(&now_str) {
         Ok(ids) => {
             for id in ids {
                 let audit =
                     make_audit_event("request_expired", EventCategory::Approval, &id, state);
-                match state
-                    .background_task_repo
+                match bg
+                    .background_task_repo()
                     .mark_expired_and_record(&id, &audit, &now_str)
                 {
                     Ok(true) => {
@@ -342,13 +344,13 @@ pub(crate) async fn run_ttl_expiry_once(state: &AppState) -> TickResult {
     }
 
     // Pending TTL
-    match state.background_task_repo.find_expired_pending(&now_str) {
+    match bg.background_task_repo().find_expired_pending(&now_str) {
         Ok(ids) => {
             for id in ids {
                 let audit =
                     make_audit_event("request_expired", EventCategory::Approval, &id, state);
-                match state
-                    .background_task_repo
+                match bg
+                    .background_task_repo()
                     .mark_expired_and_record(&id, &audit, &now_str)
                 {
                     Ok(true) => {
@@ -391,12 +393,13 @@ async fn dispatch_timeout_loop(state: AppState, shutdown: CancellationToken) {
 
 pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
     let mut result = TickResult::default();
-    let now = state.clock.now();
+    let bg = state.background();
+    let now = bg.clock().now();
     let cutoff = (now - Duration::seconds(DISPATCH_TIMEOUT_SECS)).to_rfc3339();
     let now_str = now.to_rfc3339();
 
-    let ids = match state
-        .background_task_repo
+    let ids = match bg
+        .background_task_repo()
         .find_dispatched_older_than(&cutoff)
     {
         Ok(v) => v,
@@ -417,8 +420,8 @@ pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
             &AuditContext::System,
         );
         audit_event.request_id = Some(id.clone());
-        match state
-            .request_writer
+        match bg
+            .request_writer()
             .mark_approved_from_dispatched_and_record(&id, &audit_event, &now_str)
         {
             Ok(true) => {
@@ -460,12 +463,16 @@ pub(crate) async fn run_record_purge_once(
     retention: &RetentionConfig,
 ) -> TickResult {
     let mut result = TickResult::default();
-    let now = state.clock.now();
+    let now = state.background().clock().now();
     let request_cutoff = (now - Duration::days(retention.request_ttl_days as i64)).to_rfc3339();
     let audit_cutoff = (now - Duration::days(retention.audit_ttl_days as i64)).to_rfc3339();
 
     // Revoked tokens
-    match state.token_repo.purge_revoked(&request_cutoff) {
+    match state
+        .background()
+        .token_repo()
+        .purge_revoked(&request_cutoff)
+    {
         Ok(n) => {
             if n > 0 {
                 result.processed += n;
@@ -479,20 +486,23 @@ pub(crate) async fn run_record_purge_once(
     }
 
     // Old audit events
-    match state.audit_repo.purge_old(&audit_cutoff) {
+    match state.background().audit_repo().purge_old(&audit_cutoff) {
         Ok(n) => {
             if n > 0 {
                 result.processed += n;
                 info!(task = "record_purge", count = n, "purged old audit events");
                 // A8: Record the purge action itself
-                let _ = state.audit_logger.record(&AuditEvent::simple(
-                    "audit_purged",
-                    "policy",
-                    "system",
-                    None,
-                    state.clock.now(),
-                    &AuditContext::System,
-                ));
+                let _ = state
+                    .background()
+                    .audit_logger()
+                    .record(&AuditEvent::simple(
+                        "audit_purged",
+                        "policy",
+                        "system",
+                        None,
+                        state.background().clock().now(),
+                        &AuditContext::System,
+                    ));
             }
         }
         Err(e) => {
@@ -503,7 +513,8 @@ pub(crate) async fn run_record_purge_once(
 
     // Old requests
     match state
-        .background_task_repo
+        .background()
+        .background_task_repo()
         .purge_old_requests(&request_cutoff)
     {
         Ok(n) => {
@@ -520,13 +531,17 @@ pub(crate) async fn run_record_purge_once(
 
     // Expired results (storage delete → DB delete)
     let now_str = now.to_rfc3339();
-    match state.agent_repo.find_expired_results(&now_str) {
+    match state
+        .background()
+        .agent_repo()
+        .find_expired_results(&now_str)
+    {
         Ok(expired) => {
             for (result_id, storage_key) in expired {
-                match state.result_store.delete(&storage_key).await {
+                match state.background().result_store().delete(&storage_key).await {
                     Ok(()) => {
                         // Storage deleted successfully → safe to remove DB record
-                        if let Err(e) = state.agent_repo.delete_result(&result_id) {
+                        if let Err(e) = state.background().agent_repo().delete_result(&result_id) {
                             error!(task = "record_purge", result_id = %result_id, error = %e, "db delete failed after storage delete");
                             result.failed += 1;
                         } else {
@@ -556,19 +571,20 @@ fn make_audit_event(
     request_id: &str,
     state: &AppState,
 ) -> AuditEvent {
+    let bg = state.background();
     let mut event = AuditEvent::simple(
         event_type,
         "approval",
         "system",
         Some(request_id),
-        state.clock.now(),
+        bg.clock().now(),
         &dbward_domain::entities::AuditContext::System,
     );
     event.actor_type = ActorType::System;
     event.request_id = Some(request_id.to_string());
     event.outcome = EventOutcome::Success;
     event.event_category = category;
-    match state.request_reader.get(request_id) {
+    match bg.request_reader().get(request_id) {
         Ok(Some(req)) => {
             event.database_name = Some(req.database.to_string());
             event.environment = Some(req.environment.to_string());
@@ -588,10 +604,8 @@ fn make_audit_event(
 }
 
 fn emit_webhook(state: &AppState, event_type: &str, request_id: &str) {
-    // Enrich with request data for Slack notification
-    // (sync DB read — acceptable for low-frequency background events;
-    //  consider spawn_blocking if scaling beyond 30 users)
-    let (database, environment, requester, operation) = match state.request_reader.get(request_id) {
+    let bg = state.background();
+    let (database, environment, requester, operation) = match bg.request_reader().get(request_id) {
         Ok(Some(req)) => (
             Some(req.database.as_str().to_string()),
             Some(req.environment.as_str().to_string()),
@@ -620,10 +634,9 @@ fn emit_webhook(state: &AppState, event_type: &str, request_id: &str) {
         approvers: None,
     };
 
-    state.notifier.dispatch(event.clone());
+    bg.notifier().dispatch(event.clone());
 
-    // Also notify Slack (request_notifier)
-    if let Some(ref rn) = state.request_notifier {
+    if let Some(rn) = bg.request_notifier() {
         rn.dispatch(event);
     }
 }
@@ -648,11 +661,11 @@ async fn webhook_retry_loop(state: AppState, shutdown: CancellationToken) {
 
 pub(crate) async fn run_webhook_retry_once(state: &AppState) -> TickResult {
     let mut result = TickResult::default();
-    let now = state.clock.now();
+    let now = state.background().clock().now();
 
     // Reclaim stale in_progress deliveries (crashed workers)
     let stale_cutoff = (now - Duration::seconds(WEBHOOK_STALE_CLAIM_SECS)).to_rfc3339();
-    if let Some(ref repo) = state.webhook_delivery_repo {
+    if let Some(repo) = state.background().webhook_delivery_repo() {
         match repo.reclaim_stale(&stale_cutoff) {
             Ok(n) if n > 0 => info!(
                 task = "webhook_retry",
@@ -669,7 +682,8 @@ pub(crate) async fn run_webhook_retry_once(state: &AppState) -> TickResult {
             Ok(deliveries) => {
                 for delivery in deliveries {
                     let send_result = state
-                        .webhook_sender
+                        .background()
+                        .webhook_sender()
                         .send_one(&delivery.webhook_id, &delivery.payload, None)
                         .await;
                     match send_result {
@@ -721,8 +735,8 @@ async fn dry_run_reclaim_loop(state: AppState, shutdown: CancellationToken) {
         tokio::select! {
             _ = shutdown.cancelled() => break,
             _ = interval.tick() => {
-                let cutoff = (state.clock.now() - chrono::Duration::seconds(60)).to_rfc3339();
-                match state.dry_run_repo.reclaim_stale(&cutoff) {
+                let cutoff = (state.background().clock().now() - chrono::Duration::seconds(60)).to_rfc3339();
+                match state.background().dry_run_repo().reclaim_stale(&cutoff) {
                     Ok(n) if n > 0 => {
                         tracing::info!(task = "dry_run_reclaim", reclaimed = n, "reclaimed stale dry-run jobs");
                     }
@@ -742,10 +756,10 @@ async fn context_timeout_loop(state: AppState, shutdown: CancellationToken) {
         tokio::select! {
             _ = shutdown.cancelled() => break,
             _ = interval.tick() => {
-                let now = state.clock.now();
+                let now = state.background().clock().now();
                 let cutoff = (now - chrono::Duration::seconds(300)).to_rfc3339();
                 let now_str = now.to_rfc3339();
-                match state.context_repo.timeout_collecting(&cutoff, &now_str) {
+                match state.background().context_repo().timeout_collecting(&cutoff, &now_str) {
                     Ok(n) if n > 0 => {
                         tracing::info!(task = "context_timeout", timed_out = n, "marked collecting contexts as unavailable");
                     }
@@ -767,7 +781,7 @@ async fn license_expiry_loop(state: AppState, shutdown: CancellationToken) {
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                state.license_checker.check_expiry(state.clock.now());
+                state.background().license_checker().check_expiry(state.background().clock().now());
             }
             _ = shutdown.cancelled() => break,
         }

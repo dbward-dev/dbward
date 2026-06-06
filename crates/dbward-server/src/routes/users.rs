@@ -3,7 +3,7 @@ use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
 };
-use dbward_app::use_cases::user_manage::{UserManage, UserSuspendInput};
+use dbward_app::use_cases::user_manage::UserSuspendInput;
 use dbward_domain::auth::AuthUser;
 
 use crate::middleware::trusted_proxies::ClientIp;
@@ -39,14 +39,7 @@ pub async fn list(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = UserManage {
-        authorizer: state.authorizer.clone(),
-        user_repo: state.user_repo.clone(),
-        token_repo: state.token_repo.clone(),
-        request_writer: state.request_writer.clone(),
-        audit: state.audit_logger.clone(),
-        clock: state.clock.clone(),
-    };
+    let uc = state.users().manage();
     let output = uc.list(&user).map_err(map_error)?;
     Ok((
         StatusCode::OK,
@@ -65,14 +58,7 @@ pub async fn suspend(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = UserManage {
-        authorizer: state.authorizer.clone(),
-        user_repo: state.user_repo.clone(),
-        token_repo: state.token_repo.clone(),
-        request_writer: state.request_writer.clone(),
-        audit: state.audit_logger.clone(),
-        clock: state.clock.clone(),
-    };
+    let uc = state.users().manage();
     let output = uc
         .suspend(UserSuspendInput { user_id: id }, &user, &ctx)
         .map_err(map_error)?;
@@ -98,14 +84,7 @@ pub async fn activate(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = UserManage {
-        authorizer: state.authorizer.clone(),
-        user_repo: state.user_repo.clone(),
-        token_repo: state.token_repo.clone(),
-        request_writer: state.request_writer.clone(),
-        audit: state.audit_logger.clone(),
-        clock: state.clock.clone(),
-    };
+    let uc = state.users().manage();
     uc.activate(&id, &user, &ctx).map_err(map_error)?;
     Ok((StatusCode::OK, Json(serde_json::json!({ "id": id }))))
 }
@@ -118,7 +97,6 @@ pub async fn patch(
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     use dbward_domain::auth::{Permission, ResourceContext};
 
-    // Forbid dangerous fields
     for field in ["role", "roles", "groups", "subject_type", "status"] {
         if body.get(field).is_some() {
             return Err(map_error(dbward_app::error::AppError::Validation(format!(
@@ -127,7 +105,6 @@ pub async fn patch(
         }
     }
 
-    // Auth: self-edit allowed, otherwise requires user.write
     let ctx = ResourceContext::User {
         target_id: id.clone(),
     };
@@ -138,10 +115,8 @@ pub async fn patch(
         .authorize_scoped(&user, Permission::UserWrite, &db, &env, &ctx)
         .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
 
-    // Extract and validate slack_user_id
     let slack_user_id = match body.get("slack_user_id") {
         Some(serde_json::Value::String(s)) => {
-            // Validate: ^[UW][A-Z0-9]+$
             let valid = s.len() >= 2
                 && matches!(s.as_bytes()[0], b'U' | b'W')
                 && s[1..]
@@ -168,7 +143,8 @@ pub async fn patch(
     };
 
     state
-        .user_repo
+        .users()
+        .user_repo()
         .update_slack_user_id(&id, slack_user_id.as_deref())
         .map_err(map_error)?;
 

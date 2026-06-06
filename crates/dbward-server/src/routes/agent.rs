@@ -4,10 +4,8 @@ use axum::{
     http::StatusCode,
 };
 use dbward_app::use_cases::{
-    agent_claim::{AgentClaim, AgentClaimInput},
-    agent_heartbeat::{AgentHeartbeat, AgentHeartbeatInput},
-    agent_poll::{AgentPoll, AgentPollInput},
-    agent_submit_result::{AgentSubmitResult, AgentSubmitResultInput},
+    agent_claim::AgentClaimInput, agent_heartbeat::AgentHeartbeatInput, agent_poll::AgentPollInput,
+    agent_submit_result::AgentSubmitResultInput,
 };
 use dbward_domain::auth::{AuthUser, SubjectType};
 use serde::Deserialize;
@@ -57,7 +55,6 @@ pub async fn poll(
 
     require_agent(&user)?;
 
-    // Convert PollBodyCapabilities to Vec<DatabaseCapability>
     use dbward_domain::entities::DatabaseCapability;
     use dbward_domain::values::{DatabaseName, Environment};
     let envs = if body.capabilities.environments.is_empty() {
@@ -119,12 +116,7 @@ pub async fn poll(
         None => (0, 4, 0, false, vec![]),
     };
 
-    let uc = AgentPoll {
-        authorizer: state.authorizer.clone(),
-        agent_repo: state.agent_repo.clone(),
-        audit_logger: state.audit_logger.clone(),
-        clock: state.clock.clone(),
-    };
+    let uc = state.agent().poll();
     let output = uc
         .execute(
             AgentPollInput {
@@ -166,7 +158,7 @@ pub async fn poll(
             .collect()
     };
 
-    // Fetch pending dry-run jobs for this agent's databases
+    // Fetch pending dry-run jobs
     let db_pairs: Vec<(String, String)> = databases
         .iter()
         .flat_map(|db| {
@@ -178,7 +170,11 @@ pub async fn poll(
     let dry_run_jobs: Vec<serde_json::Value> = if upgrade_required || db_pairs.is_empty() {
         vec![]
     } else {
-        match state.dry_run_repo.find_pending_for_agent(&db_pairs) {
+        match state
+            .agent()
+            .dry_run_repo()
+            .find_pending_for_agent(&db_pairs)
+        {
             Ok(jobs) => jobs
                 .iter()
                 .map(|j| {
@@ -231,9 +227,9 @@ pub async fn claim(
         connect_info.as_ref().map(|e| &e.0),
     );
 
-    // Fetch agent's registered capabilities
     let agent = state
-        .agent_repo
+        .agent()
+        .agent_repo()
         .get(&user.subject_id)
         .map_err(map_error)?
         .ok_or_else(|| {
@@ -242,18 +238,7 @@ pub async fn claim(
             ))
         })?;
 
-    let uc = AgentClaim {
-        authorizer: state.authorizer.clone(),
-        request_reader: state.request_reader.clone(),
-        agent_repo: state.agent_repo.clone(),
-        policy: state.policy_evaluator.clone(),
-        token_signer: state.token_signer.clone(),
-        event_dispatcher: state.event_dispatcher.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
-        user_repo: state.user_repo.clone(),
-        role_resolver: state.role_resolver.clone(),
-    };
+    let uc = state.agent().claim();
     let output = uc
         .execute(
             AgentClaimInput {
@@ -289,14 +274,7 @@ pub async fn heartbeat(
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
-    let uc = AgentHeartbeat {
-        authorizer: state.authorizer.clone(),
-        agent_repo: state.agent_repo.clone(),
-        request_reader: state.request_reader.clone(),
-        policy: state.policy_evaluator.clone(),
-        event_dispatcher: state.event_dispatcher.clone(),
-        clock: state.clock.clone(),
-    };
+    let uc = state.agent().heartbeat();
     let output = uc
         .execute(AgentHeartbeatInput { execution_id: id }, &user)
         .map_err(map_error)?;
@@ -331,18 +309,7 @@ pub async fn submit_result(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = AgentSubmitResult {
-        authorizer: state.authorizer.clone(),
-        agent_repo: state.agent_repo.clone(),
-        request_reader: state.request_reader.clone(),
-        result_store: state.result_store.clone(),
-        result_channel: state.result_channel.clone(),
-        event_dispatcher: state.event_dispatcher.clone(),
-        clock: state.clock.clone(),
-        max_persist_bytes: state.max_persist_bytes,
-        policy_repo: state.policy_repo.clone(),
-        storage_backend: state.storage_backend.clone(),
-    };
+    let uc = state.agent().submit_result();
     let result_data = body.result_data.map(|s| s.into_bytes());
     let output = uc
         .execute(
@@ -380,7 +347,7 @@ pub async fn list_agents(
         .authorize_global(&user, Permission::MetricsView)
         .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
 
-    let agents = state.agent_repo.list().map_err(map_error)?;
+    let agents = state.agent().agent_repo().list().map_err(map_error)?;
     let now = chrono::Utc::now();
 
     let enriched: Vec<serde_json::Value> = agents
@@ -388,7 +355,6 @@ pub async fn list_agents(
         .map(|a| {
             let derived = a.derived_status(now);
             let is_draining = a.status == dbward_domain::entities::AgentStatus::Draining;
-            // Display status: offline > draining > saturated > healthy
             let display_status = if derived == dbward_domain::entities::AgentDerivedStatus::Offline
             {
                 "offline"
@@ -403,7 +369,6 @@ pub async fn list_agents(
                 .last_seen
                 .map(|ls| now.signed_duration_since(ls).num_seconds().max(0))
                 .unwrap_or(9999);
-            // Offline agents: clear stale active_jobs
             let active_jobs = if display_status == "offline" {
                 &[][..]
             } else {
@@ -455,13 +420,7 @@ pub async fn schema_sync(
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
 
-    let uc = dbward_app::use_cases::schema_sync::SchemaSync {
-        agent_repo: state.agent_repo.clone(),
-        schema_repo: state.schema_repo.clone(),
-        database_registry: state.database_registry.clone(),
-        audit_logger: state.audit_logger.clone(),
-        clock: state.clock.clone(),
-    };
+    let uc = state.agent().schema_sync();
     uc.execute(dbward_app::use_cases::schema_sync::SchemaSyncInput {
         agent_id: user.subject_id.clone(),
         database: body.database,
@@ -483,12 +442,7 @@ pub async fn dry_run_claim(
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
 
-    let uc = dbward_app::use_cases::dry_run::DryRunClaim {
-        dry_run_repo: state.dry_run_repo.clone(),
-        agent_repo: state.agent_repo.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
-    };
+    let uc = state.agent().dry_run_claim();
     let claim_token = uc.execute(&id, &user.subject_id).map_err(map_error)?;
     Ok((
         StatusCode::OK,
@@ -511,11 +465,7 @@ pub async fn dry_run_result(
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
 
-    let uc = dbward_app::use_cases::dry_run::DryRunSubmitResult {
-        dry_run_repo: state.dry_run_repo.clone(),
-        context_repo: state.context_repo.clone(),
-        clock: state.clock.clone(),
-    };
+    let uc = state.agent().dry_run_submit();
     let result_str = body.result.as_ref().map(|v| v.to_string());
     uc.execute(dbward_app::use_cases::dry_run::DryRunResultInput {
         job_id: &id,
@@ -528,6 +478,7 @@ pub async fn dry_run_result(
 
     Ok(StatusCode::OK)
 }
+
 #[cfg(test)]
 mod tests {
     use super::version_lt;

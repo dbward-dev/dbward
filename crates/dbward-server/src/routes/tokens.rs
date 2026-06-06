@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
 };
 use chrono::{DateTime, Utc};
-use dbward_app::use_cases::token_manage::{TokenCreateInput, TokenManage, TokenRevokeInput};
+use dbward_app::use_cases::token_manage::{TokenCreateInput, TokenRevokeInput};
 use dbward_domain::auth::AuthUser;
 use serde::Deserialize;
 
@@ -36,17 +36,7 @@ pub async fn create(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = TokenManage {
-        authorizer: state.authorizer.clone(),
-        token_repo: state.token_repo.clone(),
-        user_repo: state.user_repo.clone(),
-        policy_repo: state.policy_repo.clone(),
-        license: state.license_checker.clone(),
-        audit: state.audit_logger.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
-        token_gen: state.token_value_generator.clone(),
-    };
+    let uc = state.tokens().manage();
     let output = uc
         .create(
             TokenCreateInput {
@@ -79,17 +69,7 @@ pub async fn list(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = TokenManage {
-        authorizer: state.authorizer.clone(),
-        token_repo: state.token_repo.clone(),
-        user_repo: state.user_repo.clone(),
-        policy_repo: state.policy_repo.clone(),
-        license: state.license_checker.clone(),
-        audit: state.audit_logger.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
-        token_gen: state.token_value_generator.clone(),
-    };
+    let uc = state.tokens().manage();
     let output = uc.list(&user).map_err(map_error)?;
     let tokens: Vec<serde_json::Value> = output
         .tokens
@@ -127,17 +107,7 @@ pub async fn revoke(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = TokenManage {
-        authorizer: state.authorizer.clone(),
-        token_repo: state.token_repo.clone(),
-        user_repo: state.user_repo.clone(),
-        policy_repo: state.policy_repo.clone(),
-        license: state.license_checker.clone(),
-        audit: state.audit_logger.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
-        token_gen: state.token_value_generator.clone(),
-    };
+    let uc = state.tokens().manage();
     let output = uc
         .revoke(TokenRevokeInput { token_id: id }, &user, &ctx)
         .map_err(map_error)?;

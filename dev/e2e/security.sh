@@ -65,9 +65,9 @@ if [ -n "$ADMIN_TOKEN" ]; then
 fi
 
 if [ -n "$DEV_TOKEN" ]; then
-  # Developer cannot CRUD policies
+  # Developer can list workflows (has workflow.read) but cannot create
   STATUS=$(api_status GET /api/workflows "$DEV_TOKEN")
-  [ "$STATUS" = "403" ] && pass "Developer cannot list workflows" || fail "Dev workflows" "got $STATUS"
+  [ "$STATUS" = "200" ] && pass "Developer can list workflows" || fail "Dev workflows" "got $STATUS"
 
   STATUS=$(api_status POST /api/workflows "$DEV_TOKEN" -d '{"database":"x","environment":"y"}')
   [ "$STATUS" = "403" ] && pass "Developer cannot create workflow" || fail "Dev create workflow" "got $STATUS"

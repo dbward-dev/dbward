@@ -6,11 +6,8 @@ use axum::{
 use serde_json::json;
 
 use dbward_app::error::AppError;
-use dbward_app::use_cases::{
-    approve_request, cancel_request, create_request, get_request, get_result, list_requests,
-    reject_request, resume_request, stream_result,
-};
-use dbward_domain::auth::{AuthUser, Permission};
+use dbward_app::use_cases::{create_request, list_requests, stream_result};
+use dbward_domain::auth::AuthUser;
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::middleware::trusted_proxies::ClientIp;
@@ -70,23 +67,7 @@ pub async fn create(
         channel: create_request::RequestChannel::Api,
     };
 
-    let uc = create_request::CreateRequest {
-        authorizer: state.authorizer.clone(),
-        policy: state.policy_evaluator.clone(),
-        request_reader: state.request_reader.clone(),
-        request_writer: state.request_writer.clone(),
-        db_registry: state.database_registry.clone(),
-        schema_repo: state.schema_repo.clone(),
-        dry_run_repo: state.dry_run_repo.clone(),
-        context_repo: state.context_repo.clone(),
-        event_dispatcher: state.event_dispatcher.clone(),
-        audit_logger: state.audit_logger.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
-        default_approval_ttl_secs: state.default_approval_ttl_secs,
-        review_rules: state.sql_review_rules.clone(),
-        auto_approve_entries: state.auto_approve_entries.clone(),
-    };
+    let uc = state.requests().create();
 
     match uc.execute(input, &user, &audit_ctx) {
         Ok(out) => {
@@ -117,10 +98,7 @@ pub async fn list(
     Extension(user): Extension<AuthUser>,
     axum::extract::Query(params): axum::extract::Query<ListParams>,
 ) -> ApiResult {
-    let uc = list_requests::ListRequests {
-        request_reader: state.request_reader.clone(),
-        authorizer: state.authorizer.clone(),
-    };
+    let uc = state.requests().list();
     let output = uc
         .execute(
             list_requests::ListRequestsInput {
@@ -203,12 +181,7 @@ pub async fn get(
     Path(id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<GetRequestQuery>,
 ) -> ApiResult {
-    let uc = get_request::GetRequest {
-        request_reader: state.request_reader.clone(),
-        approval_repo: state.approval_repo.clone(),
-        authorizer: state.authorizer.clone(),
-        context_repo: state.context_repo.clone(),
-    };
+    let uc = state.requests().get();
 
     // Authorize BEFORE any waiting
     let output = uc.execute(&id, &user).map_err(map_error)?;
@@ -235,7 +208,7 @@ pub async fn get(
                 if tokio::time::Instant::now() >= deadline {
                     break;
                 }
-                match state.request_reader.get(&id) {
+                match state.request_reader().get(&id) {
                     Ok(Some(r)) if r.status != original_status => {
                         break;
                     }
@@ -302,16 +275,9 @@ pub async fn approve(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = approve_request::ApproveRequest {
-        authorizer: state.authorizer.clone(),
-        request_reader: state.request_reader.clone(),
-        approval_repo: state.approval_repo.clone(),
-        event_dispatcher: state.event_dispatcher.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
-    };
+    let uc = state.requests().approve();
 
-    let input = approve_request::ApproveRequestInput {
+    let input = dbward_app::use_cases::approve_request::ApproveRequestInput {
         request_id: id,
         comment: body["comment"].as_str().map(String::from),
     };
@@ -344,16 +310,9 @@ pub async fn reject(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = reject_request::RejectRequest {
-        authorizer: state.authorizer.clone(),
-        request_reader: state.request_reader.clone(),
-        approval_repo: state.approval_repo.clone(),
-        event_dispatcher: state.event_dispatcher.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
-    };
+    let uc = state.requests().reject();
 
-    let input = reject_request::RejectRequestInput {
+    let input = dbward_app::use_cases::reject_request::RejectRequestInput {
         request_id: id,
         comment: body["comment"].as_str().map(String::from),
     };
@@ -382,15 +341,9 @@ pub async fn cancel(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = cancel_request::CancelRequest {
-        authorizer: state.authorizer.clone(),
-        request_reader: state.request_reader.clone(),
-        request_writer: state.request_writer.clone(),
-        event_dispatcher: state.event_dispatcher.clone(),
-        clock: state.clock.clone(),
-    };
+    let uc = state.requests().cancel();
 
-    let input = cancel_request::CancelRequestInput {
+    let input = dbward_app::use_cases::cancel_request::CancelRequestInput {
         request_id: id,
         reason: body["reason"].as_str().map(String::from),
     };
@@ -418,18 +371,9 @@ pub async fn resume(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = resume_request::ResumeRequest {
-        authorizer: state.authorizer.clone(),
-        policy: state.policy_evaluator.clone(),
-        request_reader: state.request_reader.clone(),
-        request_writer: state.request_writer.clone(),
-        result_channel: state.result_channel.clone(),
-        event_dispatcher: state.event_dispatcher.clone(),
-        policy_repo: state.policy_repo.clone(),
-        clock: state.clock.clone(),
-    };
+    let uc = state.requests().resume();
 
-    let input = resume_request::ResumeRequestInput { request_id: id };
+    let input = dbward_app::use_cases::resume_request::ResumeRequestInput { request_id: id };
 
     match uc.execute(input, &user, &audit_ctx) {
         Ok(out) => Ok((
@@ -448,12 +392,7 @@ pub async fn stream_result(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> ApiResult {
-    let uc = stream_result::StreamResult {
-        authorizer: state.authorizer.clone(),
-        request_reader: state.request_reader.clone(),
-        result_channel: state.result_channel.clone(),
-        policy_repo: state.policy_repo.clone(),
-    };
+    let uc = state.requests().stream_result();
 
     let input = stream_result::StreamResultInput {
         request_id: id.clone(),
@@ -474,16 +413,8 @@ pub async fn stream_result(
                 })),
             )),
             stream_result::StreamResultData::TerminalPlaceholder { success: _ } => {
-                // Fetch full result from storage
-                let get_uc = get_result::GetResult {
-                    authorizer: state.authorizer.clone(),
-                    request_reader: state.request_reader.clone(),
-                    agent_repo: state.agent_repo.clone(),
-                    result_store: state.result_store.clone(),
-                    policy_repo: state.policy_repo.clone(),
-                    clock: state.clock.clone(),
-                };
-                let get_input = get_result::GetResultInput {
+                let get_uc = state.requests().get_result();
+                let get_input = dbward_app::use_cases::get_result::GetResultInput {
                     request_id: id.clone(),
                     execution_id: None,
                 };
@@ -499,10 +430,7 @@ pub async fn stream_result(
                             )),
                         ))
                     }
-                    Err(AppError::Gone(msg)) => {
-                        // no_store / stream-only / expired → return 410 (consistent with /result/content)
-                        Err(map_error(AppError::Gone(msg)))
-                    }
+                    Err(AppError::Gone(msg)) => Err(map_error(AppError::Gone(msg))),
                     Err(e) => Err(map_error(e)),
                 }
             }
@@ -520,16 +448,9 @@ pub async fn get_result(
     Path(id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<GetResultQuery>,
 ) -> ApiResult {
-    let uc = get_result::GetResult {
-        authorizer: state.authorizer.clone(),
-        request_reader: state.request_reader.clone(),
-        agent_repo: state.agent_repo.clone(),
-        result_store: state.result_store.clone(),
-        policy_repo: state.policy_repo.clone(),
-        clock: state.clock.clone(),
-    };
+    let uc = state.requests().get_result();
 
-    let input = get_result::GetResultInput {
+    let input = dbward_app::use_cases::get_result::GetResultInput {
         request_id: id,
         execution_id: query.execution_id,
     };
@@ -545,7 +466,6 @@ fn build_result_envelope(execution_id: &str, success: bool, raw_bytes: &[u8]) ->
     let raw_text = String::from_utf8_lossy(raw_bytes);
 
     if !success {
-        // Failure: stored content is error JSON like {"success":false,"error":"..."}
         let stored: serde_json::Value = serde_json::from_slice(raw_bytes).unwrap_or(json!(null));
         return json!({
             "_dbward_result": true,
@@ -558,7 +478,6 @@ fn build_result_envelope(execution_id: &str, success: bool, raw_bytes: &[u8]) ->
         });
     }
 
-    // Success: stored content is the result_data string
     let stored: serde_json::Value = serde_json::from_slice(raw_bytes).unwrap_or(json!(null));
 
     json!({
@@ -578,36 +497,23 @@ pub async fn list_executions(
     Path(id): Path<String>,
     axum::extract::Query(query): axum::extract::Query<ListExecutionsQuery>,
 ) -> ApiResult {
-    // Authorize: same as request visibility
-    let _request = state
-        .request_reader
-        .get(&id)
-        .map_err(map_error)?
-        .ok_or_else(|| map_error(AppError::NotFound("request not found".into())))?;
-
-    // Reuse request get authorization
-    let uc = get_request::GetRequest {
-        request_reader: state.request_reader.clone(),
-        approval_repo: state.approval_repo.clone(),
-        authorizer: state.authorizer.clone(),
-        context_repo: state.context_repo.clone(),
-    };
+    // Authorize via get request UC
+    let uc = state.requests().get();
     uc.execute(&id, &user).map_err(map_error)?;
 
     let executions = state
-        .agent_repo
+        .agent()
+        .agent_repo()
         .find_executions_for_request(&id)
         .map_err(map_error)?;
 
     let limit = query.limit.unwrap_or(20).min(100) as usize;
 
-    // Sort by created_at DESC (most recent first) and limit
     let mut sorted = executions;
     sorted.sort_by_key(|e| std::cmp::Reverse(e.created_at));
 
-    // Check which executions actually have stored results
     let stored_ids: std::collections::HashSet<String> = state
-        .request_reader
+        .request_reader()
         .find_stored_execution_ids(&id)
         .map_err(map_error)?
         .into_iter()
@@ -639,23 +545,9 @@ pub async fn list_results(
     Extension(user): Extension<AuthUser>,
     axum::extract::Query(query): axum::extract::Query<ListResultsQuery>,
 ) -> ApiResult {
-    state
-        .authorizer
-        .authorize_global(&user, Permission::ResultView)
-        .map_err(|e| map_error(AppError::Forbidden(e)))?;
     let limit = query.limit.unwrap_or(50).min(100);
     let results = state
-        .request_reader
-        .list_results_for_user(
-            &user.subject_id,
-            &user.groups,
-            &user
-                .roles
-                .iter()
-                .map(|r| r.name.clone())
-                .collect::<Vec<_>>(),
-            limit,
-        )
+        .list_results_for_user(&user, limit)
         .map_err(map_error)?;
     let items: Vec<serde_json::Value> = results
         .iter()
@@ -684,14 +576,13 @@ fn compute_queue_hint(
         return None;
     }
 
-    let agents = match state.agent_repo.list() {
+    let agents = match state.agent().agent_repo().list() {
         Ok(a) => a,
         Err(_) => return None,
     };
 
-    let now = state.clock.now();
+    let now = state.clock().now();
 
-    // Filter to agents whose capabilities include this request's db/env
     let eligible: Vec<_> = agents
         .iter()
         .filter(|a| {
@@ -705,7 +596,6 @@ fn compute_queue_hint(
         return Some("no_agents");
     }
 
-    // Offline takes priority — agent is truly gone
     let all_offline = eligible
         .iter()
         .all(|a| a.derived_status(now) == AgentDerivedStatus::Offline);
@@ -713,7 +603,6 @@ fn compute_queue_hint(
         return Some("no_agents");
     }
 
-    // Draining — agent is alive but refusing new work
     let all_draining = eligible.iter().all(|a| a.status == AgentStatus::Draining);
     if all_draining {
         return Some("agents_draining");

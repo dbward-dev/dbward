@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use dbward_app::use_cases::token_manage::{TokenCreateInput, TokenManage};
+use dbward_app::use_cases::token_manage::TokenCreateInput;
 use dbward_domain::auth::{AuthUser, Permission, ResolvedRole, SubjectType};
 use dbward_domain::entities::TokenStatus;
 use dbward_domain::values::{DatabaseName, Environment};
@@ -29,17 +29,7 @@ pub fn create_bootstrap_token(
     role: &str,
     is_agent: bool,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let uc = TokenManage {
-        authorizer: state.authorizer.clone(),
-        token_repo: state.token_repo.clone(),
-        user_repo: state.user_repo.clone(),
-        policy_repo: state.policy_repo.clone(),
-        license: state.license_checker.clone(),
-        audit: state.audit_logger.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
-        token_gen: state.token_value_generator.clone(),
-    };
+    let uc = state.tokens().manage();
 
     let subject_type = if is_agent { "agent" } else { "user" };
     let output = uc.create(
@@ -65,7 +55,7 @@ pub fn auto_bootstrap(
     state_dir: &Path,
     force: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let token_repo = &state.token_repo;
+    let token_repo = state.token_repo();
     let agent_token_path = state_dir.join("agent-token");
     let admin_token_path = state_dir.join("admin-token");
 
