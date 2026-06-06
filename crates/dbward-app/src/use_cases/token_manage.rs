@@ -65,7 +65,7 @@ impl TokenManage {
         ctx: &dbward_domain::entities::AuditContext,
     ) -> Result<TokenCreateOutput, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::TokenManage)
+            .authorize_global(user, Permission::TokenWrite)
             .map_err(AppError::Forbidden)?;
 
         // Validation
@@ -189,7 +189,7 @@ impl TokenManage {
 
     pub fn list(&self, user: &AuthUser) -> Result<TokenListOutput, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::TokenManage)
+            .authorize_global(user, Permission::TokenWrite)
             .map_err(AppError::Forbidden)?;
         let tokens = self.token_repo.list()?;
         Ok(TokenListOutput { tokens })
@@ -213,7 +213,7 @@ impl TokenManage {
                 .map_err(AppError::Forbidden)?;
         } else {
             self.authorizer
-                .authorize_global(user, Permission::TokenManage)
+                .authorize_global(user, Permission::TokenWrite)
                 .map_err(AppError::Forbidden)?;
         }
 

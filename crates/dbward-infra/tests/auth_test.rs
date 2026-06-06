@@ -21,7 +21,7 @@ fn rbac_with_config_role_resolver() {
         },
         RoleDefinition {
             name: "developer".into(),
-            permissions: vec![Permission::RequestCreate, Permission::RequestView],
+            permissions: vec![Permission::RequestExecute, Permission::RequestView],
             databases: vec![DatabaseName::new("app").unwrap()],
             environments: vec![Environment::new("development").unwrap()],
         },
@@ -45,7 +45,7 @@ fn rbac_with_config_role_resolver() {
         RbacAuthorizer
             .authorize_scoped(
                 &alice,
-                Permission::RequestCreate,
+                Permission::RequestExecute,
                 &db,
                 &env,
                 &ResourceContext::Global
@@ -69,7 +69,7 @@ fn rbac_with_config_role_resolver() {
         RbacAuthorizer
             .authorize_scoped(
                 &bob,
-                Permission::RequestCreate,
+                Permission::RequestExecute,
                 &db,
                 &dev,
                 &ResourceContext::Global
@@ -81,7 +81,7 @@ fn rbac_with_config_role_resolver() {
         RbacAuthorizer
             .authorize_scoped(
                 &bob,
-                Permission::RequestCreate,
+                Permission::RequestExecute,
                 &db,
                 &env,
                 &ResourceContext::Global

@@ -50,7 +50,7 @@ impl AgentSubmitResult {
     ) -> Result<AgentSubmitResultOutput, AppError> {
         // 1. Authorization (global)
         self.authorizer
-            .authorize_global(user, Permission::AgentSubmitResult)
+            .authorize_global(user, Permission::AgentOperate)
             .map_err(AppError::Forbidden)?;
 
         // 2. Get execution
@@ -63,7 +63,7 @@ impl AgentSubmitResult {
         self.authorizer
             .authorize_scoped(
                 user,
-                Permission::AgentSubmitResult,
+                Permission::AgentOperate,
                 &dbward_domain::values::DatabaseName::wildcard(),
                 &dbward_domain::values::Environment::wildcard(),
                 &ResourceContext::AgentExecution {
@@ -753,7 +753,7 @@ mod tests {
             subject_type: SubjectType::Agent,
             roles: vec![ResolvedRole {
                 name: "agent-default".into(),
-                permissions: [P::AgentSubmitResult].into_iter().collect(),
+                permissions: [P::AgentOperate].into_iter().collect(),
                 databases: vec![],
                 environments: vec![],
             }],

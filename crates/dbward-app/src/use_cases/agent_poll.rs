@@ -46,7 +46,7 @@ impl AgentPoll {
     ) -> Result<AgentPollOutput, AppError> {
         // 1. Authorization
         self.authorizer
-            .authorize_global(user, Permission::AgentPoll)
+            .authorize_global(user, Permission::AgentOperate)
             .map_err(AppError::Forbidden)?;
 
         // 2. Check if this is a new agent registration

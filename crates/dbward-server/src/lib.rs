@@ -189,8 +189,12 @@ pub async fn run_from_args(
 
     // Sync TOML-defined custom roles to PolicyRepo (SQLite)
     {
-        let active_names: Vec<String> = cfg.auth.roles.iter().map(|r| r.name.clone()).collect();
+        let mut active_names: Vec<String> = vec!["admin", "developer", "readonly", "agent-default"]
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
         for rc in &cfg.auth.roles {
+            active_names.push(rc.name.clone());
             let def = build_role_definition(rc);
             if let Err(e) = policy_repo.upsert_config_role(&def) {
                 return Err(

@@ -142,7 +142,7 @@ impl ListRequests {
             input.user.as_deref(),
         )?;
 
-        let is_admin = user.roles.iter().any(|r| r.name == "admin");
+        let is_admin = user.has_permission(Permission::All);
 
         if is_admin {
             let pending_ids: Vec<&str> = requests

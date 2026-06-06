@@ -44,7 +44,7 @@ impl TokenVerifier for TestTokenVerifier {
                 subject_type: SubjectType::User,
                 roles: vec![ResolvedRole {
                     name: "developer".into(),
-                    permissions: [Permission::RequestCreate, Permission::ResultView]
+                    permissions: [Permission::RequestExecute, Permission::ResultView]
                         .into_iter()
                         .collect(),
                     databases: vec![DatabaseName::new("*").unwrap()],

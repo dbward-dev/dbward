@@ -31,7 +31,7 @@ impl AgentHeartbeat {
     ) -> Result<AgentHeartbeatOutput, AppError> {
         // 1. Authorization (global)
         self.authorizer
-            .authorize_global(user, Permission::AgentHeartbeat)
+            .authorize_global(user, Permission::AgentOperate)
             .map_err(AppError::Forbidden)?;
 
         // 2. Get execution
@@ -44,7 +44,7 @@ impl AgentHeartbeat {
         self.authorizer
             .authorize_scoped(
                 user,
-                Permission::AgentHeartbeat,
+                Permission::AgentOperate,
                 &dbward_domain::values::DatabaseName::wildcard(),
                 &dbward_domain::values::Environment::wildcard(),
                 &ResourceContext::AgentExecution {

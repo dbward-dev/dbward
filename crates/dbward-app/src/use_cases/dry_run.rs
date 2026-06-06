@@ -29,7 +29,7 @@ impl DryRunClaim {
             .ok_or_else(|| AppError::Validation("dry-run job not found".into()))?;
         let agent = self.agent_repo.get(agent_id)?.ok_or_else(|| {
             AppError::Forbidden(AuthzError::Forbidden {
-                permission: Permission::AgentClaim,
+                permission: Permission::AgentOperate,
                 reason: "agent not registered".into(),
             })
         })?;
@@ -38,7 +38,7 @@ impl DryRunClaim {
         });
         if !scope_ok {
             return Err(AppError::Forbidden(AuthzError::Forbidden {
-                permission: Permission::AgentClaim,
+                permission: Permission::AgentOperate,
                 reason: "agent not authorized for this job".into(),
             }));
         }

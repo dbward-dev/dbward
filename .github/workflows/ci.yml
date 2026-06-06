@@ -29,6 +29,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -A clippy::too_many_arguments -A clippy::type_complexity
 
+      - name: Security lint
+        run: |
+          bash .github/scripts/lint-sql-injection.sh
+          bash .github/scripts/lint-auth-bypass.sh
+
       - name: Test
         run: cargo test --workspace
 

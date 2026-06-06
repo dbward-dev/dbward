@@ -24,6 +24,7 @@ fn make_uc(state: &AppState) -> PolicyManage {
         audit: state.audit_logger.clone(),
         clock: state.clock.clone(),
         id_gen: state.id_generator.clone(),
+        ssrf_validator: state.ssrf_validator.clone(),
     }
 }
 

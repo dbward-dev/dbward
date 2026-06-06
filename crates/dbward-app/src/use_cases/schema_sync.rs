@@ -43,7 +43,7 @@ impl SchemaSync {
         // 4. Scope check: agent must have capability for this database+environment
         let agent = self.agent_repo.get(&input.agent_id)?.ok_or_else(|| {
             AppError::Forbidden(AuthzError::Forbidden {
-                permission: Permission::AgentClaim,
+                permission: Permission::AgentOperate,
                 reason: "agent not registered".into(),
             })
         })?;
@@ -52,7 +52,7 @@ impl SchemaSync {
         });
         if !scope_match {
             return Err(AppError::Forbidden(AuthzError::Forbidden {
-                permission: Permission::AgentClaim,
+                permission: Permission::AgentOperate,
                 reason: "agent not authorized for this database/environment".into(),
             }));
         }

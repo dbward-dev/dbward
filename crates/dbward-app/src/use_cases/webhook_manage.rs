@@ -44,7 +44,7 @@ impl WebhookManage {
         ctx: &AuditContext,
     ) -> Result<Webhook, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::WebhookManage)
+            .authorize_global(user, Permission::WebhookWrite)
             .map_err(AppError::Forbidden)?;
 
         if input.url.is_empty() {
@@ -108,7 +108,7 @@ impl WebhookManage {
         ctx: &AuditContext,
     ) -> Result<Webhook, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::WebhookManage)
+            .authorize_global(user, Permission::WebhookWrite)
             .map_err(AppError::Forbidden)?;
 
         let mut webhook = self
@@ -161,14 +161,14 @@ impl WebhookManage {
 
     pub fn list(&self, user: &AuthUser) -> Result<Vec<Webhook>, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::WebhookManage)
+            .authorize_global(user, Permission::WebhookWrite)
             .map_err(AppError::Forbidden)?;
         self.webhook_repo.list()
     }
 
     pub fn get(&self, id: &str, user: &AuthUser) -> Result<Webhook, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::WebhookManage)
+            .authorize_global(user, Permission::WebhookWrite)
             .map_err(AppError::Forbidden)?;
         self.webhook_repo
             .get(id)?
@@ -182,7 +182,7 @@ impl WebhookManage {
         ctx: &AuditContext,
     ) -> Result<(), AppError> {
         self.authorizer
-            .authorize_global(user, Permission::WebhookManage)
+            .authorize_global(user, Permission::WebhookWrite)
             .map_err(AppError::Forbidden)?;
         self.webhook_repo
             .get(&input.id)?

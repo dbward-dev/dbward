@@ -55,7 +55,7 @@ impl AgentClaim {
     ) -> Result<AgentClaimOutput, AppError> {
         // 1. Authorization (global permission)
         self.authorizer
-            .authorize_global(user, Permission::AgentClaim)
+            .authorize_global(user, Permission::AgentOperate)
             .map_err(AppError::Forbidden)?;
 
         // 2. Get request
@@ -95,7 +95,7 @@ impl AgentClaim {
         });
         if !has_capability {
             return Err(AppError::Forbidden(crate::error::AuthzError::Forbidden {
-                permission: Permission::AgentClaim,
+                permission: Permission::AgentOperate,
                 reason: "agent lacks capability for this database/environment".into(),
             }));
         }
@@ -117,7 +117,7 @@ impl AgentClaim {
             };
             if !op_supported {
                 return Err(AppError::Forbidden(crate::error::AuthzError::Forbidden {
-                    permission: Permission::AgentClaim,
+                    permission: Permission::AgentOperate,
                     reason: "agent.capability_mismatch: operation not supported".into(),
                 }));
             }
@@ -141,7 +141,7 @@ impl AgentClaim {
         self.authorizer
             .authorize_scoped(
                 user,
-                Permission::AgentClaim,
+                Permission::AgentOperate,
                 &request.database,
                 &request.environment,
                 &ResourceContext::AgentExecution {
