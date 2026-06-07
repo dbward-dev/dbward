@@ -19,15 +19,15 @@ pub enum ServerAction {
         #[arg(long)]
         pid: Option<u32>,
         /// Path to the server config (to find state_dir/server.pid)
-        #[arg(long, default_value = "dbward-server.toml")]
-        config: String,
+        #[arg(long = "server-config", default_value = "dbward-server.toml")]
+        server_config: String,
     },
 }
 
 pub async fn run_server_command(action: &ServerAction) -> Result<(), CliError> {
     match action {
         ServerAction::Start { listen, config } => run_server_start(listen, config).await,
-        ServerAction::Reload { pid, config } => run_server_reload(*pid, config),
+        ServerAction::Reload { pid, server_config } => run_server_reload(*pid, server_config),
     }
 }
 

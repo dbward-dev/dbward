@@ -365,6 +365,23 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             )
             .await;
         }
+        Command::Config { action } => {
+            return match action {
+                ConfigAction::Validate { path } => {
+                    match dbward_config::server::ServerConfig::load(path) {
+                        Ok(_) => {
+                            println!("✅ Config is valid: {}", path.display());
+                            Ok(())
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Config validation failed: {e}");
+                            Err(CliError::Config(e.to_string()))
+                        }
+                    }
+                }
+                ConfigAction::Export { config: cfg_path } => run_config_export(cfg_path),
+            };
+        }
         _ => {}
     }
 
@@ -539,21 +556,6 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                 .await
             }
         },
-        Command::Config { action } => match action {
-            ConfigAction::Validate { path } => {
-                match dbward_config::server::ServerConfig::load(&path) {
-                    Ok(_) => {
-                        println!("✅ Config is valid: {}", path.display());
-                        Ok(())
-                    }
-                    Err(e) => {
-                        eprintln!("❌ Config validation failed: {e}");
-                        Err(CliError::Config(e.to_string()))
-                    }
-                }
-            }
-            ConfigAction::Export { config } => run_config_export(&config),
-        },
         // Handled above
         Command::Init { .. }
         | Command::Login { .. }
@@ -563,6 +565,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         | Command::Agent { .. }
         | Command::Dev { .. }
         | Command::SelfUpdate
+        | Command::Config { .. }
         | Command::Doctor { .. } => unreachable!(),
     }
 }
