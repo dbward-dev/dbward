@@ -39,8 +39,8 @@ impl TokenVerifier for MockTokenVerifier {
                 subject_id: "agent-01".into(),
                 subject_type: SubjectType::Agent,
                 roles: vec![ResolvedRole {
-                    name: "agent".into(),
-                    permissions: [Permission::All].into(),
+                    name: "agent-default".into(),
+                    permissions: [Permission::AgentOperate].into(),
                     databases: vec![DatabaseName::new("*").unwrap()],
                     environments: vec![Environment::new("*").unwrap()],
                 }],

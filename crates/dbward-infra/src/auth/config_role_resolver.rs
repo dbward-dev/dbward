@@ -178,8 +178,9 @@ impl RoleResolver for ConfigRoleResolver {
             }
         }
 
-        // 3. Agent always gets agent-default
+        // 3. Agent always gets agent-default — and ONLY agent-default
         if subject_type == SubjectType::Agent {
+            role_names.clear();
             role_names.insert("agent-default".to_string());
         }
 
