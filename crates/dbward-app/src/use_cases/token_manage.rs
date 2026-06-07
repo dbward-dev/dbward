@@ -77,6 +77,14 @@ impl TokenManage {
                 "subject_type must be 'user' or 'agent'".into(),
             ));
         }
+        // Agent tokens must have exactly ["agent-default"] role
+        if input.subject_type == "agent"
+            && (input.roles.len() != 1 || input.roles[0] != "agent-default")
+        {
+            return Err(AppError::Validation(
+                "agent tokens must have exactly the 'agent-default' role".into(),
+            ));
+        }
         if let Some(ref exp) = input.expires_at
             && *exp <= self.clock.now()
         {
@@ -593,5 +601,63 @@ mod tests {
             &dbward_domain::entities::AuditContext::System,
         );
         assert!(matches!(result, Err(AppError::PlanLimit(_))));
+    }
+
+    #[test]
+    fn create_rejects_agent_with_admin_role() {
+        let uc = make_uc(vec![], 0);
+        let result = uc.create(
+            TokenCreateInput {
+                subject_id: "my-agent".into(),
+                subject_type: "agent".into(),
+                name: None,
+                roles: vec!["admin".into()],
+                groups: vec![],
+                expires_at: None,
+            },
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("agent-default"))
+        );
+    }
+
+    #[test]
+    fn create_rejects_agent_with_empty_roles() {
+        let uc = make_uc(vec![], 0);
+        let result = uc.create(
+            TokenCreateInput {
+                subject_id: "my-agent".into(),
+                subject_type: "agent".into(),
+                name: None,
+                roles: vec![],
+                groups: vec![],
+                expires_at: None,
+            },
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("agent-default"))
+        );
+    }
+
+    #[test]
+    fn create_accepts_agent_with_agent_default_role() {
+        let uc = make_uc(vec![], 0);
+        let result = uc.create(
+            TokenCreateInput {
+                subject_id: "my-agent".into(),
+                subject_type: "agent".into(),
+                name: None,
+                roles: vec!["agent-default".into()],
+                groups: vec![],
+                expires_at: None,
+            },
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(result.is_ok());
     }
 }

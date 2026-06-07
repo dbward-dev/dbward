@@ -225,6 +225,18 @@ pub async fn auth_middleware(
         }
     }
 
-    req.extensions_mut().insert(user);
+    req.extensions_mut().insert(user.clone());
+
+    // Agent tokens are restricted to agent-specific endpoints only
+    if user.subject_type == SubjectType::Agent {
+        let path = req.uri().path();
+        if !path.starts_with("/api/agent/") && path != "/api/public-key" {
+            return Err((
+                StatusCode::FORBIDDEN,
+                serde_json::json!({"error": "agent tokens cannot access this endpoint", "code": "forbidden"}).to_string(),
+            ));
+        }
+    }
+
     Ok(next.run(req).await)
 }

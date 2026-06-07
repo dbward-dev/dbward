@@ -98,6 +98,21 @@ pub fn auto_bootstrap(
             )
             .into());
         }
+        // Warn about legacy agent tokens with overprivileged roles
+        let bad_agents: Vec<_> = existing
+            .iter()
+            .filter(|t| {
+                t.subject_type == dbward_domain::auth::SubjectType::Agent
+                    && t.roles != vec!["agent-default".to_string()]
+            })
+            .collect();
+        for t in &bad_agents {
+            eprintln!(
+                "[security] WARNING: agent token prefix={} subject_id={} has roles {:?} (expected [\"agent-default\"]). \
+                 Revoke with --force-bootstrap or DELETE /api/tokens/{}",
+                t.token_prefix, t.subject_id, t.roles, t.id
+            );
+        }
         return Ok(());
     } else if count > 0 {
         // Partial state (1-2 tokens) — fail-closed
@@ -111,7 +126,7 @@ pub fn auto_bootstrap(
     // Create bootstrap tokens
     let admin_token = create_bootstrap_token(state, "admin", "admin", false)?;
     let dev_token = create_bootstrap_token(state, "developer", "developer", false)?;
-    let agent_token = create_bootstrap_token(state, "agent", "admin", true)?;
+    let agent_token = create_bootstrap_token(state, "agent", "agent-default", true)?;
 
     // Write token files (0600)
     write_token_file(&admin_token_path, &admin_token)?;
