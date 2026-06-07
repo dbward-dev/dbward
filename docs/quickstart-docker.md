@@ -12,7 +12,7 @@ See the full approval workflow: submit → approve → execute → audit.
 ## 1. Start the stack
 
 ```bash
-git clone https://github.com/dbward-dev/dbward.git && cd dbward/docs/examples/quickstart
+git clone https://github.com/dbward-dev/dbward.git && cd dbward/examples/quickstart
 docker compose up -d
 ```
 
