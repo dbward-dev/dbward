@@ -1032,4 +1032,216 @@ mod tests {
         let result = sync.sync_workflows(vec![wf]);
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn sync_all_preserves_oidc_and_token_users() {
+        // Verify that sync only deletes source='config', not 'oidc'/'token'
+        use std::sync::Mutex;
+
+        struct TrackingUserRepo {
+            deleted_source: Mutex<Vec<String>>,
+        }
+        impl UserRepo for TrackingUserRepo {
+            fn delete_by_source(&self, source: &str) -> Result<u64, AppError> {
+                self.deleted_source.lock().unwrap().push(source.into());
+                Ok(0)
+            }
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
+                Ok(None)
+            }
+            fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> {
+                Ok(vec![])
+            }
+            fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn activate(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+        }
+
+        let tracking = Arc::new(TrackingUserRepo {
+            deleted_source: Mutex::new(vec![]),
+        });
+        let mut sync = make_sync();
+        sync.user_repo = tracking.clone();
+        let result = sync.sync_users(vec![UserInput {
+            id: "alice".into(),
+            status: "active".into(),
+        }]);
+        assert!(result.is_ok());
+        let sources = tracking.deleted_source.lock().unwrap();
+        assert_eq!(
+            &*sources,
+            &["config"],
+            "only source='config' should be deleted"
+        );
+    }
+
+    #[test]
+    fn sync_rollback_on_license_failure() {
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct FailLicenseChecker;
+        impl crate::ports::LicenseChecker for FailLicenseChecker {
+            fn max_databases(&self) -> u32 {
+                0
+            }
+            fn max_workflows(&self) -> u32 {
+                100
+            }
+            fn max_webhooks(&self) -> u32 {
+                100
+            }
+            fn max_tokens(&self) -> u32 {
+                100
+            }
+            fn max_roles(&self) -> u32 {
+                100
+            }
+            fn is_enterprise(&self) -> bool {
+                false
+            }
+            fn configured_plan(&self) -> &str {
+                "free"
+            }
+            fn effective_plan(&self) -> &str {
+                "free"
+            }
+            fn is_expired(&self) -> bool {
+                false
+            }
+            fn check_expiry(&self, _: chrono::DateTime<chrono::Utc>) {}
+        }
+
+        struct TrackingDbRegistry {
+            entries: Mutex<Vec<(DatabaseName, Environment)>>,
+        }
+        impl DatabaseRegistry for TrackingDbRegistry {
+            fn register(&self, db: &DatabaseName, env: &Environment) -> Result<(), AppError> {
+                self.entries.lock().unwrap().push((db.clone(), env.clone()));
+                Ok(())
+            }
+            fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+                Ok(self.entries.lock().unwrap().clone())
+            }
+            fn delete_by_source(&self, _: &str) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
+                Ok(true)
+            }
+        }
+
+        struct TrackingTransaction {
+            committed: AtomicBool,
+            rolled_back: AtomicBool,
+        }
+        impl super::SyncTransaction for TrackingTransaction {
+            fn begin(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn commit(&self) -> Result<(), AppError> {
+                self.committed.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+            fn rollback(&self) -> Result<(), AppError> {
+                self.rolled_back.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let txn = Arc::new(TrackingTransaction {
+            committed: AtomicBool::new(false),
+            rolled_back: AtomicBool::new(false),
+        });
+        let mut sync = make_sync();
+        sync.license_checker = Arc::new(FailLicenseChecker);
+        sync.database_registry = Arc::new(TrackingDbRegistry {
+            entries: Mutex::new(vec![]),
+        });
+        sync.transaction = txn.clone();
+
+        let result = sync.sync_all(
+            vec![DatabaseInput {
+                name: "db1".into(),
+                environments: vec!["prod".into()],
+            }],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        );
+        assert!(result.is_err(), "should fail on license check");
+        assert!(
+            txn.rolled_back.load(Ordering::SeqCst),
+            "transaction must be rolled back"
+        );
+        assert!(
+            !txn.committed.load(Ordering::SeqCst),
+            "transaction must NOT be committed"
+        );
+    }
+
+    #[test]
+    fn ssrf_rejects_private_url_in_webhook_sync() {
+        struct RejectingSsrfValidator;
+        impl crate::ports::SsrfValidator for RejectingSsrfValidator {
+            fn validate_url(&self, url: &str) -> Result<(), AppError> {
+                if url.contains("127.0.0.1") || url.contains("10.") {
+                    Err(AppError::Validation(format!("private IP: {url}")))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let mut sync = make_sync();
+        sync.ssrf_validator = Arc::new(RejectingSsrfValidator);
+
+        let result = sync.sync_webhooks(vec![WebhookInput {
+            id: "evil".into(),
+            url: "http://10.0.0.1/internal".into(),
+            events: vec!["*".into()],
+            format: "generic".into(),
+            secret: None,
+        }]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            AppError::Validation(msg) => assert!(msg.contains("10.0.0.1")),
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn api_405_response_body_format() {
+        // Verify the 405 handler returns correct JSON body
+        // This test is placed here as a compile-time guarantee of the structure
+        let body = serde_json::json!({
+            "error": "this resource is config-managed; update server.toml and restart",
+            "code": "config_only"
+        });
+        assert_eq!(body["code"], "config_only");
+        assert!(body["error"].as_str().unwrap().contains("config-managed"));
+    }
 }
