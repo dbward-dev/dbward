@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
 };
 use dbward_app::use_cases::policy_manage::{
-    CreateNotificationPolicyInput, CreateResultPolicyInput, CreateWorkflowInput, PolicyManage,
+    CreateNotificationPolicyInput, CreateResultPolicyInput, CreateWorkflowInput,
     UpdateNotificationPolicyInput, UpdateResultPolicyInput,
 };
 use dbward_domain::auth::{AuthUser, RoleDefinition};
@@ -15,18 +15,6 @@ use crate::middleware::trusted_proxies::ClientIp;
 use crate::state::AppState;
 
 use super::map_error;
-
-fn make_uc(state: &AppState) -> PolicyManage {
-    PolicyManage {
-        authorizer: state.authorizer.clone(),
-        policy_repo: state.policy_repo.clone(),
-        license: state.license_checker.clone(),
-        audit: state.audit_logger.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
-        ssrf_validator: state.ssrf_validator.clone(),
-    }
-}
 
 #[derive(serde::Deserialize)]
 pub(super) struct CreateWorkflowBody {
@@ -67,7 +55,7 @@ pub async fn create_workflow(
         steps: body.steps,
         require_reason: body.require_reason,
     };
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let wf = uc.create_workflow(input, &user, &ctx).map_err(map_error)?;
     Ok((StatusCode::CREATED, Json(serde_json::json!(wf))))
 }
@@ -76,7 +64,7 @@ pub async fn list_workflows(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let workflows = uc.list_workflows(&user).map_err(map_error)?;
     Ok((
         StatusCode::OK,
@@ -95,7 +83,7 @@ pub async fn delete_workflow(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     uc.delete_workflow(&id, &user, &ctx).map_err(map_error)?;
     Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
 }
@@ -111,7 +99,7 @@ pub async fn create_execution_policy(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let ep = uc
         .create_execution_policy(body, &user, &ctx)
         .map_err(map_error)?;
@@ -122,7 +110,7 @@ pub async fn list_execution_policies(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let policies = uc.list_execution_policies(&user).map_err(map_error)?;
     Ok((
         StatusCode::OK,
@@ -135,7 +123,7 @@ pub async fn delete_execution_policy(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     uc.delete_execution_policy(&id, &user).map_err(map_error)?;
     Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
 }
@@ -151,7 +139,7 @@ pub async fn create_role(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let role = uc.create_role(body, &user, &ctx).map_err(map_error)?;
     Ok((StatusCode::CREATED, Json(serde_json::json!(role))))
 }
@@ -160,7 +148,7 @@ pub async fn list_roles(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let roles = uc.list_roles(&user).map_err(map_error)?;
     Ok((StatusCode::OK, Json(serde_json::json!({ "roles": roles }))))
 }
@@ -170,7 +158,7 @@ pub async fn delete_role(
     Extension(user): Extension<AuthUser>,
     Path(name): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     uc.delete_role(&name, &user).map_err(map_error)?;
     Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
 }
@@ -210,7 +198,7 @@ pub(super) async fn create_result_policy(
         })
         .collect::<Result<_, _>>()?;
 
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let policy = uc
         .create_result_policy(
             CreateResultPolicyInput {
@@ -244,7 +232,7 @@ pub(super) async fn list_result_policies(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let policies = uc.list_result_policies(&user).map_err(map_error)?;
     let items: Vec<serde_json::Value> = policies
         .iter()
@@ -272,7 +260,7 @@ pub(super) async fn get_result_policy(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let policy = uc.get_result_policy(&id, &user).map_err(map_error)?;
     Ok((
         StatusCode::OK,
@@ -325,7 +313,7 @@ pub(super) async fn update_result_policy(
         })
         .transpose()?;
 
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let policy = uc
         .update_result_policy(
             &id,
@@ -365,7 +353,7 @@ pub(super) async fn delete_result_policy(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     uc.delete_result_policy(&id, &user, &ctx)
         .map_err(map_error)?;
     Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
@@ -389,7 +377,7 @@ pub(super) async fn create_notification_policy(
     let environment = Environment::new(&body.environment)
         .map_err(|e| map_error(dbward_app::error::AppError::Validation(e.to_string())))?;
 
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let policy = uc
         .create_notification_policy(
             CreateNotificationPolicyInput {
@@ -419,7 +407,7 @@ pub(super) async fn list_notification_policies(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let policies = uc.list_notification_policies(&user).map_err(map_error)?;
     let items: Vec<serde_json::Value> = policies
         .iter()
@@ -441,7 +429,7 @@ pub(super) async fn get_notification_policy(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let policy = uc.get_notification_policy(&id, &user).map_err(map_error)?;
     Ok((
         StatusCode::OK,
@@ -467,7 +455,7 @@ pub(super) async fn update_notification_policy(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     let policy = uc
         .update_notification_policy(
             &id,
@@ -503,7 +491,7 @@ pub(super) async fn delete_notification_policy(
         client_ip.as_ref().map(|e| &e.0),
         connect_info.as_ref().map(|e| &e.0),
     );
-    let uc = make_uc(&state);
+    let uc = state.admin().policy_manage();
     uc.delete_notification_policy(&id, &user, &ctx)
         .map_err(map_error)?;
     Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
@@ -542,7 +530,6 @@ pub async fn policy_resolution(
         )
     })?;
 
-    // Auth: scoped RequestView
     state
         .authorizer
         .authorize_scoped(
@@ -559,7 +546,6 @@ pub async fn policy_resolution(
             )
         })?;
 
-    // Validate operation param early
     let ops: Vec<Operation> = if let Some(ref op_str) = q.operation {
         vec![op_str.parse::<Operation>().map_err(|e| {
             (
@@ -577,9 +563,8 @@ pub async fn policy_resolution(
         ]
     };
 
-    // DB registered?
     let registered = state
-        .database_registry
+        .database_registry()
         .exists(&db, &env)
         .map_err(map_error)?;
     if !registered {
@@ -596,7 +581,7 @@ pub async fn policy_resolution(
     }
 
     let auto_entry = workflow_matcher::find_auto_approve(&state.auto_approve_entries, &db, &env);
-    let exec_policy = state.policy_evaluator.get_execution_policy(&db, &env);
+    let exec_policy = state.policy_evaluator().get_execution_policy(&db, &env);
 
     let exec_policy_json = {
         let matched_by = format!("({}, {})", exec_policy.database, exec_policy.environment);
@@ -620,11 +605,10 @@ pub async fn policy_resolution(
         })
     });
 
-    // Single operation response
     if q.operation.is_some() {
         let op = ops[0];
         let wf = state
-            .policy_evaluator
+            .policy_evaluator()
             .evaluate_workflow(&db, &env, op)
             .map_err(map_error)?;
         let (decision, reason_code, _) = resolve_single(&wf, op, auto_entry);
@@ -643,11 +627,10 @@ pub async fn policy_resolution(
         return Ok((StatusCode::OK, Json(resp)));
     }
 
-    // Matrix response
     let mut resolutions = Vec::new();
     for op in &ops {
         let wf = state
-            .policy_evaluator
+            .policy_evaluator()
             .evaluate_workflow(&db, &env, *op)
             .map_err(map_error)?;
         let (decision, reason_code, _) = resolve_single(&wf, *op, auto_entry);

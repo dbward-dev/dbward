@@ -19,7 +19,7 @@ use dbward_domain::license::{License, Plan};
 use dbward_domain::values::*;
 use dbward_infra::sqlite::{self, *};
 use dbward_server::build_app;
-use dbward_server::state::AppState;
+use dbward_server::state::{AppState, AppStateBuilder};
 
 mod common;
 use common::*;
@@ -57,7 +57,7 @@ impl TokenVerifier for AdminVerifier {
 
 fn state_with_license(license: License) -> AppState {
     let conn = sqlite::open_memory().unwrap();
-    AppState {
+    AppStateBuilder {
         token_verifier: Arc::new(AdminVerifier),
         role_resolver: Arc::new(NoopRoleResolver),
         authorizer: Arc::new(dbward_infra::auth::RbacAuthorizer),
@@ -101,6 +101,7 @@ fn state_with_license(license: License) -> AppState {
         sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
         auto_approve_entries: vec![],
     }
+    .build()
 }
 
 fn wf_request(db: &str, env: &str) -> Request<Body> {
@@ -131,14 +132,14 @@ async fn free_database_limit_blocks_at_max() {
     let state = state_with_license(license);
 
     // Free allows 3 databases — register 3 successfully
-    let registry = state.database_registry.clone();
+    let registry = state.database_registry().clone();
     for i in 0..3 {
         let db = DatabaseName::new(format!("db{i}")).unwrap();
         let env = Environment::new("production").unwrap();
         registry.register(&db, &env).unwrap();
     }
 
-    assert_eq!(state.license_checker.max_databases(), 3);
+    assert_eq!(state.license_checker().max_databases(), 3);
 
     // 4th database via register_databases should fail
     let dbs = vec![dbward_config::server::DatabaseDef {
@@ -190,7 +191,7 @@ async fn pro_database_limit_allows_20() {
     };
     let state = state_with_license(license);
 
-    let registry = state.database_registry.clone();
+    let registry = state.database_registry().clone();
     for i in 0..20 {
         let db = DatabaseName::new(format!("db{i}")).unwrap();
         let env = Environment::new("production").unwrap();
@@ -198,7 +199,7 @@ async fn pro_database_limit_allows_20() {
     }
 
     assert_eq!(registry.list().unwrap().len(), 20);
-    assert_eq!(state.license_checker.max_databases(), 20);
+    assert_eq!(state.license_checker().max_databases(), 20);
 }
 
 // === Test 4: Pro plan — DB 21 blocked ===
@@ -212,7 +213,7 @@ async fn pro_database_limit_blocks_at_21() {
     };
     let state = state_with_license(license);
 
-    let registry = state.database_registry.clone();
+    let registry = state.database_registry().clone();
     for i in 0..20 {
         let db = DatabaseName::new(format!("db{i}")).unwrap();
         let env = Environment::new("production").unwrap();
@@ -239,7 +240,7 @@ async fn enterprise_no_database_limit() {
     };
     let state = state_with_license(license);
 
-    let registry = state.database_registry.clone();
+    let registry = state.database_registry().clone();
     for i in 0..50 {
         let db = DatabaseName::new(format!("db{i}")).unwrap();
         let env = Environment::new("production").unwrap();
@@ -247,8 +248,8 @@ async fn enterprise_no_database_limit() {
     }
 
     assert_eq!(registry.list().unwrap().len(), 50);
-    assert_eq!(state.license_checker.max_databases(), u32::MAX);
-    assert!(state.license_checker.is_enterprise());
+    assert_eq!(state.license_checker().max_databases(), u32::MAX);
+    assert!(state.license_checker().is_enterprise());
 }
 
 // === Test 6: Expired license falls back to Free limits via LicenseCheckerImpl ===
@@ -266,10 +267,10 @@ async fn expired_license_falls_back_to_free() {
     let state = state_with_license(expired);
 
     // LicenseCheckerImpl should have detected expiry
-    assert!(state.license_checker.is_expired());
-    assert_eq!(state.license_checker.effective_plan(), "free");
-    assert_eq!(state.license_checker.configured_plan(), "pro");
-    assert_eq!(state.license_checker.max_workflows(), u32::MAX);
+    assert!(state.license_checker().is_expired());
+    assert_eq!(state.license_checker().effective_plan(), "free");
+    assert_eq!(state.license_checker().configured_plan(), "pro");
+    assert_eq!(state.license_checker().max_workflows(), u32::MAX);
 
     let mut app = build_app(state, vec![]);
 

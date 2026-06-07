@@ -14,18 +14,17 @@ async fn resolve_slack_auth_user(
     state: &AppState,
     slack_user_id: &str,
 ) -> Result<AuthUser, String> {
-    let subject_id = state
-        .user_repo
+    let user_repo = state.user_repo();
+    let subject_id = user_repo
         .find_by_slack_user_id(slack_user_id)
         .map_err(|e| format!("DB error: {e}"))?
         .ok_or_else(|| "not_linked".to_string())?;
 
-    if state.user_repo.is_suspended(&subject_id).unwrap_or(true) {
+    if user_repo.is_suspended(&subject_id).unwrap_or(true) {
         return Err("suspended".to_string());
     }
 
-    let user = state
-        .user_repo
+    let user = user_repo
         .get(&subject_id)
         .map_err(|e| format!("DB error: {e}"))?
         .ok_or_else(|| "user not found".to_string())?;
@@ -161,16 +160,7 @@ async fn handle_block_actions(
                     return;
                 }
             };
-            let uc = dbward_app::use_cases::resume_request::ResumeRequest {
-                authorizer: state_clone.authorizer.clone(),
-                policy: state_clone.policy_evaluator.clone(),
-                request_reader: state_clone.request_reader.clone(),
-                request_writer: state_clone.request_writer.clone(),
-                result_channel: state_clone.result_channel.clone(),
-                event_dispatcher: state_clone.event_dispatcher.clone(),
-                policy_repo: state_clone.policy_repo.clone(),
-                clock: state_clone.clock.clone(),
-            };
+            let uc = state_clone.requests().resume();
             let input = dbward_app::use_cases::resume_request::ResumeRequestInput {
                 request_id: request_id.clone(),
             };
@@ -186,9 +176,9 @@ async fn handle_block_actions(
                     // Update root message to Dispatched state (removes Resume button)
                     if let Some(ref sc) = state_clone.slack_client
                         && !message_ts.is_empty()
-                        && let Ok(Some(req)) = state_clone.request_reader.get(&request_id)
+                        && let Ok(Some(req)) = state_clone.request_reader().get(&request_id)
                     {
-                        let context = state_clone.context_repo.get(&request_id).ok().flatten();
+                        let context = state_clone.context_repo().get(&request_id).ok().flatten();
                         let current_step = req
                             .workflow_snapshot_json
                             .as_deref()
@@ -263,14 +253,7 @@ async fn handle_block_actions(
                     return;
                 }
             };
-            let uc = dbward_app::use_cases::get_result::GetResult {
-                authorizer: state_clone.authorizer.clone(),
-                request_reader: state_clone.request_reader.clone(),
-                agent_repo: state_clone.agent_repo.clone(),
-                result_store: state_clone.result_store.clone(),
-                policy_repo: state_clone.policy_repo.clone(),
-                clock: state_clone.clock.clone(),
-            };
+            let uc = state_clone.requests().get_result();
             let input = dbward_app::use_cases::get_result::GetResultInput {
                 request_id: request_id.clone(),
                 execution_id: None,
@@ -296,7 +279,7 @@ async fn handle_block_actions(
                     }
                     let text = String::from_utf8_lossy(&buf);
                     let sql = state_clone
-                        .request_reader
+                        .request_reader()
                         .get(&request_id)
                         .ok()
                         .flatten()
@@ -370,7 +353,7 @@ async fn handle_block_actions(
     };
 
     // Check if request exists + user can approve
-    let req = match state.request_reader.get(&request_id).ok().flatten() {
+    let req = match state.request_reader().get(&request_id).ok().flatten() {
         Some(r) => r,
         None => {
             if let Some(ref slack_client) = state.slack_client {
@@ -432,12 +415,12 @@ async fn handle_block_actions(
             return;
         };
         let sql = state_clone
-            .request_reader
+            .request_reader()
             .get(&request_id)
             .ok()
             .flatten()
             .map(|r| r.detail);
-        let context = state_clone.context_repo.get(&request_id).ok().flatten();
+        let context = state_clone.context_repo().get(&request_id).ok().flatten();
         let full_view = dbward_infra::slack::block_kit::build_review_modal(
             &request_id,
             sql.as_deref(),
@@ -514,14 +497,7 @@ async fn handle_view_submission(
 
     let result = match decision {
         "approve" => {
-            let uc = dbward_app::use_cases::approve_request::ApproveRequest {
-                authorizer: state.authorizer.clone(),
-                request_reader: state.request_reader.clone(),
-                approval_repo: state.approval_repo.clone(),
-                event_dispatcher: state.event_dispatcher.clone(),
-                clock: state.clock.clone(),
-                id_gen: state.id_generator.clone(),
-            };
+            let uc = state.requests().approve();
             uc.execute(
                 dbward_app::use_cases::approve_request::ApproveRequestInput {
                     request_id,
@@ -533,14 +509,7 @@ async fn handle_view_submission(
             .map(|_| ())
         }
         "reject" => {
-            let uc = dbward_app::use_cases::reject_request::RejectRequest {
-                authorizer: state.authorizer.clone(),
-                request_reader: state.request_reader.clone(),
-                approval_repo: state.approval_repo.clone(),
-                event_dispatcher: state.event_dispatcher.clone(),
-                clock: state.clock.clone(),
-                id_gen: state.id_generator.clone(),
-            };
+            let uc = state.requests().reject();
             uc.execute(
                 dbward_app::use_cases::reject_request::RejectRequestInput {
                     request_id,

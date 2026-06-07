@@ -13,7 +13,7 @@ use dbward_domain::entities::*;
 use dbward_domain::policies::{ExecutionPolicy, Workflow};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 use dbward_server::build_app;
-use dbward_server::state::AppState;
+use dbward_server::state::{AppState, AppStateBuilder};
 
 // --- Mock TokenVerifier ---
 
@@ -644,7 +644,7 @@ impl PolicyEvaluator for StubPolicyEvaluator {
 }
 
 fn test_state() -> AppState {
-    AppState {
+    AppStateBuilder {
         token_verifier: Arc::new(MockTokenVerifier),
         role_resolver: Arc::new(NoopRoleResolver),
         authorizer: Arc::new(StubAuthorizer),
@@ -688,6 +688,7 @@ fn test_state() -> AppState {
         sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
         auto_approve_entries: vec![],
     }
+    .build()
 }
 
 #[tokio::test]

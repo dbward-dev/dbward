@@ -5,7 +5,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use dbward_app::ports::AuditFilter;
-use dbward_app::use_cases::audit_query::{AuditListInput, AuditQuery};
+use dbward_app::use_cases::audit_query::AuditListInput;
 use dbward_domain::auth::AuthUser;
 use serde::Deserialize;
 
@@ -32,10 +32,7 @@ pub async fn list_events(
     Extension(user): Extension<AuthUser>,
     Query(params): Query<ListParams>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = AuditQuery {
-        authorizer: state.authorizer.clone(),
-        audit_repo: state.audit_repo.clone(),
-    };
+    let uc = state.admin().audit_query();
     let output = uc
         .list(
             AuditListInput {
@@ -66,10 +63,7 @@ pub async fn verify_chain(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = AuditQuery {
-        authorizer: state.authorizer.clone(),
-        audit_repo: state.audit_repo.clone(),
-    };
+    let uc = state.admin().audit_query();
     let output = uc.verify(&user).map_err(map_error)?;
 
     Ok((

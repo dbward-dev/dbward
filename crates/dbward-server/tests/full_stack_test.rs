@@ -15,7 +15,7 @@ use dbward_domain::values::*;
 use dbward_infra::auth::RbacAuthorizer;
 use dbward_infra::sqlite::{self, *};
 use dbward_server::build_app;
-use dbward_server::state::AppState;
+use dbward_server::state::{AppState, AppStateBuilder};
 
 mod common;
 use common::*;
@@ -88,7 +88,7 @@ fn real_state() -> AppState {
 
     let authorizer = Arc::new(RbacAuthorizer);
 
-    AppState {
+    AppStateBuilder {
         token_verifier: Arc::new(TestTokenVerifier),
         role_resolver: Arc::new(NoopRoleResolver),
         authorizer,
@@ -132,6 +132,7 @@ fn real_state() -> AppState {
         sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
         auto_approve_entries: vec![],
     }
+    .build()
 }
 
 fn auth_header(token: &str) -> (&str, String) {

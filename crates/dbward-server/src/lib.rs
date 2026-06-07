@@ -404,7 +404,7 @@ pub async fn run_from_args(
 
     let draining = Arc::new(AtomicBool::new(false));
 
-    let state = AppState {
+    let state = state::AppStateBuilder {
         token_verifier,
         role_resolver,
         authorizer,
@@ -459,7 +459,8 @@ pub async fn run_from_args(
         slack_config,
         slack_client: slack_client_for_state,
         request_notifier: slack_notifier_for_bg,
-    };
+    }
+    .build();
 
     // Auto-bootstrap: create tokens on first startup
     bootstrap::auto_bootstrap(&state, &state_dir, force_bootstrap)?;
@@ -476,13 +477,13 @@ pub async fn run_from_args(
 
     // A7: Record config sync in audit log
     let _ = state
-        .audit_logger
+        .audit_logger()
         .record(&dbward_domain::entities::AuditEvent::simple(
             "config_synced",
             "policy",
             "system",
             None,
-            state.clock.now(),
+            state.clock().now(),
             &dbward_domain::entities::AuditContext::System,
         ));
 
@@ -501,8 +502,7 @@ pub fn register_databases(
     state: &AppState,
     databases: &[config::DatabaseDef],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Count unique database names (not db×env combinations)
-    let existing_pairs = state.database_registry.list()?;
+    let existing_pairs = state.database_registry().list()?;
     let existing_db_names: std::collections::HashSet<&str> =
         existing_pairs.iter().map(|(db, _)| db.as_str()).collect();
     let mut new_db_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -514,10 +514,10 @@ pub fn register_databases(
     }
 
     let total = existing_db_names.len() as u32 + new_db_names.len() as u32;
-    if total > state.license_checker.max_databases() {
+    if total > state.license_checker().max_databases() {
         return Err(format!(
             "database limit reached (max {})",
-            state.license_checker.max_databases()
+            state.license_checker().max_databases()
         )
         .into());
     }
@@ -526,7 +526,7 @@ pub fn register_databases(
         for env in &db.environments {
             let db_name = DatabaseName::new(&db.name).map_err(|e| format!("database name: {e}"))?;
             let environment = Environment::new(env).map_err(|e| format!("environment: {e}"))?;
-            state.database_registry.register(&db_name, &environment)?;
+            state.database_registry().register(&db_name, &environment)?;
         }
     }
     Ok(())
@@ -537,10 +537,10 @@ fn sync_workflows(
     workflows: &[config::WorkflowDef],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let uc = SyncConfig {
-        policy_repo: state.policy_repo.clone(),
-        webhook_repo: state.webhook_repo.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
+        policy_repo: state.policy_repo().clone(),
+        webhook_repo: state.webhook_repo().clone(),
+        clock: state.clock().clone(),
+        id_gen: state.id_generator().clone(),
     };
 
     let inputs: Vec<WorkflowInput> = workflows
@@ -611,10 +611,10 @@ fn sync_webhooks(
     webhooks: &[config::WebhookDef],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let uc = SyncConfig {
-        policy_repo: state.policy_repo.clone(),
-        webhook_repo: state.webhook_repo.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
+        policy_repo: state.policy_repo().clone(),
+        webhook_repo: state.webhook_repo().clone(),
+        clock: state.clock().clone(),
+        id_gen: state.id_generator().clone(),
     };
 
     let inputs: Vec<WebhookInput> = webhooks
@@ -629,8 +629,7 @@ fn sync_webhooks(
 
     uc.sync_webhooks(inputs)?;
 
-    // Reload notifier to pick up new webhooks
-    if let Err(e) = state.notifier.reload() {
+    if let Err(e) = state.notifier().reload() {
         tracing::warn!("failed to reload webhooks after sync: {e}");
     }
     Ok(())
@@ -641,10 +640,10 @@ fn sync_execution_policies(
     policies: &[config::ExecutionPolicyDef],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let uc = SyncConfig {
-        policy_repo: state.policy_repo.clone(),
-        webhook_repo: state.webhook_repo.clone(),
-        clock: state.clock.clone(),
-        id_gen: state.id_generator.clone(),
+        policy_repo: state.policy_repo().clone(),
+        webhook_repo: state.webhook_repo().clone(),
+        clock: state.clock().clone(),
+        id_gen: state.id_generator().clone(),
     };
 
     let inputs: Vec<ExecutionPolicyInput> = policies
@@ -682,18 +681,18 @@ pub async fn start(
     trusted: Vec<ipnet::IpNet>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let draining = state.draining.clone();
-    let result_channel = state.result_channel.clone();
+    let result_channel = state.result_channel().clone();
 
     // Startup recovery: warn about in-flight requests
     let dispatched = state
-        .request_reader
+        .request_reader()
         .count_by_status("dispatched")
         .unwrap_or_else(|e| {
             tracing::error!(error = %e, "failed to count dispatched requests on startup");
             0
         });
     let running = state
-        .request_reader
+        .request_reader()
         .count_by_status("running")
         .unwrap_or_else(|e| {
             tracing::error!(error = %e, "failed to count running requests on startup");

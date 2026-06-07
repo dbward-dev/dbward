@@ -63,7 +63,7 @@ fn log_auth_failure(state: &AppState, e: &AuthError, req: &Request) {
         event_hash: String::new(),
         created_at: chrono::Utc::now(),
     };
-    let _ = state.audit_logger.record(&event);
+    let _ = state.audit_logger().record(&event);
 }
 
 pub async fn auth_middleware(
@@ -113,7 +113,7 @@ pub async fn auth_middleware(
             created_at: now,
             updated_at: now,
         };
-        if let Err(e) = state.user_repo.upsert(&user_entity) {
+        if let Err(e) = state.user_repo().upsert(&user_entity) {
             tracing::error!("user upsert failed: {e}");
             return Err(auth_error_response(AuthError::Internal(
                 "user upsert failed".into(),
@@ -121,7 +121,7 @@ pub async fn auth_middleware(
         }
 
         // Check suspended (fail-closed: DB error → reject)
-        match state.user_repo.is_suspended(&subject_id) {
+        match state.user_repo().is_suspended(&subject_id) {
             Ok(true) => {
                 let e = AuthError::UserSuspended;
                 log_auth_failure(&state, &e, &req);
@@ -179,10 +179,10 @@ pub async fn auth_middleware(
                     "auth",
                     &subject_id,
                     None,
-                    state.clock.now(),
+                    state.clock().now(),
                     &ctx,
                 );
-                let _ = state.audit_logger.record(&event);
+                let _ = state.audit_logger().record(&event);
                 let mut cache = LOGIN_AUDIT_CACHE.lock().unwrap();
                 // Evict stale entries if cache is too large
                 if cache.len() > 10_000 {
@@ -210,7 +210,7 @@ pub async fn auth_middleware(
                 auth_error_response(e)
             })?;
         // F-3: auto-create user record on first API token auth
-        if let Err(e) = state.user_repo.ensure_exists(&auth_user.subject_id) {
+        if let Err(e) = state.user_repo().ensure_exists(&auth_user.subject_id) {
             tracing::error!("user ensure_exists failed: {e}");
         }
         auth_user

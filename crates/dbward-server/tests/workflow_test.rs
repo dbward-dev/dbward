@@ -15,7 +15,7 @@ use dbward_domain::values::*;
 use dbward_infra::auth::RbacAuthorizer;
 use dbward_infra::sqlite::{self, *};
 use dbward_server::build_app;
-use dbward_server::state::AppState;
+use dbward_server::state::{AppState, AppStateBuilder};
 
 mod common;
 use common::*;
@@ -146,7 +146,7 @@ fn workflow_state() -> AppState {
         ).unwrap();
     }
 
-    AppState {
+    AppStateBuilder {
         token_verifier: Arc::new(MultiUserVerifier),
         role_resolver: Arc::new(NoopRoleResolver),
         authorizer: Arc::new(RbacAuthorizer),
@@ -190,6 +190,7 @@ fn workflow_state() -> AppState {
         sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
         auto_approve_entries: vec![],
     }
+    .build()
 }
 
 // --- Helpers ---
