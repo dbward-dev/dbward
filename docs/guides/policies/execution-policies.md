@@ -26,8 +26,9 @@ retry_on_failure = false
 |-------|------|---------|-------------|
 | `database` | String | `"*"` | Database scope (or `*` for all) |
 | `environment` | String | `"*"` | Environment scope (or `*` for all) |
-| `statement_timeout_secs` | Integer | — | Maximum seconds a statement can run (applies to migrations too) |
+| `statement_timeout_secs` | Integer | — | Maximum seconds a statement can run |
 | `max_statement_timeout_secs` | Integer | — | Upper bound for user-requested timeouts |
+| `migration_statement_timeout_secs` | Integer | — | Statement timeout for migrations. Unset = unlimited |
 | `max_rows` | Integer | — | Maximum rows returned by a query |
 | `max_executions` | Integer | — | Maximum times a request can be executed |
 | `execution_window_secs` | Integer | — | Time window (seconds) for `max_executions` |
@@ -78,6 +79,21 @@ min(execution_policy.statement_timeout_secs, agent.statement_timeout_secs)
 ```
 
 If neither is set, the database's own statement timeout applies.
+
+## Migration timeout
+
+Migrations run **without statement timeout by default** (industry standard). Interrupting DDL mid-execution can leave the database in a corrupted state that requires manual recovery.
+
+To add a safety limit:
+
+```toml
+[[execution_policies]]
+migration_statement_timeout_secs = 600  # 10 minutes
+```
+
+When unset (or set to `0`), no timeout is applied. The lease duration defaults to 600 seconds when no migration timeout is configured.
+
+> **Warning**: If a migration times out, PostgreSQL transactional migrations will roll back safely, but `transactional = false` migrations (e.g., `CREATE INDEX CONCURRENTLY`) may leave partial state. Use `dbward migrate repair` to recover.
 
 ## See also
 

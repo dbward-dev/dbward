@@ -161,22 +161,23 @@ dbward migrate up --share-with "group:backend-team"
 
 ### Statement timeout
 
-Migrations respect `statement_timeout_secs` from your execution policy or workflow configuration. If a migration SQL exceeds the timeout, it is cancelled:
+Migrations run **without statement timeout by default**. This matches industry standard behavior — interrupting DDL mid-execution risks schema corruption.
 
-- **PostgreSQL (transactional)**: `SET LOCAL statement_timeout` cancels the statement and rolls back the implicit transaction (atomicity preserved).
-- **PostgreSQL (non-transactional)**: Statement is cancelled but side effects may persist (e.g., `CREATE INDEX CONCURRENTLY` leaves an invalid index). Manual inspection required.
-- **MySQL**: `tokio::time::timeout` + `KILL CONNECTION` terminates the session. Schema state is unknown after timeout — manual inspection required.
-
-Default timeout is 30 seconds. Configure longer timeouts for heavy migrations:
-
-> **Important**: The default 30-second timeout applies to migrations as well. Most DDL operations (e.g., `ALTER TABLE` on large tables) take longer than 30 seconds. Always configure an appropriate timeout for environments where migrations run:
+Configure `migration_statement_timeout_secs` to add a safety limit:
 
 ```toml
 [[execution_policies]]
-statement_timeout_secs = 300
+migration_statement_timeout_secs = 600  # 10 minutes for migrations
+statement_timeout_secs = 30             # queries still have 30s timeout
 max_statement_timeout_secs = 3600
 migration_lease_duration_secs = 3600
 ```
+
+If a migration exceeds the timeout:
+
+- **PostgreSQL (transactional)**: `SET LOCAL statement_timeout` cancels the statement and rolls back the implicit transaction (atomicity preserved).
+- **PostgreSQL (non-transactional)**: Statement is cancelled but side effects may persist (e.g., `CREATE INDEX CONCURRENTLY` leaves an invalid index). Use `dbward migrate repair` to recover.
+- **MySQL**: `tokio::time::timeout` + `KILL CONNECTION` terminates the session. Schema state is unknown after timeout — manual inspection required.
 
 ### MySQL DDL warning
 

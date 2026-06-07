@@ -220,7 +220,7 @@ impl AgentClaim {
             database: request.database.as_str().to_string(),
             environment: request.environment.as_str().to_string(),
             detail: request.detail,
-            statement_timeout_secs: exec_policy.statement_timeout_secs,
+            statement_timeout_secs: exec_policy.effective_statement_timeout(request.operation),
             max_rows: exec_policy.max_rows,
             lease_expires_at,
         })

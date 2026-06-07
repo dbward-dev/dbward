@@ -274,6 +274,7 @@ statement_timeout_secs = 60
 | `retry_on_failure` | bool | | — | Allow re-dispatch on failure. Unset = no retry. |
 | `statement_timeout_secs` | u32 | | — | SQL timeout. Unset = use agent default (30s). |
 | `max_statement_timeout_secs` | u32 | | — | Cap for workflow-level timeout override. |
+| `migration_statement_timeout_secs` | u32 | | — | Statement timeout for migrations. Unset = unlimited (no timeout). |
 | `max_rows` | u32 | | — | Max result rows. Unset = no limit. |
 
 ### [retention]

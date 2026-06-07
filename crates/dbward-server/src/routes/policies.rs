@@ -588,6 +588,7 @@ pub async fn policy_resolution(
         let explicit = !exec_policy.id.is_empty();
         json!({
             "statement_timeout_secs": exec_policy.statement_timeout_secs,
+            "migration_statement_timeout_secs": exec_policy.migration_statement_timeout_secs,
             "max_rows": exec_policy.max_rows,
             "matched_by": matched_by,
             "explicit": explicit,

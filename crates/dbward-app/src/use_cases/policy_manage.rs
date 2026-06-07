@@ -139,6 +139,7 @@ impl PolicyManage {
         self.authorizer
             .authorize_global(user, Permission::PolicyWrite)
             .map_err(AppError::Forbidden)?;
+        ep.validate().map_err(AppError::Validation)?;
         self.policy_repo.create_execution_policy(&ep)?;
         self.audit.record(&AuditEvent::simple(
             "policy_created",
