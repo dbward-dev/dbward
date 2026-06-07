@@ -263,8 +263,10 @@ impl SyncConfig {
                 inserted += 1;
             }
         }
-        // License check after inserting all databases
-        let total = self.database_registry.list()?.len() as u32;
+        // License check: count unique database names (not db+env pairs)
+        let all = self.database_registry.list()?;
+        let unique_names: std::collections::HashSet<_> = all.iter().map(|(name, _)| name).collect();
+        let total = unique_names.len() as u32;
         if total > self.license_checker.max_databases() {
             return Err(AppError::Validation(format!(
                 "database limit exceeded (max {}, have {total})",

@@ -70,7 +70,7 @@ if [ -n "$DEV_TOKEN" ]; then
   [ "$STATUS" = "200" ] && pass "Developer can list workflows" || fail "Dev workflows" "got $STATUS"
 
   STATUS=$(api_status POST /api/workflows "$DEV_TOKEN" -d '{"database":"x","environment":"y"}')
-  [ "$STATUS" = "403" ] && pass "Developer cannot create workflow" || fail "Dev create workflow" "got $STATUS"
+  [ "$STATUS" = "405" ] && pass "Developer cannot create workflow (405 config-managed)" || fail "Dev create workflow" "got $STATUS"
 fi
 
 if [ -n "${READONLY_TOKEN:-}" ]; then
