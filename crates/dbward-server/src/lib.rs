@@ -968,6 +968,89 @@ fn build_reloadable_config_with(
     })
 }
 
+#[cfg(test)]
+mod safety_guard_tests {
+    use super::*;
+
+    fn empty_config() -> config::ServerConfig {
+        config::ServerConfig::load(std::path::Path::new("/dev/null")).unwrap_or_else(|_| {
+            // Minimal valid config
+            toml::from_str(
+                r#"
+                    state_dir = "/tmp"
+                    [auth]
+                    mode = "token"
+                    "#,
+            )
+            .unwrap()
+        })
+    }
+
+    #[test]
+    fn safety_guard_rejects_when_db_has_config_records_but_toml_empty() {
+        let conn = dbward_infra::sqlite::open_memory().unwrap();
+        // Insert a source='config' workflow (source column exists via V14 migration)
+        {
+            let c = conn.lock();
+            c.execute(
+                "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, source) VALUES ('wf-1', 'db', 'prod', '[]', '[]', 'config')",
+                [],
+            ).unwrap();
+        }
+
+        let cfg = empty_config();
+        assert!(cfg.workflows.is_empty(), "config should have no workflows");
+
+        let result = safety_guard(&conn, &cfg);
+        assert!(result.is_err(), "safety guard should reject");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("workflows"),
+            "error should mention workflows: {err}"
+        );
+    }
+
+    #[test]
+    fn safety_guard_allows_when_db_empty() {
+        let conn = dbward_infra::sqlite::open_memory().unwrap();
+        let cfg = empty_config();
+        let result = safety_guard(&conn, &cfg);
+        assert!(result.is_ok(), "safety guard should pass on empty DB");
+    }
+
+    #[test]
+    fn safety_guard_allows_when_config_has_entries() {
+        let conn = dbward_infra::sqlite::open_memory().unwrap();
+        {
+            let c = conn.lock();
+            c.execute(
+                "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, source) VALUES ('wf-1', 'db', 'prod', '[]', '[]', 'config')",
+                [],
+            ).unwrap();
+        }
+
+        let cfg: config::ServerConfig = toml::from_str(
+            r#"
+            state_dir = "/tmp"
+            [auth]
+            mode = "token"
+            [[workflows]]
+            database = "db"
+            environment = "prod"
+            operations = ["execute_select"]
+            steps = []
+            "#,
+        )
+        .unwrap();
+
+        let result = safety_guard(&conn, &cfg);
+        assert!(
+            result.is_ok(),
+            "safety guard should pass when config has workflows"
+        );
+    }
+}
+
 #[cfg(all(test, feature = "commercial"))]
 mod tests {
     use super::*;

@@ -16,15 +16,33 @@ ADMIN_TOKEN=$(create_token e2e-admin admin)
 DEV_TOKEN=$(create_token e2e-dev developer)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create admin token"; exit 1; }
 
-# --- 1. Workflow write API returns 405 ---
-echo "--- Workflow write API → 405 ---"
+# --- 1. All Tier 1 write API returns 405 ---
+echo "--- All Tier 1 write API → 405 ---"
 
 STATUS=$(api_status POST /api/workflows "$ADMIN_TOKEN" \
   -d '{"database":"e2edb","environment":"staging","operations":["execute_select"],"steps":[]}')
-[ "$STATUS" = "405" ] && pass "POST /api/workflows → 405 (config-managed)" || fail "POST workflows" "got $STATUS"
+[ "$STATUS" = "405" ] && pass "POST /api/workflows → 405" || fail "POST workflows" "got $STATUS"
 
 STATUS=$(api_status DELETE /api/workflows/any-id "$ADMIN_TOKEN")
-[ "$STATUS" = "405" ] && pass "DELETE /api/workflows/{id} → 405 (config-managed)" || fail "DELETE workflows" "got $STATUS"
+[ "$STATUS" = "405" ] && pass "DELETE /api/workflows/{id} → 405" || fail "DELETE workflows" "got $STATUS"
+
+STATUS=$(api_status POST /api/execution-policies "$ADMIN_TOKEN" -d '{}')
+[ "$STATUS" = "405" ] && pass "POST /api/execution-policies → 405" || fail "POST ep" "got $STATUS"
+
+STATUS=$(api_status DELETE /api/execution-policies/any-id "$ADMIN_TOKEN")
+[ "$STATUS" = "405" ] && pass "DELETE /api/execution-policies/{id} → 405" || fail "DELETE ep" "got $STATUS"
+
+STATUS=$(api_status POST /api/result-policies "$ADMIN_TOKEN" -d '{}')
+[ "$STATUS" = "405" ] && pass "POST /api/result-policies → 405" || fail "POST rp" "got $STATUS"
+
+STATUS=$(api_status POST /api/notification-policies "$ADMIN_TOKEN" -d '{}')
+[ "$STATUS" = "405" ] && pass "POST /api/notification-policies → 405" || fail "POST np" "got $STATUS"
+
+STATUS=$(api_status POST /api/roles "$ADMIN_TOKEN" -d '{}')
+[ "$STATUS" = "405" ] && pass "POST /api/roles → 405" || fail "POST roles" "got $STATUS"
+
+STATUS=$(api_status DELETE /api/roles/any-name "$ADMIN_TOKEN")
+[ "$STATUS" = "405" ] && pass "DELETE /api/roles/{name} → 405" || fail "DELETE roles" "got $STATUS"
 
 # --- 2. Config-synced workflows appear in list ---
 echo ""
