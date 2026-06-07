@@ -220,6 +220,7 @@ fn execution_policy_crud() {
         max_statement_timeout_secs: 300,
         max_rows: None,
         migration_lease_duration_secs: None,
+        migration_statement_timeout_secs: None,
         created_at: None,
         updated_at: None,
     };
@@ -234,6 +235,17 @@ fn execution_policy_crud() {
     assert_eq!(repo.list_execution_policies().unwrap().len(), 1);
     assert!(repo.delete_execution_policy("ep-1").unwrap());
     assert!(repo.list_execution_policies().unwrap().is_empty());
+
+    // Round-trip with migration_statement_timeout_secs = Some(600)
+    let ep2 = ExecutionPolicy {
+        id: "ep-2".into(),
+        migration_statement_timeout_secs: Some(600),
+        ..ep.clone()
+    };
+    repo.create_execution_policy(&ep2).unwrap();
+    let loaded = repo.get_execution_policy("ep-2").unwrap().unwrap();
+    assert_eq!(loaded.migration_statement_timeout_secs, Some(600));
+    repo.delete_execution_policy("ep-2").unwrap();
 }
 
 #[test]

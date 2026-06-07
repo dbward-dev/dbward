@@ -130,6 +130,13 @@ pub async fn run_resolve(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(30);
             println!("Timeout:     {timeout}s");
+            let mig_timeout = ep
+                .get("migration_statement_timeout_secs")
+                .and_then(|v| v.as_u64());
+            match mig_timeout {
+                Some(0) | None => println!("Mig timeout: unlimited"),
+                Some(t) => println!("Mig timeout: {t}s"),
+            }
         }
     } else {
         println!("Workflow:    none");

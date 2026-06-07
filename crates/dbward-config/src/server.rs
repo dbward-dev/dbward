@@ -123,6 +123,16 @@ impl ServerConfig {
                     "execution_policies[{i}]: statement_timeout_secs must not exceed max_statement_timeout_secs"
                 )));
             }
+            if let (Some(mig_st), Some(max_st)) = (
+                ep.migration_statement_timeout_secs,
+                ep.max_statement_timeout_secs,
+            ) && mig_st > 0
+                && mig_st > max_st
+            {
+                return Err(ConfigError::Validation(format!(
+                    "execution_policies[{i}]: migration_statement_timeout_secs must not exceed max_statement_timeout_secs"
+                )));
+            }
         }
 
         // Custom role definitions
@@ -497,6 +507,8 @@ pub struct ExecutionPolicyDef {
     pub max_rows: Option<u32>,
     #[serde(default)]
     pub migration_lease_duration_secs: Option<u32>,
+    #[serde(default)]
+    pub migration_statement_timeout_secs: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -638,6 +650,31 @@ max_statement_timeout_secs = 300
         );
         let err = ServerConfig::from_str(&toml, "test").unwrap_err();
         assert!(err.to_string().contains("must not exceed"));
+    }
+
+    #[test]
+    fn rejects_migration_timeout_exceeding_max() {
+        let toml = test_cfg(
+            r#"
+[[execution_policies]]
+migration_statement_timeout_secs = 700
+max_statement_timeout_secs = 600
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("migration_statement_timeout_secs"));
+    }
+
+    #[test]
+    fn accepts_migration_timeout_zero() {
+        let toml = test_cfg(
+            r#"
+[[execution_policies]]
+migration_statement_timeout_secs = 0
+max_statement_timeout_secs = 600
+"#,
+        );
+        assert!(ServerConfig::from_str(&toml, "test").is_ok());
     }
 
     #[test]

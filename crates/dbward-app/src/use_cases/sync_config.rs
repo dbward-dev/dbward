@@ -63,6 +63,7 @@ pub struct ExecutionPolicyInput {
     pub max_statement_timeout_secs: Option<u32>,
     pub max_rows: Option<u32>,
     pub migration_lease_duration_secs: Option<u32>,
+    pub migration_statement_timeout_secs: Option<u32>,
 }
 
 impl SyncConfig {
@@ -242,9 +243,17 @@ impl SyncConfig {
                     .unwrap_or(defaults.max_statement_timeout_secs),
                 max_rows: ep.max_rows,
                 migration_lease_duration_secs: ep.migration_lease_duration_secs,
+                migration_statement_timeout_secs: ep.migration_statement_timeout_secs,
                 created_at: None,
                 updated_at: None,
             });
+        }
+
+        // Validate all policies
+        for (i, policy) in parsed.iter().enumerate() {
+            policy
+                .validate()
+                .map_err(|e| AppError::Validation(format!("execution_policy[{i}]: {e}")))?;
         }
 
         // Delete existing config-managed policies
