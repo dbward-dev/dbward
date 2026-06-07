@@ -143,3 +143,20 @@ risk = "high"
 database = "*"
 environment = "production"
 risk = "none"
+
+[[result_policies]]
+database = "app"
+environment = "production"
+retention_days = 30
+delivery_mode = "store_only"
+access = ["requester"]
+
+[[notification_policies]]
+database = "app"
+environment = "production"
+webhooks = ["dev-receiver"]
+events = ["request_completed"]
+
+[[users]]
+id = "config-alice"
+status = "active"
