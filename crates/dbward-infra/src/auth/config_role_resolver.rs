@@ -293,7 +293,7 @@ mod tests {
     fn agent_default_def() -> RoleDefinition {
         RoleDefinition {
             name: "agent-default".to_string(),
-            permissions: vec![Permission::All],
+            permissions: vec![Permission::AgentOperate],
             databases: vec![DatabaseName::new("*").unwrap()],
             environments: vec![Environment::new("*").unwrap()],
         }
