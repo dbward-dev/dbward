@@ -1,0 +1,30 @@
+state_dir = "/data"
+
+[auth]
+mode = "token"
+
+[[databases]]
+name = "app"
+environments = ["development", "staging"]
+
+# Development: no approval needed (empty steps = auto-dispatch)
+[[workflows]]
+database = "*"
+environment = "development"
+steps = []
+
+# Staging: 1 admin must approve before execution
+[[workflows]]
+database = "*"
+environment = "staging"
+
+[[workflows.steps]]
+type = "approval"
+
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
+
+[result_storage]
+backend = "local"
+root_dir = "/data/results"
