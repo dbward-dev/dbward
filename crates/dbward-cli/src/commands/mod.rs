@@ -203,11 +203,6 @@ pub enum Command {
         #[command(subcommand)]
         action: PolicyAction,
     },
-    /// Manage server configuration
-    Config {
-        #[command(subcommand)]
-        action: ConfigAction,
-    },
 }
 
 #[derive(clap::Subcommand)]
@@ -221,22 +216,6 @@ pub enum PolicyAction {
         /// Specific operation to resolve
         #[arg(long)]
         operation: Option<String>,
-    },
-}
-
-#[derive(clap::Subcommand)]
-pub enum ConfigAction {
-    /// Validate a server config file (CI/CD pre-deploy check)
-    Validate {
-        /// Path to the server config file
-        #[arg(default_value = "server.toml")]
-        path: PathBuf,
-    },
-    /// Export current DB state as TOML (migration helper)
-    Export {
-        /// Path to the server config file (to resolve state_dir)
-        #[arg(long, default_value = "server.toml")]
-        config: PathBuf,
     },
 }
 
@@ -364,23 +343,6 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                 *timeout,
             )
             .await;
-        }
-        Command::Config { action } => {
-            return match action {
-                ConfigAction::Validate { path } => {
-                    match dbward_config::server::ServerConfig::load(path) {
-                        Ok(_) => {
-                            println!("✅ Config is valid: {}", path.display());
-                            Ok(())
-                        }
-                        Err(e) => {
-                            eprintln!("❌ Config validation failed: {e}");
-                            Err(CliError::Config(e.to_string()))
-                        }
-                    }
-                }
-                ConfigAction::Export { config: cfg_path } => run_config_export(cfg_path),
-            };
         }
         _ => {}
     }
@@ -565,7 +527,6 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         | Command::Agent { .. }
         | Command::Dev { .. }
         | Command::SelfUpdate
-        | Command::Config { .. }
         | Command::Doctor { .. } => unreachable!(),
     }
 }
@@ -691,269 +652,5 @@ mod tests {
             Command::Execute { no_persist, .. } => assert!(!no_persist),
             _ => panic!("unexpected command"),
         }
-    }
-}
-
-fn run_config_export(config_path: &std::path::Path) -> Result<(), CliError> {
-    let cfg = dbward_config::server::ServerConfig::load(config_path)
-        .map_err(|e| CliError::Config(e.to_string()))?;
-
-    let config_dir = config_path.parent().unwrap_or(std::path::Path::new("."));
-    let state_dir = if std::path::Path::new(&cfg.state_dir).is_absolute() {
-        std::path::PathBuf::from(&cfg.state_dir)
-    } else {
-        config_dir.join(&cfg.state_dir)
-    };
-    let db_path = state_dir.join("dbward.db");
-
-    if !db_path.exists() {
-        return Err(CliError::Config(format!(
-            "database not found at {}",
-            db_path.display()
-        )));
-    }
-
-    let conn =
-        rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(|e| CliError::Config(format!("cannot open database: {e}")))?;
-
-    let mut out = String::new();
-
-    // Databases
-    export_section(
-        &conn,
-        &mut out,
-        "databases",
-        "databases",
-        &["name", "environment"],
-        |row| {
-            format!(
-                "[[databases]]\nname = {:?}\nenvironments = [{:?}]\n",
-                row[0], row[1]
-            )
-        },
-    );
-
-    // Webhooks
-    export_section(
-        &conn,
-        &mut out,
-        "webhooks",
-        "webhooks",
-        &["id", "url", "events_json", "format"],
-        |row| {
-            let events: Vec<String> = serde_json::from_str(&row[2]).unwrap_or_default();
-            let events_str = events
-                .iter()
-                .map(|e| format!("{e:?}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "[[webhooks]]\nid = {:?}\nurl = {:?}\nformat = {:?}\nevents = [{}]\n",
-                row[0], row[1], row[3], events_str
-            )
-        },
-    );
-
-    // Workflows
-    export_section(
-        &conn,
-        &mut out,
-        "workflows",
-        "workflows",
-        &["database", "environment", "operations_json", "steps_json"],
-        |row| {
-            let ops: Vec<String> = serde_json::from_str(&row[2]).unwrap_or_default();
-            let ops_str = ops
-                .iter()
-                .map(|o| format!("{o:?}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "[[workflows]]\ndatabase = {:?}\nenvironment = {:?}\noperations = [{}]\nsteps = [] # TODO: manually convert from {}\n",
-                row[0], row[1], ops_str, row[3]
-            )
-        },
-    );
-
-    // Execution Policies
-    export_section(
-        &conn,
-        &mut out,
-        "execution_policies",
-        "execution_policies",
-        &[
-            "database",
-            "environment",
-            "max_executions",
-            "statement_timeout_secs",
-        ],
-        |row| {
-            format!(
-                "[[execution_policies]]\ndatabase = {:?}\nenvironment = {:?}\nmax_executions = {}\nstatement_timeout_secs = {}\n",
-                row[0], row[1], row[2], row[3]
-            )
-        },
-    );
-
-    // Result Policies
-    export_section(
-        &conn,
-        &mut out,
-        "result_policies",
-        "result_policies",
-        &["database", "environment", "retention_days", "delivery_mode"],
-        |row| {
-            format!(
-                "[[result_policies]]\ndatabase = {:?}\nenvironment = {:?}\nretention_days = {}\ndelivery_mode = {:?}\n",
-                row[0], row[1], row[2], row[3]
-            )
-        },
-    );
-
-    // Notification Policies
-    export_section(
-        &conn,
-        &mut out,
-        "notification_policies",
-        "notification_policies",
-        &["database", "environment", "webhooks_json", "events_json"],
-        |row| {
-            let whs: Vec<String> = serde_json::from_str(&row[2]).unwrap_or_default();
-            let evts: Vec<String> = serde_json::from_str(&row[3]).unwrap_or_default();
-            let whs_str = whs
-                .iter()
-                .map(|w| format!("{w:?}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let evts_str = evts
-                .iter()
-                .map(|e| format!("{e:?}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "[[notification_policies]]\ndatabase = {:?}\nenvironment = {:?}\nwebhooks = [{}]\nevents = [{}]\n",
-                row[0], row[1], whs_str, evts_str
-            )
-        },
-    );
-
-    // Roles
-    export_section(
-        &conn,
-        &mut out,
-        "roles",
-        "roles",
-        &[
-            "name",
-            "permissions_json",
-            "databases_json",
-            "environments_json",
-        ],
-        |row| {
-            let perms: Vec<String> = serde_json::from_str(&row[1]).unwrap_or_default();
-            let perms_str = perms
-                .iter()
-                .map(|p| format!("{p:?}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "[[auth.roles]]\nname = {:?}\npermissions = [{}]\n",
-                row[0], perms_str
-            )
-        },
-    );
-
-    // Groups
-    export_section(
-        &conn,
-        &mut out,
-        "groups",
-        "groups",
-        &["name", "members_json"],
-        |row| {
-            let members: Vec<String> = serde_json::from_str(&row[1]).unwrap_or_default();
-            let members_str = members
-                .iter()
-                .map(|m| format!("{m:?}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "[[auth.groups]]\nname = {:?}\nmembers = [{}]\n",
-                row[0], members_str
-            )
-        },
-    );
-
-    // Role Bindings
-    export_section(
-        &conn,
-        &mut out,
-        "role_bindings",
-        "role_bindings",
-        &["role", "subjects_json", "groups_json"],
-        |row| {
-            let subjects: Vec<String> = serde_json::from_str(&row[1]).unwrap_or_default();
-            let groups: Vec<String> = serde_json::from_str(&row[2]).unwrap_or_default();
-            let subs_str = subjects
-                .iter()
-                .map(|s| format!("{s:?}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let grps_str = groups
-                .iter()
-                .map(|g| format!("{g:?}"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "[[auth.role_bindings]]\nrole = {:?}\nsubjects = [{}]\ngroups = [{}]\n",
-                row[0], subs_str, grps_str
-            )
-        },
-    );
-
-    // Users
-    export_section(
-        &conn,
-        &mut out,
-        "users",
-        "users",
-        &["id", "status"],
-        |row| format!("[[users]]\nid = {:?}\nstatus = {:?}\n", row[0], row[1]),
-    );
-
-    if out.is_empty() {
-        println!("# No config-managed resources found in database.");
-    } else {
-        print!("{out}");
-    }
-    Ok(())
-}
-
-fn export_section(
-    conn: &rusqlite::Connection,
-    out: &mut String,
-    _label: &str,
-    table: &str,
-    columns: &[&str],
-    format_row: impl Fn(&[String]) -> String,
-) {
-    let cols = columns.join(", ");
-    let sql = format!("SELECT {cols} FROM {table} WHERE source = 'config'");
-    let Ok(mut stmt) = conn.prepare(&sql) else {
-        return;
-    };
-    let col_count = columns.len();
-    let rows = stmt.query_map([], |row| {
-        let mut vals = Vec::with_capacity(col_count);
-        for i in 0..col_count {
-            vals.push(row.get::<_, String>(i).unwrap_or_default());
-        }
-        Ok(vals)
-    });
-    let Ok(rows) = rows else { return };
-    for row in rows.flatten() {
-        out.push_str(&format_row(&row));
-        out.push('\n');
     }
 }
