@@ -10,6 +10,7 @@ pub enum Operation {
     MigrateUp,
     MigrateDown,
     MigrateStatus,
+    MigrateRepair,
 }
 
 impl Operation {
@@ -20,6 +21,7 @@ impl Operation {
             Self::MigrateUp => "migrate_up",
             Self::MigrateDown => "migrate_down",
             Self::MigrateStatus => "migrate_status",
+            Self::MigrateRepair => "migrate_repair",
         }
     }
 
@@ -34,7 +36,10 @@ impl Operation {
     /// Returns true for state-changing migration operations (Up/Down).
     /// MigrateStatus is excluded as it is a read-only SELECT.
     pub fn is_migration_mutation(&self) -> bool {
-        matches!(self, Self::MigrateUp | Self::MigrateDown)
+        matches!(
+            self,
+            Self::MigrateUp | Self::MigrateDown | Self::MigrateRepair
+        )
     }
 }
 
@@ -54,8 +59,9 @@ impl std::str::FromStr for Operation {
             "migrate_up" => Ok(Self::MigrateUp),
             "migrate_down" => Ok(Self::MigrateDown),
             "migrate_status" => Ok(Self::MigrateStatus),
+            "migrate_repair" => Ok(Self::MigrateRepair),
             _ => Err(format!(
-                "unknown operation '{s}'. Valid operations: execute_select, execute_dml, execute_query, migrate_up, migrate_down, migrate_status"
+                "unknown operation '{s}'. Valid operations: execute_select, execute_dml, execute_query, migrate_up, migrate_down, migrate_status, migrate_repair"
             )),
         }
     }
@@ -73,6 +79,7 @@ mod tests {
             Operation::MigrateUp,
             Operation::MigrateDown,
             Operation::MigrateStatus,
+            Operation::MigrateRepair,
         ] {
             let s = op.as_str();
             let parsed: Operation = s.parse().unwrap();
@@ -91,6 +98,7 @@ mod tests {
     fn is_migration_mutation() {
         assert!(Operation::MigrateUp.is_migration_mutation());
         assert!(Operation::MigrateDown.is_migration_mutation());
+        assert!(Operation::MigrateRepair.is_migration_mutation());
         assert!(!Operation::MigrateStatus.is_migration_mutation());
         assert!(!Operation::ExecuteSelect.is_migration_mutation());
         assert!(!Operation::ExecuteDml.is_migration_mutation());

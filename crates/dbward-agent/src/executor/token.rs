@@ -57,14 +57,16 @@ impl ExecutionToken {
         // Canonicalize JSON for migration mutations to ensure deterministic hash.
         // Relies on serde_json::Value using BTreeMap (alphabetical key sort).
         // Must match the canonicalization in server's agent_claim.rs.
-        let canonical_detail =
-            if claim.operation == "migrate_up" || claim.operation == "migrate_down" {
-                serde_json::from_str::<serde_json::Value>(&claim.detail)
-                    .and_then(|v| serde_json::to_string(&v))
-                    .unwrap_or_else(|_| claim.detail.clone())
-            } else {
-                claim.detail.clone()
-            };
+        let canonical_detail = if claim.operation == "migrate_up"
+            || claim.operation == "migrate_down"
+            || claim.operation == "migrate_repair"
+        {
+            serde_json::from_str::<serde_json::Value>(&claim.detail)
+                .and_then(|v| serde_json::to_string(&v))
+                .unwrap_or_else(|_| claim.detail.clone())
+        } else {
+            claim.detail.clone()
+        };
         let actual_hash = hex::encode(Sha256::digest(canonical_detail.as_bytes()));
         if actual_hash != self.detail_hash {
             return Err(AgentError::TokenVerification("detail_hash mismatch".into()));

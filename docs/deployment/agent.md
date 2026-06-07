@@ -76,6 +76,8 @@ statement_timeout_secs = 30       # Default SQL statement timeout (default: 30)
 
 > **Note**: `statement_timeout_secs` is the agent-level default. If a server-side `[[execution_policies]]` is configured for the target database/environment, the policy's `statement_timeout_secs` takes precedence.
 
+> **Migration warning**: This timeout also applies to migrations. The default 30 seconds is likely too short for DDL operations on large tables. Configure a longer timeout via `[[execution_policies]]` for environments where migrations run.
+
 ### Server connection
 
 ```toml

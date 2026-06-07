@@ -112,9 +112,10 @@ impl CreateRequest {
 
         // 1. Determine operation: migration types are explicit, others classified from SQL
         let operation = match input.operation {
-            Operation::MigrateUp | Operation::MigrateDown | Operation::MigrateStatus => {
-                input.operation
-            }
+            Operation::MigrateUp
+            | Operation::MigrateDown
+            | Operation::MigrateStatus
+            | Operation::MigrateRepair => input.operation,
             _ => {
                 let classification =
                     sql_classifier::classify(&input.detail, dialect).map_err(|e| match e {
@@ -340,6 +341,13 @@ impl CreateRequest {
         if input.emergency && input.reason.is_none() {
             return Err(AppError::Validation(
                 "reason is required for emergency requests".into(),
+            ));
+        }
+
+        // 1c-2. MigrateRepair always requires emergency (break-glass)
+        if operation == Operation::MigrateRepair && !input.emergency {
+            return Err(AppError::Validation(
+                "migrate_repair requires emergency flag (break-glass)".into(),
             ));
         }
 

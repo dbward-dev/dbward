@@ -90,22 +90,33 @@ mod tests {
         async fn execute(&self, _: &str) -> Result<u64, DriverError> {
             unimplemented!()
         }
-        async fn apply_migration(&self, _: &str, _: &str) -> Result<(), DriverError> {
+        async fn apply_migration(&self, _: &str, _: &str, _: u64) -> Result<(), DriverError> {
             unimplemented!()
         }
-        async fn revert_migration(&self, _: &str, _: &str) -> Result<(), DriverError> {
+        async fn revert_migration(&self, _: &str, _: &str, _: u64) -> Result<(), DriverError> {
             unimplemented!()
         }
-        async fn apply_migration_no_tx(&self, _: &str, _: &str) -> Result<(), DriverError> {
+        async fn apply_migration_no_tx(&self, _: &str, _: &str, _: u64) -> Result<(), DriverError> {
             unimplemented!()
         }
-        async fn revert_migration_no_tx(&self, _: &str, _: &str) -> Result<(), DriverError> {
+        async fn revert_migration_no_tx(
+            &self,
+            _: &str,
+            _: &str,
+            _: u64,
+        ) -> Result<(), DriverError> {
             unimplemented!()
         }
         async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
             unimplemented!()
         }
         async fn applied_versions(&self) -> Result<Vec<String>, DriverError> {
+            unimplemented!()
+        }
+        async fn mark_applied(&self, _: &str) -> Result<(), DriverError> {
+            unimplemented!()
+        }
+        async fn remove_version(&self, _: &str) -> Result<(), DriverError> {
             unimplemented!()
         }
         async fn query_cancellable(

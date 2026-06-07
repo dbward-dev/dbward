@@ -25,6 +25,7 @@ pub enum OperationKind {
     MigrateUp,
     MigrateDown,
     MigrateStatus,
+    MigrateRepair,
 }
 
 impl From<dbward_domain::values::Operation> for OperationKind {
@@ -35,6 +36,7 @@ impl From<dbward_domain::values::Operation> for OperationKind {
             dbward_domain::values::Operation::MigrateUp => Self::MigrateUp,
             dbward_domain::values::Operation::MigrateDown => Self::MigrateDown,
             dbward_domain::values::Operation::MigrateStatus => Self::MigrateStatus,
+            dbward_domain::values::Operation::MigrateRepair => Self::MigrateRepair,
         }
     }
 }

@@ -14,6 +14,10 @@ pub enum DriverError {
     Cancelled,
     #[error("unsupported URL scheme: {0}")]
     UnsupportedScheme(String),
+    #[error("migration partially applied (version {version}): {message}")]
+    PartialMigration { version: String, message: String },
+    #[error("migration timed out (version {version}): {message}")]
+    MigrationTimeout { version: String, message: String },
 }
 
 impl DriverError {

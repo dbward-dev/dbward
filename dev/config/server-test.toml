@@ -1,0 +1,27 @@
+state_dir = "/data"
+trusted_proxies = ["172.16.0.0/12", "127.0.0.1"]
+
+[auth]
+mode = "token"
+
+[[databases]]
+name = "app"
+environments = ["development", "staging", "production"]
+
+[[workflows]]
+database = "*"
+environment = "development"
+steps = []
+
+[[execution_policies]]
+database = "*"
+environment = "development"
+max_executions = 10
+execution_window_secs = 86400
+retry_on_failure = true
+statement_timeout_secs = 5
+max_statement_timeout_secs = 600
+
+[result_storage]
+backend = "local"
+root_dir = "/data/results"

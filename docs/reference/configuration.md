@@ -168,7 +168,7 @@ min = 1
 |---|---|---|---|---|
 | `database` | String | | `"*"` | Scope filter. `"*"` matches all databases. |
 | `environment` | String | | `"*"` | Scope filter. `"*"` matches all environments. |
-| `operations` | String[] | | `[]` | Operations filter. Empty = all. Values: `execute_select`, `execute_dml`, `migrate_up`, `migrate_down`, `migrate_status`. |
+| `operations` | String[] | | `[]` | Operations filter. Empty = all. Values: `execute_select`, `execute_dml`, `migrate_up`, `migrate_down`, `migrate_status`, `migrate_repair`. |
 | `steps` | Step[] | | `[]` | Approval steps. Empty = auto-approve. |
 | `require_reason` | bool | | `false` | Reject requests without `--reason`. |
 | `allow_self_approve` | bool | | `false` | Allow requester to approve own request. |

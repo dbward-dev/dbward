@@ -26,12 +26,13 @@ retry_on_failure = false
 |-------|------|---------|-------------|
 | `database` | String | `"*"` | Database scope (or `*` for all) |
 | `environment` | String | `"*"` | Environment scope (or `*` for all) |
-| `statement_timeout_secs` | Integer | — | Maximum seconds a statement can run |
+| `statement_timeout_secs` | Integer | — | Maximum seconds a statement can run (applies to migrations too) |
 | `max_statement_timeout_secs` | Integer | — | Upper bound for user-requested timeouts |
 | `max_rows` | Integer | — | Maximum rows returned by a query |
 | `max_executions` | Integer | — | Maximum times a request can be executed |
 | `execution_window_secs` | Integer | — | Time window (seconds) for `max_executions` |
 | `retry_on_failure` | Boolean | — | Allow agent to retry on transient failure |
+| `migration_lease_duration_secs` | Integer | — | Override lease duration for migration operations |
 
 Fields left unset have no limit applied.
 

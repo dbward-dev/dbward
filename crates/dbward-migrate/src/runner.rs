@@ -20,6 +20,7 @@ impl MigrationRunner {
         driver: &dyn DatabaseDriver,
         detail: &str,
         cancel: &CancelState,
+        timeout_secs: u64,
     ) -> Result<MigrationRunResult, MigrateError> {
         let parsed = MigrationDetail::parse(detail)?;
         if parsed.direction != "up" {
@@ -48,10 +49,12 @@ impl MigrationRunner {
                 });
             }
             let result = if entry.transactional {
-                driver.apply_migration(&entry.sql, &entry.version).await
+                driver
+                    .apply_migration(&entry.sql, &entry.version, timeout_secs)
+                    .await
             } else {
                 driver
-                    .apply_migration_no_tx(&entry.sql, &entry.version)
+                    .apply_migration_no_tx(&entry.sql, &entry.version, timeout_secs)
                     .await
             };
             match result {
@@ -78,6 +81,7 @@ impl MigrationRunner {
         driver: &dyn DatabaseDriver,
         detail: &str,
         cancel: &CancelState,
+        timeout_secs: u64,
     ) -> Result<MigrationRunResult, MigrateError> {
         let parsed = MigrationDetail::parse(detail)?;
         if parsed.direction != "down" {
@@ -107,10 +111,12 @@ impl MigrationRunner {
                 });
             }
             let result = if entry.transactional {
-                driver.revert_migration(&entry.sql, &entry.version).await
+                driver
+                    .revert_migration(&entry.sql, &entry.version, timeout_secs)
+                    .await
             } else {
                 driver
-                    .revert_migration_no_tx(&entry.sql, &entry.version)
+                    .revert_migration_no_tx(&entry.sql, &entry.version, timeout_secs)
                     .await
             };
             match result {
@@ -136,6 +142,24 @@ impl MigrationRunner {
     pub async fn status(driver: &dyn DatabaseDriver) -> Result<Vec<String>, MigrateError> {
         driver.ensure_migrations_table().await?;
         driver.applied_versions().await.map_err(Into::into)
+    }
+
+    /// Force-mark a version as applied in schema_migrations (metadata repair).
+    pub async fn repair_mark_applied(
+        driver: &dyn DatabaseDriver,
+        version: &str,
+    ) -> Result<(), MigrateError> {
+        driver.ensure_migrations_table().await?;
+        driver.mark_applied(version).await.map_err(Into::into)
+    }
+
+    /// Force-remove a version from schema_migrations (metadata repair).
+    pub async fn repair_remove(
+        driver: &dyn DatabaseDriver,
+        version: &str,
+    ) -> Result<(), MigrateError> {
+        driver.ensure_migrations_table().await?;
+        driver.remove_version(version).await.map_err(Into::into)
     }
 }
 
@@ -166,11 +190,21 @@ mod tests {
         async fn execute(&self, _sql: &str) -> Result<u64, DriverError> {
             Ok(0)
         }
-        async fn apply_migration(&self, _sql: &str, version: &str) -> Result<(), DriverError> {
+        async fn apply_migration(
+            &self,
+            _sql: &str,
+            version: &str,
+            _timeout_secs: u64,
+        ) -> Result<(), DriverError> {
             self.applied.lock().unwrap().push(version.to_owned());
             Ok(())
         }
-        async fn revert_migration(&self, _sql: &str, version: &str) -> Result<(), DriverError> {
+        async fn revert_migration(
+            &self,
+            _sql: &str,
+            version: &str,
+            _timeout_secs: u64,
+        ) -> Result<(), DriverError> {
             self.applied.lock().unwrap().retain(|v| v != version);
             Ok(())
         }
@@ -178,6 +212,7 @@ mod tests {
             &self,
             _sql: &str,
             version: &str,
+            _timeout_secs: u64,
         ) -> Result<(), DriverError> {
             self.applied.lock().unwrap().push(version.to_owned());
             Ok(())
@@ -186,6 +221,7 @@ mod tests {
             &self,
             _sql: &str,
             version: &str,
+            _timeout_secs: u64,
         ) -> Result<(), DriverError> {
             self.applied.lock().unwrap().retain(|v| v != version);
             Ok(())
@@ -195,6 +231,17 @@ mod tests {
         }
         async fn applied_versions(&self) -> Result<Vec<String>, DriverError> {
             Ok(self.applied.lock().unwrap().clone())
+        }
+        async fn mark_applied(&self, version: &str) -> Result<(), DriverError> {
+            let mut applied = self.applied.lock().unwrap();
+            if !applied.contains(&version.to_owned()) {
+                applied.push(version.to_owned());
+            }
+            Ok(())
+        }
+        async fn remove_version(&self, version: &str) -> Result<(), DriverError> {
+            self.applied.lock().unwrap().retain(|v| v != version);
+            Ok(())
         }
         async fn query_cancellable(
             &self,
@@ -262,7 +309,7 @@ mod tests {
             "up",
             vec![("001", "CREATE TABLE t1"), ("002", "CREATE TABLE t2")],
         );
-        let result = MigrationRunner::run_up(driver.as_ref(), &detail, &cancel)
+        let result = MigrationRunner::run_up(driver.as_ref(), &detail, &cancel, 0)
             .await
             .unwrap();
         assert_eq!(result.applied, vec!["001", "002"]);
@@ -276,7 +323,7 @@ mod tests {
             "up",
             vec![("001", "CREATE TABLE t1"), ("002", "CREATE TABLE t2")],
         );
-        let result = MigrationRunner::run_up(driver.as_ref(), &detail, &cancel)
+        let result = MigrationRunner::run_up(driver.as_ref(), &detail, &cancel, 0)
             .await
             .unwrap();
         assert_eq!(result.applied, vec!["002"]);
@@ -287,7 +334,7 @@ mod tests {
         let driver = Arc::new(MockDriver::new(vec![]));
         let cancel = CancelState::new();
         let detail = make_detail("down", vec![("001", "DROP TABLE t1")]);
-        let err = MigrationRunner::run_up(driver.as_ref(), &detail, &cancel)
+        let err = MigrationRunner::run_up(driver.as_ref(), &detail, &cancel, 0)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("expected direction 'up'"));
@@ -301,7 +348,7 @@ mod tests {
             "down",
             vec![("001", "DROP TABLE t1"), ("002", "DROP TABLE t2")],
         );
-        let result = MigrationRunner::run_down(driver.as_ref(), &detail, &cancel)
+        let result = MigrationRunner::run_down(driver.as_ref(), &detail, &cancel, 0)
             .await
             .unwrap();
         assert_eq!(result.reverted, vec!["002", "001"]);
@@ -312,7 +359,7 @@ mod tests {
         let driver = Arc::new(MockDriver::new(vec![]));
         let cancel = CancelState::new();
         let detail = make_detail("up", vec![("001", "CREATE TABLE t1")]);
-        let err = MigrationRunner::run_down(driver.as_ref(), &detail, &cancel)
+        let err = MigrationRunner::run_down(driver.as_ref(), &detail, &cancel, 0)
             .await
             .unwrap_err();
         assert!(err.to_string().contains("expected direction 'down'"));
@@ -324,7 +371,7 @@ mod tests {
         let cancel = CancelState::new();
         cancel.mark_cancelled();
         let detail = make_detail("up", vec![("001", "CREATE TABLE t1")]);
-        let err = MigrationRunner::run_up(driver.as_ref(), &detail, &cancel)
+        let err = MigrationRunner::run_up(driver.as_ref(), &detail, &cancel, 0)
             .await
             .unwrap_err();
         assert!(matches!(err, MigrateError::Cancelled));
@@ -360,11 +407,21 @@ mod tests {
         async fn execute(&self, _: &str) -> Result<u64, DriverError> {
             unimplemented!()
         }
-        async fn apply_migration(&self, _sql: &str, version: &str) -> Result<(), DriverError> {
+        async fn apply_migration(
+            &self,
+            _sql: &str,
+            version: &str,
+            _timeout_secs: u64,
+        ) -> Result<(), DriverError> {
             self.applied.lock().unwrap().push(version.to_owned());
             Ok(())
         }
-        async fn revert_migration(&self, _sql: &str, version: &str) -> Result<(), DriverError> {
+        async fn revert_migration(
+            &self,
+            _sql: &str,
+            version: &str,
+            _timeout_secs: u64,
+        ) -> Result<(), DriverError> {
             self.applied.lock().unwrap().retain(|v| v != version);
             Ok(())
         }
@@ -372,6 +429,7 @@ mod tests {
             &self,
             _sql: &str,
             version: &str,
+            _timeout_secs: u64,
         ) -> Result<(), DriverError> {
             self.applied.lock().unwrap().push(version.to_owned());
             self.no_tx_calls
@@ -384,6 +442,7 @@ mod tests {
             &self,
             _sql: &str,
             version: &str,
+            _timeout_secs: u64,
         ) -> Result<(), DriverError> {
             self.applied.lock().unwrap().retain(|v| v != version);
             self.no_tx_calls
@@ -397,6 +456,17 @@ mod tests {
         }
         async fn applied_versions(&self) -> Result<Vec<String>, DriverError> {
             Ok(self.applied.lock().unwrap().clone())
+        }
+        async fn mark_applied(&self, version: &str) -> Result<(), DriverError> {
+            let mut applied = self.applied.lock().unwrap();
+            if !applied.contains(&version.to_owned()) {
+                applied.push(version.to_owned());
+            }
+            Ok(())
+        }
+        async fn remove_version(&self, version: &str) -> Result<(), DriverError> {
+            self.applied.lock().unwrap().retain(|v| v != version);
+            Ok(())
         }
         async fn query_cancellable(
             &self,
@@ -440,7 +510,7 @@ mod tests {
                 ("002", "CREATE TABLE t2 (id INT)", true),
             ],
         );
-        let result = MigrationRunner::run_up(driver.as_ref(), &detail, &cancel)
+        let result = MigrationRunner::run_up(driver.as_ref(), &detail, &cancel, 0)
             .await
             .unwrap();
         assert_eq!(result.applied, vec!["001", "002"]);
@@ -466,7 +536,7 @@ mod tests {
                 ("002", "DROP INDEX CONCURRENTLY idx", false),
             ],
         );
-        let result = MigrationRunner::run_down(driver.as_ref(), &detail, &cancel)
+        let result = MigrationRunner::run_down(driver.as_ref(), &detail, &cancel, 0)
             .await
             .unwrap();
         assert_eq!(result.reverted, vec!["002", "001"]);

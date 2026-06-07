@@ -160,6 +160,13 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     let drain_timeout = Duration::from_secs(config.drain_timeout_secs());
     let statement_timeout = config.statement_timeout_secs();
     let operations = config.operations();
+    if config.operations.is_none() {
+        tracing::warn!(
+            "agent.operations not configured; all standard operations including migrations are enabled. \
+             Note: migrate_repair requires explicit configuration. \
+             Set [agent].operations explicitly for production use."
+        );
+    }
     let startup_initial = config.startup_retry_initial_ms();
     let startup_max = config.startup_retry_max_ms();
     let startup_deadline = config.startup_max_wait_secs();

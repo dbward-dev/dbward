@@ -203,6 +203,24 @@ dbward migrate down --count 2
 | `--repo <URL>` | | Metadata |
 | `--idempotency-key <KEY>` | | Deduplication key |
 
+### dbward migrate repair
+
+Repair schema_migrations metadata. This modifies only the version tracking table, not the actual database schema. Verify DB state manually before use.
+
+```bash
+dbward migrate repair --emergency --action mark-applied --version 20240601_add_index --reason "partial migration recovery"
+dbward migrate repair --emergency --action remove --version 20240601_add_index --reason "rolled back manually"
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--action <ACTION>` | (required) | `mark-applied` or `remove` |
+| `--version <VERSION>` | (required) | Migration version to repair |
+| `--emergency` | (required) | Safety flag (break-glass permission required) |
+| `--reason <TEXT>` | (required) | Reason for the repair (recorded in audit log) |
+| `--ticket <ID>` | | Metadata |
+| `--repo <URL>` | | Metadata |
+
 ---
 
 ## dbward audit
