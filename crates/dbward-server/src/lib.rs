@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use arc_swap::ArcSwap;
 use axum::Router;
 use config::{AutoApproveExt, SqlReviewExt};
 use dbward_app::ports::ResultStore;
@@ -88,6 +89,9 @@ pub async fn run_from_args(
     std::fs::create_dir_all(&state_dir)?;
     let db_path = state_dir.join("dbward.db");
 
+    // Write PID file for `dbward server reload`
+    std::fs::write(state_dir.join("server.pid"), std::process::id().to_string())?;
+
     // Logging: apply config, with RUST_LOG env override taking precedence
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         cfg.logging.level.parse().unwrap_or_else(|_| {
@@ -123,10 +127,6 @@ pub async fn run_from_args(
     let database_registry = Arc::new(dbward_infra::sqlite::SqliteDatabaseRegistry::new(
         conn.clone(),
     ));
-    let group_repo = Arc::new(dbward_infra::sqlite::SqliteGroupRepo::new(conn.clone()));
-    let role_binding_repo = Arc::new(dbward_infra::sqlite::SqliteRoleBindingRepo::new(
-        conn.clone(),
-    ));
     let schema_repo = Arc::new(dbward_infra::sqlite::SqliteSchemaRepo::new(conn.clone()));
     let dry_run_repo = Arc::new(dbward_infra::sqlite::SqliteDryRunRepo::new(conn.clone()));
     let context_repo = Arc::new(dbward_infra::sqlite::SqliteContextRepo::new(conn.clone()));
@@ -145,50 +145,9 @@ pub async fn run_from_args(
     );
 
     // token_verifier is finalized after OIDC injection below
-    let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new({
-        // H-31: Build bindings from config
-        let mut group_bindings: HashMap<String, Vec<String>> = HashMap::new();
-        let mut user_bindings: HashMap<String, Vec<String>> = HashMap::new();
-        for rb in &cfg.auth.role_bindings {
-            for group in &rb.groups {
-                group_bindings
-                    .entry(group.clone())
-                    .or_default()
-                    .push(rb.role.clone());
-            }
-            for subject in &rb.subjects {
-                user_bindings
-                    .entry(subject.clone())
-                    .or_default()
-                    .push(rb.role.clone());
-            }
-        }
-        // Also include OIDC role_mappings (group → role)
-        if let Some(ref oidc_cfg) = cfg.auth.oidc {
-            for mapping in &oidc_cfg.role_mappings {
-                if mapping.claim == "groups" {
-                    group_bindings
-                        .entry(mapping.value.clone())
-                        .or_default()
-                        .push(mapping.role.clone());
-                }
-            }
-        }
-        dbward_infra::auth::ConfigRoleResolver::with_policy_repo(
-            cfg.auth.roles.iter().map(build_role_definition).collect(),
-            group_bindings,
-            user_bindings,
-            cfg.auth.default_role.clone(),
-            Some(policy_repo.clone()),
-        )
-        .with_group_members(
-            cfg.auth
-                .groups
-                .iter()
-                .map(|gc| (gc.name.clone(), gc.members.iter().cloned().collect()))
-                .collect(),
-        )
-    });
+    let initial_reloadable = build_reloadable_config_with(&cfg, Some(policy_repo.clone()))
+        .map_err(|e| format!("config: {e}"))?;
+    let role_resolver = initial_reloadable.role_resolver.clone();
     let authorizer: Arc<dyn dbward_app::ports::Authorizer> =
         Arc::new(dbward_infra::auth::RbacAuthorizer);
 
@@ -394,17 +353,13 @@ pub async fn run_from_args(
 
     let draining = Arc::new(AtomicBool::new(false));
 
-    // Clone repos needed for config sync (before they're moved into AppState)
-    let sync_db_reg = database_registry.clone() as Arc<dyn dbward_app::ports::DatabaseRegistry>;
-    let sync_user_repo = user_repo.clone() as Arc<dyn dbward_app::ports::UserRepo>;
-    let sync_group_repo = group_repo.clone() as Arc<dyn dbward_app::ports::GroupRepo>;
-    let sync_rb_repo = role_binding_repo.clone() as Arc<dyn dbward_app::ports::RoleBindingRepo>;
-    let sync_notifier = notifier.clone();
+    // Clone SSRF validator needed for config sync (before it's moved into AppState)
     let sync_ssrf_validator = ssrf_validator.clone();
+    let reload_ssrf = ssrf_validator.clone();
 
     let state = state::AppStateBuilder {
         token_verifier,
-        role_resolver,
+        reloadable: Arc::new(ArcSwap::from_pointee(initial_reloadable)),
         authorizer,
         request_reader: request_repo.clone(),
         request_writer: request_repo.clone(),
@@ -435,24 +390,9 @@ pub async fn run_from_args(
         token_value_generator,
         webhook_delivery_repo: Some(webhook_delivery_repo),
         metrics: Arc::new(metrics::Metrics::new()),
-        default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
         max_persist_bytes: cfg.result_storage.max_persist_bytes,
         auth_mode: cfg.auth.mode.clone(),
         storage_backend: cfg.result_storage.backend.clone(),
-        sql_review_rules: cfg
-            .sql_review
-            .to_review_rules()
-            .map_err(|e| format!("config: {e}"))?,
-        auto_approve_entries: {
-            let mut entries = Vec::new();
-            for (i, a) in cfg.auto_approve.iter().enumerate() {
-                entries.push(
-                    a.to_entry()
-                        .map_err(|e| format!("auto_approve[{i}]: {e}"))?,
-                );
-            }
-            entries
-        },
         draining: draining.clone(),
         slack_config,
         slack_client: slack_client_for_state,
@@ -467,17 +407,7 @@ pub async fn run_from_args(
     safety_guard(&conn, &cfg)?;
 
     // Register databases and sync all config-managed resources
-    sync_all_config(
-        &state,
-        &cfg,
-        sync_db_reg,
-        sync_user_repo,
-        sync_group_repo,
-        sync_rb_repo,
-        sync_notifier,
-        sync_ssrf_validator,
-        conn.clone(),
-    )?;
+    sync_all_config(&state, &cfg, sync_ssrf_validator, conn.clone())?;
 
     // A7: Record config sync in audit log
     let _ = state
@@ -498,6 +428,71 @@ pub async fn run_from_args(
     // Parse trusted_proxies at startup (fail fast on invalid config)
     let trusted = middleware::trusted_proxies::parse_trusted_proxies(&cfg.trusted_proxies)
         .map_err(|e| format!("trusted_proxies config: {e}"))?;
+
+    // Spawn SIGHUP hot reload handler
+    #[cfg(unix)]
+    {
+        let reload_state = state.clone();
+        let reload_conn = conn.clone();
+        let reload_config_path = config_path.to_string();
+        let reload_ssrf_validator = reload_ssrf.clone();
+        let allow_private = cfg.allow_private_networks;
+        tokio::spawn(async move {
+            use tokio::signal::unix::{SignalKind, signal};
+            use tokio::time::Instant;
+
+            let mut sig = signal(SignalKind::hangup()).unwrap();
+            let reload_mutex = tokio::sync::Mutex::new(());
+            let mut last_reload = Instant::now() - Duration::from_secs(10);
+
+            loop {
+                sig.recv().await;
+                if last_reload.elapsed() < Duration::from_secs(5) {
+                    tracing::debug!("config reload debounced");
+                    continue;
+                }
+                let _guard = reload_mutex.lock().await;
+                last_reload = Instant::now();
+
+                let new_cfg =
+                    match config::ServerConfig::load(std::path::Path::new(&reload_config_path)) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!("config reload failed (parse): {e}");
+                            continue;
+                        }
+                    };
+
+                if let Err(e) = safety_guard(&reload_conn, &new_cfg) {
+                    tracing::error!("config reload rejected (safety guard): {e}");
+                    continue;
+                }
+
+                let ssrf: Arc<dyn dbward_app::ports::SsrfValidator> = if allow_private {
+                    reload_ssrf_validator.clone()
+                } else {
+                    Arc::new(dbward_infra::webhook::SsrfGuard)
+                };
+
+                let uc = build_sync_uc(&reload_state, reload_conn.clone(), ssrf);
+
+                let sync_result = build_sync_inputs_and_run(&uc, &new_cfg);
+                match sync_result {
+                    Ok(()) => {
+                        let new_reloadable = build_reloadable_config(&new_cfg);
+                        match new_reloadable {
+                            Ok(r) => {
+                                reload_state.reloadable.store(Arc::new(r));
+                                tracing::info!("config reloaded successfully");
+                            }
+                            Err(e) => tracing::warn!("config reload failed (build): {e}"),
+                        }
+                    }
+                    Err(e) => tracing::warn!("config reload failed (sync): {e}"),
+                }
+            }
+        });
+    }
 
     start(addr, state, cfg.retention, trusted).await
 }
@@ -567,208 +562,35 @@ fn safety_guard(
 fn sync_all_config(
     state: &AppState,
     cfg: &config::ServerConfig,
-    database_registry: Arc<dyn dbward_app::ports::DatabaseRegistry>,
-    user_repo: Arc<dyn dbward_app::ports::UserRepo>,
-    group_repo: Arc<dyn dbward_app::ports::GroupRepo>,
-    role_binding_repo: Arc<dyn dbward_app::ports::RoleBindingRepo>,
-    notifier: Arc<dyn dbward_app::ports::Notifier>,
     ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator>,
     conn: dbward_infra::sqlite::DbConn,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let transaction = Arc::new(dbward_infra::sqlite::SqliteSyncTransaction::new(conn));
-    let uc = SyncConfig {
+    let uc = build_sync_uc(state, conn, ssrf_validator);
+    build_sync_inputs_and_run(&uc, cfg)
+}
+
+fn build_sync_uc(
+    state: &AppState,
+    conn: dbward_infra::sqlite::DbConn,
+    ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator>,
+) -> SyncConfig {
+    let transaction = Arc::new(dbward_infra::sqlite::SqliteSyncTransaction::new(
+        conn.clone(),
+    ));
+    SyncConfig {
         policy_repo: state.policy_repo().clone(),
         webhook_repo: state.webhook_repo().clone(),
-        database_registry,
-        user_repo,
-        group_repo,
-        role_binding_repo,
-        notifier,
+        database_registry: state.database_registry().clone(),
+        user_repo: state.user_repo().clone(),
+        group_repo: Arc::new(dbward_infra::sqlite::SqliteGroupRepo::new(conn.clone())),
+        role_binding_repo: Arc::new(dbward_infra::sqlite::SqliteRoleBindingRepo::new(conn)),
+        notifier: state.notifier().clone(),
         clock: state.clock().clone(),
         id_gen: state.id_generator().clone(),
         transaction,
         license_checker: state.license_checker().clone(),
         ssrf_validator,
-    };
-
-    let databases: Vec<DatabaseInput> = cfg
-        .databases
-        .iter()
-        .map(|d| DatabaseInput {
-            name: d.name.clone(),
-            environments: d.environments.clone(),
-        })
-        .collect();
-
-    let users: Vec<UserInput> = cfg
-        .users
-        .iter()
-        .map(|u| UserInput {
-            id: u.id.clone(),
-            status: u.status.clone(),
-        })
-        .collect();
-
-    let groups: Vec<GroupInput> = cfg
-        .auth
-        .groups
-        .iter()
-        .map(|g| GroupInput {
-            name: g.name.clone(),
-            members: g.members.clone(),
-        })
-        .collect();
-
-    let roles: Vec<RoleInput> = cfg
-        .auth
-        .roles
-        .iter()
-        .map(|r| RoleInput {
-            name: r.name.clone(),
-            permissions: r.permissions.clone(),
-            databases: r.databases.clone(),
-            environments: r.environments.clone(),
-        })
-        .collect();
-
-    let role_bindings: Vec<RoleBindingInput> = cfg
-        .auth
-        .role_bindings
-        .iter()
-        .map(|rb| RoleBindingInput {
-            role: rb.role.clone(),
-            subjects: rb.subjects.clone(),
-            groups: rb.groups.clone(),
-        })
-        .collect();
-
-    let webhooks: Vec<WebhookInput> = cfg
-        .webhooks
-        .iter()
-        .map(|wh| WebhookInput {
-            id: wh.id.clone(),
-            url: wh.url.clone(),
-            events: wh.events.clone(),
-            format: wh.format.clone(),
-            secret: wh.secret.clone(),
-        })
-        .collect();
-
-    let workflows: Vec<WorkflowInput> = cfg
-        .workflows
-        .iter()
-        .map(|wf| WorkflowInput {
-            database: wf.database.clone(),
-            environment: wf.environment.clone(),
-            operations: wf.operations.clone(),
-            steps: wf
-                .steps
-                .iter()
-                .map(|step_val| {
-                    let mode = step_val
-                        .get("mode")
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("all")
-                        .to_string();
-                    let approvers = step_val
-                        .get("approvers")
-                        .and_then(|a| a.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|a| {
-                                    let min =
-                                        a.get("min").and_then(|m| m.as_u64()).unwrap_or(1) as u32;
-                                    let (selector_type, value) = if let Some(role) =
-                                        a.get("role").and_then(|r| r.as_str())
-                                    {
-                                        ("role", role)
-                                    } else if let Some(group) =
-                                        a.get("group").and_then(|g| g.as_str())
-                                    {
-                                        ("group", group)
-                                    } else if let Some(user) =
-                                        a.get("user").and_then(|u| u.as_str())
-                                    {
-                                        ("user", user)
-                                    } else {
-                                        return None;
-                                    };
-                                    Some(ApproverInput {
-                                        selector_type: selector_type.to_string(),
-                                        value: value.to_string(),
-                                        min,
-                                    })
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    WorkflowStepInput { mode, approvers }
-                })
-                .collect(),
-            require_reason: wf.require_reason,
-            allow_self_approve: wf.allow_self_approve,
-            allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
-            explain: wf.explain,
-            pending_ttl_secs: wf.pending_ttl_secs,
-            statement_timeout_secs: wf.statement_timeout_secs,
-        })
-        .collect();
-
-    let execution_policies: Vec<ExecutionPolicyInput> = cfg
-        .execution_policies
-        .iter()
-        .map(|ep| ExecutionPolicyInput {
-            database: ep.database.clone(),
-            environment: ep.environment.clone(),
-            max_executions: ep.max_executions,
-            execution_window_secs: ep.execution_window_secs,
-            retry_on_failure: ep.retry_on_failure,
-            statement_timeout_secs: ep.statement_timeout_secs,
-            max_statement_timeout_secs: ep.max_statement_timeout_secs,
-            max_rows: ep.max_rows,
-            migration_lease_duration_secs: ep.migration_lease_duration_secs,
-            migration_statement_timeout_secs: ep.migration_statement_timeout_secs,
-        })
-        .collect();
-
-    let result_policies: Vec<ResultPolicyInput> = cfg
-        .result_policies
-        .iter()
-        .map(|rp| ResultPolicyInput {
-            database: rp.database.clone(),
-            environment: rp.environment.clone(),
-            retention_days: rp.retention_days,
-            delivery_mode: rp.delivery_mode.clone(),
-            access: rp.access.clone(),
-        })
-        .collect();
-
-    let notification_policies: Vec<NotificationPolicyInput> = cfg
-        .notification_policies
-        .iter()
-        .map(|np| NotificationPolicyInput {
-            database: np.database.clone(),
-            environment: np.environment.clone(),
-            webhooks: np.webhooks.clone(),
-            events: np.events.clone(),
-        })
-        .collect();
-
-    uc.sync_all(
-        databases,
-        users,
-        groups,
-        roles,
-        role_bindings,
-        webhooks,
-        workflows,
-        execution_policies,
-        result_policies,
-        notification_policies,
-    )
-    .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
-
-    Ok(())
+    }
 }
 
 pub fn build_app(state: AppState, trusted: Vec<ipnet::IpNet>) -> Router {
@@ -899,6 +721,251 @@ async fn wait_for_signal() {
     {
         ctrl_c.await.ok();
     }
+}
+
+fn build_sync_inputs_and_run(
+    uc: &SyncConfig,
+    cfg: &config::ServerConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let databases: Vec<DatabaseInput> = cfg
+        .databases
+        .iter()
+        .map(|d| DatabaseInput {
+            name: d.name.clone(),
+            environments: d.environments.clone(),
+        })
+        .collect();
+    let users: Vec<UserInput> = cfg
+        .users
+        .iter()
+        .map(|u| UserInput {
+            id: u.id.clone(),
+            status: u.status.clone(),
+        })
+        .collect();
+    let groups: Vec<GroupInput> = cfg
+        .auth
+        .groups
+        .iter()
+        .map(|g| GroupInput {
+            name: g.name.clone(),
+            members: g.members.clone(),
+        })
+        .collect();
+    let roles: Vec<RoleInput> = cfg
+        .auth
+        .roles
+        .iter()
+        .map(|r| RoleInput {
+            name: r.name.clone(),
+            permissions: r.permissions.clone(),
+            databases: r.databases.clone(),
+            environments: r.environments.clone(),
+        })
+        .collect();
+    let role_bindings: Vec<RoleBindingInput> = cfg
+        .auth
+        .role_bindings
+        .iter()
+        .map(|rb| RoleBindingInput {
+            role: rb.role.clone(),
+            subjects: rb.subjects.clone(),
+            groups: rb.groups.clone(),
+        })
+        .collect();
+    let webhooks: Vec<WebhookInput> = cfg
+        .webhooks
+        .iter()
+        .map(|wh| WebhookInput {
+            id: wh.id.clone(),
+            url: wh.url.clone(),
+            events: wh.events.clone(),
+            format: wh.format.clone(),
+            secret: wh.secret.clone(),
+        })
+        .collect();
+    let workflows: Vec<WorkflowInput> = cfg
+        .workflows
+        .iter()
+        .map(|wf| WorkflowInput {
+            database: wf.database.clone(),
+            environment: wf.environment.clone(),
+            operations: wf.operations.clone(),
+            steps: wf
+                .steps
+                .iter()
+                .map(|step_val| {
+                    let mode = step_val
+                        .get("mode")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("all")
+                        .to_string();
+                    let approvers = step_val
+                        .get("approvers")
+                        .and_then(|a| a.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|a| {
+                                    let min =
+                                        a.get("min").and_then(|m| m.as_u64()).unwrap_or(1) as u32;
+                                    let (selector_type, value) = if let Some(role) =
+                                        a.get("role").and_then(|r| r.as_str())
+                                    {
+                                        ("role", role)
+                                    } else if let Some(group) =
+                                        a.get("group").and_then(|g| g.as_str())
+                                    {
+                                        ("group", group)
+                                    } else if let Some(user) =
+                                        a.get("user").and_then(|u| u.as_str())
+                                    {
+                                        ("user", user)
+                                    } else {
+                                        return None;
+                                    };
+                                    Some(ApproverInput {
+                                        selector_type: selector_type.to_string(),
+                                        value: value.to_string(),
+                                        min,
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    WorkflowStepInput { mode, approvers }
+                })
+                .collect(),
+            require_reason: wf.require_reason,
+            allow_self_approve: wf.allow_self_approve,
+            allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
+            explain: wf.explain,
+            pending_ttl_secs: wf.pending_ttl_secs,
+            statement_timeout_secs: wf.statement_timeout_secs,
+        })
+        .collect();
+    let execution_policies: Vec<ExecutionPolicyInput> = cfg
+        .execution_policies
+        .iter()
+        .map(|ep| ExecutionPolicyInput {
+            database: ep.database.clone(),
+            environment: ep.environment.clone(),
+            max_executions: ep.max_executions,
+            execution_window_secs: ep.execution_window_secs,
+            retry_on_failure: ep.retry_on_failure,
+            statement_timeout_secs: ep.statement_timeout_secs,
+            max_statement_timeout_secs: ep.max_statement_timeout_secs,
+            max_rows: ep.max_rows,
+            migration_lease_duration_secs: ep.migration_lease_duration_secs,
+            migration_statement_timeout_secs: ep.migration_statement_timeout_secs,
+        })
+        .collect();
+    let result_policies: Vec<ResultPolicyInput> = cfg
+        .result_policies
+        .iter()
+        .map(|rp| ResultPolicyInput {
+            database: rp.database.clone(),
+            environment: rp.environment.clone(),
+            retention_days: rp.retention_days,
+            delivery_mode: rp.delivery_mode.clone(),
+            access: rp.access.clone(),
+        })
+        .collect();
+    let notification_policies: Vec<NotificationPolicyInput> = cfg
+        .notification_policies
+        .iter()
+        .map(|np| NotificationPolicyInput {
+            database: np.database.clone(),
+            environment: np.environment.clone(),
+            webhooks: np.webhooks.clone(),
+            events: np.events.clone(),
+        })
+        .collect();
+
+    uc.sync_all(
+        databases,
+        users,
+        groups,
+        roles,
+        role_bindings,
+        webhooks,
+        workflows,
+        execution_policies,
+        result_policies,
+        notification_policies,
+    )
+    .map(|_| ())
+    .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })
+}
+
+fn build_reloadable_config(
+    cfg: &config::ServerConfig,
+) -> Result<state::ReloadableConfig, Box<dyn std::error::Error>> {
+    build_reloadable_config_with(cfg, None)
+}
+
+fn build_reloadable_config_with(
+    cfg: &config::ServerConfig,
+    policy_repo: Option<Arc<dyn dbward_app::ports::PolicyRepo>>,
+) -> Result<state::ReloadableConfig, Box<dyn std::error::Error>> {
+    let mut group_bindings: HashMap<String, Vec<String>> = HashMap::new();
+    let mut user_bindings: HashMap<String, Vec<String>> = HashMap::new();
+    for rb in &cfg.auth.role_bindings {
+        for group in &rb.groups {
+            group_bindings
+                .entry(group.clone())
+                .or_default()
+                .push(rb.role.clone());
+        }
+        for subject in &rb.subjects {
+            user_bindings
+                .entry(subject.clone())
+                .or_default()
+                .push(rb.role.clone());
+        }
+    }
+    if let Some(ref oidc_cfg) = cfg.auth.oidc {
+        for mapping in &oidc_cfg.role_mappings {
+            if mapping.claim == "groups" {
+                group_bindings
+                    .entry(mapping.value.clone())
+                    .or_default()
+                    .push(mapping.role.clone());
+            }
+        }
+    }
+    let resolver = dbward_infra::auth::ConfigRoleResolver::with_policy_repo(
+        cfg.auth.roles.iter().map(build_role_definition).collect(),
+        group_bindings,
+        user_bindings,
+        cfg.auth.default_role.clone(),
+        policy_repo,
+    )
+    .with_group_members(
+        cfg.auth
+            .groups
+            .iter()
+            .map(|gc| (gc.name.clone(), gc.members.iter().cloned().collect()))
+            .collect(),
+    );
+    let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new(resolver);
+
+    let mut auto_approve_entries = Vec::new();
+    for (i, a) in cfg.auto_approve.iter().enumerate() {
+        auto_approve_entries.push(
+            a.to_entry()
+                .map_err(|e| format!("auto_approve[{i}]: {e}"))?,
+        );
+    }
+
+    Ok(state::ReloadableConfig {
+        role_resolver,
+        auto_approve_entries,
+        sql_review_rules: cfg
+            .sql_review
+            .to_review_rules()
+            .map_err(|e| format!("config: {e}"))?,
+        default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
+    })
 }
 
 #[cfg(all(test, feature = "commercial"))]

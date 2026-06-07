@@ -30,6 +30,8 @@ async fn resolve_slack_auth_user(
         .ok_or_else(|| "user not found".to_string())?;
 
     let roles = state
+        .reloadable
+        .load()
         .role_resolver
         .resolve(&subject_id, SubjectType::User, &user.groups)
         .map_err(|e| format!("{e}"))?;
@@ -42,7 +44,12 @@ async fn resolve_slack_auth_user(
         token_id: None,
     };
     // Augment with TOML [[auth.groups]] membership
-    if let Some(config_groups) = state.role_resolver.config_groups_for(&auth_user.subject_id) {
+    if let Some(config_groups) = state
+        .reloadable
+        .load()
+        .role_resolver
+        .config_groups_for(&auth_user.subject_id)
+    {
         for g in config_groups {
             if !auth_user.groups.contains(g) {
                 auth_user.groups.push(g.clone());

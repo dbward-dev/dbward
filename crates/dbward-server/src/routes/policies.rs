@@ -262,7 +262,9 @@ pub async fn policy_resolution(
         ));
     }
 
-    let auto_entry = workflow_matcher::find_auto_approve(&state.auto_approve_entries, &db, &env);
+    let reloadable = state.reloadable.load();
+    let auto_entry =
+        workflow_matcher::find_auto_approve(&reloadable.auto_approve_entries, &db, &env);
     let exec_policy = state.policy_evaluator().get_execution_policy(&db, &env);
 
     let exec_policy_json = {
