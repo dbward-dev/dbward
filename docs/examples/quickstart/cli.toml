@@ -1,0 +1,5 @@
+default_database = "app"
+
+[server]
+url = "http://server:3000"
+token = "${DBWARD_API_TOKEN}"
