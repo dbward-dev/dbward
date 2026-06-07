@@ -50,7 +50,11 @@ impl Migrator {
             .collect())
     }
 
-    pub async fn up(&self, count: Option<usize>) -> Result<MigrationResult, MigrateError> {
+    pub async fn up(
+        &self,
+        count: Option<usize>,
+        timeout_secs: u64,
+    ) -> Result<MigrationResult, MigrateError> {
         self.driver.ensure_migrations_table().await?;
         let applied = self.driver.applied_versions().await?;
         let migrations = parse_migrations_dir(&self.migrations_dir)?;
@@ -73,11 +77,11 @@ impl Migrator {
         for migration in to_apply {
             if migration.up_transactional {
                 self.driver
-                    .apply_migration(&migration.up_sql, &migration.version)
+                    .apply_migration(&migration.up_sql, &migration.version, timeout_secs)
                     .await?;
             } else {
                 self.driver
-                    .apply_migration_no_tx(&migration.up_sql, &migration.version)
+                    .apply_migration_no_tx(&migration.up_sql, &migration.version, timeout_secs)
                     .await?;
             }
             result
@@ -88,7 +92,11 @@ impl Migrator {
         Ok(result)
     }
 
-    pub async fn down(&self, count: Option<usize>) -> Result<MigrationResult, MigrateError> {
+    pub async fn down(
+        &self,
+        count: Option<usize>,
+        timeout_secs: u64,
+    ) -> Result<MigrationResult, MigrateError> {
         self.driver.ensure_migrations_table().await?;
         let applied = self.driver.applied_versions().await?;
         let migrations = parse_migrations_dir(&self.migrations_dir)?;
@@ -114,11 +122,11 @@ impl Migrator {
 
             if migration.down_transactional {
                 self.driver
-                    .revert_migration(down_sql, &migration.version)
+                    .revert_migration(down_sql, &migration.version, timeout_secs)
                     .await?;
             } else {
                 self.driver
-                    .revert_migration_no_tx(down_sql, &migration.version)
+                    .revert_migration_no_tx(down_sql, &migration.version, timeout_secs)
                     .await?;
             }
             result

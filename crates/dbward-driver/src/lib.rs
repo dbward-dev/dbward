@@ -30,16 +30,39 @@ pub struct QueryOutput {
 pub trait DatabaseDriver: Send + Sync {
     async fn query(&self, sql: &str) -> Result<QueryOutput, DriverError>;
     async fn execute(&self, sql: &str) -> Result<u64, DriverError>;
-    async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), DriverError>;
-    async fn revert_migration(&self, down_sql: &str, version: &str) -> Result<(), DriverError>;
-    async fn apply_migration_no_tx(&self, sql: &str, version: &str) -> Result<(), DriverError>;
+
+    /// Apply a migration. timeout_secs: 0 means no timeout (unlimited).
+    async fn apply_migration(
+        &self,
+        sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError>;
+    async fn revert_migration(
+        &self,
+        down_sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError>;
+    async fn apply_migration_no_tx(
+        &self,
+        sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError>;
     async fn revert_migration_no_tx(
         &self,
         down_sql: &str,
         version: &str,
+        timeout_secs: u64,
     ) -> Result<(), DriverError>;
     async fn ensure_migrations_table(&self) -> Result<(), DriverError>;
     async fn applied_versions(&self) -> Result<Vec<String>, DriverError>;
+
+    /// Force-insert a version into schema_migrations (metadata repair).
+    async fn mark_applied(&self, version: &str) -> Result<(), DriverError>;
+    /// Force-delete a version from schema_migrations (metadata repair).
+    async fn remove_version(&self, version: &str) -> Result<(), DriverError>;
 
     /// Cancellable query: acquire connection → set timeout → set pid on cancel_state → execute.
     /// All on the same connection. Cancel state is shared with heartbeat task.

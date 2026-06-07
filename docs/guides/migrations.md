@@ -154,3 +154,55 @@ dbward migrate up --share-with "group:backend-team"
 
 - [CI/CD](ci-cd.md) — Automate migrations in pipelines
 - [Workflows](policies/workflows.md) — Configure approval for migrations
+
+---
+
+## Safety features
+
+### Statement timeout
+
+Migrations respect `statement_timeout_secs` from your execution policy or workflow configuration. If a migration SQL exceeds the timeout, it is cancelled:
+
+- **PostgreSQL (transactional)**: `SET LOCAL statement_timeout` cancels the statement and rolls back the implicit transaction (atomicity preserved).
+- **PostgreSQL (non-transactional)**: Statement is cancelled but side effects may persist (e.g., `CREATE INDEX CONCURRENTLY` leaves an invalid index). Manual inspection required.
+- **MySQL**: `tokio::time::timeout` + `KILL CONNECTION` terminates the session. Schema state is unknown after timeout — manual inspection required.
+
+Default timeout is 30 seconds. Configure longer timeouts for heavy migrations:
+
+> **Important**: The default 30-second timeout applies to migrations as well. Most DDL operations (e.g., `ALTER TABLE` on large tables) take longer than 30 seconds. Always configure an appropriate timeout for environments where migrations run:
+
+```toml
+[[execution_policies]]
+statement_timeout_secs = 300
+max_statement_timeout_secs = 3600
+migration_lease_duration_secs = 3600
+```
+
+### MySQL DDL warning
+
+MySQL DDL statements (`CREATE`, `ALTER`, `DROP`, `TRUNCATE`, `RENAME`) cause an implicit commit, meaning transaction atomicity is not guaranteed. dbward logs a warning when DDL is detected in a migration.
+
+### Non-transactional migrations
+
+Use `-- migrate:up transaction:false` for statements that cannot run inside a transaction (e.g., `CREATE INDEX CONCURRENTLY` on PostgreSQL):
+
+```sql
+-- migrate:up transaction:false
+CREATE INDEX CONCURRENTLY idx_users_email ON users(email);
+
+-- migrate:down transaction:false
+DROP INDEX CONCURRENTLY idx_users_email;
+```
+
+If the SQL succeeds but the version record fails, dbward returns a `PartialMigration` error with a suggested repair command.
+
+### Repairing metadata
+
+If schema_migrations gets out of sync with the actual database state, use `migrate repair`:
+
+```bash
+dbward migrate repair --emergency --action mark-applied --version 20240601_add_index --reason "SQL applied but version record failed"
+dbward migrate repair --emergency --action remove --version 20240601_add_index --reason "manually rolled back"
+```
+
+This command only modifies the `schema_migrations` table — it does not alter the actual database schema. Always verify DB state before using repair.

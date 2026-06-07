@@ -229,7 +229,10 @@ impl JobExecutor {
         let max_rows = claim.max_rows.map(|v| v as usize);
         let is_migration = matches!(
             operation,
-            Operation::MigrateUp | Operation::MigrateDown | Operation::MigrateStatus
+            Operation::MigrateUp
+                | Operation::MigrateDown
+                | Operation::MigrateStatus
+                | Operation::MigrateRepair
         );
 
         let cancel_state = CancelState::new();

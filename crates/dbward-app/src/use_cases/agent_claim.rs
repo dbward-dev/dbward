@@ -106,7 +106,7 @@ impl AgentClaim {
             // Agent's registered operations are checked via the poll filter;
             // here we verify the request operation is supported by the agent's declared scope
             let op_supported = match request.operation {
-                Operation::MigrateUp | Operation::MigrateDown => {
+                Operation::MigrateUp | Operation::MigrateDown | Operation::MigrateRepair => {
                     // Migration checks database capability (wildcard permitted)
                     input
                         .agent_databases
@@ -126,7 +126,7 @@ impl AgentClaim {
         // 5. Migration exclusion: no concurrent migrate on same (db, env)
         if matches!(
             request.operation,
-            Operation::MigrateUp | Operation::MigrateDown
+            Operation::MigrateUp | Operation::MigrateDown | Operation::MigrateRepair
         ) && self.agent_repo.has_running_migration(
             &request.database,
             &request.environment,

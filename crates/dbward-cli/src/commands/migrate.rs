@@ -43,6 +43,26 @@ pub enum MigrateAction {
     Create {
         name: String,
     },
+    /// Repair schema_migrations metadata (mark-applied or remove a version).
+    /// Requires --emergency flag.
+    Repair {
+        /// Action: "mark-applied" or "remove"
+        #[arg(long, required = true)]
+        action: String,
+        /// Migration version to repair
+        #[arg(long, required = true)]
+        version: String,
+        /// Required safety flag
+        #[arg(long)]
+        emergency: bool,
+        /// Reason for emergency repair (required)
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        ticket: Option<String>,
+        #[arg(long)]
+        repo: Option<String>,
+    },
 }
 
 pub async fn run_migrate(
@@ -146,12 +166,61 @@ pub async fn run_migrate(
             [].as_slice(),
         ),
         MigrateAction::Create { .. } => unreachable!(),
+        MigrateAction::Repair {
+            action,
+            version,
+            emergency,
+            reason,
+            ticket,
+            repo,
+        } => {
+            if !emergency {
+                return Err(CliError::Other(
+                    "--emergency flag is required for migrate repair. \
+                     This command modifies schema_migrations metadata only, not the actual schema. \
+                     Verify DB state manually before use."
+                        .into(),
+                ));
+            }
+            if reason.is_none() {
+                return Err(CliError::Other(
+                    "--reason is required for emergency repair requests.".into(),
+                ));
+            }
+            let repair_action = match action.as_str() {
+                "mark-applied" => "mark_applied",
+                "remove" => "remove",
+                _ => {
+                    return Err(CliError::Other(format!(
+                        "unknown repair action '{action}'. Valid: mark-applied, remove"
+                    )));
+                }
+            };
+            let detail = serde_json::json!({
+                "action": repair_action,
+                "version": version,
+            })
+            .to_string();
+            (
+                "migrate_repair",
+                detail,
+                build_request_metadata(ticket.as_deref(), repo.as_deref()),
+                None::<&str>,
+                [].as_slice(),
+            )
+        }
     };
 
     let sw = if share_with.is_empty() {
         None
     } else {
         Some(share_with)
+    };
+
+    let emergency = matches!(action, MigrateAction::Repair { .. });
+    let reason = match action {
+        MigrateAction::Repair { reason, .. } => reason.as_deref(),
+        _ => None,
     };
 
     let outcome = tokio::select! {
@@ -162,8 +231,8 @@ pub async fn run_migrate(
                 environment: env_str,
                 database: db_name,
                 detail: &detail,
-                emergency: false,
-                reason: None,
+                emergency,
+                reason,
                 metadata: metadata.as_ref(),
                 idempotency_key,
                 share_with: sw,

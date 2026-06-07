@@ -56,6 +56,73 @@ impl PostgresDriver {
             url: url.to_owned(),
         })
     }
+
+    /// Shared logic for non-transactional migration (apply or revert).
+    /// Acquires a connection, sets timeout, executes SQL, records version, restores timeout.
+    async fn run_no_tx_migration(
+        &self,
+        sql: &str,
+        version_sql: &str,
+        version: &str,
+        partial_error_prefix: &str,
+        repair_action: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
+        let mut conn = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let original_timeout = if timeout_secs > 0 {
+            let row: (String,) = sqlx::query_as("SHOW statement_timeout")
+                .fetch_one(&mut *conn)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            let ms = timeout_secs * 1000;
+            sqlx::query(&format!("SET statement_timeout = {ms}"))
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            Some(row.0)
+        } else {
+            None
+        };
+        let migration_result = sqlx::query(sql).execute(&mut *conn).await.map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("statement timeout") {
+                DriverError::MigrationTimeout {
+                    version: version.to_owned(),
+                    message: "migration timed out (statement_timeout). Schema state may be \
+                             partially applied. Manual inspection required before running \
+                             further migrations."
+                        .to_string(),
+                }
+            } else {
+                DriverError::QueryFailed(msg)
+            }
+        });
+        let result = match migration_result {
+            Ok(_) => sqlx::query(version_sql)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| DriverError::PartialMigration {
+                    version: version.to_owned(),
+                    message: format!(
+                        "{partial_error_prefix}: {e}. \
+                         Run `dbward migrate repair --emergency --action {repair_action} --version {version} --reason <reason>` to fix \
+                         (metadata only — does not modify actual schema)."
+                    ),
+                })
+                .map(|_| ()),
+            Err(e) => Err(e),
+        };
+        if let Some(ref orig) = original_timeout {
+            let _ = sqlx::query(&format!("SET statement_timeout = '{orig}'"))
+                .execute(&mut *conn)
+                .await;
+        }
+        result
+    }
 }
 
 fn classify_connect_error(e: sqlx::Error) -> DriverError {
@@ -110,11 +177,23 @@ impl DatabaseDriver for PostgresDriver {
         Ok(result.rows_affected())
     }
 
-    async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), DriverError> {
+    async fn apply_migration(
+        &self,
+        sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
         validate_migration_version(version)?;
-        // Combine migration SQL + version record in a single raw_sql batch for atomicity
-        let batch =
-            format!("{sql}\n;\nINSERT INTO schema_migrations (version) VALUES ('{version}');");
+        // SET LOCAL is effective within the implicit transaction of PG simple query protocol.
+        // statement_timeout applies per-statement, not cumulatively across the batch.
+        let timeout_stmt = if timeout_secs > 0 {
+            format!("SET LOCAL statement_timeout = '{}s';\n", timeout_secs)
+        } else {
+            String::new()
+        };
+        let batch = format!(
+            "{timeout_stmt}{sql}\n;\nINSERT INTO schema_migrations (version) VALUES ('{version}');"
+        );
         sqlx::raw_sql(&batch)
             .execute(&self.pool)
             .await
@@ -122,10 +201,21 @@ impl DatabaseDriver for PostgresDriver {
         Ok(())
     }
 
-    async fn revert_migration(&self, down_sql: &str, version: &str) -> Result<(), DriverError> {
+    async fn revert_migration(
+        &self,
+        down_sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
         validate_migration_version(version)?;
-        let batch =
-            format!("{down_sql}\n;\nDELETE FROM schema_migrations WHERE version = '{version}';");
+        let timeout_stmt = if timeout_secs > 0 {
+            format!("SET LOCAL statement_timeout = '{}s';\n", timeout_secs)
+        } else {
+            String::new()
+        };
+        let batch = format!(
+            "{timeout_stmt}{down_sql}\n;\nDELETE FROM schema_migrations WHERE version = '{version}';"
+        );
         sqlx::raw_sql(&batch)
             .execute(&self.pool)
             .await
@@ -133,29 +223,34 @@ impl DatabaseDriver for PostgresDriver {
         Ok(())
     }
 
-    async fn apply_migration_no_tx(&self, sql: &str, version: &str) -> Result<(), DriverError> {
+    async fn apply_migration_no_tx(
+        &self,
+        sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
         validate_migration_version(version)?;
         if has_multiple_statements(sql) {
             return Err(DriverError::QueryFailed(
                 "transactional=false migrations must contain a single SQL statement".into(),
             ));
         }
-        sqlx::raw_sql(sql)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        let insert = format!("INSERT INTO schema_migrations (version) VALUES ('{version}');");
-        sqlx::raw_sql(&insert)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        Ok(())
+        self.run_no_tx_migration(
+            sql,
+            &format!("INSERT INTO schema_migrations (version) VALUES ('{version}')"),
+            version,
+            "migration SQL applied successfully but version record failed",
+            "mark-applied",
+            timeout_secs,
+        )
+        .await
     }
 
     async fn revert_migration_no_tx(
         &self,
         down_sql: &str,
         version: &str,
+        timeout_secs: u64,
     ) -> Result<(), DriverError> {
         validate_migration_version(version)?;
         if has_multiple_statements(down_sql) {
@@ -163,16 +258,15 @@ impl DatabaseDriver for PostgresDriver {
                 "transactional=false migrations must contain a single SQL statement".into(),
             ));
         }
-        sqlx::raw_sql(down_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        let delete = format!("DELETE FROM schema_migrations WHERE version = '{version}';");
-        sqlx::raw_sql(&delete)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        Ok(())
+        self.run_no_tx_migration(
+            down_sql,
+            &format!("DELETE FROM schema_migrations WHERE version = '{version}'"),
+            version,
+            "revert SQL applied successfully but version removal failed",
+            "remove",
+            timeout_secs,
+        )
+        .await
     }
 
     async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
@@ -190,6 +284,24 @@ impl DatabaseDriver for PostgresDriver {
                 .await
                 .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         Ok(rows.into_iter().map(|(v,)| v).collect())
+    }
+
+    async fn mark_applied(&self, version: &str) -> Result<(), DriverError> {
+        sqlx::query("INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT DO NOTHING")
+            .bind(version)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn remove_version(&self, version: &str) -> Result<(), DriverError> {
+        sqlx::query("DELETE FROM schema_migrations WHERE version = $1")
+            .bind(version)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok(())
     }
 
     async fn query_cancellable(

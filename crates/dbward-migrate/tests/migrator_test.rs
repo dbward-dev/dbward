@@ -31,7 +31,7 @@ async fn migrate_up_and_status() {
     assert!(!status[0].applied);
     assert!(!status[1].applied);
 
-    let result = migrator.up(None).await.unwrap();
+    let result = migrator.up(None, 0).await.unwrap();
     assert_eq!(result.applied.len(), 2);
 
     let status = migrator.status().await.unwrap();
@@ -53,7 +53,7 @@ async fn migrate_up_with_count() {
     let (_container, drv) = setup().await;
     let migrator = Migrator::new(drv, fixtures_dir());
 
-    let result = migrator.up(Some(1)).await.unwrap();
+    let result = migrator.up(Some(1), 0).await.unwrap();
     assert_eq!(result.applied.len(), 1);
     assert!(result.applied[0].contains("create_users"));
 
@@ -68,9 +68,9 @@ async fn migrate_down() {
     let (_container, drv) = setup().await;
     let migrator = Migrator::new(drv, fixtures_dir());
 
-    migrator.up(None).await.unwrap();
+    migrator.up(None, 0).await.unwrap();
 
-    let result = migrator.down(Some(1)).await.unwrap();
+    let result = migrator.down(Some(1), 0).await.unwrap();
     assert_eq!(result.rolled_back.len(), 1);
     assert!(result.rolled_back[0].contains("add_email_index"));
 
@@ -85,7 +85,7 @@ async fn migrate_idempotent() {
     let (_container, drv) = setup().await;
     let migrator = Migrator::new(drv, fixtures_dir());
 
-    migrator.up(None).await.unwrap();
-    let result = migrator.up(None).await.unwrap();
+    migrator.up(None, 0).await.unwrap();
+    let result = migrator.up(None, 0).await.unwrap();
     assert_eq!(result.applied.len(), 0);
 }

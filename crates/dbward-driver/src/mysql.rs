@@ -7,6 +7,17 @@ use crate::{
     QueryOutput, text_to_json,
 };
 
+fn contains_ddl(stmts: &[String]) -> bool {
+    stmts.iter().any(|s| {
+        let upper = s.trim_start().to_uppercase();
+        upper.starts_with("CREATE ")
+            || upper.starts_with("ALTER ")
+            || upper.starts_with("DROP ")
+            || upper.starts_with("TRUNCATE ")
+            || upper.starts_with("RENAME ")
+    })
+}
+
 pub struct MysqlDriver {
     pool: sqlx::MySqlPool,
     url: String,
@@ -37,6 +48,104 @@ impl MysqlDriver {
             pool,
             url: url.to_owned(),
         })
+    }
+
+    /// Best-effort KILL via a fresh connection (avoids pool saturation).
+    /// Uses KILL (not KILL QUERY) to fully terminate the connection for migrations.
+    async fn kill_connection(&self, conn_id: u64) {
+        let kill_result = async {
+            let kill_pool = sqlx::mysql::MySqlPoolOptions::new()
+                .max_connections(1)
+                .connect(&self.url)
+                .await
+                .map_err(|e| e.to_string())?;
+            sqlx::query(&format!("KILL {conn_id}"))
+                .execute(&kill_pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            kill_pool.close().await;
+            Ok::<(), String>(())
+        };
+        match tokio::time::timeout(Duration::from_secs(5), kill_result).await {
+            Ok(Ok(())) => {
+                tracing::warn!(conn_id, "migration timed out, connection killed");
+            }
+            Ok(Err(e)) => {
+                tracing::error!(
+                    conn_id, error = %e,
+                    "migration timed out but KILL failed; connection may still be running"
+                );
+            }
+            Err(_) => {
+                tracing::error!(
+                    conn_id,
+                    "migration timed out and KILL itself timed out; connection may still be running"
+                );
+            }
+        }
+    }
+
+    /// Shared implementation for apply/revert migration with timeout + KILL.
+    async fn run_migration_tx(
+        &self,
+        stmts: &[String],
+        version_sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
+        if contains_ddl(stmts) {
+            tracing::warn!(
+                version,
+                "migration contains DDL; MySQL implicit commit means \
+                 transaction atomicity is not guaranteed for this migration"
+            );
+        }
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let conn_id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()")
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+
+        let exec = async {
+            for stmt in stmts {
+                sqlx::query(stmt)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            }
+            sqlx::query(version_sql)
+                .bind(version)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            tx.commit()
+                .await
+                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            Ok::<(), DriverError>(())
+        };
+
+        if timeout_secs == 0 {
+            return exec.await;
+        }
+
+        match tokio::time::timeout(Duration::from_secs(timeout_secs), exec).await {
+            Ok(result) => result,
+            Err(_) => {
+                self.kill_connection(conn_id).await;
+                Err(DriverError::MigrationTimeout {
+                    version: version.to_owned(),
+                    message: format!(
+                        "migration timed out after {timeout_secs}s. Schema state is unknown. \
+                         Manual inspection required before running further migrations."
+                    ),
+                })
+            }
+        }
     }
 }
 
@@ -113,53 +222,44 @@ impl DatabaseDriver for MysqlDriver {
         Ok(total_affected)
     }
 
-    async fn apply_migration(&self, sql: &str, version: &str) -> Result<(), DriverError> {
+    async fn apply_migration(
+        &self,
+        sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
         let stmts = split_statements(sql);
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        for stmt in &stmts {
-            sqlx::query(stmt)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        }
-        sqlx::query("INSERT INTO schema_migrations (version) VALUES (?)")
-            .bind(version)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        tx.commit()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))
+        self.run_migration_tx(
+            &stmts,
+            "INSERT INTO schema_migrations (version) VALUES (?)",
+            version,
+            timeout_secs,
+        )
+        .await
     }
 
-    async fn revert_migration(&self, down_sql: &str, version: &str) -> Result<(), DriverError> {
+    async fn revert_migration(
+        &self,
+        down_sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
         let stmts = split_statements(down_sql);
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        for stmt in &stmts {
-            sqlx::query(stmt)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        }
-        sqlx::query("DELETE FROM schema_migrations WHERE version = ?")
-            .bind(version)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        tx.commit()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))
+        self.run_migration_tx(
+            &stmts,
+            "DELETE FROM schema_migrations WHERE version = ?",
+            version,
+            timeout_secs,
+        )
+        .await
     }
 
-    async fn apply_migration_no_tx(&self, _sql: &str, _version: &str) -> Result<(), DriverError> {
+    async fn apply_migration_no_tx(
+        &self,
+        _sql: &str,
+        _version: &str,
+        _timeout_secs: u64,
+    ) -> Result<(), DriverError> {
         Err(DriverError::QueryFailed(
             "non-transactional migrations are not supported for MySQL".into(),
         ))
@@ -169,6 +269,7 @@ impl DatabaseDriver for MysqlDriver {
         &self,
         _down_sql: &str,
         _version: &str,
+        _timeout_secs: u64,
     ) -> Result<(), DriverError> {
         Err(DriverError::QueryFailed(
             "non-transactional migrations are not supported for MySQL".into(),
@@ -192,6 +293,24 @@ impl DatabaseDriver for MysqlDriver {
                 .await
                 .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
         Ok(rows.into_iter().map(|(v,)| v).collect())
+    }
+
+    async fn mark_applied(&self, version: &str) -> Result<(), DriverError> {
+        sqlx::query("INSERT IGNORE INTO schema_migrations (version) VALUES (?)")
+            .bind(version)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn remove_version(&self, version: &str) -> Result<(), DriverError> {
+        sqlx::query("DELETE FROM schema_migrations WHERE version = ?")
+            .bind(version)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        Ok(())
     }
 
     async fn query_cancellable(
@@ -632,5 +751,48 @@ fn mysql_type_mapping(type_name: &str) -> JsonMapping {
             JsonMapping::Binary
         }
         _ => JsonMapping::Text,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contains_ddl_detects_create() {
+        assert!(contains_ddl(&["CREATE TABLE foo (id INT)".into()]));
+    }
+
+    #[test]
+    fn contains_ddl_detects_alter() {
+        assert!(contains_ddl(&["ALTER TABLE foo ADD COLUMN bar INT".into()]));
+    }
+
+    #[test]
+    fn contains_ddl_detects_drop() {
+        assert!(contains_ddl(&["DROP TABLE foo".into()]));
+    }
+
+    #[test]
+    fn contains_ddl_detects_truncate() {
+        assert!(contains_ddl(&["TRUNCATE TABLE foo".into()]));
+    }
+
+    #[test]
+    fn contains_ddl_detects_rename() {
+        assert!(contains_ddl(&["RENAME TABLE foo TO bar".into()]));
+    }
+
+    #[test]
+    fn contains_ddl_ignores_dml() {
+        assert!(!contains_ddl(&["INSERT INTO foo VALUES (1)".into()]));
+        assert!(!contains_ddl(&["UPDATE foo SET bar = 1".into()]));
+        assert!(!contains_ddl(&["SELECT 1".into()]));
+    }
+
+    #[test]
+    fn contains_ddl_case_insensitive() {
+        assert!(contains_ddl(&["create table foo (id int)".into()]));
+        assert!(contains_ddl(&["  ALTER TABLE foo DROP COLUMN bar".into()]));
     }
 }

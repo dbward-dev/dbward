@@ -249,7 +249,7 @@ impl AgentRepo for SqliteAgentRepo {
             .query_row(
                 "SELECT COUNT(*) FROM requests
              WHERE status IN ('dispatched','running')
-               AND operation IN ('migrate_up','migrate_down')
+               AND operation IN ('migrate_up','migrate_down','migrate_repair')
                AND database_id = ?1
                AND id != ?2",
                 params![database_id, exclude_request_id],
@@ -297,12 +297,13 @@ impl AgentRepo for SqliteAgentRepo {
             )
             .map_err(|e| AppError::Internal(e.to_string()))?;
 
-        if operation == "migrate_up" || operation == "migrate_down" {
+        if operation == "migrate_up" || operation == "migrate_down" || operation == "migrate_repair"
+        {
             let conflict: u32 = tx
                 .query_row(
                     "SELECT COUNT(*) FROM requests
                      WHERE status IN ('dispatched','running')
-                       AND operation IN ('migrate_up','migrate_down')
+                       AND operation IN ('migrate_up','migrate_down','migrate_repair')
                        AND database_id = ?1
                        AND id != ?2",
                     params![database_id, request_id],
