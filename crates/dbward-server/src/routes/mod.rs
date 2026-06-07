@@ -91,6 +91,17 @@ async fn version_header(response: axum::response::Response) -> axum::response::R
     response
 }
 
+/// Returns 405 for config-managed resources that cannot be modified via API.
+async fn config_only_405() -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(serde_json::json!({
+            "error": "this resource is config-managed; update server.toml and restart",
+            "code": "config_only"
+        })),
+    )
+}
+
 pub fn build_router(state: AppState) -> Router {
     let metrics_state = state.clone();
     let authed = Router::new()
@@ -178,13 +189,13 @@ pub fn build_router(state: AppState) -> Router {
         // Webhooks
         .route(
             "/api/webhooks",
-            axum::routing::post(webhooks::create).get(webhooks::list),
+            axum::routing::post(config_only_405).get(webhooks::list),
         )
         .route(
             "/api/webhooks/{id}",
             axum::routing::get(webhooks::get)
-                .put(webhooks::update)
-                .delete(webhooks::delete),
+                .put(config_only_405)
+                .delete(config_only_405),
         )
         .route(
             "/api/webhook-deliveries",
@@ -193,51 +204,46 @@ pub fn build_router(state: AppState) -> Router {
         // Policies
         .route(
             "/api/workflows",
-            axum::routing::post(policies::create_workflow).get(policies::list_workflows),
+            axum::routing::post(config_only_405).get(policies::list_workflows),
         )
         .route(
             "/api/workflows/{id}",
-            axum::routing::delete(policies::delete_workflow),
+            axum::routing::delete(config_only_405),
         )
         .route(
             "/api/execution-policies",
-            axum::routing::post(policies::create_execution_policy)
-                .get(policies::list_execution_policies),
+            axum::routing::post(config_only_405).get(policies::list_execution_policies),
         )
         .route(
             "/api/execution-policies/{id}",
-            axum::routing::delete(policies::delete_execution_policy),
+            axum::routing::delete(config_only_405),
         )
         .route(
             "/api/roles",
-            axum::routing::post(policies::create_role).get(policies::list_roles),
+            axum::routing::post(config_only_405).get(policies::list_roles),
         )
-        .route(
-            "/api/roles/{name}",
-            axum::routing::delete(policies::delete_role),
-        )
+        .route("/api/roles/{name}", axum::routing::delete(config_only_405))
         // Result policies
         .route(
             "/api/result-policies",
-            axum::routing::post(policies::create_result_policy).get(policies::list_result_policies),
+            axum::routing::post(config_only_405).get(policies::list_result_policies),
         )
         .route(
             "/api/result-policies/{id}",
             axum::routing::get(policies::get_result_policy)
-                .put(policies::update_result_policy)
-                .delete(policies::delete_result_policy),
+                .put(config_only_405)
+                .delete(config_only_405),
         )
         // Notification policies
         .route(
             "/api/notification-policies",
-            axum::routing::post(policies::create_notification_policy)
-                .get(policies::list_notification_policies),
+            axum::routing::post(config_only_405).get(policies::list_notification_policies),
         )
         .route(
             "/api/notification-policies/{id}",
             axum::routing::get(policies::get_notification_policy)
-                .put(policies::update_notification_policy)
-                .delete(policies::delete_notification_policy),
+                .put(config_only_405)
+                .delete(config_only_405),
         )
         // Audit
         .route("/api/audit/events", axum::routing::get(audit::list_events))

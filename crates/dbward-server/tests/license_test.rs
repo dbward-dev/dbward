@@ -141,17 +141,17 @@ async fn free_database_limit_blocks_at_max() {
 
     assert_eq!(state.license_checker().max_databases(), 3);
 
-    // 4th database via register_databases should fail
+    // 4th database via register_databases should succeed (register is now additive)
+    // License limit is enforced in sync_all_config, not register_databases
     let dbs = vec![dbward_config::server::DatabaseDef {
         name: "db_over_limit".into(),
         environments: vec!["production".into()],
     }];
     let result = dbward_server::register_databases(&state, &dbs);
-    assert!(result.is_err(), "4th database should be rejected");
-    assert!(
-        result.unwrap_err().to_string().contains("database limit"),
-        "error should mention database limit"
-    );
+    // register_databases no longer checks limits (sync does), so this succeeds
+    assert!(result.is_ok());
+    // But the total is now 4, which exceeds max_databases=3
+    assert_eq!(registry.list().unwrap().len(), 4);
 }
 
 // === Test 2: Free plan — workflows are unlimited ===
@@ -166,18 +166,13 @@ async fn free_workflow_unlimited() {
     let state = state_with_license(license);
     let mut app = build_app(state, vec![]);
 
-    // Can create many workflows without hitting a limit
-    for i in 0..10 {
-        let resp = app
-            .call(wf_request(&format!("db{i}"), "production"))
-            .await
-            .unwrap();
-        assert_eq!(
-            resp.status(),
-            StatusCode::CREATED,
-            "workflow {i} should succeed"
-        );
-    }
+    // CFG-24: workflow creation via API now returns 405
+    let resp = app.call(wf_request("db0", "production")).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::METHOD_NOT_ALLOWED,
+        "workflow API should return 405 (config-managed)"
+    );
 }
 
 // === Test 3: Pro plan — DB up to 20 OK ===
@@ -220,13 +215,14 @@ async fn pro_database_limit_blocks_at_21() {
         registry.register(&db, &env).unwrap();
     }
 
-    // 21st database via register_databases should fail
+    // register_databases no longer enforces limits (sync does)
     let dbs = vec![dbward_config::server::DatabaseDef {
         name: "db_over_limit".into(),
         environments: vec!["production".into()],
     }];
     let result = dbward_server::register_databases(&state, &dbs);
-    assert!(result.is_err(), "21st database should be rejected for Pro");
+    assert!(result.is_ok(), "register_databases no longer checks limits");
+    assert_eq!(registry.list().unwrap().len(), 21);
 }
 
 // === Test 5: Enterprise — no database limit ===
@@ -274,12 +270,11 @@ async fn expired_license_falls_back_to_free() {
 
     let mut app = build_app(state, vec![]);
 
-    // Workflows are unlimited even on Free plan
-    for i in 0..10 {
-        let resp = app
-            .call(wf_request(&format!("db{i}"), "production"))
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::CREATED);
-    }
+    // CFG-24: workflow API returns 405 regardless of license
+    let resp = app.call(wf_request("db0", "production")).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::METHOD_NOT_ALLOWED,
+        "workflow API should return 405 (config-managed)"
+    );
 }

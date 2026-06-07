@@ -117,7 +117,58 @@ ALTER TABLE execution_policies ADD COLUMN migration_lease_duration_secs INTEGER;
 
 const MIGRATION_V14: &str = "
 ALTER TABLE execution_policies ADD COLUMN migration_statement_timeout_secs INTEGER;
+
+-- New tables
+CREATE TABLE IF NOT EXISTS groups (
+    name TEXT PRIMARY KEY,
+    members_json TEXT NOT NULL DEFAULT '[]',
+    source TEXT NOT NULL DEFAULT 'config',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS role_bindings (
+    id TEXT PRIMARY KEY,
+    role TEXT NOT NULL,
+    subjects_json TEXT NOT NULL DEFAULT '[]',
+    groups_json TEXT NOT NULL DEFAULT '[]',
+    source TEXT NOT NULL DEFAULT 'config',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 ";
+
+/// Apply V14 source-column additions idempotently.
+fn apply_migration_v14(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(MIGRATION_V14)?;
+
+    // Add source column to each table idempotently
+    let columns = [
+        ("users", "source", "'token'"),
+        ("roles", "source", "'config'"),
+        ("workflows", "source", "'config'"),
+        ("execution_policies", "source", "'config'"),
+        ("webhooks", "source", "'config'"),
+        ("result_policies", "source", "'config'"),
+        ("notification_policies", "source", "'config'"),
+        ("databases", "source", "'config'"),
+    ];
+    for (table, col, default) in columns {
+        let has_col: bool = conn
+            .prepare(&format!(
+                "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='{col}'"
+            ))
+            .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+            .unwrap_or(0)
+            > 0;
+        if !has_col {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN {col} TEXT NOT NULL DEFAULT {default};"
+            ))?;
+        }
+    }
+    Ok(())
+}
 
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -161,7 +212,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(MIGRATION_V11)?;
         // V12 not needed for fresh DB (schema already includes config_synced)
         conn.execute_batch(MIGRATION_V13)?;
-        conn.execute_batch(MIGRATION_V14)?;
+        apply_migration_v14(conn)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -211,7 +262,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
             conn.execute_batch(MIGRATION_V13)?;
         }
         if current < 14 {
-            conn.execute_batch(MIGRATION_V14)?;
+            apply_migration_v14(conn)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }

@@ -13,10 +13,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::Router;
 use config::{AutoApproveExt, SqlReviewExt};
-use dbward_app::ports::PolicyRepo;
 use dbward_app::ports::ResultStore;
 use dbward_app::use_cases::sync_config::{
-    ApproverInput, ExecutionPolicyInput, SyncConfig, WebhookInput, WorkflowInput, WorkflowStepInput,
+    ApproverInput, DatabaseInput, ExecutionPolicyInput, GroupInput, NotificationPolicyInput,
+    ResultPolicyInput, RoleBindingInput, RoleInput, SyncConfig, UserInput, WebhookInput,
+    WorkflowInput, WorkflowStepInput,
 };
 use dbward_domain::values::{DatabaseName, Environment};
 
@@ -122,6 +123,10 @@ pub async fn run_from_args(
     let database_registry = Arc::new(dbward_infra::sqlite::SqliteDatabaseRegistry::new(
         conn.clone(),
     ));
+    let group_repo = Arc::new(dbward_infra::sqlite::SqliteGroupRepo::new(conn.clone()));
+    let role_binding_repo = Arc::new(dbward_infra::sqlite::SqliteRoleBindingRepo::new(
+        conn.clone(),
+    ));
     let schema_repo = Arc::new(dbward_infra::sqlite::SqliteSchemaRepo::new(conn.clone()));
     let dry_run_repo = Arc::new(dbward_infra::sqlite::SqliteDryRunRepo::new(conn.clone()));
     let context_repo = Arc::new(dbward_infra::sqlite::SqliteContextRepo::new(conn.clone()));
@@ -187,25 +192,7 @@ pub async fn run_from_args(
     let authorizer: Arc<dyn dbward_app::ports::Authorizer> =
         Arc::new(dbward_infra::auth::RbacAuthorizer);
 
-    // Sync TOML-defined custom roles to PolicyRepo (SQLite)
-    {
-        let mut active_names: Vec<String> = vec!["admin", "developer", "readonly", "agent-default"]
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect();
-        for rc in &cfg.auth.roles {
-            active_names.push(rc.name.clone());
-            let def = build_role_definition(rc);
-            if let Err(e) = policy_repo.upsert_config_role(&def) {
-                return Err(
-                    format!("failed to sync config role '{}' to DB: {}", rc.name, e).into(),
-                );
-            }
-        }
-        if let Err(e) = policy_repo.delete_stale_config_roles(&active_names) {
-            return Err(format!("failed to clean stale config roles: {}", e).into());
-        }
-    }
+    // Role sync handled by sync_all_config below
 
     // Role validation now handled by config validate() (fail-fast)
 
@@ -344,8 +331,11 @@ pub async fn run_from_args(
             },
             clock: clock.clone(),
         });
-    let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> =
-        Arc::new(dbward_infra::webhook::SsrfGuard);
+    let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> = if cfg.allow_private_networks {
+        Arc::new(dbward_infra::webhook::PermissiveSsrfGuard)
+    } else {
+        Arc::new(dbward_infra::webhook::SsrfGuard)
+    };
     let license_checker: Arc<dyn dbward_app::ports::LicenseChecker> = {
         #[cfg(feature = "commercial")]
         {
@@ -403,6 +393,14 @@ pub async fn run_from_args(
         Arc::new(dbward_infra::SecureTokenGenerator);
 
     let draining = Arc::new(AtomicBool::new(false));
+
+    // Clone repos needed for config sync (before they're moved into AppState)
+    let sync_db_reg = database_registry.clone() as Arc<dyn dbward_app::ports::DatabaseRegistry>;
+    let sync_user_repo = user_repo.clone() as Arc<dyn dbward_app::ports::UserRepo>;
+    let sync_group_repo = group_repo.clone() as Arc<dyn dbward_app::ports::GroupRepo>;
+    let sync_rb_repo = role_binding_repo.clone() as Arc<dyn dbward_app::ports::RoleBindingRepo>;
+    let sync_notifier = notifier.clone();
+    let sync_ssrf_validator = ssrf_validator.clone();
 
     let state = state::AppStateBuilder {
         token_verifier,
@@ -465,15 +463,21 @@ pub async fn run_from_args(
     // Auto-bootstrap: create tokens on first startup
     bootstrap::auto_bootstrap(&state, &state_dir, force_bootstrap)?;
 
-    // Register databases and sync workflows on startup
-    register_databases(&state, &cfg.databases)?;
-    sync_workflows(&state, &cfg.workflows)?;
+    // Safety guard: reject if DB has config records but TOML key is absent
+    safety_guard(&conn, &cfg)?;
 
-    // BUG-28: Sync webhooks from config
-    sync_webhooks(&state, &cfg.webhooks)?;
-
-    // Sync execution policies from config
-    sync_execution_policies(&state, &cfg.execution_policies)?;
+    // Register databases and sync all config-managed resources
+    sync_all_config(
+        &state,
+        &cfg,
+        sync_db_reg,
+        sync_user_repo,
+        sync_group_repo,
+        sync_rb_repo,
+        sync_notifier,
+        sync_ssrf_validator,
+        conn.clone(),
+    )?;
 
     // A7: Record config sync in audit log
     let _ = state
@@ -498,30 +502,11 @@ pub async fn run_from_args(
     start(addr, state, cfg.retention, trusted).await
 }
 
+/// Deprecated: use sync_all_config instead. Kept for test compatibility.
 pub fn register_databases(
     state: &AppState,
     databases: &[config::DatabaseDef],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let existing_pairs = state.database_registry().list()?;
-    let existing_db_names: std::collections::HashSet<&str> =
-        existing_pairs.iter().map(|(db, _)| db.as_str()).collect();
-    let mut new_db_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
-
-    for db in databases {
-        if !existing_db_names.contains(db.name.as_str()) {
-            new_db_names.insert(&db.name);
-        }
-    }
-
-    let total = existing_db_names.len() as u32 + new_db_names.len() as u32;
-    if total > state.license_checker().max_databases() {
-        return Err(format!(
-            "database limit reached (max {})",
-            state.license_checker().max_databases()
-        )
-        .into());
-    }
-
     for db in databases {
         for env in &db.environments {
             let db_name = DatabaseName::new(&db.name).map_err(|e| format!("database name: {e}"))?;
@@ -532,18 +517,145 @@ pub fn register_databases(
     Ok(())
 }
 
-fn sync_workflows(
-    state: &AppState,
-    workflows: &[config::WorkflowDef],
+fn safety_guard(
+    conn: &dbward_infra::sqlite::DbConn,
+    cfg: &config::ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Check: if DB has source='config' records but config has zero entries,
+    // it likely means the user forgot to include that section (data loss prevention).
+    // An explicit empty array `workflows = []` will have .is_empty() = true but that's
+    // intentional. We can only detect "key never appeared" vs "key = []" at the TOML
+    // level, but serde gives us the same empty Vec for both. We accept this trade-off:
+    // explicit empty = allowed, and accidental omission on a FRESH config also = allowed
+    // (no DB records yet). The guard only fires when DB has existing records AND config is empty.
+    let checks: &[(&str, bool)] = &[
+        ("workflows", cfg.workflows.is_empty()),
+        ("execution_policies", cfg.execution_policies.is_empty()),
+        ("webhooks", cfg.webhooks.is_empty()),
+        ("result_policies", cfg.result_policies.is_empty()),
+        (
+            "notification_policies",
+            cfg.notification_policies.is_empty(),
+        ),
+        ("databases", cfg.databases.is_empty()),
+    ];
+
+    let c = conn.lock();
+    for (table, config_empty) in checks {
+        if !config_empty {
+            continue;
+        }
+        let count: i64 = c
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE source = 'config'"),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        if count > 0 {
+            return Err(format!(
+                "database contains {count} {table} (source='config') but config has no [[{table}]] entries.\n\
+                 Run `dbward config export` to export current state, or add [[{table}]] to your config."
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn sync_all_config(
+    state: &AppState,
+    cfg: &config::ServerConfig,
+    database_registry: Arc<dyn dbward_app::ports::DatabaseRegistry>,
+    user_repo: Arc<dyn dbward_app::ports::UserRepo>,
+    group_repo: Arc<dyn dbward_app::ports::GroupRepo>,
+    role_binding_repo: Arc<dyn dbward_app::ports::RoleBindingRepo>,
+    notifier: Arc<dyn dbward_app::ports::Notifier>,
+    ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator>,
+    conn: dbward_infra::sqlite::DbConn,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let transaction = Arc::new(dbward_infra::sqlite::SqliteSyncTransaction::new(conn));
     let uc = SyncConfig {
         policy_repo: state.policy_repo().clone(),
         webhook_repo: state.webhook_repo().clone(),
+        database_registry,
+        user_repo,
+        group_repo,
+        role_binding_repo,
+        notifier,
         clock: state.clock().clone(),
         id_gen: state.id_generator().clone(),
+        transaction,
+        license_checker: state.license_checker().clone(),
+        ssrf_validator,
     };
 
-    let inputs: Vec<WorkflowInput> = workflows
+    let databases: Vec<DatabaseInput> = cfg
+        .databases
+        .iter()
+        .map(|d| DatabaseInput {
+            name: d.name.clone(),
+            environments: d.environments.clone(),
+        })
+        .collect();
+
+    let users: Vec<UserInput> = cfg
+        .users
+        .iter()
+        .map(|u| UserInput {
+            id: u.id.clone(),
+            status: u.status.clone(),
+        })
+        .collect();
+
+    let groups: Vec<GroupInput> = cfg
+        .auth
+        .groups
+        .iter()
+        .map(|g| GroupInput {
+            name: g.name.clone(),
+            members: g.members.clone(),
+        })
+        .collect();
+
+    let roles: Vec<RoleInput> = cfg
+        .auth
+        .roles
+        .iter()
+        .map(|r| RoleInput {
+            name: r.name.clone(),
+            permissions: r.permissions.clone(),
+            databases: r.databases.clone(),
+            environments: r.environments.clone(),
+        })
+        .collect();
+
+    let role_bindings: Vec<RoleBindingInput> = cfg
+        .auth
+        .role_bindings
+        .iter()
+        .map(|rb| RoleBindingInput {
+            role: rb.role.clone(),
+            subjects: rb.subjects.clone(),
+            groups: rb.groups.clone(),
+        })
+        .collect();
+
+    let webhooks: Vec<WebhookInput> = cfg
+        .webhooks
+        .iter()
+        .map(|wh| WebhookInput {
+            id: wh.id.clone(),
+            url: wh.url.clone(),
+            events: wh.events.clone(),
+            format: wh.format.clone(),
+            secret: wh.secret.clone(),
+        })
+        .collect();
+
+    let workflows: Vec<WorkflowInput> = cfg
+        .workflows
         .iter()
         .map(|wf| WorkflowInput {
             database: wf.database.clone(),
@@ -602,51 +714,8 @@ fn sync_workflows(
         })
         .collect();
 
-    uc.sync_workflows(inputs)?;
-    Ok(())
-}
-
-fn sync_webhooks(
-    state: &AppState,
-    webhooks: &[config::WebhookDef],
-) -> Result<(), Box<dyn std::error::Error>> {
-    let uc = SyncConfig {
-        policy_repo: state.policy_repo().clone(),
-        webhook_repo: state.webhook_repo().clone(),
-        clock: state.clock().clone(),
-        id_gen: state.id_generator().clone(),
-    };
-
-    let inputs: Vec<WebhookInput> = webhooks
-        .iter()
-        .map(|wh| WebhookInput {
-            url: wh.url.clone(),
-            events: wh.events.clone(),
-            format: wh.format.clone(),
-            secret: wh.secret.clone(),
-        })
-        .collect();
-
-    uc.sync_webhooks(inputs)?;
-
-    if let Err(e) = state.notifier().reload() {
-        tracing::warn!("failed to reload webhooks after sync: {e}");
-    }
-    Ok(())
-}
-
-fn sync_execution_policies(
-    state: &AppState,
-    policies: &[config::ExecutionPolicyDef],
-) -> Result<(), Box<dyn std::error::Error>> {
-    let uc = SyncConfig {
-        policy_repo: state.policy_repo().clone(),
-        webhook_repo: state.webhook_repo().clone(),
-        clock: state.clock().clone(),
-        id_gen: state.id_generator().clone(),
-    };
-
-    let inputs: Vec<ExecutionPolicyInput> = policies
+    let execution_policies: Vec<ExecutionPolicyInput> = cfg
+        .execution_policies
         .iter()
         .map(|ep| ExecutionPolicyInput {
             database: ep.database.clone(),
@@ -662,7 +731,43 @@ fn sync_execution_policies(
         })
         .collect();
 
-    uc.sync_execution_policies(inputs)?;
+    let result_policies: Vec<ResultPolicyInput> = cfg
+        .result_policies
+        .iter()
+        .map(|rp| ResultPolicyInput {
+            database: rp.database.clone(),
+            environment: rp.environment.clone(),
+            retention_days: rp.retention_days,
+            delivery_mode: rp.delivery_mode.clone(),
+            access: rp.access.clone(),
+        })
+        .collect();
+
+    let notification_policies: Vec<NotificationPolicyInput> = cfg
+        .notification_policies
+        .iter()
+        .map(|np| NotificationPolicyInput {
+            database: np.database.clone(),
+            environment: np.environment.clone(),
+            webhooks: np.webhooks.clone(),
+            events: np.events.clone(),
+        })
+        .collect();
+
+    uc.sync_all(
+        databases,
+        users,
+        groups,
+        roles,
+        role_bindings,
+        webhooks,
+        workflows,
+        execution_policies,
+        result_policies,
+        notification_policies,
+    )
+    .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+
     Ok(())
 }
 

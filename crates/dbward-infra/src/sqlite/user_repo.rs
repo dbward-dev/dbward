@@ -170,6 +170,37 @@ impl UserRepo for SqliteUserRepo {
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(result)
     }
+
+    fn delete_by_source(&self, source: &str) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute("DELETE FROM users WHERE source = ?1", [source])
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(n as u64)
+    }
+
+    fn set_source(&self, user_id: &str, source: &str) -> Result<(), AppError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE users SET source = ?1 WHERE id = ?2",
+            rusqlite::params![source, user_id],
+        )
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(())
+    }
+
+    fn get_source(&self, user_id: &str) -> Result<Option<String>, AppError> {
+        let conn = self.conn.lock();
+        let result = conn
+            .query_row(
+                "SELECT source FROM users WHERE id = ?1",
+                rusqlite::params![user_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(result)
+    }
 }
 
 fn parse_user_status(s: &str) -> UserStatus {

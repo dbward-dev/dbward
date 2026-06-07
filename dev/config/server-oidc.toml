@@ -1,4 +1,5 @@
 state_dir = "/data"
+allow_private_networks = true
 [auth]
 mode = "both"
 
@@ -65,6 +66,7 @@ min = 1
 
 # Global webhooks (all events, all environments)
 [[webhooks]]
+id = "dev-receiver"
 url = "http://webhook-receiver:9999"
 format = "generic"
 events = ["request_created", "request_approved", "request_rejected", "request_completed", "break_glass", "step_approved"]

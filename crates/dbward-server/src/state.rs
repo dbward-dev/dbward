@@ -21,14 +21,12 @@ use dbward_app::use_cases::{
     get_request::GetRequest,
     get_result::GetResult,
     list_requests::ListRequests,
-    policy_manage::PolicyManage,
     reject_request::RejectRequest,
     resume_request::ResumeRequest,
     schema_sync::SchemaSync,
     stream_result::StreamResult,
     token_manage::TokenManage,
     user_manage::UserManage,
-    webhook_manage::WebhookManage,
 };
 
 use crate::metrics::Metrics;
@@ -65,6 +63,7 @@ pub struct AppState {
     notifier: Arc<dyn Notifier>,
     webhook_sender: Arc<dyn dbward_app::ports::WebhookSender>,
     event_dispatcher: Arc<dyn EventDispatcher>,
+    #[allow(dead_code)] // Used in sync_all_config (cloned before AppState build)
     ssrf_validator: Arc<dyn SsrfValidator>,
     license_checker: Arc<dyn LicenseChecker>,
     clock: Arc<dyn Clock>,
@@ -313,33 +312,6 @@ impl<'a> AgentUseCases<'a> {
 pub(crate) struct AdminUseCases<'a>(&'a AppState);
 
 impl<'a> AdminUseCases<'a> {
-    pub(crate) fn policy_manage(&self) -> PolicyManage {
-        let s = self.0;
-        PolicyManage {
-            authorizer: s.authorizer.clone(),
-            policy_repo: s.policy_repo.clone(),
-            license: s.license_checker.clone(),
-            audit: s.audit_logger.clone(),
-            clock: s.clock.clone(),
-            id_gen: s.id_generator.clone(),
-            ssrf_validator: s.ssrf_validator.clone(),
-        }
-    }
-
-    pub(crate) fn webhook_manage(&self) -> WebhookManage {
-        let s = self.0;
-        WebhookManage {
-            authorizer: s.authorizer.clone(),
-            webhook_repo: s.webhook_repo.clone(),
-            ssrf_validator: s.ssrf_validator.clone(),
-            license: s.license_checker.clone(),
-            audit: s.audit_logger.clone(),
-            notifier: s.notifier.clone(),
-            clock: s.clock.clone(),
-            id_gen: s.id_generator.clone(),
-        }
-    }
-
     pub(crate) fn audit_query(&self) -> AuditQuery {
         let s = self.0;
         AuditQuery {
@@ -584,6 +556,7 @@ impl AppState {
     pub(crate) fn token_repo(&self) -> &Arc<dyn TokenRepo> {
         &self.token_repo
     }
+    #[allow(dead_code)] // Used in hot reload (Phase 4)
     pub(crate) fn notifier(&self) -> &Arc<dyn Notifier> {
         &self.notifier
     }

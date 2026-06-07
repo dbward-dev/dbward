@@ -18,7 +18,7 @@ impl DatabaseRegistry for SqliteDatabaseRegistry {
         let conn = self.conn.lock();
         let id = format!("{}:{}", db, env);
         conn.execute(
-            "INSERT OR IGNORE INTO databases (id, name, environment, created_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO databases (id, name, environment, source, created_at) VALUES (?1, ?2, ?3, 'config', ?4) ON CONFLICT(id) DO UPDATE SET source='config'",
             rusqlite::params![id, db.to_string(), env.to_string(), chrono::Utc::now().to_rfc3339()],
         )
         .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -60,5 +60,13 @@ impl DatabaseRegistry for SqliteDatabaseRegistry {
             results.push((db, environment));
         }
         Ok(results)
+    }
+
+    fn delete_by_source(&self, source: &str) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute("DELETE FROM databases WHERE source = ?1", [source])
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(n as u64)
     }
 }
