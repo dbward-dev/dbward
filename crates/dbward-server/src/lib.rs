@@ -145,9 +145,15 @@ pub async fn run_from_args(
     );
 
     // token_verifier is finalized after OIDC injection below
-    let initial_reloadable = build_reloadable_config_with(&cfg, Some(policy_repo.clone()))
-        .map_err(|e| format!("config: {e}"))?;
-    let role_resolver = initial_reloadable.role_resolver.clone();
+    // initial_reloadable is built after OIDC injection determines final effective_auth_mode
+    let pre_reloadable = build_reloadable_config_with(
+        &cfg,
+        cfg.effective_auth_mode(),
+        None,
+        Some(policy_repo.clone()),
+    )
+    .map_err(|e| format!("config: {e}"))?;
+    let role_resolver = pre_reloadable.role_resolver.clone();
     let authorizer: Arc<dyn dbward_app::ports::Authorizer> =
         Arc::new(dbward_infra::auth::RbacAuthorizer);
 
@@ -316,35 +322,71 @@ pub async fn run_from_args(
     };
 
     // C-10: Inject OIDC verifier (requires commercial feature + Pro license)
+    let mut effective_auth_mode = cfg.effective_auth_mode().to_string();
+
     #[cfg(feature = "commercial")]
-    if (cfg.auth.mode == "oidc" || cfg.auth.mode == "both")
+    if (effective_auth_mode == "oidc" || effective_auth_mode == "both")
         && let Some(ref oidc_cfg) = cfg.auth.oidc
     {
         if license_checker.effective_plan() == "free" {
-            tracing::warn!(
-                "auth.mode = {:?} requires a Pro license. Falling back to token-only auth.",
-                cfg.auth.mode
-            );
+            if cfg.auth.mode.is_some() {
+                return Err(format!(
+                    "auth.mode = \"{}\" requires a Pro license. \
+                     Either provide a valid license or change auth.mode to \"token\".",
+                    effective_auth_mode
+                )
+                .into());
+            } else {
+                tracing::warn!(
+                    "OIDC configured but Pro license not available. \
+                     Effective auth mode: token-only."
+                );
+                effective_auth_mode = "token".to_string();
+            }
         } else {
             let oidc = dbward_commercial_oidc::OidcVerifier::new(
-                oidc_cfg.issuer_url.clone(),
+                oidc_cfg.issuer_url.trim().to_string(),
                 oidc_cfg
                     .client_id
-                    .clone()
-                    .unwrap_or_else(|| oidc_cfg.audience.clone()),
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(oidc_cfg.audience.trim())
+                    .to_string(),
                 "groups".to_string(),
-                oidc_cfg.jwks_uri.clone(),
+                oidc_cfg.jwks_uri.as_deref().map(|s| s.trim().to_string()),
             );
             token_verifier_impl = token_verifier_impl.with_oidc(Arc::new(oidc));
         }
     }
     #[cfg(not(feature = "commercial"))]
-    if cfg.auth.mode == "oidc" || cfg.auth.mode == "both" {
-        tracing::warn!(
-            "auth.mode = {:?} requires a Pro license (commercial feature not compiled). Using token-only auth.",
-            cfg.auth.mode
-        );
+    if effective_auth_mode == "oidc" || effective_auth_mode == "both" {
+        if cfg.auth.mode.is_some() {
+            return Err(format!(
+                "auth.mode = \"{}\" requires the commercial feature (Pro license). \
+                 Change auth.mode to \"token\" or use a commercial build.",
+                effective_auth_mode
+            )
+            .into());
+        } else {
+            tracing::warn!(
+                "OIDC configured but commercial feature not available. \
+                 Effective auth mode: token-only."
+            );
+            effective_auth_mode = "token".to_string();
+        }
     }
+
+    tracing::info!(auth_mode = %effective_auth_mode, "Authentication configured");
+
+    // Rebuild initial_reloadable with the final effective_auth_mode
+    // (may differ from cfg.effective_auth_mode() due to license fallback)
+    let initial_reloadable = if effective_auth_mode == cfg.effective_auth_mode() {
+        pre_reloadable
+    } else {
+        build_reloadable_config_with(&cfg, &effective_auth_mode, None, Some(policy_repo.clone()))
+            .map_err(|e| format!("config: {e}"))?
+    };
 
     let token_verifier: Arc<dyn dbward_app::ports::TokenVerifier> = Arc::new(token_verifier_impl);
 
@@ -391,7 +433,7 @@ pub async fn run_from_args(
         webhook_delivery_repo: Some(webhook_delivery_repo),
         metrics: Arc::new(metrics::Metrics::new()),
         max_persist_bytes: cfg.result_storage.max_persist_bytes,
-        auth_mode: cfg.auth.mode.clone(),
+        auth_mode: effective_auth_mode.clone(),
         storage_backend: cfg.result_storage.backend.clone(),
         draining: draining.clone(),
         slack_config,
@@ -437,6 +479,32 @@ pub async fn run_from_args(
         let reload_config_path = config_path.to_string();
         let reload_ssrf_validator = reload_ssrf.clone();
         let allow_private = cfg.allow_private_networks;
+        let startup_auth_mode = effective_auth_mode.clone();
+        // For reload comparison: use config-level effective mode (before license fallback)
+        let startup_config_auth_mode = cfg.effective_auth_mode().to_string();
+        // Snapshot OIDC connection settings for change detection
+        let startup_oidc_issuer = cfg
+            .auth
+            .oidc
+            .as_ref()
+            .map(|o| o.issuer_url.trim().to_string());
+        let startup_oidc_audience = cfg
+            .auth
+            .oidc
+            .as_ref()
+            .map(|o| o.audience.trim().to_string());
+        let startup_oidc_client_id = cfg
+            .auth
+            .oidc
+            .as_ref()
+            .and_then(|o| o.client_id.as_deref())
+            .map(|s| s.trim().to_string());
+        let startup_oidc_jwks = cfg
+            .auth
+            .oidc
+            .as_ref()
+            .and_then(|o| o.jwks_uri.as_deref())
+            .map(|s| s.trim().to_string());
         tokio::spawn(async move {
             use tokio::signal::unix::{SignalKind, signal};
             use tokio::time::Instant;
@@ -454,14 +522,65 @@ pub async fn run_from_args(
                 let _guard = reload_mutex.lock().await;
                 last_reload = Instant::now();
 
-                let new_cfg =
-                    match config::ServerConfig::load(std::path::Path::new(&reload_config_path)) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            tracing::warn!("config reload failed (parse): {e}");
-                            continue;
-                        }
-                    };
+                let raw = match std::fs::read_to_string(&reload_config_path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!("config reload failed (read): {e}");
+                        continue;
+                    }
+                };
+                let new_cfg = match config::ServerConfig::parse_for_reload(
+                    &raw,
+                    &reload_config_path,
+                    &startup_auth_mode,
+                ) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!("config reload failed (parse): {e}");
+                        continue;
+                    }
+                };
+
+                // Detect auth connection changes (compare config-level values,
+                // not runtime fallback — avoids permanent mismatch when license forces fallback)
+                let new_oidc_issuer = new_cfg
+                    .auth
+                    .oidc
+                    .as_ref()
+                    .map(|o| o.issuer_url.trim().to_string());
+                let new_oidc_audience = new_cfg
+                    .auth
+                    .oidc
+                    .as_ref()
+                    .map(|o| o.audience.trim().to_string());
+                let new_oidc_client_id = new_cfg
+                    .auth
+                    .oidc
+                    .as_ref()
+                    .and_then(|o| o.client_id.as_deref())
+                    .map(|s| s.trim().to_string());
+                let new_oidc_jwks = new_cfg
+                    .auth
+                    .oidc
+                    .as_ref()
+                    .and_then(|o| o.jwks_uri.as_deref())
+                    .map(|s| s.trim().to_string());
+                // When startup fell back (e.g., "both" → "token" due to license),
+                // only OIDC connection field changes are restart-worthy.
+                // auth.mode changes to/from the fallback value are expected.
+                let auth_changed = new_oidc_issuer != startup_oidc_issuer
+                    || new_oidc_audience != startup_oidc_audience
+                    || new_oidc_client_id != startup_oidc_client_id
+                    || new_oidc_jwks != startup_oidc_jwks
+                    || (startup_auth_mode == startup_config_auth_mode
+                        && new_cfg.effective_auth_mode() != startup_config_auth_mode);
+                if auth_changed {
+                    tracing::warn!(
+                        configured = %new_cfg.effective_auth_mode(),
+                        active = %startup_auth_mode,
+                        "auth.mode change detected but requires restart to take effect"
+                    );
+                }
 
                 if let Err(e) = safety_guard(&reload_conn, &new_cfg) {
                     tracing::error!("config reload rejected (safety guard): {e}");
@@ -479,13 +598,27 @@ pub async fn run_from_args(
                 let sync_result = build_sync_inputs_and_run(&uc, &new_cfg);
                 match sync_result {
                     Ok(()) => {
-                        let new_reloadable = build_reloadable_config(&new_cfg);
-                        match new_reloadable {
-                            Ok(r) => {
-                                reload_state.reloadable.store(Arc::new(r));
-                                tracing::info!("config reloaded successfully");
+                        if auth_changed {
+                            // Auth connection changes require restart — don't rebuild
+                            // role resolver to avoid inconsistent authorization state
+                            tracing::info!(
+                                "config sync applied (databases, webhooks, policies). \
+                                 Role/auth changes skipped until restart."
+                            );
+                        } else {
+                            let new_reloadable = build_reloadable_config_with(
+                                &new_cfg,
+                                &startup_auth_mode,
+                                None,
+                                None,
+                            );
+                            match new_reloadable {
+                                Ok(r) => {
+                                    reload_state.reloadable.store(Arc::new(r));
+                                    tracing::info!("config reloaded successfully");
+                                }
+                                Err(e) => tracing::warn!("config reload failed (build): {e}"),
                             }
-                            Err(e) => tracing::warn!("config reload failed (build): {e}"),
                         }
                     }
                     Err(e) => tracing::warn!("config reload failed (sync): {e}"),
@@ -902,14 +1035,10 @@ fn build_sync_inputs_and_run(
     .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })
 }
 
-fn build_reloadable_config(
-    cfg: &config::ServerConfig,
-) -> Result<state::ReloadableConfig, Box<dyn std::error::Error>> {
-    build_reloadable_config_with(cfg, None)
-}
-
 fn build_reloadable_config_with(
     cfg: &config::ServerConfig,
+    effective_auth_mode: &str,
+    override_role_mappings: Option<&[dbward_config::server::OidcRoleMapping]>,
     policy_repo: Option<Arc<dyn dbward_app::ports::PolicyRepo>>,
 ) -> Result<state::ReloadableConfig, Box<dyn std::error::Error>> {
     let mut group_bindings: HashMap<String, Vec<String>> = HashMap::new();
@@ -928,8 +1057,13 @@ fn build_reloadable_config_with(
                 .push(rb.role.clone());
         }
     }
-    if let Some(ref oidc_cfg) = cfg.auth.oidc {
-        for mapping in &oidc_cfg.role_mappings {
+    // Only include OIDC role_mappings when effective mode uses OIDC
+    if effective_auth_mode == "oidc" || effective_auth_mode == "both" {
+        let mappings: &[dbward_config::server::OidcRoleMapping] = match override_role_mappings {
+            Some(m) => m,
+            None => cfg.auth.oidc.as_ref().map_or(&[], |o| &o.role_mappings),
+        };
+        for mapping in mappings {
             if mapping.claim == "groups" {
                 group_bindings
                     .entry(mapping.value.clone())

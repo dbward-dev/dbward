@@ -6,6 +6,7 @@ Config as Authority: TOML config becomes the sole source of truth for all policy
 
 ### Breaking Changes
 
+- **`auth.mode` default changed**: Previously defaulted to `"both"`. Now defaults to `"token"` when `[auth.oidc]` is absent, and `"both"` when `[auth.oidc]` is present. Explicitly setting `auth.mode = "oidc"` or `"both"` now requires a Pro license (startup fails without one).
 - **All Tier 1 write API endpoints return 405 Method Not Allowed.** Affected: POST/PUT/DELETE on `/api/workflows`, `/api/execution-policies`, `/api/result-policies`, `/api/notification-policies`, `/api/webhooks`, `/api/roles`. Define these in `server.toml` instead.
 - **Webhook `id` field is now mandatory** in `[[webhooks]]`. Missing id triggers startup failure with a suggested value from the URL.
 - **`[[auth.roles]]` custom roles are config-managed.** API write is no longer available.
@@ -34,6 +35,7 @@ Hardening: code review findings, migration tooling, reactive elicitation, and de
 
 ### Bug Fixes
 
+- **auth.mode/OIDC verifier inconsistency** (H-3): Fixed critical bug where `auth.mode = "oidc"` without a valid OIDC verifier caused all authentication to be rejected. Middleware enforced oidc-only mode but no verifier was injected, making the server unreachable. Now fails fast on startup with clear error message.
 - **MCP migrate v1/v2 mismatch** (H-2): MCP `migrate_up`/`migrate_down` tools now produce v2 JSON detail (was sending v1 string that agent couldn't parse — migrations via MCP were completely broken)
 - **Request insert atomicity** (M-2): `insert()` now wrapped in transaction (prevents orphan requests when `populate_pending_approvers` fails)
 - **OIDC EC key support** (M-3): JWKS parser handles ES256/ES384 keys + algorithm rotation fix

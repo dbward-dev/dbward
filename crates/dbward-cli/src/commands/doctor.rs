@@ -1169,7 +1169,7 @@ environment = "*"
         let cfg = server_cfg(
             r#"
 [auth]
-mode = "both"
+mode = "token"
 default_role = "developer"
 
 [[auth.role_bindings]]
@@ -1191,7 +1191,7 @@ subjects = ["alice"]
         let cfg = server_cfg(
             r#"
 [auth]
-mode = "both"
+mode = "token"
 
 [[auth.roles]]
 name = "dba"
