@@ -76,4 +76,52 @@ STATUS=$(api_status POST /api/requests "$READONLY_TOKEN" \
   -d '{"detail":"DELETE FROM users","database":"app","environment":"development"}')
 [ "$STATUS" = "403" ] || [ "$STATUS" = "400" ] && pass "Readonly cannot execute DML ($STATUS)" || fail "Readonly DML" "got $STATUS"
 
+# --- Bootstrap agent token cannot access non-agent endpoints ---
+echo ""
+echo "--- Bootstrap agent token isolation ---"
+
+# Read bootstrap agent token directly (this is the token auto_bootstrap creates)
+BOOTSTRAP_AGENT_TOKEN=$(docker compose exec -T dbward-server cat /data/agent-token 2>/dev/null || echo "")
+if [ -n "$BOOTSTRAP_AGENT_TOKEN" ]; then
+  # /api/me has no authorizer call — proves middleware path restriction works
+  STATUS=$(api_status GET /api/me "$BOOTSTRAP_AGENT_TOKEN")
+  [ "$STATUS" = "403" ] && pass "Bootstrap agent token cannot GET /api/me" || fail "Agent /api/me" "got $STATUS"
+
+  STATUS=$(api_status POST /api/requests "$BOOTSTRAP_AGENT_TOKEN" \
+    -d '{"detail":"SELECT 1","database":"app","environment":"development"}')
+  [ "$STATUS" = "403" ] && pass "Bootstrap agent token cannot create requests" || fail "Agent create request" "got $STATUS"
+
+  STATUS=$(api_status GET /api/workflows "$BOOTSTRAP_AGENT_TOKEN")
+  [ "$STATUS" = "403" ] && pass "Bootstrap agent token cannot list workflows" || fail "Agent list workflows" "got $STATUS"
+
+  STATUS=$(api_status GET /api/tokens "$BOOTSTRAP_AGENT_TOKEN")
+  [ "$STATUS" = "403" ] && pass "Bootstrap agent token cannot list tokens" || fail "Agent list tokens" "got $STATUS"
+
+  STATUS=$(api_status POST /api/users/someone/suspend "$BOOTSTRAP_AGENT_TOKEN")
+  [ "$STATUS" = "403" ] && pass "Bootstrap agent token cannot suspend users" || fail "Agent suspend user" "got $STATUS"
+
+  # Agent endpoint should still work (poll returns 200 even with empty capabilities)
+  STATUS=$(api_status POST /api/agent/poll "$BOOTSTRAP_AGENT_TOKEN" \
+    -d '{"capabilities":{"databases":["app"],"environments":["development"]},"limit":1}')
+  [ "$STATUS" = "200" ] && pass "Bootstrap agent token can still poll" || fail "Agent poll" "got $STATUS"
+
+  # Public key endpoint should work for agents
+  STATUS=$(api_status GET /api/public-key "$BOOTSTRAP_AGENT_TOKEN")
+  [ "$STATUS" = "200" ] && pass "Bootstrap agent token can get public key" || fail "Agent public-key" "got $STATUS"
+else
+  skip "Bootstrap agent token not found (skipping agent isolation tests)"
+fi
+
+# --- Agent token creation rejects non-agent-default roles ---
+echo ""
+echo "--- Agent token role enforcement ---"
+
+STATUS=$(api_status POST /api/tokens "$ADMIN_TOKEN" \
+  -d '{"subject_id":"evil-agent","roles":["admin"],"subject_type":"agent"}')
+[ "$STATUS" = "400" ] && pass "Cannot create agent token with admin role" || fail "Agent admin role" "got $STATUS"
+
+STATUS=$(api_status POST /api/tokens "$ADMIN_TOKEN" \
+  -d '{"subject_id":"good-agent","roles":["agent-default"],"subject_type":"agent"}')
+[ "$STATUS" = "200" ] || [ "$STATUS" = "201" ] && pass "Can create agent token with agent-default role" || fail "Agent agent-default role" "got $STATUS"
+
 summary

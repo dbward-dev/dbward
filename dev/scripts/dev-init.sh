@@ -10,7 +10,7 @@ until curl -sf "$SERVER_URL/health" >/dev/null 2>&1; do
 done
 
 # Read bootstrap admin token
-ADMIN_TOKEN="$(cat /data/agent-token)"
+ADMIN_TOKEN="$(cat /data/admin-token)"
 
 create_token() {
     user="$1"
@@ -41,5 +41,5 @@ create_token "alice" "developer" "/tokens/alice.token"
 create_token "bob" "admin" "/tokens/bob.token"
 create_token "carol" "developer" "/tokens/carol.token"
 create_token "dave" "developer" "/tokens/dave.token"
-create_token "agent" "admin" "/tokens/agent.token" "agent"
+create_token "agent" "agent-default" "/tokens/agent.token" "agent"
 echo "[dev-init] done"

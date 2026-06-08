@@ -1,6 +1,6 @@
 use dbward_app::error::AuthzError;
 use dbward_app::ports::Authorizer;
-use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
+use dbward_domain::auth::{AuthUser, Permission, ResourceContext, SubjectType};
 use dbward_domain::services::approval_checker;
 use dbward_domain::values::{DatabaseName, Environment, Selector};
 
@@ -9,6 +9,13 @@ pub struct RbacAuthorizer;
 
 impl Authorizer for RbacAuthorizer {
     fn authorize_global(&self, user: &AuthUser, permission: Permission) -> Result<(), AuthzError> {
+        // Agent tokens may only use agent.operate
+        if user.subject_type == SubjectType::Agent && permission != Permission::AgentOperate {
+            return Err(AuthzError::Forbidden {
+                permission,
+                reason: "agent tokens are restricted to agent.operate".into(),
+            });
+        }
         if user.has_permission(permission) {
             return Ok(());
         }
@@ -29,6 +36,13 @@ impl Authorizer for RbacAuthorizer {
         environment: &Environment,
         context: &ResourceContext,
     ) -> Result<(), AuthzError> {
+        // Agent tokens may only use agent.operate
+        if user.subject_type == SubjectType::Agent && permission != Permission::AgentOperate {
+            return Err(AuthzError::Forbidden {
+                permission,
+                reason: "agent tokens are restricted to agent.operate".into(),
+            });
+        }
         // Layer 1: role-based scope check
         // User context: self-edit bypasses Layer 1 (no UserWrite needed)
         let skip_scope =
@@ -361,6 +375,94 @@ mod tests {
         assert!(
             RbacAuthorizer
                 .authorize_scoped(&u, Permission::UserWrite, &db, &env, &ctx)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn agent_denied_non_agent_permission() {
+        let u = AuthUser {
+            subject_id: "agent-1".to_string(),
+            subject_type: SubjectType::Agent,
+            roles: vec![ResolvedRole {
+                name: "admin".to_string(),
+                permissions: [Permission::All].into_iter().collect(),
+                databases: vec![DatabaseName::new("*").unwrap()],
+                environments: vec![Environment::new("*").unwrap()],
+            }],
+            groups: vec![],
+            token_id: None,
+        };
+        // Even with admin role, agent is denied non-agent permissions
+        assert!(
+            RbacAuthorizer
+                .authorize_global(&u, Permission::WorkflowWrite)
+                .is_err()
+        );
+        assert!(
+            RbacAuthorizer
+                .authorize_global(&u, Permission::TokenWrite)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn agent_allowed_agent_operate() {
+        let u = AuthUser {
+            subject_id: "agent-1".to_string(),
+            subject_type: SubjectType::Agent,
+            roles: vec![ResolvedRole {
+                name: "agent-default".to_string(),
+                permissions: [Permission::AgentOperate].into_iter().collect(),
+                databases: vec![DatabaseName::new("*").unwrap()],
+                environments: vec![Environment::new("*").unwrap()],
+            }],
+            groups: vec![],
+            token_id: None,
+        };
+        assert!(
+            RbacAuthorizer
+                .authorize_global(&u, Permission::AgentOperate)
+                .is_ok()
+        );
+        // Also test authorize_scoped
+        let db = DatabaseName::new("app").unwrap();
+        let env = Environment::new("production").unwrap();
+        let ctx = ResourceContext::AgentExecution {
+            agent_id: "agent-1".to_string(),
+        };
+        assert!(
+            RbacAuthorizer
+                .authorize_scoped(&u, Permission::AgentOperate, &db, &env, &ctx)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn agent_denied_non_agent_permission_scoped() {
+        let u = AuthUser {
+            subject_id: "agent-1".to_string(),
+            subject_type: SubjectType::Agent,
+            roles: vec![ResolvedRole {
+                name: "admin".to_string(),
+                permissions: [Permission::All].into_iter().collect(),
+                databases: vec![DatabaseName::new("*").unwrap()],
+                environments: vec![Environment::new("*").unwrap()],
+            }],
+            groups: vec![],
+            token_id: None,
+        };
+        let db = DatabaseName::new("app").unwrap();
+        let env = Environment::new("production").unwrap();
+        assert!(
+            RbacAuthorizer
+                .authorize_scoped(
+                    &u,
+                    Permission::RequestExecute,
+                    &db,
+                    &env,
+                    &ResourceContext::Global
+                )
                 .is_err()
         );
     }
