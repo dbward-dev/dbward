@@ -10,6 +10,7 @@ use dbward_domain::entities::{ApprovalAction, Request, RequestStatus};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::sqlite::DbConn;
+use crate::sqlite::error::db_err;
 
 pub struct SqliteRequestRepo {
     conn: DbConn,
@@ -19,10 +20,6 @@ impl SqliteRequestRepo {
     pub fn new(conn: DbConn) -> Self {
         Self { conn }
     }
-}
-
-fn map_err(e: rusqlite::Error) -> AppError {
-    AppError::Internal(e.to_string())
 }
 
 fn build_selectors(user_id: &str, groups: &[String], roles: &[String]) -> Vec<String> {
@@ -50,7 +47,7 @@ fn populate_pending_approvers(
         "DELETE FROM request_pending_approvers WHERE request_id = ?1",
         rusqlite::params![request_id],
     )
-    .map_err(map_err)?;
+    .map_err(db_err("request: populate_pending_approvers"))?;
     if let Some(json) = workflow_snapshot_json
         && let Ok(workflow) =
             serde_json::from_str::<dbward_domain::policies::workflow::Workflow>(json)
@@ -62,7 +59,7 @@ fn populate_pending_approvers(
                 "INSERT OR IGNORE INTO request_pending_approvers (request_id, selector, step_index) VALUES (?1, ?2, ?3)",
                 rusqlite::params![request_id, selector, step_index],
             )
-            .map_err(map_err)?;
+            .map_err(db_err("request: populate_pending_approvers"))?;
         }
     }
     Ok(())

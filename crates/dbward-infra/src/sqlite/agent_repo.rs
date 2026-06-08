@@ -7,6 +7,7 @@ use dbward_domain::entities::*;
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::sqlite::DbConn;
+use crate::sqlite::error::{db_err, json_err};
 
 pub struct SqliteAgentRepo {
     conn: DbConn,
@@ -21,10 +22,10 @@ impl SqliteAgentRepo {
 impl AgentRepo for SqliteAgentRepo {
     fn upsert(&self, agent: &Agent) -> Result<(), AppError> {
         let conn = self.conn.lock();
-        let databases_json = serde_json::to_string(&agent.databases)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        let active_jobs_json = serde_json::to_string(&agent.active_jobs)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let databases_json =
+            serde_json::to_string(&agent.databases).map_err(json_err("agent: upsert"))?;
+        let active_jobs_json =
+            serde_json::to_string(&agent.active_jobs).map_err(json_err("agent: upsert"))?;
         let status = agent_status_str(agent.status);
         let last_seen = agent.last_seen.map(|t| t.to_rfc3339());
         let created_at = agent.created_at.to_rfc3339();
@@ -42,7 +43,7 @@ impl AgentRepo for SqliteAgentRepo {
                active_jobs_json = excluded.active_jobs_json,
                last_seen_at = excluded.last_seen_at",
             params![agent.id, agent.token_id, databases_json, status, agent.max_concurrent, agent.in_flight, agent.uptime_secs as i64, active_jobs_json, last_seen, created_at],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("agent: upsert"))?;
         Ok(())
     }
 
@@ -67,7 +68,7 @@ impl AgentRepo for SqliteAgentRepo {
             },
         )
         .optional()
-        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map_err(db_err("agent: get"))?
         .map(row_to_agent)
         .transpose()
     }
@@ -76,7 +77,7 @@ impl AgentRepo for SqliteAgentRepo {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, token_id, databases_json, status, max_concurrent, in_flight, uptime_secs, active_jobs_json, last_seen_at, created_at FROM agents ORDER BY last_seen_at DESC",
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("agent: list"))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(AgentRow {
@@ -92,10 +93,10 @@ impl AgentRepo for SqliteAgentRepo {
                     created_at: row.get(9)?,
                 })
             })
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: list"))?;
         let mut results = Vec::new();
         for row in rows {
-            let r = row.map_err(|e| AppError::Internal(e.to_string()))?;
+            let r = row.map_err(db_err("agent: list"))?;
             results.push(row_to_agent(r)?);
         }
         Ok(results)
@@ -113,7 +114,7 @@ impl AgentRepo for SqliteAgentRepo {
             "INSERT INTO executions (id, request_id, agent_id, status, token, lease_expires_at, started_at, finished_at, error_message, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![execution.id, execution.request_id, execution.agent_id, status, execution.token, lease, started, finished, execution.error_message, created],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("agent: create_execution"))?;
         Ok(())
     }
 
@@ -126,7 +127,7 @@ impl AgentRepo for SqliteAgentRepo {
             row_to_execution,
         )
         .optional()
-        .map_err(|e| AppError::Internal(e.to_string()))
+        .map_err(db_err("agent: get_execution"))
     }
 
     fn update_execution_status(
@@ -146,13 +147,13 @@ impl AgentRepo for SqliteAgentRepo {
                     chrono::Utc::now().to_rfc3339()
                 ],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: update_execution_status"))?;
         } else {
             conn.execute(
                 "UPDATE executions SET status = ?1 WHERE id = ?2",
                 params![execution_status_str(status), execution_id],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: update_execution_status"))?;
         }
         Ok(())
     }
@@ -163,7 +164,7 @@ impl AgentRepo for SqliteAgentRepo {
             "UPDATE executions SET lease_expires_at = ?1 WHERE id = ?2",
             params![new_expiry.to_rfc3339(), execution_id],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("agent: extend_lease"))?;
         Ok(())
     }
 
@@ -188,7 +189,7 @@ impl AgentRepo for SqliteAgentRepo {
 
         let mut stmt = conn
             .prepare(&sql)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: find_dispatched_jobs"))?;
         let db_ids: Vec<String> = databases
             .iter()
             .map(|(db, env)| format!("{}:{}", db, env))
@@ -227,11 +228,11 @@ impl AgentRepo for SqliteAgentRepo {
                     expires_at: row.get(18)?,
                 })
             })
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: find_dispatched_jobs"))?;
 
         let mut results = Vec::new();
         for row in rows {
-            let r = row.map_err(|e| AppError::Internal(e.to_string()))?;
+            let r = row.map_err(db_err("agent: find_dispatched_jobs"))?;
             results.push(row_to_request(r)?);
         }
         Ok(results)
@@ -255,7 +256,7 @@ impl AgentRepo for SqliteAgentRepo {
                 params![database_id, exclude_request_id],
                 |row| row.get(0),
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: has_running_migration"))?;
         Ok(count > 0)
     }
 
@@ -264,15 +265,15 @@ impl AgentRepo for SqliteAgentRepo {
         let mut stmt = conn.prepare(
             "SELECT id, request_id, agent_id, status, token, lease_expires_at, started_at, finished_at, error_message, created_at
              FROM executions WHERE request_id = ?1 ORDER BY created_at ASC",
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("agent: find_executions_for_request"))?;
 
         let rows = stmt
             .query_map(params![request_id], row_to_execution)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: find_executions_for_request"))?;
 
         let mut results = Vec::new();
         for row in rows {
-            results.push(row.map_err(|e| AppError::Internal(e.to_string()))?);
+            results.push(row.map_err(db_err("agent: find_executions_for_request"))?);
         }
         Ok(results)
     }
@@ -286,7 +287,7 @@ impl AgentRepo for SqliteAgentRepo {
         let conn = self.conn.lock();
         let tx = conn
             .unchecked_transaction()
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: claim_and_mark_running"))?;
 
         // Migration exclusion check within TX (prevents TOCTOU race)
         let (operation, database_id): (String, String) = tx
@@ -295,7 +296,7 @@ impl AgentRepo for SqliteAgentRepo {
                 params![request_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: claim_and_mark_running"))?;
 
         if operation == "migrate_up" || operation == "migrate_down" || operation == "migrate_repair"
         {
@@ -309,7 +310,7 @@ impl AgentRepo for SqliteAgentRepo {
                     params![database_id, request_id],
                     |row| row.get(0),
                 )
-                .map_err(|e| AppError::Internal(e.to_string()))?;
+                .map_err(db_err("agent: claim_and_mark_running"))?;
             if conflict > 0 {
                 drop(tx);
                 return Ok(false);
@@ -326,20 +327,21 @@ impl AgentRepo for SqliteAgentRepo {
             "INSERT INTO executions (id, request_id, agent_id, status, token, lease_expires_at, started_at, finished_at, error_message, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![execution.id, execution.request_id, execution.agent_id, status, execution.token, lease, started, finished, execution.error_message, created],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("agent: claim_and_mark_running"))?;
 
         let now_str = now.to_rfc3339();
         let updated = tx.execute(
             "UPDATE requests SET status = 'running', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
             params![request_id, now_str],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("agent: claim_and_mark_running"))?;
 
         if updated == 0 {
             drop(tx);
             return Ok(false);
         }
 
-        tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
+        tx.commit()
+            .map_err(db_err("agent: claim_and_mark_running"))?;
         Ok(true)
     }
 
@@ -358,20 +360,20 @@ impl AgentRepo for SqliteAgentRepo {
         let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: complete_execution"))?;
 
         let exec_status = if success { "completed" } else { "failed" };
         tx.execute(
             "UPDATE executions SET status = ?1, finished_at = ?2 WHERE id = ?3",
             params![exec_status, now.to_rfc3339(), execution_id],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("agent: complete_execution"))?;
 
         let req_status = if success { "executed" } else { "failed" };
         let updated = tx.execute(
             "UPDATE requests SET status = ?1, updated_at = ?2 WHERE id = ?3 AND status IN ('running', 'execution_lost')",
             params![req_status, now.to_rfc3339(), request_id],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("agent: complete_execution"))?;
 
         if updated == 0 {
             // Check if request was cancelled or already completed
@@ -381,7 +383,7 @@ impl AgentRepo for SqliteAgentRepo {
                     params![request_id],
                     |r| r.get(0),
                 )
-                .map_err(|e| AppError::Internal(e.to_string()))?;
+                .map_err(db_err("agent: complete_execution"))?;
 
             match current_status.as_str() {
                 // Cancelled: store result/audit but don't update request status
@@ -408,19 +410,19 @@ impl AgentRepo for SqliteAgentRepo {
                     "stored", rm.truncated as i64, rm.truncation_reason,
                     rm.stored_at.to_rfc3339(), rm.expires_at.to_rfc3339(),
                 ],
-            ).map_err(|e| AppError::Internal(e.to_string()))?;
+            ).map_err(db_err("agent: complete_execution"))?;
 
             for ra in share_with {
                 tx.execute(
                     "INSERT INTO result_access (id, result_id, selector_type, selector_value) VALUES (?1, ?2, ?3, ?4)",
                     params![ra.id, ra.result_id, selector_type_str(ra.selector_type), ra.selector_value],
-                ).map_err(|e| AppError::Internal(e.to_string()))?;
+                ).map_err(db_err("agent: complete_execution"))?;
             }
         }
 
         insert_audit_in_agent_tx(&tx, audit_event)?;
 
-        tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
+        tx.commit().map_err(db_err("agent: complete_execution"))?;
         Ok(if updated > 0 {
             CompletionOutcome::Normal
         } else {
@@ -432,14 +434,14 @@ impl AgentRepo for SqliteAgentRepo {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, request_id FROM executions WHERE status IN ('claimed', 'running') AND datetime(lease_expires_at) < datetime(?1)"
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("agent: find_expired_leases"))?;
         let rows = stmt
             .query_map(rusqlite::params![now], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: find_expired_leases"))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| AppError::Internal(e.to_string()))
+            .map_err(db_err("agent: find_expired_leases"))
     }
 
     fn mark_execution_lost(
@@ -451,19 +453,19 @@ impl AgentRepo for SqliteAgentRepo {
         let conn = self.conn.lock();
         let tx = conn
             .unchecked_transaction()
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: mark_execution_lost"))?;
         let n1 = tx.execute(
             "UPDATE executions SET status = 'failed', finished_at = ?2 WHERE id = ?1 AND status IN ('claimed', 'running')",
             rusqlite::params![execution_id, now],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("agent: mark_execution_lost"))?;
         if n1 == 0 {
             return Ok(false);
         }
         tx.execute(
             "UPDATE requests SET status = 'execution_lost', updated_at = ?2 WHERE id = ?1 AND status IN ('dispatched', 'running')",
             rusqlite::params![request_id, now],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
-        tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("agent: mark_execution_lost"))?;
+        tx.commit().map_err(db_err("agent: mark_execution_lost"))?;
         Ok(true)
     }
 
@@ -477,18 +479,18 @@ impl AgentRepo for SqliteAgentRepo {
         let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: mark_execution_lost_and_record"))?;
         let n1 = tx.execute(
             "UPDATE executions SET status = 'failed', finished_at = ?2 WHERE id = ?1 AND status IN ('claimed', 'running')",
             rusqlite::params![execution_id, now],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("agent: mark_execution_lost_and_record"))?;
         if n1 == 0 {
             return Ok(false);
         }
         tx.execute(
             "UPDATE requests SET status = 'execution_lost', updated_at = ?2 WHERE id = ?1 AND status IN ('dispatched', 'running')",
             rusqlite::params![request_id, now],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("agent: mark_execution_lost_and_record"))?;
 
         // Inline audit INSERT with hash chain
         crate::sqlite::audit_helper::insert_audit_event_in_tx(
@@ -496,9 +498,10 @@ impl AgentRepo for SqliteAgentRepo {
             audit_event,
             crate::sqlite::audit_helper::IdPolicy::AlwaysGenerate,
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("agent: mark_execution_lost_and_record"))?;
 
-        tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
+        tx.commit()
+            .map_err(db_err("agent: mark_execution_lost_and_record"))?;
         Ok(true)
     }
 
@@ -508,14 +511,14 @@ impl AgentRepo for SqliteAgentRepo {
             .prepare(
                 "SELECT id, storage_key FROM results WHERE datetime(expires_at) < datetime(?1)",
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: find_expired_results"))?;
         let rows = stmt
             .query_map(rusqlite::params![now], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("agent: find_expired_results"))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| AppError::Internal(e.to_string()))
+            .map_err(db_err("agent: find_expired_results"))
     }
 
     fn delete_result(&self, result_id: &str) -> Result<(), AppError> {
@@ -524,12 +527,12 @@ impl AgentRepo for SqliteAgentRepo {
             "DELETE FROM result_access WHERE result_id = ?1",
             rusqlite::params![result_id],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("agent: delete_result"))?;
         conn.execute(
             "DELETE FROM results WHERE id = ?1",
             rusqlite::params![result_id],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("agent: delete_result"))?;
         Ok(())
     }
 }
@@ -545,7 +548,7 @@ fn insert_audit_in_agent_tx(
         audit_event,
         crate::sqlite::audit_helper::IdPolicy::AlwaysGenerate,
     )
-    .map_err(|e| AppError::Internal(e.to_string()))
+    .map_err(db_err("agent: insert_audit"))
 }
 
 fn selector_type_str(st: SelectorType) -> &'static str {
@@ -634,7 +637,7 @@ struct AgentRow {
 
 fn row_to_agent(r: AgentRow) -> Result<Agent, AppError> {
     let databases: Vec<DatabaseCapability> =
-        serde_json::from_str(&r.databases_json).map_err(|e| AppError::Internal(e.to_string()))?;
+        serde_json::from_str(&r.databases_json).map_err(json_err("agent: row_to_agent"))?;
     let active_jobs: Vec<ActiveJobEntry> =
         serde_json::from_str(&r.active_jobs_json).unwrap_or_default();
     Ok(Agent {
@@ -726,7 +729,7 @@ fn row_to_request(r: RequestRow) -> Result<Request, AppError> {
         .map_err(|e: String| AppError::Internal(e))?;
     let status = parse_request_status(&r.status)?;
     let share_with: Vec<String> =
-        serde_json::from_str(&r.share_with_json).map_err(|e| AppError::Internal(e.to_string()))?;
+        serde_json::from_str(&r.share_with_json).map_err(json_err("agent: row_to_request"))?;
 
     Ok(Request {
         id: r.id,

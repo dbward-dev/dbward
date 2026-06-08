@@ -1,4 +1,5 @@
 use crate::sqlite::DbConn;
+use crate::sqlite::error::db_err;
 use chrono::{DateTime, Utc};
 use dbward_app::error::AppError;
 use dbward_app::ports::UserRepo;
@@ -18,7 +19,7 @@ impl SqliteUserRepo {
 impl UserRepo for SqliteUserRepo {
     fn get(&self, user_id: &str) -> Result<Option<User>, AppError> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT id, display_name, email, groups_json, status, last_seen_at, created_at, updated_at FROM users WHERE id = ?1").map_err(|e| AppError::Internal(e.to_string()))?;
+        let mut stmt = conn.prepare("SELECT id, display_name, email, groups_json, status, last_seen_at, created_at, updated_at FROM users WHERE id = ?1").map_err(db_err("user: get"))?;
         let result = stmt.query_row(rusqlite::params![user_id], |row| {
             Ok(User {
                 id: row.get(0)?,
@@ -40,7 +41,7 @@ impl UserRepo for SqliteUserRepo {
         match result {
             Ok(u) => Ok(Some(u)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(AppError::Internal(e.to_string())),
+            Err(e) => Err(db_err("user: get")(e)),
         }
     }
 
@@ -56,13 +57,13 @@ impl UserRepo for SqliteUserRepo {
                 user.created_at.to_rfc3339(),
                 user.updated_at.to_rfc3339(),
             ],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("user: upsert"))?;
         Ok(())
     }
 
     fn list(&self) -> Result<Vec<User>, AppError> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT id, display_name, email, groups_json, status, last_seen_at, created_at, updated_at FROM users ORDER BY created_at DESC").map_err(|e| AppError::Internal(e.to_string()))?;
+        let mut stmt = conn.prepare("SELECT id, display_name, email, groups_json, status, last_seen_at, created_at, updated_at FROM users ORDER BY created_at DESC").map_err(db_err("user: list"))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(User {
@@ -82,20 +83,20 @@ impl UserRepo for SqliteUserRepo {
                     updated_at: super::parse_datetime(&row.get::<_, String>(7)?)?,
                 })
             })
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("user: list"))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| AppError::Internal(e.to_string()))
+            .map_err(db_err("user: list"))
     }
 
     fn suspend(&self, user_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let conn = self.conn.lock();
-        let n = conn.execute("UPDATE users SET status = 'suspended', updated_at = ?1 WHERE id = ?2 AND status = 'active'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(|e| AppError::Internal(e.to_string()))?;
+        let n = conn.execute("UPDATE users SET status = 'suspended', updated_at = ?1 WHERE id = ?2 AND status = 'active'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(db_err("user: suspend"))?;
         Ok(n > 0)
     }
 
     fn activate(&self, user_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let conn = self.conn.lock();
-        let n = conn.execute("UPDATE users SET status = 'active', updated_at = ?1 WHERE id = ?2 AND status = 'suspended'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(|e| AppError::Internal(e.to_string()))?;
+        let n = conn.execute("UPDATE users SET status = 'active', updated_at = ?1 WHERE id = ?2 AND status = 'suspended'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(db_err("user: activate"))?;
         Ok(n > 0)
     }
 
@@ -117,7 +118,7 @@ impl UserRepo for SqliteUserRepo {
         conn.execute(
             "INSERT OR IGNORE INTO users (id, groups_json, status, created_at, updated_at) VALUES (?1, '[]', 'active', ?2, ?2)",
             rusqlite::params![subject_id, now],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("user: ensure_exists"))?;
         Ok(())
     }
 
@@ -132,7 +133,7 @@ impl UserRepo for SqliteUserRepo {
         conn.execute(
             "INSERT OR IGNORE INTO users (id, groups_json, status, created_at, updated_at) VALUES (?1, '[]', 'active', ?2, ?2)",
             rusqlite::params![subject_id, now],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("user: update_slack_user_id"))?;
         // Update slack_user_id
         let result = conn.execute(
             "UPDATE users SET slack_user_id = ?1, updated_at = ?2 WHERE id = ?3",
@@ -147,27 +148,27 @@ impl UserRepo for SqliteUserRepo {
                     "slack_user_id already linked to another user".into(),
                 ))
             }
-            Err(e) => Err(AppError::Internal(e.to_string())),
+            Err(e) => Err(db_err("user: update_slack_user_id")(e)),
         }
     }
 
     fn get_slack_user_id(&self, subject_id: &str) -> Result<Option<String>, AppError> {
         let conn = self.conn.lock();
         conn.prepare("SELECT slack_user_id FROM users WHERE id = ?1")
-            .map_err(|e| AppError::Internal(e.to_string()))?
+            .map_err(db_err("user: get_slack_user_id"))?
             .query_row(rusqlite::params![subject_id], |row| row.get(0))
             .optional()
-            .map_err(|e| AppError::Internal(e.to_string()))
+            .map_err(db_err("user: get_slack_user_id"))
     }
 
     fn find_by_slack_user_id(&self, slack_user_id: &str) -> Result<Option<String>, AppError> {
         let conn = self.conn.lock();
         let result = conn
             .prepare("SELECT id FROM users WHERE slack_user_id = ?1")
-            .map_err(|e| AppError::Internal(e.to_string()))?
+            .map_err(db_err("user: find_by_slack_user_id"))?
             .query_row(rusqlite::params![slack_user_id], |row| row.get(0))
             .optional()
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("user: find_by_slack_user_id"))?;
         Ok(result)
     }
 
@@ -175,7 +176,7 @@ impl UserRepo for SqliteUserRepo {
         let conn = self.conn.lock();
         let n = conn
             .execute("DELETE FROM users WHERE source = ?1", [source])
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("user: delete_by_source"))?;
         Ok(n as u64)
     }
 
@@ -185,7 +186,7 @@ impl UserRepo for SqliteUserRepo {
             "UPDATE users SET source = ?1 WHERE id = ?2",
             rusqlite::params![source, user_id],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("user: set_source"))?;
         Ok(())
     }
 
@@ -198,7 +199,7 @@ impl UserRepo for SqliteUserRepo {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("user: get_source"))?;
         Ok(result)
     }
 }

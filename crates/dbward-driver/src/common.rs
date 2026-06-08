@@ -19,3 +19,14 @@ pub(crate) fn validate_migration_version(version: &str) -> Result<(), DriverErro
     }
     Ok(())
 }
+
+/// Convert sqlx query errors to DriverError::QueryFailed.
+/// The statement_timeout branch is a placeholder for future Timeout variant promotion.
+pub(crate) fn query_err(e: sqlx::Error) -> DriverError {
+    DriverError::QueryFailed(e.to_string())
+}
+
+/// Convert sqlx pool-acquire errors to DriverError::ConnectionFailed.
+pub(crate) fn conn_err(e: sqlx::Error) -> DriverError {
+    DriverError::ConnectionFailed(e.to_string())
+}

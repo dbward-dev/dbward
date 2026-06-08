@@ -4,6 +4,7 @@ use dbward_app::error::AppError;
 use dbward_app::ports::repos::{ContextRepo, RequestContextRecord};
 
 use crate::sqlite::DbConn;
+use crate::sqlite::error::db_err;
 
 pub struct SqliteContextRepo {
     conn: DbConn,
@@ -34,7 +35,7 @@ impl ContextRepo for SqliteContextRepo {
                 ctx.updated_at,
             ],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("context: create"))?;
         Ok(())
     }
 
@@ -61,7 +62,7 @@ impl ContextRepo for SqliteContextRepo {
         match result {
             Ok(r) => Ok(Some(r)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(AppError::Internal(e.to_string())),
+            Err(e) => Err(db_err("context: get")(e)),
         }
     }
 
@@ -77,7 +78,7 @@ impl ContextRepo for SqliteContextRepo {
             "UPDATE request_context SET explain_json = ?1, status = ?2, updated_at = ?3 WHERE request_id = ?4",
             params![explain_json, status, now, request_id],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("context: update_explain"))?;
         Ok(())
     }
 
@@ -89,7 +90,7 @@ impl ContextRepo for SqliteContextRepo {
              WHERE status = 'collecting' AND created_at < ?2",
                 params![now, cutoff],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("context: timeout_collecting"))?;
         Ok(n as u32)
     }
 }

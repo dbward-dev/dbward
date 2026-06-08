@@ -4,6 +4,7 @@ use dbward_app::error::AppError;
 use dbward_app::ports::repos::{DryRunJobRecord, DryRunRepo};
 
 use crate::sqlite::DbConn;
+use crate::sqlite::error::db_err;
 
 pub struct SqliteDryRunRepo {
     conn: DbConn,
@@ -24,7 +25,7 @@ impl DryRunRepo for SqliteDryRunRepo {
                  VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
                 params![job.id, job.request_id, job.database_name, job.environment, job.sql_text, job.created_at],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("dry_run: create_jobs"))?;
         }
         Ok(())
     }
@@ -58,7 +59,7 @@ impl DryRunRepo for SqliteDryRunRepo {
         );
         let mut stmt = conn
             .prepare(&sql)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("dry_run: find_pending_for_agent"))?;
         let params: Vec<&dyn rusqlite::types::ToSql> = databases
             .iter()
             .flat_map(|(db, env)| {
@@ -86,9 +87,9 @@ impl DryRunRepo for SqliteDryRunRepo {
                     completed_at: row.get(12)?,
                 })
             })
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("dry_run: find_pending_for_agent"))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| AppError::Internal(e.to_string()))
+            .map_err(db_err("dry_run: find_pending_for_agent"))
     }
 
     fn claim(
@@ -104,7 +105,7 @@ impl DryRunRepo for SqliteDryRunRepo {
              WHERE id = ?4 AND status = 'pending'",
             params![agent_id, now, claim_token, job_id],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("dry_run: claim"))?;
         Ok(affected > 0)
     }
 
@@ -123,7 +124,7 @@ impl DryRunRepo for SqliteDryRunRepo {
              WHERE id = ?3 AND claimed_by = ?4 AND claim_token = ?5 AND status = 'claimed'",
                 params![result_json, now, job_id, agent_id, claim_token],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("dry_run: complete"))?;
         Ok(affected > 0)
     }
 
@@ -142,7 +143,7 @@ impl DryRunRepo for SqliteDryRunRepo {
              WHERE id = ?3 AND claimed_by = ?4 AND claim_token = ?5 AND status = 'claimed'",
                 params![error, now, job_id, agent_id, claim_token],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("dry_run: fail"))?;
         Ok(affected > 0)
     }
 
@@ -153,7 +154,7 @@ impl DryRunRepo for SqliteDryRunRepo {
              WHERE status = 'claimed' AND claimed_at < ?1",
             params![cutoff],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("dry_run: reclaim_stale"))?;
         Ok(affected as u32)
     }
 
@@ -164,7 +165,7 @@ impl DryRunRepo for SqliteDryRunRepo {
              claimed_by, claimed_at, claim_token, result_json, error_message, created_at, completed_at \
              FROM dry_run_jobs WHERE request_id = ?1",
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("dry_run: find_for_request"))?;
         let rows = stmt
             .query_map(params![request_id], |row| {
                 Ok(DryRunJobRecord {
@@ -183,9 +184,9 @@ impl DryRunRepo for SqliteDryRunRepo {
                     completed_at: row.get(12)?,
                 })
             })
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("dry_run: find_for_request"))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| AppError::Internal(e.to_string()))
+            .map_err(db_err("dry_run: find_for_request"))
     }
 
     fn get_request_id(&self, job_id: &str) -> Result<Option<String>, AppError> {
@@ -198,7 +199,7 @@ impl DryRunRepo for SqliteDryRunRepo {
         match result {
             Ok(id) => Ok(Some(id)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(AppError::Internal(e.to_string())),
+            Err(e) => Err(db_err("dry_run: get_request_id")(e)),
         }
     }
 }

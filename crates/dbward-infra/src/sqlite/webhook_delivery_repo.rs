@@ -5,6 +5,7 @@ use dbward_app::ports::WebhookDeliveryRepo;
 use dbward_domain::entities::{DeliveryStatus, WebhookDelivery};
 
 use crate::sqlite::DbConn;
+use crate::sqlite::error::db_err;
 
 pub struct SqliteWebhookDeliveryRepo {
     conn: DbConn,
@@ -84,7 +85,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
                 d.claimed_at.map(|t| t.to_rfc3339()),
             ],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("webhook_delivery: insert"))?;
         Ok(())
     }
 
@@ -95,18 +96,18 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
             "UPDATE webhook_deliveries SET status = 'in_progress', claimed_at = ?1 WHERE id IN (SELECT id FROM webhook_deliveries WHERE status = 'pending' AND next_retry_at <= ?1 ORDER BY next_retry_at ASC LIMIT ?2)",
             params![now, limit],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("webhook_delivery: claim_for_retry"))?;
         // Fetch claimed rows
         let mut stmt = conn
             .prepare(
                 "SELECT * FROM webhook_deliveries WHERE status = 'in_progress' AND claimed_at = ?1",
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("webhook_delivery: claim_for_retry"))?;
         let rows = stmt
             .query_and_then(params![now], row_to_delivery)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("webhook_delivery: claim_for_retry"))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| AppError::Internal(e.to_string()))
+            .map_err(db_err("webhook_delivery: claim_for_retry"))
     }
 
     fn mark_delivered(&self, id: &str, now: &str) -> Result<(), AppError> {
@@ -115,7 +116,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
             "UPDATE webhook_deliveries SET status = 'delivered', last_attempted_at = ?2 WHERE id = ?1",
             params![id, now],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("webhook_delivery: mark_delivered"))?;
         Ok(())
     }
 
@@ -131,7 +132,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
             "UPDATE webhook_deliveries SET status = 'pending', last_error = ?2, next_retry_at = ?3, attempts = ?4, last_attempted_at = ?3, claimed_at = NULL WHERE id = ?1",
             params![id, error, next_retry_at, attempts],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("webhook_delivery: mark_failed"))?;
         Ok(())
     }
 
@@ -141,7 +142,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
             "UPDATE webhook_deliveries SET status = 'dead', claimed_at = NULL WHERE id = ?1",
             params![id],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("webhook_delivery: mark_dead"))?;
         Ok(())
     }
 
@@ -152,7 +153,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
                 "UPDATE webhook_deliveries SET status = 'pending', claimed_at = NULL WHERE status = 'in_progress' AND claimed_at < ?1",
                 params![older_than],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("webhook_delivery: reclaim_stale"))?;
         Ok(changed as u32)
     }
 
@@ -181,19 +182,19 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
         } else {
             conn.query_row(count_sql, [], |r| r.get(0))
         }
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("webhook_delivery: list_by_status"))?;
         let mut stmt = conn
             .prepare(query_sql)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("webhook_delivery: list_by_status"))?;
         let rows = if has_status {
             stmt.query_and_then(params![status.unwrap(), limit, offset], row_to_delivery)
         } else {
             stmt.query_and_then(params![limit, offset], row_to_delivery)
         }
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("webhook_delivery: list_by_status"))?;
         let items = rows
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("webhook_delivery: list_by_status"))?;
         Ok((items, total))
     }
 
@@ -204,7 +205,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
                 "DELETE FROM webhook_deliveries WHERE status IN ('delivered', 'dead') AND created_at < ?1",
                 params![before],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("webhook_delivery: purge_old"))?;
         Ok(changed as u32)
     }
 }

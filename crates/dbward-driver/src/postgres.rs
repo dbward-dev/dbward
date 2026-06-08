@@ -11,6 +11,7 @@ use crate::{
 /// the SQL string literal used in `format!("...VALUES ('{version}')...")`.
 /// Specific to PostgreSQL's raw_sql batch approach.
 use crate::common::validate_migration_version;
+use crate::common::{conn_err, query_err};
 
 /// Check if SQL contains multiple statements (semicolon followed by non-whitespace).
 fn has_multiple_statements(sql: &str) -> bool {
@@ -68,21 +69,17 @@ impl PostgresDriver {
         repair_action: &str,
         timeout_secs: u64,
     ) -> Result<(), DriverError> {
-        let mut conn = self
-            .pool
-            .acquire()
-            .await
-            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let mut conn = self.pool.acquire().await.map_err(conn_err)?;
         let original_timeout = if timeout_secs > 0 {
             let row: (String,) = sqlx::query_as("SHOW statement_timeout")
                 .fetch_one(&mut *conn)
                 .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                .map_err(query_err)?;
             let ms = timeout_secs * 1000;
             sqlx::query(&format!("SET statement_timeout = {ms}"))
                 .execute(&mut *conn)
                 .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                .map_err(query_err)?;
             Some(row.0)
         } else {
             None
@@ -138,11 +135,7 @@ impl DatabaseDriver for PostgresDriver {
         let mut truncated = false;
         let mut truncation_reason = None;
 
-        while let Some(row) = stream
-            .try_next()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?
-        {
+        while let Some(row) = stream.try_next().await.map_err(query_err)? {
             let json = pg_row_to_json(&row);
             total_bytes += serde_json::to_string(&json).unwrap_or_default().len();
             rows.push(json);
@@ -173,7 +166,7 @@ impl DatabaseDriver for PostgresDriver {
         let result = sqlx::raw_sql(sql)
             .execute(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         Ok(result.rows_affected())
     }
 
@@ -197,7 +190,7 @@ impl DatabaseDriver for PostgresDriver {
         sqlx::raw_sql(&batch)
             .execute(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         Ok(())
     }
 
@@ -219,7 +212,7 @@ impl DatabaseDriver for PostgresDriver {
         sqlx::raw_sql(&batch)
             .execute(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         Ok(())
     }
 
@@ -273,7 +266,7 @@ impl DatabaseDriver for PostgresDriver {
         sqlx::query("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY)")
             .execute(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         Ok(())
     }
 
@@ -282,7 +275,7 @@ impl DatabaseDriver for PostgresDriver {
             sqlx::query_as("SELECT version FROM schema_migrations ORDER BY version")
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                .map_err(query_err)?;
         Ok(rows.into_iter().map(|(v,)| v).collect())
     }
 
@@ -291,7 +284,7 @@ impl DatabaseDriver for PostgresDriver {
             .bind(version)
             .execute(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         Ok(())
     }
 
@@ -300,7 +293,7 @@ impl DatabaseDriver for PostgresDriver {
             .bind(version)
             .execute(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         Ok(())
     }
 
@@ -311,20 +304,16 @@ impl DatabaseDriver for PostgresDriver {
         cancel: &CancelState,
         max_rows: Option<usize>,
     ) -> Result<QueryOutput, DriverError> {
-        let mut conn = self
-            .pool
-            .acquire()
-            .await
-            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let mut conn = self.pool.acquire().await.map_err(conn_err)?;
         let ms = timeout_secs * 1000;
         sqlx::query(&format!("SET statement_timeout = {ms}"))
             .execute(&mut *conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
             .fetch_one(&mut *conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         cancel.set_connection_id(pid.to_string());
 
         if cancel.is_cancelled() {
@@ -338,11 +327,7 @@ impl DatabaseDriver for PostgresDriver {
         let mut truncation_reason = None;
         let effective_max_rows = max_rows.unwrap_or(MAX_RESULT_ROWS).min(MAX_RESULT_ROWS);
 
-        while let Some(row) = stream
-            .try_next()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?
-        {
+        while let Some(row) = stream.try_next().await.map_err(query_err)? {
             let json = pg_row_to_json(&row);
             total_bytes += json.to_string().len();
             if rows.len() >= effective_max_rows {
@@ -370,20 +355,16 @@ impl DatabaseDriver for PostgresDriver {
         timeout_secs: u64,
         cancel: &CancelState,
     ) -> Result<u64, DriverError> {
-        let mut conn = self
-            .pool
-            .acquire()
-            .await
-            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let mut conn = self.pool.acquire().await.map_err(conn_err)?;
         let ms = timeout_secs * 1000;
         sqlx::query(&format!("SET statement_timeout = {ms}"))
             .execute(&mut *conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
             .fetch_one(&mut *conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         cancel.set_connection_id(pid.to_string());
 
         if cancel.is_cancelled() {
@@ -393,11 +374,7 @@ impl DatabaseDriver for PostgresDriver {
         // Use raw_sql + fetch_many to support multi-statement and sum rows_affected
         let mut stream = sqlx::raw_sql(sql).fetch_many(&mut *conn);
         let mut total_affected = 0u64;
-        while let Some(either) = stream
-            .try_next()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?
-        {
+        while let Some(either) = stream.try_next().await.map_err(query_err)? {
             if let sqlx::Either::Left(result) = either {
                 total_affected += result.rows_affected();
             }
@@ -413,11 +390,11 @@ impl DatabaseDriver for PostgresDriver {
             .max_connections(1)
             .connect(&self.url)
             .await
-            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+            .map_err(conn_err)?;
         let cancelled: bool = sqlx::query_scalar(&format!("SELECT pg_cancel_backend({pid})"))
             .fetch_one(&cancel_pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         cancel_pool.close().await;
         Ok(cancelled)
     }
@@ -435,7 +412,7 @@ impl DatabaseDriver for PostgresDriver {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        .map_err(query_err)?;
 
         let mut tables = Vec::new();
         for row in &table_rows {
@@ -454,7 +431,7 @@ impl DatabaseDriver for PostgresDriver {
             .bind(&name)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
 
             let columns: Vec<ColumnInfo> = col_rows
                 .iter()
@@ -488,7 +465,7 @@ impl DatabaseDriver for PostgresDriver {
             .bind(&name)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
 
             let mut constraints: Vec<ConstraintInfo> = Vec::new();
             for cr in &constraint_rows {
@@ -541,7 +518,7 @@ impl DatabaseDriver for PostgresDriver {
             .bind(&name)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
 
             let indexes: Vec<IndexInfo> = idx_rows
                 .iter()
@@ -589,32 +566,26 @@ impl DatabaseDriver for PostgresDriver {
         timeout_secs: u64,
     ) -> Result<serde_json::Value, DriverError> {
         use sqlx::Row;
-        let mut conn = self
-            .pool
-            .acquire()
-            .await
-            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let mut conn = self.pool.acquire().await.map_err(conn_err)?;
         // BEGIN transaction so SET LOCAL is scoped correctly
         sqlx::query("BEGIN")
             .execute(&mut *conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         sqlx::query(&format!("SET LOCAL statement_timeout = '{timeout_secs}s'"))
             .execute(&mut *conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         let explain_sql = format!("EXPLAIN (FORMAT JSON) {sql}");
         let result = sqlx::query(&explain_sql)
             .fetch_one(&mut *conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()));
+            .map_err(query_err);
         // Always rollback (read-only, no side effects)
         let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
         let row = result?;
         // PG EXPLAIN (FORMAT JSON) returns a json column, decode directly
-        let plan: serde_json::Value = row
-            .try_get(0)
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let plan: serde_json::Value = row.try_get(0).map_err(query_err)?;
         Ok(plan)
     }
 
