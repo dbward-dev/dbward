@@ -56,14 +56,12 @@ $ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
 
 ## Quick Start
 
-**Try the approval flow in 5 minutes (Docker):**
+**Try the approval flow in 2 minutes (Docker):**
 
 ```bash
-git clone https://github.com/dbward-dev/dbward.git && cd dbward
-./dev/scripts/dev-setup.sh
-DBWARD_SERVER_CONFIG=server-quickstart.toml \
-  docker compose -f dev/compose.yml -f dev/compose.override.yml up -d
-./dev/scripts/quickstart-init.sh
+git clone https://github.com/dbward-dev/dbward.git && cd dbward/examples/quickstart
+docker compose up -d
+docker compose run --rm alice execute "SELECT version()" -e development
 ```
 
 Then submit → approve → execute → audit. Full walkthrough: **[Quickstart with Docker](https://dbward.dev/docs/quickstart-docker/)**
