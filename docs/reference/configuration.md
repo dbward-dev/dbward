@@ -24,7 +24,7 @@ All files support [variable expansion](#variable-expansion) for secrets and envi
 ### Minimal Example
 
 ```toml
-state_dir = "./data"
+state_dir = "/data"
 
 [[databases]]
 name = "app"
