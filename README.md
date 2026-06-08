@@ -4,7 +4,7 @@
 
 **Approval workflows and audit logs for your production database.**
 
-Stop accidents before they hit production. Add approval gates, audit trails, and AI agent guardrails to every database operation — in a single binary with zero external dependencies.
+Stop accidents before they hit production. Add approval gates, audit trails, and AI agent guardrails to every database operation — with standalone binaries and embedded SQLite. No external control-plane DB required.
 
 ```bash
 $ dbward execute "UPDATE users SET active = false WHERE last_login < '2025-01-01'"
@@ -21,7 +21,7 @@ $ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
 - 🔐 **Approval workflows** — multi-step, conditional auto-approve, TOML policy engine
 - 📋 **Audit logs** — tamper-evident hash chain, 24 event types, SQL redaction
 - 🤖 **MCP-native** — 12 tools, 6 prompts, elicitation support. AI agents operate safely
-- ⚡ **Single binary** — Rust + embedded SQLite. No Docker, no external DB
+- ⚡ **Standalone binaries** — CLI, server, and agent ship as self-contained Rust binaries with embedded SQLite. No external control-plane DB
 - 🔒 **Agent isolation** — DB credentials never leave the agent. CLI/AI never touch your database directly
 - 🆓 **Core features free** — approval, audit, MCP, break-glass all included under [Apache-2.0](LICENSE-APACHE). Pro features (OIDC, group auth) require a [commercial license](LICENSE-COMMERCIAL)
 
@@ -40,9 +40,9 @@ $ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
 │  Ed25519 token signing │ OIDC/API auth │ Webhooks        │
 │  In-memory result relay │ NO database credentials        │
 └──────────┬───────────────────────────────────────────────┘
-           │ Agent polls (outbound HTTPS)
-           ▼
-┌─────────────────────────────────────────────────────────┐
+           ▲ Agent polls (outbound HTTPS)
+           │
+┌──────────┴───────────────────────────────────────────────┐
 │                    dbward agent                           │
 │  DB credentials here only │ Executes approved operations  │
 │  Token verification (Ed25519) │ Multiple DB support       │
@@ -220,6 +220,8 @@ Global Options:
 
 ## REST API
 
+> Full reference with parameters, permissions, and response formats: [docs/reference/api.md](docs/reference/api.md)
+
 ### Core
 
 | Method | Path | Description |
@@ -227,7 +229,7 @@ Global Options:
 | GET | `/health` | Health check |
 | GET | `/ready` | Readiness check |
 | GET | `/metrics` | Prometheus metrics (admin auth required) |
-| GET | `/api/public-key` | Agent-only: Ed25519 public key | Ed25519 public key |
+| GET | `/api/public-key` | Ed25519 public key (for execution token verification) |
 
 ### Requests
 
@@ -242,6 +244,19 @@ Global Options:
 | POST | `/api/requests/:id/cancel` | Cancel a pending request |
 | GET | `/api/requests/:id/result/stream` | Long-poll for result |
 | GET | `/api/requests/:id/result/content` | Get stored result content |
+| GET | `/api/requests/:id/executions` | List execution attempts |
+
+### Tokens & Users
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/tokens` | Create API token |
+| GET | `/api/tokens` | List tokens |
+| DELETE | `/api/tokens/:id` | Revoke token |
+| GET | `/api/me` | Current user info |
+| GET | `/api/users` | List users |
+| POST | `/api/users/:id/suspend` | Suspend user |
+| POST | `/api/users/:id/activate` | Activate user |
 
 ### Agent
 
@@ -251,26 +266,36 @@ Global Options:
 | POST | `/api/agent/jobs/:id/claim` | Claim a job (lease) |
 | POST | `/api/agent/jobs/:id/heartbeat` | Extend lease |
 | POST | `/api/agent/jobs/:id/result` | Submit execution result |
+| GET | `/api/agents` | List connected agents |
 
-### Policies (admin)
+### Policies (read-only)
 
 | Method | Path | Description |
 |---|---|---|
-| GET/POST | `/api/workflows` | List / create workflows |
-| GET/PUT/DELETE | `/api/workflows/:id` | Get / update / delete |
-| GET/POST | `/api/execution-policies` | List / create execution policies |
-| GET/PUT/DELETE | `/api/execution-policies/:id` | Get / update / delete |
-| GET/POST | `/api/result-policies` | List / create result policies |
-| GET/PUT/DELETE | `/api/result-policies/:id` | Get / update / delete |
-| GET/POST | `/api/notification-policies` | List / create notification policies |
-| GET/PUT/DELETE | `/api/notification-policies/:id` | Get / update / delete |
+| GET | `/api/workflows` | List workflows |
+| GET | `/api/execution-policies` | List execution policies |
+| GET | `/api/result-policies` | List result policies |
+| GET | `/api/result-policies/:id` | Get result policy detail |
+| GET | `/api/notification-policies` | List notification policies |
+| GET | `/api/notification-policies/:id` | Get notification policy detail |
+| GET | `/api/roles` | List roles |
+| GET | `/api/webhooks` | List webhooks |
+| GET | `/api/webhooks/:id` | Get webhook detail |
+| GET | `/api/webhook-deliveries` | List webhook delivery history |
+| GET | `/api/policy-resolution` | Resolve effective policy for a request |
+
+### Databases & Schemas
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/databases` | List configured databases |
+| GET | `/api/schemas/:db` | Get schema for a database |
 
 ### Audit
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/api/audit` | Audit log (legacy format) |
-| GET | `/api/audit/events` | Audit events (full: category/type/outcome filters) |
+| GET | `/api/audit/events` | Audit events (category/type/outcome filters) |
 | GET | `/api/audit/verify` | Verify hash chain integrity |
 
 ### Results
