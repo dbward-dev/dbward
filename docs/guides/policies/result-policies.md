@@ -9,21 +9,18 @@ Result policies control what happens to query results after execution — how lo
 
 ## Configuration
 
-Result policies are managed via the REST API:
+Result policies are managed via `server.toml` (config-managed since v0.1.5):
 
-```bash
-# Create a result policy
-curl -X POST http://localhost:3000/api/result-policies \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "database": "app",
-    "environment": "production",
-    "retention_days": 7,
-    "delivery_mode": "both",
-    "access": ["role:admin", "role:developer"]
-  }'
+```toml
+[[result_policies]]
+database = "app"
+environment = "production"
+retention_days = 7
+delivery_mode = "both"
+access = ["role:admin", "role:developer"]
 ```
+
+Changes take effect on server restart or `dbward server reload`.
 
 ## Fields
 
