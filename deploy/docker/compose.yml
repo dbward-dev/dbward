@@ -1,0 +1,51 @@
+# Production Docker Compose template for dbward
+# Documentation: docs/deployment/docker.md
+#
+# Usage:
+#   1. Copy this file and create server.toml + agent.toml
+#   2. docker compose up -d server
+#   3. Read bootstrap tokens: docker compose exec server cat /data/agent-token
+#   4. Set DBWARD_AGENT_TOKEN and DATABASE_URL env vars, then: docker compose up -d agent
+
+services:
+  server:
+    image: ghcr.io/dbward-dev/dbward-server:latest
+    command: ["dbward-server", "--config", "/etc/dbward/server.toml", "--listen", "0.0.0.0:3000"]
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./server.toml:/etc/dbward/server.toml:ro
+      - server-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  agent:
+    image: ghcr.io/dbward-dev/dbward-agent:latest
+    command: ["dbward-agent", "--config", "/etc/dbward/agent.toml"]
+    volumes:
+      - ./agent.toml:/etc/dbward/agent.toml:ro
+    environment:
+      - DBWARD_AGENT_TOKEN=${DBWARD_AGENT_TOKEN}
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  server-data:

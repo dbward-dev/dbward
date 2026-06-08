@@ -7,41 +7,15 @@ description: Deploy the dbward server
 
 The dbward server manages approval state, audit logs, and coordinates agents. It does **not** connect to your database.
 
-## Quick start
-
-```bash
-# 1. Create config
-cat > dbward-server.toml << 'EOF'
-
-state_dir = "/var/lib/dbward"
-
-[auth]
-mode = "token"
-
-[[workflows]]
-database = "*"
-environment = "production"
-
-[[workflows.steps]]
-type = "approval"
-
-[[workflows.steps.approvers]]
-role = "admin"
-min = 1
-EOF
-
-# 2. Start (auto-initializes on first run: creates DB, keys, tokens)
-dbward-server --config dbward-server.toml
-# First run writes tokens to: /var/lib/dbward/admin-token, /var/lib/dbward/agent-token
-```
-
 ## Configuration reference
+
+> Full configuration reference with all options: [Configuration](../reference/configuration.md)
 
 ### Top-level settings
 
 ```toml
 # Required: directory for server state (SQLite DB, signing keys, agent-token)
-state_dir = "/var/lib/dbward"
+state_dir = "/data"
 
 trusted_proxies = ["10.0.0.0/8"]  # Trust X-Forwarded-For from these CIDRs
 ```
@@ -83,7 +57,7 @@ redaction = "literals"            # "literals" (mask SQL values) | "none" (defau
 # Local (default) — omit root_dir to use {state_dir}/results
 [result_storage]
 backend = "local"
-root_dir = "/var/lib/dbward/results"
+root_dir = "/data/results"
 
 # S3
 [result_storage]
@@ -276,7 +250,7 @@ The server stores all state in a single SQLite file. Back it up with:
 
 ```bash
 # Simple copy (while server is running — SQLite WAL mode is safe)
-cp /var/lib/dbward/dbward.db /backup/dbward-$(date +%Y%m%d).db
+cp /data/dbward.db /backup/dbward-$(date +%Y%m%d).db
 
 # Or use Litestream for continuous replication to S3
 # See: https://litestream.io
@@ -292,8 +266,9 @@ url = "${SLACK_WEBHOOK_URL}"
 secret = "${WEBHOOK_SECRET}"
 ```
 
-## Next steps
+## See also
 
 - [Agent setup](agent.md) — Connect agents to your databases
 - [Authentication](../guides/authentication.md) — Configure OIDC or manage tokens
 - [Workflows](../guides/policies/workflows.md) — Set up approval rules
+- [Troubleshooting](troubleshooting.md) — Common deployment issues

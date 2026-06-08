@@ -349,7 +349,7 @@ When a request comes in, dbward finds the most specific matching workflow:
 - **Require reason for production:** `require_reason = true` creates better audit trails.
 - **Monitor with webhooks:** Get Slack notifications so approvers don't miss requests.
 
-## Next steps
+## See also
 
 - [Configuration Reference](../../reference/configuration.md) — All workflow, auto_approve, and execution_policies options
 - [Authentication](../authentication.md) — Set up groups and role mappings

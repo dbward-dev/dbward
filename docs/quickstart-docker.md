@@ -1,154 +1,201 @@
 ---
 title: "Quickstart: Try with Docker"
-description: Experience the full approval workflow in 5 minutes — no install required
+description: Experience the approval workflow in 2 minutes with Docker
 ---
 
 # Quickstart: Try with Docker
 
-Submit a query, get it approved, see the result, verify the audit trail. All in Docker — nothing to install on your machine.
+See the full approval workflow: submit → approve → execute → audit.
 
-**Prerequisites:** Docker, Docker Compose v2, and python3 (for the token setup script).
+**Prerequisites:** Docker, Docker Compose v2.
 
-## 1. Clone and set up
-
-```bash
-git clone https://github.com/dbward-dev/dbward.git
-cd dbward
-./dev/scripts/dev-setup.sh
-```
-
-## 2. Start the stack
+## 1. Start the stack
 
 ```bash
-DBWARD_SERVER_CONFIG=server-quickstart.toml \
-  docker compose -f dev/compose.yml -f dev/compose.override.yml up -d
+git clone https://github.com/dbward-dev/dbward.git && cd dbward/examples/quickstart
+docker compose up -d
 ```
 
-This starts PostgreSQL, the dbward server (approval engine), and an agent (connected to PostgreSQL). Wait ~15 seconds for all services to become healthy.
+This starts:
+- **PostgreSQL** — target database
+- **dbward-server** — approval engine (port 13000)
+- **dbward-agent** — executes approved queries on PostgreSQL
 
-## 3. Create user tokens
+Wait for healthy state (~15 seconds):
 
 ```bash
-./dev/scripts/quickstart-init.sh
+docker compose ps   # all should show "healthy"
 ```
 
-This creates two users:
-- **alice** — developer (can submit queries)
-- **bob** — admin (can approve requests)
+## 2. Run a query (auto-approved)
 
-## 4. Submit a query (alice)
-
-Alice submits a query to the staging environment:
+The `development` environment has no approval steps — queries execute immediately:
 
 ```bash
-docker compose -f dev/compose.yml -f dev/compose.override.yml \
-  --profile dev run --rm alice \
-  execute "SELECT version()" \
-  --database app --environment staging
+docker compose run --rm alice execute "SELECT version()" -e development
 ```
 
-Output:
 ```
-Request a1b2c3d4-... requires approval.
+ version
+──────────────────────────────────────
+ PostgreSQL 17.2 on x86_64-pc-linux...
+(1 row)
+
+Completed in 52ms
+```
+
+**That's the 30-second check.** dbward is working. Alice (developer) submitted a query, the agent executed it on PostgreSQL, and the result came back.
+
+## 3. Submit a query that needs approval
+
+Now target `staging` — this environment requires admin approval:
+
+```bash
+docker compose run --rm alice execute "SELECT current_timestamp" -e staging
+```
+
+```
+Request e5f6g7h8-... requires approval.
   Approvers: role:admin
-Run: dbward request resume a1b2c3d4-...
+Run: dbward request resume e5f6g7h8-...
 ```
 
-The request is **pending** — it won't execute until approved.
+The request is **pending** — it won't execute until an admin approves.
 
-## 5. Approve (bob)
+## 4. Approve (as bob)
 
-Copy the request ID from the output above, then:
+Copy the request ID from step 3:
 
 ```bash
-docker compose -f dev/compose.yml -f dev/compose.override.yml \
-  --profile dev run --rm bob \
-  request approve <REQUEST_ID> --comment "Looks good"
+docker compose run --rm bob request approve e5f6g7h8 --comment "LGTM"
 ```
 
-Output:
 ```
 Approved step 1/1
-Request: a1b2c3d4
-All steps complete. Agent has been dispatched.
+Request e5f6g7h8 — all steps complete.
 ```
 
-## 6. Get the result (alice)
+## 5. Get the result (as alice)
 
 ```bash
-docker compose -f dev/compose.yml -f dev/compose.override.yml \
-  --profile dev run --rm alice \
-  request resume <REQUEST_ID>
+docker compose run --rm alice request resume e5f6g7h8
 ```
 
-Output:
 ```
-Waiting for agent to execute...
- version
----------
- PostgreSQL 17.x ...
+ current_timestamp
+──────────────────────────────────
+ 2026-06-08 08:15:23.456789+00
 (1 row)
+
+Completed in 38ms
 ```
 
 The agent executed the query on PostgreSQL after approval.
 
-## 7. Check the audit trail (bob)
+## 6. Check the audit trail
 
 ```bash
-docker compose -f dev/compose.yml -f dev/compose.override.yml \
-  --profile dev run --rm bob audit
+docker compose run --rm bob audit --limit 4
 ```
 
-Output:
 ```
-ID         TIMESTAMP              USER    EVENT              ENV      DATABASE  OUTCOME
-96af1a07   2026-05-31T12:55:30    agent   request_completed  staging  app       success
-c646583f   2026-05-31T12:55:25    bob     request_approved   staging  app       success
-8f8c35a4   2026-05-31T12:55:16    alice   request_created    staging  app       success
-...
+ID         TIMESTAMP              USER        EVENT              ENV      DATABASE  OUTCOME
+96af1a07   2026-06-08T08:15:23    agent       request_executed   staging  app       success
+d3e4f5a6   2026-06-08T08:15:22    developer   request_dispatched staging  app       success
+c646583f   2026-06-08T08:15:20    admin       request_approved   staging  app       success
+8f8c35a4   2026-06-08T08:15:16    developer   request_created    staging  app       success
 ```
 
 Every action is recorded. Verify the tamper-evident hash chain:
 
 ```bash
-docker compose -f dev/compose.yml -f dev/compose.override.yml \
-  --profile dev run --rm bob audit --verify
+docker compose run --rm bob audit --verify
 ```
 
 ```
-✓ Hash chain intact (15 events verified)
+✓ Hash chain intact (6 events verified)
 ```
 
-## 8. Stop
+## 7. Stop
 
 ```bash
-docker compose -f dev/compose.yml -f dev/compose.override.yml down
+docker compose down -v
 ```
 
-Add `-v` to also remove the database volume.
+---
 
 ## What just happened?
 
 ```
 alice (developer)          bob (admin)              agent
      │                          │                      │
-     ├─ execute SELECT ─────────►│                      │
-     │  "pending"               │                      │
+     ├─ execute (staging) ─────►│                      │
+     │  "pending approval"      │                      │
+     │                          │                      │
      │                          ├─ approve ───────────►│
+     │                          │                      │
+     ├─ resume ────────────────►│  dispatch ──────────►│
      │                          │                      ├─ execute on DB
-     ├─ resume ────────────────►│                      │
-     │  "PostgreSQL 17.x ..."   │                      │
+     │  "current_timestamp"  ◄──│◄─────── result ──────┤
      │                          │                      │
      └──────── audit trail records everything ─────────┘
 ```
 
-- **Development** environment auto-approves everything (for fast iteration)
-- **Staging** requires 1 admin approval (what you just tried)
-- **Production** can require multi-step approval with distinct approvers
+### Why did staging need approval?
 
-## Next steps
+The server config (`server.toml`) defines the rules:
+
+```toml
+# Development: no approval needed
+[[workflows]]
+environment = "development"
+steps = []
+
+# Staging: 1 admin must approve
+[[workflows]]
+environment = "staging"
+
+[[workflows.steps]]
+type = "approval"
+
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
+```
+
+Change the config, change the rules.
+
+### How does alice/bob work?
+
+The compose file has two CLI containers with different tokens:
+- **alice** uses `developer-token` (can submit queries)
+- **bob** uses `admin-token` (can approve requests)
+
+Both read their token from files that the server creates on first startup.
+
+---
+
+## Troubleshooting
+
+**`docker compose ps` shows "unhealthy":**
+```bash
+docker compose logs server  # check for startup errors
+```
+Most common: the server needs a few more seconds. Wait and retry.
+
+**"requires approval" but you can't approve:**
+You're using alice (developer). Switch to bob (admin):
+```bash
+docker compose run --rm bob request approve <ID>
+```
+
+**Result shows "waiting for agent":**
+The agent needs 1-2 seconds to poll and execute. Wait a moment, then run `request resume` again.
+
+---
+
+## See also
 
 - [Connect your own database](quickstart-local.md) — use dbward with your real PostgreSQL or MySQL
-- [Workflows Guide](guides/policies/workflows.md) — customize approval policies
+- [Deploy to production](deployment/overview.md) — choose a deployment method for your team
 - [MCP Integration](guides/mcp-integration.md) — connect AI agents (Claude, Cursor)
-- [Deployment Overview](deployment/overview.md) — production architecture

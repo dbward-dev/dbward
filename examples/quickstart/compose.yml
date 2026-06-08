@@ -1,0 +1,73 @@
+# Quickstart: approval workflow demo
+# Usage:
+#   docker compose up -d
+#   docker compose run --rm alice execute "SELECT version()"
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: dbward
+      POSTGRES_PASSWORD: dbward
+      POSTGRES_DB: app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbward -d app"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  server:
+    image: ghcr.io/dbward-dev/dbward-server:latest
+    command: ["--listen", "0.0.0.0:3000", "--config", "/config/server.toml"]
+    ports: ["13000:3000"]
+    volumes:
+      - ./server.toml:/config/server.toml:ro
+      - server-data:/data
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:3000/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  agent:
+    image: ghcr.io/dbward-dev/dbward-agent:latest
+    entrypoint: ["/bin/sh", "/config/agent-entrypoint.sh"]
+    command: ["--config", "/config/agent.toml"]
+    volumes:
+      - ./agent.toml:/config/agent.toml:ro
+      - ./agent-entrypoint.sh:/config/agent-entrypoint.sh:ro
+      - server-data:/data:ro
+    depends_on:
+      server: { condition: service_healthy }
+
+  # CLI as alice (developer) — can submit queries
+  alice:
+    image: ghcr.io/dbward-dev/dbward:latest
+    entrypoint: ["/bin/sh", "/config/cli-entrypoint.sh"]
+    environment:
+      TOKEN_FILE: /data/developer-token
+    volumes:
+      - ./cli.toml:/config/cli.toml:ro
+      - ./cli-entrypoint.sh:/config/cli-entrypoint.sh:ro
+      - server-data:/data:ro
+    depends_on:
+      server: { condition: service_healthy }
+    profiles: [cli]
+
+  # CLI as bob (admin) — can approve requests
+  bob:
+    image: ghcr.io/dbward-dev/dbward:latest
+    entrypoint: ["/bin/sh", "/config/cli-entrypoint.sh"]
+    environment:
+      TOKEN_FILE: /data/admin-token
+    volumes:
+      - ./cli.toml:/config/cli.toml:ro
+      - ./cli-entrypoint.sh:/config/cli-entrypoint.sh:ro
+      - server-data:/data:ro
+    depends_on:
+      server: { condition: service_healthy }
+    profiles: [cli]
+
+volumes:
+  server-data:

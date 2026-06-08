@@ -216,7 +216,7 @@ When a query requires approval, dbward uses MCP's **Elicitation** feature to pau
 
 If the IDE doesn't support elicitation, the tool falls back to polling with `dbward_wait_request`.
 
-## Next steps
+## See also
 
 - [Workflows](policies/workflows.md) — Configure what requires approval
 - [Authentication](authentication.md) — Token setup for MCP

@@ -7,30 +7,6 @@ description: Deploy the dbward agent
 
 The dbward agent is the **only component that connects to your database**. It polls the server for approved jobs, executes them, and returns results.
 
-## Quick start
-
-```bash
-# 1. Create agent config
-cat > dbward-agent.toml << 'EOF'
-agent_id = "prod-agent-1"
-
-[server]
-url = "https://dbward.internal:3000"
-agent_token = "${DBWARD_AGENT_TOKEN}"
-
-# Operations this agent handles (default: all)
-# operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "migrate_status"]
-
-[databases.app.production]
-url = "${DATABASE_URL}"
-EOF
-
-# 2. Start
-export DBWARD_AGENT_TOKEN="dbw_..."
-export DATABASE_URL="postgres://dbward:pass@db.internal:5432/app"
-dbward agent --config dbward-agent.toml
-```
-
 ## How the Agent Works
 
 ### Polling architecture
@@ -62,6 +38,8 @@ For preview and approval context, the agent can execute `EXPLAIN` (read-only, no
 If a database connection is lost, the agent skips jobs targeting that database but continues serving other configured databases normally. It retries the failed connection each poll interval and resumes when connectivity is restored.
 
 ## Configuration reference
+
+> Full configuration reference with all options: [Configuration](../reference/configuration.md)
 
 ### Agent identity
 
@@ -254,8 +232,9 @@ On SIGTERM/SIGINT:
 - **Token rotation:** Rotate agent tokens periodically. Create a new token, update the agent config, restart, then revoke the old token.
 - **Environment variables:** Use `${ENV_VAR}` in TOML to avoid hardcoding credentials.
 
-## Next steps
+## See also
 
 - [Server setup](server.md) — Configure the server
 - [Authentication](../guides/authentication.md) — Token management and OIDC
 - [Workflows](../guides/policies/workflows.md) — Configure approval rules
+- [Troubleshooting](troubleshooting.md) — Common deployment issues

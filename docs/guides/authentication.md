@@ -292,7 +292,7 @@ In `mode = "both"`, both API tokens and OIDC JWTs are accepted for all users.
 | `JWT verification failed` | Wrong issuer/audience/expired | Check `issuer` and `client_id` match IdP |
 | JWKS fetch timeout | Server can't reach IdP | Check network, or set `jwks_uri` override |
 
-## Next steps
+## See also
 
 - [Server setup](../deployment/server.md) — Full server configuration
 - [Workflows](policies/workflows.md) — Group-based approval rules

@@ -1,0 +1,12 @@
+agent_id = "quickstart-agent"
+poll_interval_ms = 500
+
+[server]
+url = "http://server:3000"
+agent_token = "${DBWARD_AGENT_TOKEN}"
+
+[databases.app.development]
+url = "postgres://dbward:dbward@postgres:5432/app"
+
+[databases.app.staging]
+url = "postgres://dbward:dbward@postgres:5432/app"
