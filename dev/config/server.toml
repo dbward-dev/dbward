@@ -83,6 +83,7 @@ environment = "production"
 max_executions = 1
 execution_window_secs = 3600
 retry_on_failure = false
+migration_statement_timeout_secs = 120
 statement_timeout_secs = 30
 max_statement_timeout_secs = 300
 
