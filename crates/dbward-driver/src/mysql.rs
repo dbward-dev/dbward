@@ -2,6 +2,7 @@ use futures::TryStreamExt;
 use sqlx::{Column, TypeInfo, ValueRef};
 use std::time::Duration;
 
+use crate::common::{conn_err, query_err};
 use crate::{
     CancelState, DatabaseDriver, DriverError, JsonMapping, MAX_RESULT_BYTES, MAX_RESULT_ROWS,
     QueryOutput, text_to_json,
@@ -101,31 +102,25 @@ impl MysqlDriver {
             );
         }
 
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(query_err)?;
         let conn_id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()")
             .fetch_one(&mut *tx)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
 
         let exec = async {
             for stmt in stmts {
                 sqlx::query(stmt)
                     .execute(&mut *tx)
                     .await
-                    .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                    .map_err(query_err)?;
             }
             sqlx::query(version_sql)
                 .bind(version)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-            tx.commit()
-                .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                .map_err(query_err)?;
+            tx.commit().await.map_err(query_err)?;
             Ok::<(), DriverError>(())
         };
 
@@ -162,11 +157,7 @@ impl DatabaseDriver for MysqlDriver {
         let mut truncated = false;
         let mut truncation_reason = None;
 
-        while let Some(row) = stream
-            .try_next()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?
-        {
+        while let Some(row) = stream.try_next().await.map_err(query_err)? {
             let json = mysql_row_to_json(&row);
             total_bytes += serde_json::to_string(&json).unwrap_or_default().len();
             rows.push(json);
@@ -197,28 +188,22 @@ impl DatabaseDriver for MysqlDriver {
             let result = sqlx::raw_sql(sql)
                 .execute(&self.pool)
                 .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                .map_err(query_err)?;
             return Ok(result.rows_affected());
         }
 
         // MySQL: wrap multi-statement in explicit transaction for atomicity
         let stmts = split_statements(sql);
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        let mut tx = self.pool.begin().await.map_err(query_err)?;
         let mut total_affected = 0u64;
         for stmt in &stmts {
             let r = sqlx::query(stmt)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                .map_err(query_err)?;
             total_affected += r.rows_affected();
         }
-        tx.commit()
-            .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        tx.commit().await.map_err(query_err)?;
         Ok(total_affected)
     }
 
@@ -282,7 +267,7 @@ impl DatabaseDriver for MysqlDriver {
         )
         .execute(&self.pool)
         .await
-        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        .map_err(query_err)?;
         Ok(())
     }
 
@@ -291,7 +276,7 @@ impl DatabaseDriver for MysqlDriver {
             sqlx::query_as("SELECT version FROM schema_migrations ORDER BY version")
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                .map_err(query_err)?;
         Ok(rows.into_iter().map(|(v,)| v).collect())
     }
 
@@ -300,7 +285,7 @@ impl DatabaseDriver for MysqlDriver {
             .bind(version)
             .execute(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         Ok(())
     }
 
@@ -309,7 +294,7 @@ impl DatabaseDriver for MysqlDriver {
             .bind(version)
             .execute(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         Ok(())
     }
 
@@ -320,20 +305,16 @@ impl DatabaseDriver for MysqlDriver {
         cancel: &CancelState,
         max_rows: Option<usize>,
     ) -> Result<QueryOutput, DriverError> {
-        let mut conn = self
-            .pool
-            .acquire()
-            .await
-            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let mut conn = self.pool.acquire().await.map_err(conn_err)?;
         let ms = timeout_secs * 1000;
         sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
             .execute(&mut *conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         let id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
             .fetch_one(&mut *conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         cancel.set_connection_id(id.to_string());
 
         if cancel.is_cancelled() {
@@ -353,11 +334,7 @@ impl DatabaseDriver for MysqlDriver {
             let mut truncation_reason = None;
             let effective_max_rows = max_rows.unwrap_or(MAX_RESULT_ROWS).min(MAX_RESULT_ROWS);
 
-            while let Some(row) = stream
-                .try_next()
-                .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?
-            {
+            while let Some(row) = stream.try_next().await.map_err(query_err)? {
                 let json = mysql_row_to_json(&row);
                 total_bytes += json.to_string().len();
                 if rows.len() >= effective_max_rows {
@@ -403,20 +380,16 @@ impl DatabaseDriver for MysqlDriver {
         timeout_secs: u64,
         cancel: &CancelState,
     ) -> Result<u64, DriverError> {
-        let mut conn = self
-            .pool
-            .acquire()
-            .await
-            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+        let mut conn = self.pool.acquire().await.map_err(conn_err)?;
         let ms = timeout_secs * 1000;
         sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
             .execute(&mut *conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         let id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
             .fetch_one(&mut *conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         cancel.set_connection_id(id.to_string());
 
         if cancel.is_cancelled() {
@@ -435,14 +408,14 @@ impl DatabaseDriver for MysqlDriver {
                 let r = sqlx::query(&stmts[0])
                     .execute(&mut *conn)
                     .await
-                    .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                    .map_err(query_err)?;
                 return Ok::<_, DriverError>(r.rows_affected());
             }
             // Multi-statement: wrap in transaction for atomicity, sum rows_affected
             sqlx::query("BEGIN")
                 .execute(&mut *conn)
                 .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                .map_err(query_err)?;
             let mut total = 0u64;
             for stmt in &stmts {
                 let r = match sqlx::query(stmt).execute(&mut *conn).await {
@@ -458,7 +431,7 @@ impl DatabaseDriver for MysqlDriver {
             sqlx::query("COMMIT")
                 .execute(&mut *conn)
                 .await
-                .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+                .map_err(query_err)?;
             Ok(total)
         })
         .await;
@@ -488,11 +461,11 @@ impl DatabaseDriver for MysqlDriver {
             .max_connections(1)
             .connect(&self.url)
             .await
-            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+            .map_err(conn_err)?;
         sqlx::query(&format!("KILL QUERY {conn_id}"))
             .execute(&cancel_pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         cancel_pool.close().await;
         Ok(true)
     }
@@ -531,7 +504,7 @@ impl DatabaseDriver for MysqlDriver {
         )
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+        .map_err(query_err)?;
 
         let mut tables = Vec::new();
         for row in &table_rows {
@@ -550,7 +523,7 @@ impl DatabaseDriver for MysqlDriver {
             .bind(&name)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
 
             let columns: Vec<ColumnInfo> = col_rows
                 .iter()
@@ -580,7 +553,7 @@ impl DatabaseDriver for MysqlDriver {
             .bind(&name)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
 
             let mut constraints: Vec<ConstraintInfo> = Vec::new();
             for r in &fk_rows {
@@ -666,20 +639,18 @@ impl DatabaseDriver for MysqlDriver {
         // Use dedicated connection to avoid session pollution
         let mut conn = sqlx::MySqlConnection::connect(&self.url)
             .await
-            .map_err(|e| DriverError::ConnectionFailed(e.to_string()))?;
+            .map_err(conn_err)?;
         let ms = timeout_secs * 1000;
         sqlx::query(&format!("SET max_execution_time = {ms}"))
             .execute(&mut conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
         let explain_sql = format!("EXPLAIN FORMAT=JSON {sql}");
         let row = sqlx::query(&explain_sql)
             .fetch_one(&mut conn)
             .await
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
-        let plan: String = row
-            .try_get(0)
-            .map_err(|e| DriverError::QueryFailed(e.to_string()))?;
+            .map_err(query_err)?;
+        let plan: String = row.try_get(0).map_err(query_err)?;
         serde_json::from_str(&plan)
             .map_err(|e| DriverError::QueryFailed(format!("invalid EXPLAIN JSON: {e}")))
     }

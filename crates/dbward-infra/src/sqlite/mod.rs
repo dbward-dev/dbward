@@ -1,3 +1,4 @@
+pub(crate) mod error;
 mod schema;
 
 mod agent_repo;
