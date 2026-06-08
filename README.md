@@ -1,5 +1,7 @@
 # dbward
 
+> **Open-core project** — core components are [Apache-2.0](LICENSE-APACHE). Some features and pre-built binaries include code under the [dbward Commercial License](LICENSE-COMMERCIAL). See [License](#license) for details.
+
 **Approval workflows and audit logs for your production database.**
 
 Stop accidents before they hit production. Add approval gates, audit trails, and AI agent guardrails to every database operation — in a single binary with zero external dependencies.
@@ -21,7 +23,7 @@ $ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
 - 🤖 **MCP-native** — 12 tools, 6 prompts, elicitation support. AI agents operate safely
 - ⚡ **Single binary** — Rust + embedded SQLite. No Docker, no external DB
 - 🔒 **Agent isolation** — DB credentials never leave the agent. CLI/AI never touch your database directly
-- 🆓 **Free** — approval, audit, MCP, break-glass all included. [Apache-2.0](LICENSE-APACHE)
+- 🆓 **Core features free** — approval, audit, MCP, break-glass all included under [Apache-2.0](LICENSE-APACHE). Pro features (OIDC, group auth) require a [commercial license](LICENSE-COMMERCIAL)
 
 ## Architecture
 
@@ -304,6 +306,8 @@ Global Options:
 | Windows | ❌ Not supported |
 
 Pre-built binaries are available on [GitHub Releases](https://github.com/dbward-dev/dbward/releases). Docker images are published for `linux/amd64` and `linux/arm64`.
+
+> **Note:** Pre-built binaries and Docker images include commercial-licensed components. They are free to use within Free plan limits. See [LICENSE](LICENSE) for details.
 
 ## Database Support
 
