@@ -131,11 +131,15 @@ Permission: Self-update allowed; otherwise `user.manage`
 
 Suspend a user. Revokes all active tokens and cancels pending requests.
 
+For config-managed users (`[[users]]` in server.toml), the response includes a `warning` field: status will revert to the config value on next server restart or reload. To permanently suspend, set `status = "suspended"` in server.toml.
+
 Permission: `user.manage`
 
 ### POST /api/users/{id}/activate
 
 Reactivate a previously suspended user.
+
+For config-managed users, same caveat applies: status reverts to config on restart.
 
 Permission: `user.manage`
 
