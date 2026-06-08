@@ -258,6 +258,41 @@ pub trait UserRepo: Send + Sync {
     fn get_slack_user_id(&self, _subject_id: &str) -> Result<Option<String>, AppError> {
         Ok(None)
     }
+    fn delete_by_source(&self, _source: &str) -> Result<u64, AppError> {
+        Ok(0)
+    }
+    fn set_source(&self, _user_id: &str, _source: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get_source(&self, _user_id: &str) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
+}
+
+// --- GroupRepo (CFG-24) ---
+
+pub trait GroupRepo: Send + Sync {
+    fn delete_by_source(&self, source: &str) -> Result<u64, AppError>;
+    fn create(&self, name: &str, members: &[String], source: &str) -> Result<(), AppError>;
+    fn list(&self) -> Result<Vec<(String, Vec<String>)>, AppError>;
+}
+
+// --- RoleBindingRepo (CFG-24) ---
+
+/// (id, role, subjects, groups)
+pub type RoleBindingEntry = (String, String, Vec<String>, Vec<String>);
+
+pub trait RoleBindingRepo: Send + Sync {
+    fn delete_by_source(&self, source: &str) -> Result<u64, AppError>;
+    fn create(
+        &self,
+        id: &str,
+        role: &str,
+        subjects: &[String],
+        groups: &[String],
+        source: &str,
+    ) -> Result<(), AppError>;
+    fn list(&self) -> Result<Vec<RoleBindingEntry>, AppError>;
 }
 
 // --- TokenRepo ---
@@ -285,6 +320,9 @@ pub trait WebhookRepo: Send + Sync {
     fn list(&self) -> Result<Vec<Webhook>, AppError>;
     fn update(&self, webhook: &Webhook) -> Result<(), AppError>;
     fn delete(&self, id: &str) -> Result<(), AppError>;
+    fn delete_by_source(&self, _source: &str) -> Result<u64, AppError> {
+        Ok(0)
+    }
 }
 
 // --- DatabaseRegistry ---
@@ -293,6 +331,9 @@ pub trait DatabaseRegistry: Send + Sync {
     fn register(&self, db: &DatabaseName, env: &Environment) -> Result<(), AppError>;
     fn exists(&self, db: &DatabaseName, env: &Environment) -> Result<bool, AppError>;
     fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError>;
+    fn delete_by_source(&self, _source: &str) -> Result<u64, AppError> {
+        Ok(0)
+    }
 }
 
 // --- SchemaRepo ---
@@ -517,6 +558,24 @@ pub trait PolicyRepo: Send + Sync {
     /// Delete config-synced roles whose names are NOT in active_names.
     fn delete_stale_config_roles(&self, _active_names: &[String]) -> Result<(), AppError> {
         Ok(())
+    }
+
+    // --- Source-based bulk deletion (CFG-24) ---
+
+    fn delete_workflows_by_source(&self, _source: &str) -> Result<u64, AppError> {
+        Ok(0)
+    }
+    fn delete_execution_policies_by_source(&self, _source: &str) -> Result<u64, AppError> {
+        Ok(0)
+    }
+    fn delete_result_policies_by_source(&self, _source: &str) -> Result<u64, AppError> {
+        Ok(0)
+    }
+    fn delete_notification_policies_by_source(&self, _source: &str) -> Result<u64, AppError> {
+        Ok(0)
+    }
+    fn delete_roles_by_source(&self, _source: &str) -> Result<u64, AppError> {
+        Ok(0)
     }
 }
 

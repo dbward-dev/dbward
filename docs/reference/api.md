@@ -131,11 +131,15 @@ Permission: Self-update allowed; otherwise `user.manage`
 
 Suspend a user. Revokes all active tokens and cancels pending requests.
 
+For config-managed users (`[[users]]` in server.toml), the response includes a `warning` field: status will revert to the config value on next server restart or reload. To permanently suspend, set `status = "suspended"` in server.toml.
+
 Permission: `user.manage`
 
 ### POST /api/users/{id}/activate
 
 Reactivate a previously suspended user.
+
+For config-managed users, same caveat applies: status reverts to config on restart.
 
 Permission: `user.manage`
 
@@ -165,11 +169,14 @@ Permission: `token.manage` or `token.revoke_own` (for own tokens)
 
 ## Webhooks
 
-### POST /api/webhooks
+> **v0.1.5 Breaking Change**: Webhooks are config-managed. Write endpoints return 405.
+> Define webhooks in `[[webhooks]]` in server.toml.
 
-Register a new webhook endpoint for event notifications.
+### ~~POST /api/webhooks~~ → 405
 
-Permission: `webhook.manage`
+### ~~PUT /api/webhooks/{id}~~ → 405
+
+### ~~DELETE /api/webhooks/{id}~~ → 405
 
 ### GET /api/webhooks
 
@@ -180,20 +187,6 @@ Permission: `webhook.manage`
 ### GET /api/webhooks/{id}
 
 Get a webhook's configuration and delivery statistics.
-
-Permission: `webhook.manage`
-
-### PUT /api/webhooks/{id}
-
-Update a webhook's URL, events filter, format, or secret. Only provided fields are changed.
-
-Permission: `webhook.manage`
-
-### DELETE /api/webhooks/{id}
-
-Delete a webhook. Pending deliveries are cancelled.
-
-Response: 204
 
 Permission: `webhook.manage`
 
@@ -213,11 +206,12 @@ Permission: `metrics.view`
 
 ## Roles
 
-### POST /api/roles
+> **v0.1.5 Breaking Change**: Custom roles are config-managed. Write endpoints return 405.
+> Define roles in `[[auth.roles]]` in server.toml.
 
-Create a custom role with specific permissions and optional database/environment scope.
+### ~~POST /api/roles~~ → 405
 
-Permission: `role.manage`
+### ~~DELETE /api/roles/{name}~~ → 405
 
 ### GET /api/roles
 
@@ -237,11 +231,12 @@ Permission: `role.manage`
 
 ## Policies
 
-### POST /api/workflows
+> **v0.1.5 Breaking Change**: All policies are config-managed. Write endpoints return 405.
+> Define policies in `[[workflows]]`, `[[execution_policies]]`, `[[result_policies]]`, `[[notification_policies]]` in server.toml.
 
-Create an approval workflow scoped to a database/environment/operation combination.
+### ~~POST /api/workflows~~ → 405
 
-Permission: `workflow.manage`
+### ~~DELETE /api/workflows/{id}~~ → 405
 
 ### GET /api/workflows
 
@@ -249,19 +244,9 @@ List all configured workflows.
 
 Permission: `workflow.manage`
 
-### DELETE /api/workflows/{id}
+### ~~POST /api/execution-policies~~ → 405
 
-Delete a workflow.
-
-Response: 204
-
-Permission: `workflow.manage`
-
-### POST /api/execution-policies
-
-Create an execution policy (timeout, row limit, rate limit) for a scope.
-
-Permission: `policy.manage`
+### ~~DELETE /api/execution-policies/{id}~~ → 405
 
 ### GET /api/execution-policies
 
@@ -269,19 +254,11 @@ List all execution policies.
 
 Permission: `policy.manage`
 
-### DELETE /api/execution-policies/{id}
+### ~~POST /api/result-policies~~ → 405
 
-Delete an execution policy.
+### ~~PUT /api/result-policies/{id}~~ → 405
 
-Response: 204
-
-Permission: `policy.manage`
-
-### POST /api/result-policies
-
-Create a result policy controlling retention, delivery mode, and access for a scope.
-
-Permission: `policy.manage`
+### ~~DELETE /api/result-policies/{id}~~ → 405
 
 ### GET /api/result-policies
 
@@ -295,25 +272,11 @@ Get a specific result policy.
 
 Permission: `policy.manage`
 
-### PUT /api/result-policies/{id}
+### ~~POST /api/notification-policies~~ → 405
 
-Update a result policy. Only provided fields are changed.
+### ~~PUT /api/notification-policies/{id}~~ → 405
 
-Permission: `policy.manage`
-
-### DELETE /api/result-policies/{id}
-
-Delete a result policy.
-
-Response: 204
-
-Permission: `policy.manage`
-
-### POST /api/notification-policies
-
-Create a notification policy that maps events to webhooks for a specific scope.
-
-Permission: `policy.manage`
+### ~~DELETE /api/notification-policies/{id}~~ → 405
 
 ### GET /api/notification-policies
 
@@ -324,20 +287,6 @@ Permission: `policy.manage`
 ### GET /api/notification-policies/{id}
 
 Get a specific notification policy.
-
-Permission: `policy.manage`
-
-### PUT /api/notification-policies/{id}
-
-Update a notification policy. Only provided fields are changed.
-
-Permission: `policy.manage`
-
-### DELETE /api/notification-policies/{id}
-
-Delete a notification policy.
-
-Response: 204
 
 Permission: `policy.manage`
 

@@ -18,6 +18,7 @@ dbward-api-types = { path = "../dbward-api-types" }
 dbward-config = { path = "../dbward-config" }
 dbward-domain = { path = "../dbward-domain" }
 dbward-migrate = { path = "../dbward-migrate", version = "0.1.1" }
+libc = "0.2"
 clap = { version = "4", features = ["derive", "env"] }
 tokio.workspace = true
 serde.workspace = true

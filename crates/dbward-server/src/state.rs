@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use arc_swap::ArcSwap;
 use dbward_app::ports::{
     AgentRepo, ApprovalRepo, AuditLogger, AuditRepo, Authorizer, BackgroundTaskRepo, Clock,
     ContextRepo, DatabaseRegistry, DryRunRepo, EventDispatcher, IdGenerator, LicenseChecker,
@@ -21,23 +22,31 @@ use dbward_app::use_cases::{
     get_request::GetRequest,
     get_result::GetResult,
     list_requests::ListRequests,
-    policy_manage::PolicyManage,
     reject_request::RejectRequest,
     resume_request::ResumeRequest,
     schema_sync::SchemaSync,
     stream_result::StreamResult,
     token_manage::TokenManage,
     user_manage::UserManage,
-    webhook_manage::WebhookManage,
 };
 
 use crate::metrics::Metrics;
 
+/// Config fields that can be hot-reloaded via SIGHUP without restarting.
+pub struct ReloadableConfig {
+    pub role_resolver: Arc<dyn RoleResolver>,
+    pub auto_approve_entries: Vec<dbward_domain::services::workflow_matcher::AutoApproveEntry>,
+    pub sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
+    pub default_approval_ttl_secs: Option<u64>,
+}
+
 #[derive(Clone)]
 pub struct AppState {
+    // Reloadable portion (swapped atomically on SIGHUP)
+    pub(crate) reloadable: Arc<ArcSwap<ReloadableConfig>>,
+
     // Auth — pub(crate) for middleware
     pub(crate) token_verifier: Arc<dyn TokenVerifier>,
-    pub(crate) role_resolver: Arc<dyn RoleResolver>,
     pub(crate) authorizer: Arc<dyn Authorizer>,
 
     // Repos — private
@@ -65,6 +74,7 @@ pub struct AppState {
     notifier: Arc<dyn Notifier>,
     webhook_sender: Arc<dyn dbward_app::ports::WebhookSender>,
     event_dispatcher: Arc<dyn EventDispatcher>,
+    #[allow(dead_code)] // Used in sync_all_config (cloned before AppState build)
     ssrf_validator: Arc<dyn SsrfValidator>,
     license_checker: Arc<dyn LicenseChecker>,
     clock: Arc<dyn Clock>,
@@ -76,13 +86,9 @@ pub struct AppState {
     pub(crate) metrics: Arc<Metrics>,
 
     // Config — pub(crate)
-    pub(crate) default_approval_ttl_secs: Option<u64>,
     pub(crate) max_persist_bytes: usize,
     pub(crate) auth_mode: String,
     pub(crate) storage_backend: String,
-    pub(crate) sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
-    pub(crate) auto_approve_entries:
-        Vec<dbward_domain::services::workflow_matcher::AutoApproveEntry>,
 
     // Shutdown — pub(crate)
     pub(crate) draining: Arc<AtomicBool>,
@@ -103,6 +109,7 @@ pub(crate) struct RequestUseCases<'a>(&'a AppState);
 impl<'a> RequestUseCases<'a> {
     pub(crate) fn create(&self) -> CreateRequest {
         let s = self.0;
+        let r = s.reloadable.load();
         CreateRequest {
             authorizer: s.authorizer.clone(),
             policy: s.policy_evaluator.clone(),
@@ -116,9 +123,9 @@ impl<'a> RequestUseCases<'a> {
             audit_logger: s.audit_logger.clone(),
             clock: s.clock.clone(),
             id_gen: s.id_generator.clone(),
-            default_approval_ttl_secs: s.default_approval_ttl_secs,
-            review_rules: s.sql_review_rules.clone(),
-            auto_approve_entries: s.auto_approve_entries.clone(),
+            default_approval_ttl_secs: r.default_approval_ttl_secs,
+            review_rules: r.sql_review_rules.clone(),
+            auto_approve_entries: r.auto_approve_entries.clone(),
         }
     }
 
@@ -238,7 +245,7 @@ impl<'a> AgentUseCases<'a> {
             clock: s.clock.clone(),
             id_gen: s.id_generator.clone(),
             user_repo: s.user_repo.clone(),
-            role_resolver: s.role_resolver.clone(),
+            role_resolver: s.reloadable.load().role_resolver.clone(),
         }
     }
 
@@ -313,33 +320,6 @@ impl<'a> AgentUseCases<'a> {
 pub(crate) struct AdminUseCases<'a>(&'a AppState);
 
 impl<'a> AdminUseCases<'a> {
-    pub(crate) fn policy_manage(&self) -> PolicyManage {
-        let s = self.0;
-        PolicyManage {
-            authorizer: s.authorizer.clone(),
-            policy_repo: s.policy_repo.clone(),
-            license: s.license_checker.clone(),
-            audit: s.audit_logger.clone(),
-            clock: s.clock.clone(),
-            id_gen: s.id_generator.clone(),
-            ssrf_validator: s.ssrf_validator.clone(),
-        }
-    }
-
-    pub(crate) fn webhook_manage(&self) -> WebhookManage {
-        let s = self.0;
-        WebhookManage {
-            authorizer: s.authorizer.clone(),
-            webhook_repo: s.webhook_repo.clone(),
-            ssrf_validator: s.ssrf_validator.clone(),
-            license: s.license_checker.clone(),
-            audit: s.audit_logger.clone(),
-            notifier: s.notifier.clone(),
-            clock: s.clock.clone(),
-            id_gen: s.id_generator.clone(),
-        }
-    }
-
     pub(crate) fn audit_query(&self) -> AuditQuery {
         let s = self.0;
         AuditQuery {
@@ -584,6 +564,7 @@ impl AppState {
     pub(crate) fn token_repo(&self) -> &Arc<dyn TokenRepo> {
         &self.token_repo
     }
+    #[allow(dead_code)] // Used in hot reload (Phase 4)
     pub(crate) fn notifier(&self) -> &Arc<dyn Notifier> {
         &self.notifier
     }
@@ -614,7 +595,7 @@ impl AppState {
 /// Builder for constructing AppState in tests and integration scenarios.
 pub struct AppStateBuilder {
     pub token_verifier: Arc<dyn TokenVerifier>,
-    pub role_resolver: Arc<dyn RoleResolver>,
+    pub reloadable: Arc<ArcSwap<ReloadableConfig>>,
     pub authorizer: Arc<dyn Authorizer>,
     pub request_reader: Arc<dyn RequestReader>,
     pub request_writer: Arc<dyn RequestWriter>,
@@ -645,12 +626,9 @@ pub struct AppStateBuilder {
     pub token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator>,
     pub webhook_delivery_repo: Option<Arc<dyn dbward_app::ports::WebhookDeliveryRepo>>,
     pub metrics: Arc<Metrics>,
-    pub default_approval_ttl_secs: Option<u64>,
     pub max_persist_bytes: usize,
     pub auth_mode: String,
     pub storage_backend: String,
-    pub sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
-    pub auto_approve_entries: Vec<dbward_domain::services::workflow_matcher::AutoApproveEntry>,
     pub draining: Arc<AtomicBool>,
     pub slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
@@ -660,8 +638,8 @@ pub struct AppStateBuilder {
 impl AppStateBuilder {
     pub fn build(self) -> AppState {
         AppState {
+            reloadable: self.reloadable,
             token_verifier: self.token_verifier,
-            role_resolver: self.role_resolver,
             authorizer: self.authorizer,
             request_reader: self.request_reader,
             request_writer: self.request_writer,
@@ -692,12 +670,9 @@ impl AppStateBuilder {
             token_value_generator: self.token_value_generator,
             webhook_delivery_repo: self.webhook_delivery_repo,
             metrics: self.metrics,
-            default_approval_ttl_secs: self.default_approval_ttl_secs,
             max_persist_bytes: self.max_persist_bytes,
             auth_mode: self.auth_mode,
             storage_backend: self.storage_backend,
-            sql_review_rules: self.sql_review_rules,
-            auto_approve_entries: self.auto_approve_entries,
             draining: self.draining,
             slack_config: self.slack_config,
             slack_client: self.slack_client,

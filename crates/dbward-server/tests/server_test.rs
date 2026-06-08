@@ -646,7 +646,14 @@ impl PolicyEvaluator for StubPolicyEvaluator {
 fn test_state() -> AppState {
     AppStateBuilder {
         token_verifier: Arc::new(MockTokenVerifier),
-        role_resolver: Arc::new(NoopRoleResolver),
+        reloadable: Arc::new(arc_swap::ArcSwap::from_pointee(
+            dbward_server::state::ReloadableConfig {
+                role_resolver: Arc::new(NoopRoleResolver),
+                auto_approve_entries: vec![],
+                sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+                default_approval_ttl_secs: Some(3600),
+            },
+        )),
         authorizer: Arc::new(StubAuthorizer),
         request_reader: Arc::new(StubRequestRepo),
         request_writer: Arc::new(StubRequestRepo),
@@ -681,12 +688,9 @@ fn test_state() -> AppState {
         slack_config: None,
         slack_client: None,
         request_notifier: None,
-        default_approval_ttl_secs: Some(3600),
         max_persist_bytes: 10 * 1024 * 1024,
         auth_mode: "both".to_string(),
         storage_backend: "local".into(),
-        sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-        auto_approve_entries: vec![],
     }
     .build()
 }

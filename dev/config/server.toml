@@ -3,6 +3,9 @@ state_dir = "/data"
 # Trust Docker internal network for XFF resolution
 trusted_proxies = ["172.16.0.0/12", "127.0.0.1"]
 
+# Development: allow webhooks to private/internal hosts
+allow_private_networks = true
+
 [auth]
 mode = "token"
 
@@ -12,37 +15,12 @@ name = "app"
 environments = ["development", "staging", "production"]
 
 [[databases]]
-name = "mysql_dev"
-environments = ["development"]
-
-# E2E test databases
-[[databases]]
 name = "default"
 environments = ["development", "staging", "production"]
 
 [[databases]]
-name = "primary"
-environments = ["development", "staging", "production"]
-
-[[databases]]
-name = "e2edb"
-environments = ["development", "staging", "production"]
-
-[[databases]]
-name = "dupdb"
-environments = ["development", "staging", "production", "prod"]
-
-[[databases]]
-name = "x"
-environments = ["development", "staging", "production", "y"]
-
-[[databases]]
-name = "corrupt_db"
-environments = ["production"]
-
-[[databases]]
-name = "corrupt_ops_db"
-environments = ["production"]
+name = "mysql_dev"
+environments = ["development"]
 
 # Workflow definitions (synced to SQLite on startup)
 
@@ -91,6 +69,7 @@ min = 1
 
 # Global webhooks (all events, all environments)
 [[webhooks]]
+id = "dev-receiver"
 url = "http://webhook-receiver:9999"
 format = "generic"
 events = ["request_created", "request_approved", "request_auto_approved", "request_rejected", "request_completed", "request_failed", "break_glass", "step_approved"]
@@ -104,6 +83,7 @@ environment = "production"
 max_executions = 1
 execution_window_secs = 3600
 retry_on_failure = false
+migration_statement_timeout_secs = 120
 statement_timeout_secs = 30
 max_statement_timeout_secs = 300
 
@@ -164,3 +144,20 @@ risk = "high"
 database = "*"
 environment = "production"
 risk = "none"
+
+[[result_policies]]
+database = "app"
+environment = "production"
+retention_days = 30
+delivery_mode = "store_only"
+access = ["requester"]
+
+[[notification_policies]]
+database = "app"
+environment = "production"
+webhooks = ["dev-receiver"]
+events = ["request_completed"]
+
+[[users]]
+id = "config-alice"
+status = "active"

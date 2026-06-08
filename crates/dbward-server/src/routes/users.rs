@@ -60,17 +60,30 @@ pub async fn suspend(
     );
     let uc = state.users().manage();
     let output = uc
-        .suspend(UserSuspendInput { user_id: id }, &user, &ctx)
+        .suspend(
+            UserSuspendInput {
+                user_id: id.clone(),
+            },
+            &user,
+            &ctx,
+        )
         .map_err(map_error)?;
 
-    Ok((
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "id": output.id,
-            "revoked_tokens": output.revoked_tokens,
-            "cancelled_requests": output.cancelled_requests,
-        })),
-    ))
+    // Check if user is config-managed → add warning
+    let source = get_user_source(state.user_repo(), &id);
+    let mut resp = serde_json::json!({
+        "id": output.id,
+        "revoked_tokens": output.revoked_tokens,
+        "cancelled_requests": output.cancelled_requests,
+    });
+    if source.as_deref() == Some("config") {
+        resp["warning"] = serde_json::json!(
+            "this user is config-managed; status will revert to config value on next server restart"
+        );
+        resp["source"] = serde_json::json!("config");
+    }
+
+    Ok((StatusCode::OK, Json(resp)))
 }
 
 pub async fn activate(
@@ -86,7 +99,16 @@ pub async fn activate(
     );
     let uc = state.users().manage();
     uc.activate(&id, &user, &ctx).map_err(map_error)?;
-    Ok((StatusCode::OK, Json(serde_json::json!({ "id": id }))))
+
+    let source = get_user_source(state.user_repo(), &id);
+    let mut resp = serde_json::json!({ "id": id });
+    if source.as_deref() == Some("config") {
+        resp["warning"] = serde_json::json!(
+            "this user is config-managed; status will revert to config value on next server restart"
+        );
+        resp["source"] = serde_json::json!("config");
+    }
+    Ok((StatusCode::OK, Json(resp)))
 }
 
 pub async fn patch(
@@ -155,4 +177,12 @@ pub async fn patch(
             "slack_user_id": slack_user_id,
         })),
     ))
+}
+
+/// Query the source column for a user (returns None if user not found or error).
+fn get_user_source(
+    repo: &std::sync::Arc<dyn dbward_app::ports::UserRepo>,
+    user_id: &str,
+) -> Option<String> {
+    repo.get_source(user_id).ok().flatten()
 }

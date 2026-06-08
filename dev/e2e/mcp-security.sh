@@ -44,8 +44,8 @@ echo "--- URL injection in webhook ---"
 
 STATUS=$(api_status POST /api/webhooks "$ADMIN_TOKEN" \
   -d '{"url":"http://example.com/hook?x=1&url=http://169.254.169.254","events":["request.created"],"format":"generic"}')
-# Should accept (query params are fine) or reject if URL contains internal IP
-[ "$STATUS" = "201" ] || [ "$STATUS" = "400" ] && pass "Webhook URL with query params handled ($STATUS)" || fail "Webhook URL injection" "got $STATUS"
+# CFG-24: webhook write API returns 405 (config-managed)
+[ "$STATUS" = "405" ] && pass "Webhook POST returns 405 (config-managed)" || fail "Webhook URL injection" "got $STATUS"
 
 # --- Config injection via request metadata ---
 echo ""

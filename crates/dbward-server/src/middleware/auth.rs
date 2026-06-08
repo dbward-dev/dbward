@@ -136,6 +136,8 @@ pub async fn auth_middleware(
         }
 
         let roles = state
+            .reloadable
+            .load()
             .role_resolver
             .resolve(&subject_id, SubjectType::User, &groups)
             .map_err(|e| {
@@ -217,7 +219,12 @@ pub async fn auth_middleware(
     };
 
     // Augment AuthUser.groups with TOML [[auth.groups]] membership
-    if let Some(config_groups) = state.role_resolver.config_groups_for(&user.subject_id) {
+    if let Some(config_groups) = state
+        .reloadable
+        .load()
+        .role_resolver
+        .config_groups_for(&user.subject_id)
+    {
         for g in config_groups {
             if !user.groups.contains(g) {
                 user.groups.push(g.clone());

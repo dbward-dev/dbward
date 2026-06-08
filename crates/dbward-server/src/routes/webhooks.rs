@@ -3,73 +3,21 @@ use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
 };
-use dbward_app::use_cases::webhook_manage::{
-    WebhookCreateInput, WebhookDeleteInput, WebhookUpdateInput,
-};
-use dbward_domain::auth::AuthUser;
-use serde::Deserialize;
+use dbward_domain::auth::{AuthUser, Permission};
 
-use crate::middleware::trusted_proxies::ClientIp;
 use crate::state::AppState;
 
 use super::map_error;
-
-#[derive(Deserialize)]
-pub struct CreateBody {
-    pub url: String,
-    #[serde(default)]
-    pub events: Vec<String>,
-    #[serde(default = "default_format")]
-    pub format: String,
-    pub secret: Option<String>,
-}
-
-fn default_format() -> String {
-    "generic".into()
-}
-
-#[derive(Deserialize)]
-pub struct UpdateBody {
-    pub url: Option<String>,
-    pub events: Option<Vec<String>>,
-    pub format: Option<String>,
-    pub secret: Option<Option<String>>,
-}
-
-pub async fn create(
-    State(state): State<AppState>,
-    Extension(user): Extension<AuthUser>,
-    client_ip: Option<Extension<ClientIp>>,
-    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
-    Json(body): Json<CreateBody>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let ctx = super::extract_audit_context(
-        client_ip.as_ref().map(|e| &e.0),
-        connect_info.as_ref().map(|e| &e.0),
-    );
-    let uc = state.admin().webhook_manage();
-    let webhook = uc
-        .create(
-            WebhookCreateInput {
-                url: body.url,
-                events: body.events,
-                format: body.format,
-                secret: body.secret,
-            },
-            &user,
-            &ctx,
-        )
-        .map_err(map_error)?;
-
-    Ok((StatusCode::CREATED, Json(serde_json::json!(webhook))))
-}
 
 pub async fn list(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = state.admin().webhook_manage();
-    let webhooks = uc.list(&user).map_err(map_error)?;
+    state
+        .authorizer
+        .authorize_global(&user, Permission::WorkflowRead)
+        .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
+    let webhooks = state.webhook_repo().list().map_err(map_error)?;
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({ "webhooks": webhooks })),
@@ -81,56 +29,20 @@ pub async fn get(
     Extension(user): Extension<AuthUser>,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let uc = state.admin().webhook_manage();
-    let webhook = uc.get(&id, &user).map_err(map_error)?;
+    state
+        .authorizer
+        .authorize_global(&user, Permission::WorkflowRead)
+        .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
+    let webhook = state
+        .webhook_repo()
+        .get(&id)
+        .map_err(map_error)?
+        .ok_or_else(|| {
+            map_error(dbward_app::error::AppError::NotFound(format!(
+                "webhook '{id}' not found"
+            )))
+        })?;
     Ok((StatusCode::OK, Json(serde_json::json!(webhook))))
-}
-
-pub async fn update(
-    State(state): State<AppState>,
-    Extension(user): Extension<AuthUser>,
-    client_ip: Option<Extension<ClientIp>>,
-    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
-    Path(id): Path<String>,
-    Json(body): Json<UpdateBody>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let ctx = super::extract_audit_context(
-        client_ip.as_ref().map(|e| &e.0),
-        connect_info.as_ref().map(|e| &e.0),
-    );
-    let uc = state.admin().webhook_manage();
-    let webhook = uc
-        .update(
-            WebhookUpdateInput {
-                id,
-                url: body.url,
-                events: body.events,
-                format: body.format,
-                secret: body.secret,
-            },
-            &user,
-            &ctx,
-        )
-        .map_err(map_error)?;
-
-    Ok((StatusCode::OK, Json(serde_json::json!(webhook))))
-}
-
-pub async fn delete(
-    State(state): State<AppState>,
-    Extension(user): Extension<AuthUser>,
-    client_ip: Option<Extension<ClientIp>>,
-    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
-    Path(id): Path<String>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    let ctx = super::extract_audit_context(
-        client_ip.as_ref().map(|e| &e.0),
-        connect_info.as_ref().map(|e| &e.0),
-    );
-    let uc = state.admin().webhook_manage();
-    uc.delete(WebhookDeleteInput { id }, &user, &ctx)
-        .map_err(map_error)?;
-    Ok((StatusCode::NO_CONTENT, Json(serde_json::json!(null))))
 }
 
 #[derive(serde::Deserialize)]
@@ -147,7 +59,7 @@ pub(super) async fn list_deliveries(
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     state
         .authorizer
-        .authorize_global(&user, dbward_domain::auth::Permission::MetricsView)
+        .authorize_global(&user, Permission::MetricsView)
         .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
 
     let limit = params.limit.unwrap_or(50).min(100);

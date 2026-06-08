@@ -768,7 +768,7 @@ fn check_role_resolution(ctx: &mut DoctorContext, cfg: &dbward_config::ServerCon
                 "custom roles referenced (must exist in DB): {}",
                 undefined.join(", ")
             ),
-            hint: Some("Create these roles via API or ensure they exist".into()),
+            hint: Some("Define them in [[auth.roles]] in server.toml".into()),
         });
     }
 }

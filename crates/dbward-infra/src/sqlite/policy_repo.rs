@@ -705,6 +705,52 @@ impl PolicyRepo for SqlitePolicyRepo {
         }
         Ok(())
     }
+
+    fn delete_workflows_by_source(&self, source: &str) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute("DELETE FROM workflows WHERE source = ?1", [source])
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(n as u64)
+    }
+
+    fn delete_execution_policies_by_source(&self, source: &str) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute("DELETE FROM execution_policies WHERE source = ?1", [source])
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(n as u64)
+    }
+
+    fn delete_result_policies_by_source(&self, source: &str) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute("DELETE FROM result_policies WHERE source = ?1", [source])
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(n as u64)
+    }
+
+    fn delete_notification_policies_by_source(&self, source: &str) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute(
+                "DELETE FROM notification_policies WHERE source = ?1",
+                [source],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(n as u64)
+    }
+
+    fn delete_roles_by_source(&self, source: &str) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute(
+                "DELETE FROM roles WHERE source = ?1 AND built_in = 0",
+                [source],
+            )
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(n as u64)
+    }
 }
 
 // --- SqlitePolicyEvaluator ---

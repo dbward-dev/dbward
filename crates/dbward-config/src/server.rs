@@ -24,6 +24,12 @@ pub struct ServerConfig {
     #[serde(default)]
     pub execution_policies: Vec<ExecutionPolicyDef>,
     #[serde(default)]
+    pub result_policies: Vec<ResultPolicyDef>,
+    #[serde(default)]
+    pub notification_policies: Vec<NotificationPolicyDef>,
+    #[serde(default)]
+    pub users: Vec<UserDef>,
+    #[serde(default)]
     pub retention: RetentionConfig,
     #[serde(default)]
     pub auth: AuthConfig,
@@ -33,6 +39,8 @@ pub struct ServerConfig {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub trusted_proxies: Vec<String>,
+    #[serde(default)]
+    pub allow_private_networks: bool,
     #[serde(default)]
     pub sql_review: SqlReviewConfig,
     #[serde(default)]
@@ -105,6 +113,91 @@ impl ServerConfig {
                     "auto_approve validation: duplicate scope (database={}, environment={})",
                     a.database, a.environment
                 )));
+            }
+        }
+
+        // Webhook id validation
+        {
+            let id_re = regex::Regex::new(r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$").unwrap();
+            let mut seen_ids: HashSet<&str> = HashSet::new();
+            for (i, wh) in self.webhooks.iter().enumerate() {
+                if wh.id.is_empty() {
+                    let suggestion = slug_from_url(&wh.url);
+                    return Err(ConfigError::Validation(format!(
+                        "webhooks[{i}] is missing required 'id' field.\n       suggested: id = \"{suggestion}\""
+                    )));
+                }
+                if wh.id.len() > 64 {
+                    return Err(ConfigError::Validation(format!(
+                        "webhooks[{i}].id '{}' exceeds 64 characters",
+                        wh.id
+                    )));
+                }
+                if !id_re.is_match(&wh.id) {
+                    return Err(ConfigError::Validation(format!(
+                        "webhooks[{i}].id '{}' must match [a-z0-9][a-z0-9\\-]*",
+                        wh.id
+                    )));
+                }
+                if !seen_ids.insert(wh.id.as_str()) {
+                    return Err(ConfigError::Validation(format!(
+                        "webhooks[{i}].id '{}' is duplicated",
+                        wh.id
+                    )));
+                }
+            }
+        }
+
+        // Notification policy: webhooks must reference defined webhook IDs
+        {
+            let webhook_ids: HashSet<&str> = self.webhooks.iter().map(|w| w.id.as_str()).collect();
+            for (i, np) in self.notification_policies.iter().enumerate() {
+                for wh_id in &np.webhooks {
+                    if !webhook_ids.contains(wh_id.as_str()) {
+                        return Err(ConfigError::Validation(format!(
+                            "notification_policies[{i}].webhooks: '{}' does not match any [[webhooks]].id",
+                            wh_id
+                        )));
+                    }
+                }
+            }
+        }
+
+        // Result policy delivery_mode validation
+        for (i, rp) in self.result_policies.iter().enumerate() {
+            match rp.delivery_mode.as_str() {
+                "both" | "store_only" | "stream" => {}
+                other => {
+                    return Err(ConfigError::Validation(format!(
+                        "result_policies[{i}].delivery_mode: unknown value '{other}' (expected: both, store_only, stream)"
+                    )));
+                }
+            }
+        }
+
+        // User validation
+        {
+            let mut seen_user_ids: HashSet<&str> = HashSet::new();
+            for (i, u) in self.users.iter().enumerate() {
+                if u.id.is_empty() {
+                    return Err(ConfigError::Validation(format!(
+                        "users[{i}]: 'id' cannot be empty"
+                    )));
+                }
+                if !seen_user_ids.insert(u.id.as_str()) {
+                    return Err(ConfigError::Validation(format!(
+                        "users[{i}]: duplicate user id '{}'",
+                        u.id
+                    )));
+                }
+                match u.status.as_str() {
+                    "active" | "suspended" => {}
+                    other => {
+                        return Err(ConfigError::Validation(format!(
+                            "users[{i}].status: unknown value '{other}' (expected: active, suspended)"
+                        )));
+                    }
+                }
             }
         }
 
@@ -475,6 +568,8 @@ fn star() -> String {
 
 #[derive(Debug, Deserialize)]
 pub struct WebhookDef {
+    #[serde(default)]
+    pub id: String,
     pub url: String,
     #[serde(default)]
     pub events: Vec<String>,
@@ -485,6 +580,36 @@ pub struct WebhookDef {
 
 fn default_webhook_format() -> String {
     "generic".into()
+}
+
+/// Generate a suggested webhook ID from a URL by extracting the hostname slug.
+fn slug_from_url(url: &str) -> String {
+    let host = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url)
+        .split('/')
+        .next()
+        .unwrap_or("webhook")
+        .split(':')
+        .next()
+        .unwrap_or("webhook");
+    let slug: String = host
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "webhook".to_string()
+    } else {
+        slug
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -509,6 +634,50 @@ pub struct ExecutionPolicyDef {
     pub migration_lease_duration_secs: Option<u32>,
     #[serde(default)]
     pub migration_statement_timeout_secs: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResultPolicyDef {
+    #[serde(default = "star")]
+    pub database: String,
+    #[serde(default = "star")]
+    pub environment: String,
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u32,
+    #[serde(default = "default_delivery_mode")]
+    pub delivery_mode: String,
+    #[serde(default)]
+    pub access: Vec<String>,
+}
+
+fn default_retention_days() -> u32 {
+    30
+}
+fn default_delivery_mode() -> String {
+    "both".into()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NotificationPolicyDef {
+    #[serde(default = "star")]
+    pub database: String,
+    #[serde(default = "star")]
+    pub environment: String,
+    #[serde(default)]
+    pub webhooks: Vec<String>,
+    #[serde(default)]
+    pub events: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UserDef {
+    pub id: String,
+    #[serde(default = "default_user_status")]
+    pub status: String,
+}
+
+fn default_user_status() -> String {
+    "active".into()
 }
 
 #[derive(Debug, Deserialize)]
@@ -692,6 +861,148 @@ environment = "dev"
         );
         let err = ServerConfig::from_str(&toml, "test").unwrap_err();
         assert!(err.to_string().contains("duplicate scope"));
+    }
+
+    #[test]
+    fn webhook_valid_id() {
+        let toml = test_cfg(
+            r#"
+[[webhooks]]
+id = "ops-alerts"
+url = "https://hooks.slack.com/services/T123"
+"#,
+        );
+        let cfg = ServerConfig::from_str(&toml, "test").unwrap();
+        assert_eq!(cfg.webhooks[0].id, "ops-alerts");
+    }
+
+    #[test]
+    fn webhook_rejects_missing_id() {
+        let toml = test_cfg(
+            r#"
+[[webhooks]]
+url = "https://hooks.slack.com/services/T123"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("missing required 'id'"), "got: {msg}");
+        assert!(msg.contains("suggested"), "got: {msg}");
+    }
+
+    #[test]
+    fn webhook_rejects_invalid_id_format() {
+        let toml = test_cfg(
+            r#"
+[[webhooks]]
+id = "UPPER-CASE"
+url = "https://example.com"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("must match"));
+    }
+
+    #[test]
+    fn webhook_rejects_duplicate_id() {
+        let toml = test_cfg(
+            r#"
+[[webhooks]]
+id = "same"
+url = "https://a.example.com"
+
+[[webhooks]]
+id = "same"
+url = "https://b.example.com"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("duplicated"));
+    }
+
+    #[test]
+    fn webhook_rejects_too_long_id() {
+        let long_id = "a".repeat(65);
+        let toml = test_cfg(&format!(
+            r#"
+[[webhooks]]
+id = "{long_id}"
+url = "https://example.com"
+"#,
+        ));
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("exceeds 64"));
+    }
+
+    #[test]
+    fn slug_from_url_extracts_hostname() {
+        assert_eq!(
+            slug_from_url("https://hooks.slack.com/services/T123"),
+            "hooks-slack-com"
+        );
+        assert_eq!(slug_from_url("http://localhost:9999"), "localhost");
+        assert_eq!(slug_from_url("https://example.com/path"), "example-com");
+    }
+
+    #[test]
+    fn result_policy_valid() {
+        let toml = test_cfg(
+            r#"
+[[result_policies]]
+database = "app"
+environment = "production"
+retention_days = 7
+delivery_mode = "store_only"
+access = ["requester", "role:admin"]
+"#,
+        );
+        let cfg = ServerConfig::from_str(&toml, "test").unwrap();
+        assert_eq!(cfg.result_policies.len(), 1);
+        assert_eq!(cfg.result_policies[0].retention_days, 7);
+    }
+
+    #[test]
+    fn result_policy_rejects_invalid_delivery_mode() {
+        let toml = test_cfg(
+            r#"
+[[result_policies]]
+delivery_mode = "invalid"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("unknown value 'invalid'"));
+    }
+
+    #[test]
+    fn notification_policy_valid() {
+        let toml = test_cfg(
+            r#"
+[[webhooks]]
+id = "ops"
+url = "https://hooks.slack.com/x"
+
+[[notification_policies]]
+database = "app"
+environment = "production"
+webhooks = ["ops"]
+events = ["request_completed"]
+"#,
+        );
+        let cfg = ServerConfig::from_str(&toml, "test").unwrap();
+        assert_eq!(cfg.notification_policies.len(), 1);
+    }
+
+    #[test]
+    fn notification_policy_rejects_unknown_webhook_id() {
+        let toml = test_cfg(
+            r#"
+[[notification_policies]]
+webhooks = ["nonexistent"]
+events = ["request_completed"]
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("does not match any"));
     }
 }
 

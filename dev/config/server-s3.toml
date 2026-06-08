@@ -3,6 +3,8 @@ state_dir = "/data"
 # Trust Docker internal network for XFF resolution
 trusted_proxies = ["172.16.0.0/12", "127.0.0.1"]
 
+allow_private_networks = true
+
 [auth]
 mode = "token"
 
@@ -91,6 +93,7 @@ min = 1
 
 # Global webhooks (all events, all environments)
 [[webhooks]]
+id = "dev-receiver"
 url = "http://webhook-receiver:9999"
 format = "generic"
 events = ["request_created", "request_approved", "request_auto_approved", "request_rejected", "request_completed", "request_failed", "break_glass", "step_approved"]

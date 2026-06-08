@@ -5,6 +5,22 @@ use url::Url;
 
 pub struct SsrfGuard;
 
+/// Permissive guard that skips private IP checks (for development environments).
+pub struct PermissiveSsrfGuard;
+
+impl SsrfValidator for PermissiveSsrfGuard {
+    fn validate_url(&self, url_str: &str) -> Result<(), AppError> {
+        let url = Url::parse(url_str).map_err(|_| AppError::Validation("invalid URL".into()))?;
+        match url.scheme() {
+            "http" | "https" => {}
+            _ => return Err(AppError::Validation("only http/https allowed".into())),
+        }
+        url.host_str()
+            .ok_or_else(|| AppError::Validation("missing host".into()))?;
+        Ok(())
+    }
+}
+
 impl SsrfValidator for SsrfGuard {
     fn validate_url(&self, url_str: &str) -> Result<(), AppError> {
         let url = Url::parse(url_str).map_err(|_| AppError::Validation("invalid URL".into()))?;

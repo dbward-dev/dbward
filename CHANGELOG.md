@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.1.5] — Unreleased
+
+Config as Authority: TOML config becomes the sole source of truth for all policy resources.
+
+### Breaking Changes
+
+- **All Tier 1 write API endpoints return 405 Method Not Allowed.** Affected: POST/PUT/DELETE on `/api/workflows`, `/api/execution-policies`, `/api/result-policies`, `/api/notification-policies`, `/api/webhooks`, `/api/roles`. Define these in `server.toml` instead.
+- **Webhook `id` field is now mandatory** in `[[webhooks]]`. Missing id triggers startup failure with a suggested value from the URL.
+- **`[[auth.roles]]` custom roles are config-managed.** API write is no longer available.
+
+### Features
+
+- **Hot reload via SIGHUP**: Change `server.toml` and send SIGHUP (or `dbward server reload`) to apply without downtime. On failure, old config continues.
+- **New TOML sections**: `[[result_policies]]`, `[[notification_policies]]`, `[[users]]`
+- **Safety guard**: Server rejects startup if DB has config-managed records but the corresponding TOML section is missing (prevents accidental data loss).
+- **`dbward server reload` CLI command**: Sends SIGHUP to running server for config hot reload.
+- **`allow_private_networks` config option**: Permits webhook URLs to internal/Docker hosts in dev environments.
+- **User suspend/activate warning**: Suspending a config-managed user shows a warning that status will revert on restart.
+- **`config_synced` audit event**: Recorded after every successful config sync.
+- **`server.pid` file**: Written to state_dir at startup for reload discovery.
+
+### Internal
+
+- V14 schema migration: `groups`, `role_bindings` tables + `source` column on 8 tables
+- `policy_manage` and `webhook_manage` use cases removed
+- AppState split into immutable shell + ArcSwap ReloadableConfig
+- Shared helpers: `build_sync_uc`, `build_reloadable_config_with`, `build_sync_inputs_and_run`
+
 ## [0.1.4] — 2026-05-30
 
 Hardening: code review findings, migration tooling, reactive elicitation, and deployment improvements.

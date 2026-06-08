@@ -78,6 +78,14 @@ impl WebhookRepo for SqliteWebhookRepo {
             .map_err(|e| AppError::Internal(e.to_string()))?;
         Ok(())
     }
+
+    fn delete_by_source(&self, source: &str) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute("DELETE FROM webhooks WHERE source = ?1", [source])
+            .map_err(|e| AppError::Internal(e.to_string()))?;
+        Ok(n as u64)
+    }
 }
 
 fn format_str(f: WebhookFormat) -> &'static str {

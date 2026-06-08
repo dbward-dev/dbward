@@ -90,7 +90,14 @@ fn real_state() -> AppState {
 
     AppStateBuilder {
         token_verifier: Arc::new(TestTokenVerifier),
-        role_resolver: Arc::new(NoopRoleResolver),
+        reloadable: Arc::new(arc_swap::ArcSwap::from_pointee(
+            dbward_server::state::ReloadableConfig {
+                role_resolver: Arc::new(NoopRoleResolver),
+                auto_approve_entries: vec![],
+                sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
+                default_approval_ttl_secs: Some(3600),
+            },
+        )),
         authorizer,
         request_reader: Arc::new(SqliteRequestRepo::new(conn.clone())),
         request_writer: Arc::new(SqliteRequestRepo::new(conn.clone())),
@@ -126,11 +133,8 @@ fn real_state() -> AppState {
         slack_client: None,
         request_notifier: None,
         auth_mode: "token".into(),
-        default_approval_ttl_secs: Some(3600),
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),
-        sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-        auto_approve_entries: vec![],
     }
     .build()
 }

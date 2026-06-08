@@ -9,20 +9,17 @@ Notification policies define which [webhooks](../notifications.md) fire for whic
 
 ## Configuration
 
-Notification policies are managed via the REST API:
+Notification policies are managed via `server.toml` (config-managed since v0.1.5):
 
-```bash
-# Create a notification policy
-curl -X POST http://localhost:3000/api/notification-policies \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "database": "app",
-    "environment": "production",
-    "webhooks": ["wh_abc123"],
-    "events": ["request_created", "break_glass", "request_completed"]
-  }'
+```toml
+[[notification_policies]]
+database = "app"
+environment = "production"
+webhooks = ["ops-alerts"]
+events = ["request_created", "break_glass", "request_completed"]
 ```
+
+Changes take effect on server restart or `dbward server reload`.
 
 ## Fields
 
@@ -50,24 +47,20 @@ curl -X POST http://localhost:3000/api/notification-policies \
 
 Notification policies follow the same [scoping model](overview.md#scoping-model) as other policies:
 
-```bash
+```toml
 # All events on production → ops-channel webhook
-curl -X POST http://localhost:3000/api/notification-policies \
-  -d '{
-    "database": "*",
-    "environment": "production",
-    "webhooks": ["wh_ops"],
-    "events": ["*"]
-  }'
+[[notification_policies]]
+database = "*"
+environment = "production"
+webhooks = ["ops-channel"]
+events = ["*"]
 
 # Break-glass on any DB → security-channel webhook
-curl -X POST http://localhost:3000/api/notification-policies \
-  -d '{
-    "database": "*",
-    "environment": "*",
-    "webhooks": ["wh_security"],
-    "events": ["break_glass"]
-  }'
+[[notification_policies]]
+database = "*"
+environment = "*"
+webhooks = ["security-channel"]
+events = ["break_glass"]
 ```
 
 ## Relationship with webhooks
