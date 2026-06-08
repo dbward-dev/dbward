@@ -533,6 +533,11 @@ fn safety_guard(
             cfg.notification_policies.is_empty(),
         ),
         ("databases", cfg.databases.is_empty()),
+        ("users", cfg.users.is_empty()),
+        // Note: roles excluded — built-in roles (admin/developer/readonly) are schema-seeded
+        // with source='config' and cannot be redefined in TOML.
+        ("groups", cfg.auth.groups.is_empty()),
+        ("role_bindings", cfg.auth.role_bindings.is_empty()),
     ];
 
     let c = conn.lock();
@@ -973,17 +978,14 @@ mod safety_guard_tests {
     use super::*;
 
     fn empty_config() -> config::ServerConfig {
-        config::ServerConfig::load(std::path::Path::new("/dev/null")).unwrap_or_else(|_| {
-            // Minimal valid config
-            toml::from_str(
-                r#"
-                    state_dir = "/tmp"
-                    [auth]
-                    mode = "token"
-                    "#,
-            )
-            .unwrap()
-        })
+        toml::from_str(
+            r#"
+            state_dir = "/tmp"
+            [auth]
+            mode = "token"
+            "#,
+        )
+        .unwrap()
     }
 
     #[test]
