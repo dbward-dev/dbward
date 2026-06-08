@@ -106,7 +106,7 @@ The server applies SQLite migrations automatically on startup.
 
 The template uses `json-file` driver with 10MB rotation (3 files). Adjust in compose.yml if you use a centralized log collector.
 
-## Next steps
+## See also
 
 - [Server configuration](server.md) — full configuration reference
 - [Agent configuration](agent.md) — capabilities, resilience, multi-agent

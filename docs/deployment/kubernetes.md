@@ -126,7 +126,7 @@ kubectl -n dbward set image deploy/dbward-agent agent=ghcr.io/dbward-dev/dbward-
 
 The server applies SQLite migrations automatically on startup.
 
-## Next steps
+## See also
 
 - [Server configuration](server.md) — full server settings reference
 - [Agent configuration](agent.md) — agent settings, capabilities, resilience

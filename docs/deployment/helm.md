@@ -131,7 +131,7 @@ helm uninstall dbward
 
 The chart includes a NetworkPolicy when `networkPolicy.enabled=true`. For details on what traffic is allowed, see [Kubernetes deployment — Network Policy](kubernetes.md#network-policy).
 
-## Next steps
+## See also
 
 - [Server configuration](server.md) — full server settings reference
 - [Agent configuration](agent.md) — agent settings, capabilities, resilience

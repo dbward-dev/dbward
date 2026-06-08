@@ -132,7 +132,7 @@ When using dbward through an AI assistant (via MCP), the same approval flow appl
 
 See [MCP Integration](mcp-integration.md) for setup instructions.
 
-## Next steps
+## See also
 
 - [Policies Overview](policies/overview.md) — understand when approval is required
 - [Auto-Approve](policies/auto-approve.md) — configure automatic approval for safe queries

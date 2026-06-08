@@ -232,7 +232,7 @@ On SIGTERM/SIGINT:
 - **Token rotation:** Rotate agent tokens periodically. Create a new token, update the agent config, restart, then revoke the old token.
 - **Environment variables:** Use `${ENV_VAR}` in TOML to avoid hardcoding credentials.
 
-## Next steps
+## See also
 
 - [Server setup](server.md) — Configure the server
 - [Authentication](../guides/authentication.md) — Token management and OIDC

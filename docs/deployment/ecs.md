@@ -254,7 +254,7 @@ aws secretsmanager delete-secret --secret-id dbward/agent-token --force-delete-w
 | DatabasePort | | DB port for SG rule (default: 5432) |
 | EcrRepositoryName | | ECR repo name |
 
-## Next steps
+## See also
 
 - [Server configuration](server.md) — full server settings reference
 - [Agent configuration](agent.md) — agent settings, capabilities, resilience

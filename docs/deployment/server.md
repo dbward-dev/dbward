@@ -266,7 +266,7 @@ url = "${SLACK_WEBHOOK_URL}"
 secret = "${WEBHOOK_SECRET}"
 ```
 
-## Next steps
+## See also
 
 - [Agent setup](agent.md) — Connect agents to your databases
 - [Authentication](../guides/authentication.md) — Configure OIDC or manage tokens

@@ -72,7 +72,7 @@ Agents register with capabilities; the server matches requests to the appropriat
 4. **Audit log** — every operation recorded with hash-chain integrity
 5. **Fail-closed workflows** — if policy evaluation fails, the request is denied (not auto-approved)
 
-## Next steps
+## See also
 
 - [Server configuration](server.md) — all server settings and operations
 - [Agent configuration](agent.md) — agent settings, capabilities, resilience

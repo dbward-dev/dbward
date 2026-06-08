@@ -75,7 +75,7 @@ When a request arrives:
 6. Notification policy →  Fire webhooks for relevant events
 ```
 
-## Next steps
+## See also
 
 - [Workflows](workflows.md) — configure approval requirements
 - [Auto-Approve](auto-approve.md) — skip approval for safe queries

@@ -194,7 +194,7 @@ The agent needs 1-2 seconds to poll and execute. Wait a moment, then run `reques
 
 ---
 
-## Next steps
+## See also
 
 - [Connect your own database](quickstart-local.md) — use dbward with your real PostgreSQL or MySQL
 - [Deploy to production](deployment/overview.md) — choose a deployment method for your team

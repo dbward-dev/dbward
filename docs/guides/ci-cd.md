@@ -151,7 +151,7 @@ format = "slack"
 
 When CI creates a migration request, the team gets a Slack message with the SQL and an approve prompt.
 
-## Next steps
+## See also
 
 - [Migrations](migrations.md) — Migration file management
 - [Workflows](policies/workflows.md) — Configure auto-approve for specific environments

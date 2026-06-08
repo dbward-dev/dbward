@@ -150,7 +150,7 @@ Share migration results with your team:
 dbward migrate up --share-with "group:backend-team"
 ```
 
-## Next steps
+## See also
 
 - [CI/CD](ci-cd.md) — Automate migrations in pipelines
 - [Workflows](policies/workflows.md) — Configure approval for migrations

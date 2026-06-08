@@ -120,7 +120,7 @@ In production, you run the server and agent as separate processes (or containers
 
 ---
 
-## Next steps
+## See also
 
 - [Try with Docker](quickstart-docker.md) — full approval flow demo with submit → approve → execute
 - [Deploy to production](deployment/overview.md) — choose a deployment method for your team
