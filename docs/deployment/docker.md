@@ -18,31 +18,9 @@ Deploy dbward server and agent as a single Compose stack. For running individual
 
 ### 1. Create configuration files
 
-**server.toml:**
+Create `server.toml` and `agent.toml` in the same directory as `compose.yml`. See [server configuration](server.md) and [agent configuration](agent.md) for all options, or use the [full configuration reference](../reference/configuration.md).
 
-```toml
-state_dir = "/data"
-
-[auth]
-mode = "token"
-
-[[databases]]
-name = "app"
-environments = ["production"]
-
-[[workflows]]
-database = "*"
-environment = "production"
-
-[[workflows.steps]]
-type = "approval"
-
-[[workflows.steps.approvers]]
-role = "admin"
-min = 1
-```
-
-**agent.toml:**
+Minimal example for `agent.toml`:
 
 ```toml
 agent_id = "prod-agent"
@@ -55,6 +33,8 @@ agent_token = "${DBWARD_AGENT_TOKEN}"
 [databases.app.production]
 url = "${DATABASE_URL}"
 ```
+
+> **Note:** The agent's `[server].url` must be `http://server:3000` (the Compose service name).
 
 ### 2. Start the stack
 

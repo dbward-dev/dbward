@@ -39,6 +39,8 @@ If a database connection is lost, the agent skips jobs targeting that database b
 
 ## Configuration reference
 
+> Full configuration reference with all options: [Configuration](../reference/configuration.md)
+
 ### Agent identity
 
 ```toml

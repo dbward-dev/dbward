@@ -9,6 +9,8 @@ The dbward server manages approval state, audit logs, and coordinates agents. It
 
 ## Configuration reference
 
+> Full configuration reference with all options: [Configuration](../reference/configuration.md)
+
 ### Top-level settings
 
 ```toml
