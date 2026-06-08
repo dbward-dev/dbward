@@ -423,7 +423,7 @@ impl DatabaseDriver for MysqlDriver {
                     Err(e) => {
                         // Rollback on error to avoid leaking open transaction
                         let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-                        return Err(DriverError::QueryFailed(e.to_string()));
+                        return Err(query_err(e));
                     }
                 };
                 total += r.rows_affected();

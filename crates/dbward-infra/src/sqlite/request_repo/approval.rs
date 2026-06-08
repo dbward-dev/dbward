@@ -6,9 +6,10 @@ use dbward_app::ports::ApprovalRepo;
 use dbward_domain::entities::Approval;
 
 use super::{
-    SqliteRequestRepo, approval_action_str, map_err, parse_approval_action, parse_ts,
+    SqliteRequestRepo, approval_action_str, parse_approval_action, parse_ts,
     populate_pending_approvers,
 };
+use crate::sqlite::error::{db_err, json_err};
 
 fn compute_current_step(
     snapshot: &Option<String>,
@@ -18,15 +19,17 @@ fn compute_current_step(
         Some(j) => j,
         None => return Ok(0),
     };
-    let wf: dbward_domain::policies::Workflow = serde_json::from_str(json)
-        .map_err(|e| AppError::Internal(format!("invalid workflow snapshot: {e}")))?;
+    let wf: dbward_domain::policies::Workflow =
+        serde_json::from_str(json).map_err(json_err("request: compute_current_step"))?;
     Ok(dbward_domain::services::workflow_matcher::find_current_step(&wf.steps, approvals))
 }
 
 impl ApprovalRepo for SqliteRequestRepo {
     fn insert_approval(&self, approval: &Approval) -> Result<(), AppError> {
         let conn = self.conn.lock();
-        let tx = conn.unchecked_transaction().map_err(map_err)?;
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(db_err("request: insert_approval"))?;
         tx.execute(
             "INSERT INTO approvals (id, request_id, action, actor_id, matched_selector, step_index, comment, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -40,13 +43,13 @@ impl ApprovalRepo for SqliteRequestRepo {
                 approval.comment,
                 approval.created_at.to_rfc3339(),
             ],
-        ).map_err(map_err)?;
+        ).map_err(db_err("request: insert_approval"))?;
 
         // Get all approvals to compute correct current step
         let all_approvals: Vec<Approval> = {
             let mut stmt = tx
                 .prepare("SELECT id, request_id, action, actor_id, matched_selector, step_index, comment, created_at FROM approvals WHERE request_id = ?1 ORDER BY created_at ASC")
-                .map_err(map_err)?;
+                .map_err(db_err("request: insert_approval"))?;
             stmt.query_map(params![approval.request_id], |row| {
                 let action_str: String = row.get(2)?;
                 let action = parse_approval_action(&action_str).map_err(|e| {
@@ -69,9 +72,9 @@ impl ApprovalRepo for SqliteRequestRepo {
                     created_at,
                 })
             })
-            .map_err(map_err)?
+            .map_err(db_err("request: insert_approval"))?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(map_err)?
+            .map_err(db_err("request: insert_approval"))?
         };
 
         // Compute current step using domain logic
@@ -86,14 +89,14 @@ impl ApprovalRepo for SqliteRequestRepo {
         let current_step = compute_current_step(&snapshot, &all_approvals)?;
         populate_pending_approvers(&tx, &approval.request_id, &snapshot, current_step)?;
 
-        tx.commit().map_err(map_err)?;
+        tx.commit().map_err(db_err("request: insert_approval"))?;
         Ok(())
     }
     fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT * FROM approvals WHERE request_id = ?1 ORDER BY created_at ASC")
-            .map_err(map_err)?;
+            .map_err(db_err("request: get_approvals"))?;
         let rows = stmt
             .query_map(params![request_id], |row| {
                 let action_str: String = row.get("action")?;
@@ -123,9 +126,10 @@ impl ApprovalRepo for SqliteRequestRepo {
                     created_at,
                 })
             })
-            .map_err(map_err)?;
+            .map_err(db_err("request: get_approvals"))?;
 
-        rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(db_err("request: get_approvals"))
     }
     fn approve_and_mark_approved(
         &self,
@@ -136,7 +140,7 @@ impl ApprovalRepo for SqliteRequestRepo {
         let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(map_err)?;
+            .map_err(db_err("request: approve_and_mark_approved"))?;
 
         tx.execute(
             "INSERT INTO approvals (id, request_id, action, actor_id, matched_selector, step_index, comment, created_at)
@@ -151,13 +155,13 @@ impl ApprovalRepo for SqliteRequestRepo {
                 approval.comment,
                 approval.created_at.to_rfc3339(),
             ],
-        ).map_err(map_err)?;
+        ).map_err(db_err("request: approve_and_mark_approved"))?;
 
         let now_str = now.to_rfc3339();
         let affected = tx.execute(
             "UPDATE requests SET status = 'approved', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
             params![request_id, now_str],
-        ).map_err(map_err)?;
+        ).map_err(db_err("request: approve_and_mark_approved"))?;
 
         if affected == 0 {
             drop(tx);
@@ -168,9 +172,10 @@ impl ApprovalRepo for SqliteRequestRepo {
             "DELETE FROM request_pending_approvers WHERE request_id = ?1",
             params![request_id],
         )
-        .map_err(map_err)?;
+        .map_err(db_err("request: approve_and_mark_approved"))?;
 
-        tx.commit().map_err(map_err)?;
+        tx.commit()
+            .map_err(db_err("request: approve_and_mark_approved"))?;
         Ok(true)
     }
     fn reject_and_record(
@@ -182,13 +187,13 @@ impl ApprovalRepo for SqliteRequestRepo {
         let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(map_err)?;
+            .map_err(db_err("request: reject_and_record"))?;
 
         let now_str = now.to_rfc3339();
         let affected = tx.execute(
             "UPDATE requests SET status = 'rejected', updated_at = ?2, resolved_at = ?2 WHERE id = ?1 AND status = 'pending' AND (expires_at IS NULL OR expires_at > ?2)",
             params![request_id, now_str],
-        ).map_err(map_err)?;
+        ).map_err(db_err("request: reject_and_record"))?;
 
         if affected == 0 {
             drop(tx);
@@ -208,9 +213,9 @@ impl ApprovalRepo for SqliteRequestRepo {
                 approval.comment,
                 approval.created_at.to_rfc3339(),
             ],
-        ).map_err(map_err)?;
+        ).map_err(db_err("request: reject_and_record"))?;
 
-        tx.commit().map_err(map_err)?;
+        tx.commit().map_err(db_err("request: reject_and_record"))?;
         Ok(true)
     }
 }

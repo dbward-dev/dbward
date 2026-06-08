@@ -1,4 +1,5 @@
 use crate::sqlite::DbConn;
+use crate::sqlite::error::db_err;
 use dbward_app::error::AppError;
 use dbward_app::ports::{AuditFilter, AuditLogger, AuditRepo, AuditVerifyResult};
 use dbward_domain::entities::{ActorType, AuditEvent, EventCategory, EventOutcome};
@@ -18,16 +19,16 @@ impl AuditLogger for SqliteAuditLogger {
         let mut conn = self.conn.lock();
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("audit: record"))?;
 
         super::audit_helper::insert_audit_event_in_tx(
             &tx,
             event,
             super::audit_helper::IdPolicy::UseExisting,
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("audit: record"))?;
 
-        tx.commit().map_err(|e| AppError::Internal(e.to_string()))?;
+        tx.commit().map_err(db_err("audit: record"))?;
         Ok(())
     }
 }
@@ -107,15 +108,13 @@ impl AuditRepo for SqliteAuditRepo {
 
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
-        let mut stmt = conn
-            .prepare(&sql)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+        let mut stmt = conn.prepare(&sql).map_err(db_err("audit: list"))?;
         let rows = stmt
             .query_map(params_ref.as_slice(), row_to_audit_event)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("audit: list"))?;
 
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| AppError::Internal(e.to_string()))
+            .map_err(db_err("audit: list"))
     }
 
     fn verify_chain(&self) -> Result<AuditVerifyResult, AppError> {
@@ -124,7 +123,7 @@ impl AuditRepo for SqliteAuditRepo {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, event_type, actor_id, created_at, prev_hash, event_hash, outcome, request_id, operation, database_name, environment, reason, detail_raw, metadata_json FROM audit_events ORDER BY rowid ASC"
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("audit: verify_chain"))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -144,7 +143,7 @@ impl AuditRepo for SqliteAuditRepo {
                     row.get::<_, String>(13)?,
                 ))
             })
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("audit: verify_chain"))?;
 
         let mut total: u64 = 0;
         let mut expected_prev: Option<String> = None;
@@ -166,7 +165,7 @@ impl AuditRepo for SqliteAuditRepo {
                 reason,
                 detail_raw,
                 metadata_json,
-            ) = row.map_err(|e| AppError::Internal(e.to_string()))?;
+            ) = row.map_err(db_err("audit: verify_chain"))?;
             total += 1;
 
             if is_first {
@@ -236,7 +235,7 @@ impl AuditRepo for SqliteAuditRepo {
                 "DELETE FROM audit_events WHERE created_at < ?1",
                 rusqlite::params![before],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("audit: purge_old"))?;
         Ok(n as u32)
     }
 }

@@ -4,6 +4,7 @@ use dbward_app::error::AppError;
 use dbward_app::ports::repos::{SchemaRepo, SchemaSnapshotRecord};
 
 use crate::sqlite::DbConn;
+use crate::sqlite::error::db_err;
 
 pub struct SqliteSchemaRepo {
     conn: DbConn,
@@ -33,12 +34,12 @@ impl SchemaRepo for SqliteSchemaRepo {
                 record.agent_id,
             ],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("schema: upsert_snapshot"))?;
         conn.execute(
             "UPDATE databases SET dialect = ?1 WHERE name = ?2 AND environment = ?3 AND dialect IS NULL",
             params![record.dialect, record.database_name, record.environment],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("schema: upsert_snapshot"))?;
         Ok(())
     }
 
@@ -48,7 +49,7 @@ impl SchemaRepo for SqliteSchemaRepo {
             "SELECT database_name, environment, status, snapshot_json, error_message, dialect, collected_at, agent_id \
              FROM schema_snapshots WHERE database_name = ?1 AND environment = ?2",
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("schema: get_snapshot"))?;
         let result = stmt.query_row(params![db, env], |row| {
             Ok(SchemaSnapshotRecord {
                 database_name: row.get(0)?,
@@ -64,7 +65,7 @@ impl SchemaRepo for SqliteSchemaRepo {
         match result {
             Ok(r) => Ok(Some(r)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(AppError::Internal(e.to_string())),
+            Err(e) => Err(db_err("schema: get_snapshot")(e)),
         }
     }
 
@@ -78,7 +79,7 @@ impl SchemaRepo for SqliteSchemaRepo {
         match result {
             Ok(d) => Ok(d),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(AppError::Internal(e.to_string())),
+            Err(e) => Err(db_err("schema: get_dialect")(e)),
         }
     }
 

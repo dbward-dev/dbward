@@ -6,19 +6,20 @@ use dbward_app::error::AppError;
 use dbward_app::ports::RequestReader;
 use dbward_domain::entities::Request;
 
-use super::{SqliteRequestRepo, build_selectors, map_err, row_to_request};
+use super::{SqliteRequestRepo, build_selectors, row_to_request};
+use crate::sqlite::error::db_err;
 
 impl RequestReader for SqliteRequestRepo {
     fn get(&self, id: &str) -> Result<Option<Request>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT * FROM requests WHERE id = ?1")
-            .map_err(map_err)?;
+            .map_err(db_err("request: get"))?;
         let mut rows = stmt
             .query_and_then(params![id], row_to_request)
-            .map_err(map_err)?;
+            .map_err(db_err("request: get"))?;
         match rows.next() {
-            Some(r) => Ok(Some(r.map_err(map_err)?)),
+            Some(r) => Ok(Some(r.map_err(db_err("request: get"))?)),
             None => Ok(None),
         }
     }
@@ -56,7 +57,7 @@ impl RequestReader for SqliteRequestRepo {
                 rusqlite::params_from_iter(count_params.iter().map(|p| p.as_ref())),
                 |r| r.get(0),
             )
-            .map_err(map_err)?;
+            .map_err(db_err("request: list"))?;
 
         // NOTE: SELECT * includes decision_trace_json which is unused in list responses.
         // Acceptable for now (SQLite reads full row regardless), but could be optimised
@@ -75,26 +76,28 @@ impl RequestReader for SqliteRequestRepo {
         query_params.push(Box::new(limit));
         query_params.push(Box::new(offset));
 
-        let mut stmt = conn.prepare(&query_sql).map_err(map_err)?;
+        let mut stmt = conn.prepare(&query_sql).map_err(db_err("request: list"))?;
         let rows = stmt
             .query_and_then(
                 rusqlite::params_from_iter(query_params.iter().map(|p| p.as_ref())),
                 row_to_request,
             )
-            .map_err(map_err)?;
-        let items = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
+            .map_err(db_err("request: list"))?;
+        let items = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_err("request: list"))?;
         Ok((items, total))
     }
     fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT * FROM requests WHERE idempotency_key = ?1")
-            .map_err(map_err)?;
+            .map_err(db_err("request: find_by_idempotency_key"))?;
         let mut rows = stmt
             .query_and_then(params![key], row_to_request)
-            .map_err(map_err)?;
+            .map_err(db_err("request: find_by_idempotency_key"))?;
         match rows.next() {
-            Some(r) => Ok(Some(r.map_err(map_err)?)),
+            Some(r) => Ok(Some(r.map_err(db_err("request: find_by_idempotency_key"))?)),
             None => Ok(None),
         }
     }
@@ -158,18 +161,22 @@ impl RequestReader for SqliteRequestRepo {
             params.iter().map(|p| p.as_ref()).collect();
         let total: u32 = conn
             .query_row(&sql, count_refs.as_slice(), |row| row.get(0))
-            .map_err(map_err)?;
+            .map_err(db_err("request: list_visible_to_user"))?;
 
         params.push(Box::new(limit));
         params.push(Box::new(offset));
         let query_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
 
-        let mut stmt = conn.prepare(&query_sql).map_err(map_err)?;
+        let mut stmt = conn
+            .prepare(&query_sql)
+            .map_err(db_err("request: list_visible_to_user"))?;
         let rows = stmt
             .query_and_then(query_refs.as_slice(), row_to_request)
-            .map_err(map_err)?;
-        let requests: Vec<Request> = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
+            .map_err(db_err("request: list_visible_to_user"))?;
+        let requests: Vec<Request> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_err("request: list_visible_to_user"))?;
         Ok((requests, total))
     }
     fn list_pending_for_user(
@@ -210,13 +217,17 @@ impl RequestReader for SqliteRequestRepo {
 
         let total: u32 = conn
             .query_row(&count_sql, param_refs.as_slice(), |row| row.get(0))
-            .map_err(map_err)?;
+            .map_err(db_err("request: list_pending_for_user"))?;
 
-        let mut stmt = conn.prepare(&query_sql).map_err(map_err)?;
+        let mut stmt = conn
+            .prepare(&query_sql)
+            .map_err(db_err("request: list_pending_for_user"))?;
         let rows = stmt
             .query_and_then(param_refs.as_slice(), row_to_request)
-            .map_err(map_err)?;
-        let requests: Vec<Request> = rows.collect::<Result<Vec<_>, _>>().map_err(map_err)?;
+            .map_err(db_err("request: list_pending_for_user"))?;
+        let requests: Vec<Request> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_err("request: list_pending_for_user"))?;
         Ok((requests, total))
     }
     fn is_pending_approver(
@@ -261,7 +272,7 @@ impl RequestReader for SqliteRequestRepo {
                 params![request_id],
                 |row| row.get(0),
             )
-            .map_err(map_err)?;
+            .map_err(db_err("request: count_executions"))?;
         Ok(count)
     }
 
@@ -275,7 +286,7 @@ impl RequestReader for SqliteRequestRepo {
                 params![request_id],
                 |row| row.get(0),
             )
-            .map_err(map_err)?;
+            .map_err(db_err("request: count_completed_executions"))?;
         Ok(count)
     }
 
@@ -285,13 +296,13 @@ impl RequestReader for SqliteRequestRepo {
             .prepare(
                 "SELECT DISTINCT execution_id FROM results WHERE request_id = ?1 AND status = 'stored'",
             )
-            .map_err(map_err)?;
+            .map_err(db_err("request: find_stored_execution_ids"))?;
         let rows = stmt
             .query_map(params![request_id], |row| row.get(0))
-            .map_err(map_err)?;
+            .map_err(db_err("request: find_stored_execution_ids"))?;
         let mut ids = Vec::new();
         for row in rows {
-            ids.push(row.map_err(map_err)?);
+            ids.push(row.map_err(db_err("request: find_stored_execution_ids"))?);
         }
         Ok(ids)
     }
@@ -338,7 +349,9 @@ impl RequestReader for SqliteRequestRepo {
              ORDER BY r.stored_at DESC
              LIMIT ?2"
         );
-        let mut stmt = conn.prepare(&sql).map_err(map_err)?;
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(db_err("request: list_results_for_user"))?;
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
         let rows = stmt
@@ -352,9 +365,9 @@ impl RequestReader for SqliteRequestRepo {
                     content_length: row.get(5)?,
                 })
             })
-            .map_err(map_err)?;
+            .map_err(db_err("request: list_results_for_user"))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| AppError::Internal(e.to_string()))
+            .map_err(db_err("request: list_results_for_user"))
     }
     fn count_by_status(&self, status: &str) -> Result<u32, AppError> {
         let conn = self.conn.lock();
@@ -364,7 +377,7 @@ impl RequestReader for SqliteRequestRepo {
                 params![status],
                 |row| row.get(0),
             )
-            .map_err(map_err)?;
+            .map_err(db_err("request: count_by_status"))?;
         Ok(count)
     }
     fn get_pending_approvers_for_requests(
@@ -384,7 +397,9 @@ impl RequestReader for SqliteRequestRepo {
             "SELECT request_id, step_index, selector FROM request_pending_approvers WHERE request_id IN ({})",
             placeholders
         );
-        let mut stmt = conn.prepare(&sql).map_err(map_err)?;
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(db_err("request: get_pending_approvers_for_requests"))?;
         let params: Vec<&dyn rusqlite::types::ToSql> = request_ids
             .iter()
             .map(|id| id as &dyn rusqlite::types::ToSql)
@@ -397,10 +412,11 @@ impl RequestReader for SqliteRequestRepo {
                     row.get::<_, String>(2)?,
                 ))
             })
-            .map_err(map_err)?;
+            .map_err(db_err("request: get_pending_approvers_for_requests"))?;
         let mut result: HashMap<String, (u32, Vec<String>)> = HashMap::new();
         for row in rows {
-            let (req_id, step_idx, selector) = row.map_err(map_err)?;
+            let (req_id, step_idx, selector) =
+                row.map_err(db_err("request: get_pending_approvers_for_requests"))?;
             result
                 .entry(req_id)
                 .or_insert_with(|| (step_idx, Vec::new()))

@@ -1,4 +1,5 @@
 use crate::sqlite::DbConn;
+use crate::sqlite::error::db_err;
 use chrono::{DateTime, Utc};
 use dbward_app::error::AppError;
 use dbward_app::ports::TokenRepo;
@@ -34,7 +35,7 @@ impl TokenRepo for SqliteTokenRepo {
                 token.created_at.to_rfc3339(),
                 token.revoked_at.map(|t| t.to_rfc3339()),
             ],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("token: create"))?;
         Ok(())
     }
 
@@ -42,14 +43,14 @@ impl TokenRepo for SqliteTokenRepo {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE token_prefix = ?1 AND status = 'active'",
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("token: verify"))?;
         let rows = stmt
             .query_map(rusqlite::params![prefix], row_to_token)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("token: verify"))?;
 
         use subtle::ConstantTimeEq;
         for row in rows {
-            let token = row.map_err(|e| AppError::Internal(e.to_string()))?;
+            let token = row.map_err(db_err("token: verify"))?;
             if token.token_hash.as_bytes().ct_eq(hash.as_bytes()).into() {
                 return Ok(Some(token));
             }
@@ -61,24 +62,24 @@ impl TokenRepo for SqliteTokenRepo {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens",
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("token: list"))?;
         let rows = stmt
             .query_map([], row_to_token)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("token: list"))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| AppError::Internal(e.to_string()))
+            .map_err(db_err("token: list"))
     }
 
     fn get(&self, token_id: &str) -> Result<Option<Token>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE id = ?1",
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("token: get"))?;
         let result = stmt.query_row(rusqlite::params![token_id], row_to_token);
         match result {
             Ok(t) => Ok(Some(t)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(AppError::Internal(e.to_string())),
+            Err(e) => Err(db_err("token: get")(e)),
         }
     }
 
@@ -87,7 +88,7 @@ impl TokenRepo for SqliteTokenRepo {
         let n = conn.execute(
             "UPDATE tokens SET status = 'revoked', revoked_at = ?1 WHERE id = ?2 AND status = 'active'",
             rusqlite::params![now.to_rfc3339(), token_id],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("token: revoke"))?;
         Ok(n > 0)
     }
 
@@ -96,7 +97,7 @@ impl TokenRepo for SqliteTokenRepo {
         let n = conn.execute(
             "UPDATE tokens SET status = 'revoked', revoked_at = ?1 WHERE subject_id = ?2 AND status = 'active'",
             rusqlite::params![now.to_rfc3339(), subject_id],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("token: revoke_all_for_user"))?;
         Ok(n as u32)
     }
 
@@ -108,7 +109,7 @@ impl TokenRepo for SqliteTokenRepo {
                 [],
                 |row| row.get(0),
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("token: count_active"))?;
         Ok(count)
     }
 
@@ -119,7 +120,7 @@ impl TokenRepo for SqliteTokenRepo {
                 "DELETE FROM tokens WHERE status = 'revoked' AND revoked_at < ?1",
                 rusqlite::params![before],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("token: purge_revoked"))?;
         Ok(n as u32)
     }
 }

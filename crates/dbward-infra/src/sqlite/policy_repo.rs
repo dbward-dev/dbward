@@ -7,6 +7,7 @@ use dbward_domain::policies::{ExecutionPolicy, Workflow};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::sqlite::DbConn;
+use crate::sqlite::error::{db_err, json_err};
 
 // --- SqlitePolicyRepo ---
 
@@ -24,9 +25,9 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn create_workflow(&self, wf: &Workflow) -> Result<(), AppError> {
         let conn = self.conn.lock();
         let operations_json =
-            serde_json::to_string(&wf.operations).map_err(|e| AppError::Internal(e.to_string()))?;
+            serde_json::to_string(&wf.operations).map_err(json_err("policy: create_workflow"))?;
         let steps_json =
-            serde_json::to_string(&wf.steps).map_err(|e| AppError::Internal(e.to_string()))?;
+            serde_json::to_string(&wf.steps).map_err(json_err("policy: create_workflow"))?;
         conn.execute(
             "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
@@ -63,7 +64,7 @@ impl PolicyRepo for SqlitePolicyRepo {
             row_to_workflow,
         )
         .optional()
-        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map_err(db_err("policy: get_workflow"))?
         .transpose()
     }
 
@@ -71,14 +72,14 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows",
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("policy: list_workflows"))?;
         let rows = stmt
             .query_map([], row_to_workflow)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: list_workflows"))?;
         let mut results = Vec::new();
         for row in rows {
-            let r = row.map_err(|e| AppError::Internal(e.to_string()))?;
-            results.push(r.map_err(|e| AppError::Internal(e.to_string()))?);
+            let r = row.map_err(db_err("policy: list_workflows"))?;
+            results.push(r?);
         }
         Ok(results)
     }
@@ -87,7 +88,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let changed = conn
             .execute("DELETE FROM workflows WHERE id = ?1", params![id])
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: delete_workflow"))?;
         Ok(changed > 0)
     }
 
@@ -95,7 +96,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let count: u32 = conn
             .query_row("SELECT COUNT(*) FROM workflows", [], |row| row.get(0))
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: count_workflows"))?;
         Ok(count)
     }
 
@@ -117,7 +118,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 ep.migration_lease_duration_secs.map(|v| v as i64),
                 ep.migration_statement_timeout_secs.map(|v| v as i64),
             ],
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("policy: create_execution_policy"))?;
         Ok(())
     }
 
@@ -130,7 +131,7 @@ impl PolicyRepo for SqlitePolicyRepo {
             row_to_execution_policy,
         )
         .optional()
-        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map_err(db_err("policy: get_execution_policy"))?
         .transpose()
     }
 
@@ -138,14 +139,14 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs, max_rows, migration_lease_duration_secs, migration_statement_timeout_secs FROM execution_policies",
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("policy: list_execution_policies"))?;
         let rows = stmt
             .query_map([], row_to_execution_policy)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: list_execution_policies"))?;
         let mut results = Vec::new();
         for row in rows {
-            let r = row.map_err(|e| AppError::Internal(e.to_string()))?;
-            results.push(r.map_err(|e| AppError::Internal(e.to_string()))?);
+            let r = row.map_err(db_err("policy: list_execution_policies"))?;
+            results.push(r?);
         }
         Ok(results)
     }
@@ -154,7 +155,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let changed = conn
             .execute("DELETE FROM execution_policies WHERE id = ?1", params![id])
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: delete_execution_policy"))?;
         Ok(changed > 0)
     }
 
@@ -166,7 +167,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, database_name, environment, retention_days, delivery_mode, access_json FROM result_policies",
-        ).map_err(|e| AppError::Internal(e.to_string()))?;
+        ).map_err(db_err("policy: find_result_policy"))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -178,14 +179,14 @@ impl PolicyRepo for SqlitePolicyRepo {
                     row.get::<_, String>(5)?,
                 ))
             })
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: find_result_policy"))?;
 
         let mut best: Option<dbward_domain::policies::ResultPolicy> = None;
         let mut best_score: u8 = 0;
 
         for row in rows {
             let (id, db_str, env_str, retention_days, delivery_str, access_json) =
-                row.map_err(|e| AppError::Internal(e.to_string()))?;
+                row.map_err(db_err("policy: find_result_policy"))?;
             let policy_db =
                 DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
             let policy_env =
@@ -233,9 +234,9 @@ impl PolicyRepo for SqlitePolicyRepo {
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>(),
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(json_err("policy: create_result_policy"))?;
         let delivery_str = serde_json::to_string(&policy.delivery_mode)
-            .map_err(|e| AppError::Internal(e.to_string()))?
+            .map_err(json_err("policy: create_result_policy"))?
             .trim_matches('"')
             .to_string();
         conn.execute(
@@ -282,7 +283,7 @@ impl PolicyRepo for SqlitePolicyRepo {
             },
         )
         .optional()
-        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map_err(db_err("policy: get_result_policy"))?
         .map(|(id, db_str, env_str, retention_days, delivery_str, access_json)| {
             let database =
                 DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -292,7 +293,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 serde_json::from_value(serde_json::Value::String(delivery_str))
                     .unwrap_or_default();
             let access_strs: Vec<String> = serde_json::from_str(&access_json)
-                .map_err(|e| AppError::Internal(e.to_string()))?;
+                .map_err(json_err("policy: get_result_policy"))?;
             let access = access_strs
                 .iter()
                 .filter_map(|s| dbward_domain::values::Selector::parse(s).ok())
@@ -315,7 +316,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT id, database_name, environment, retention_days, delivery_mode, access_json FROM result_policies")
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: list_result_policies"))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -327,11 +328,11 @@ impl PolicyRepo for SqlitePolicyRepo {
                     row.get::<_, String>(5)?,
                 ))
             })
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: list_result_policies"))?;
         let mut result = Vec::new();
         for row in rows {
             let (id, db_str, env_str, retention_days, delivery_str, access_json) =
-                row.map_err(|e| AppError::Internal(e.to_string()))?;
+                row.map_err(db_err("policy: list_result_policies"))?;
             let database =
                 DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
             let environment =
@@ -369,9 +370,9 @@ impl PolicyRepo for SqlitePolicyRepo {
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>(),
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(json_err("policy: update_result_policy"))?;
         let delivery_str = serde_json::to_string(&policy.delivery_mode)
-            .map_err(|e| AppError::Internal(e.to_string()))?
+            .map_err(json_err("policy: update_result_policy"))?
             .trim_matches('"')
             .to_string();
         let changed = conn
@@ -379,7 +380,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 "UPDATE result_policies SET retention_days = ?1, delivery_mode = ?2, access_json = ?3 WHERE id = ?4",
                 params![policy.retention_days, delivery_str, access_json, policy.id],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: update_result_policy"))?;
         Ok(changed > 0)
     }
 
@@ -387,7 +388,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let changed = conn
             .execute("DELETE FROM result_policies WHERE id = ?1", params![id])
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: delete_result_policy"))?;
         Ok(changed > 0)
     }
 
@@ -397,9 +398,9 @@ impl PolicyRepo for SqlitePolicyRepo {
     ) -> Result<(), AppError> {
         let conn = self.conn.lock();
         let webhooks_json = serde_json::to_string(&policy.webhooks)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        let events_json =
-            serde_json::to_string(&policy.events).map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(json_err("policy: create_notification_policy"))?;
+        let events_json = serde_json::to_string(&policy.events)
+            .map_err(json_err("policy: create_notification_policy"))?;
         conn.execute(
             "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, events_json) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
@@ -442,16 +443,16 @@ impl PolicyRepo for SqlitePolicyRepo {
             },
         )
         .optional()
-        .map_err(|e| AppError::Internal(e.to_string()))?
+        .map_err(db_err("policy: get_notification_policy"))?
         .map(|(id, db_str, env_str, webhooks_json, events_json)| {
             let database =
                 DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
             let environment =
                 Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
             let webhooks: Vec<String> = serde_json::from_str(&webhooks_json)
-                .map_err(|e| AppError::Internal(e.to_string()))?;
+                .map_err(json_err("policy: get_notification_policy"))?;
             let events: Vec<String> = serde_json::from_str(&events_json)
-                .map_err(|e| AppError::Internal(e.to_string()))?;
+                .map_err(json_err("policy: get_notification_policy"))?;
             Ok(dbward_domain::policies::NotificationPolicy {
                 id,
                 database,
@@ -469,7 +470,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT id, database_name, environment, webhooks_json, events_json FROM notification_policies")
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: list_notification_policies"))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((
@@ -480,11 +481,11 @@ impl PolicyRepo for SqlitePolicyRepo {
                     row.get::<_, String>(4)?,
                 ))
             })
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: list_notification_policies"))?;
         let mut result = Vec::new();
         for row in rows {
             let (id, db_str, env_str, webhooks_json, events_json) =
-                row.map_err(|e| AppError::Internal(e.to_string()))?;
+                row.map_err(db_err("policy: list_notification_policies"))?;
             let database =
                 DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
             let environment =
@@ -508,15 +509,15 @@ impl PolicyRepo for SqlitePolicyRepo {
     ) -> Result<bool, AppError> {
         let conn = self.conn.lock();
         let webhooks_json = serde_json::to_string(&policy.webhooks)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        let events_json =
-            serde_json::to_string(&policy.events).map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(json_err("policy: update_notification_policy"))?;
+        let events_json = serde_json::to_string(&policy.events)
+            .map_err(json_err("policy: update_notification_policy"))?;
         let changed = conn
             .execute(
                 "UPDATE notification_policies SET webhooks_json = ?1, events_json = ?2 WHERE id = ?3",
                 params![webhooks_json, events_json, policy.id],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: update_notification_policy"))?;
         Ok(changed > 0)
     }
 
@@ -527,7 +528,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 "DELETE FROM notification_policies WHERE id = ?1",
                 params![id],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: delete_notification_policy"))?;
         Ok(changed > 0)
     }
 
@@ -540,7 +541,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 .map(|p| p.as_str())
                 .collect::<Vec<_>>(),
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(json_err("policy: create_role"))?;
         let dbs_json = serde_json::to_string(
             &role
                 .databases
@@ -548,7 +549,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 .map(|d| d.as_str())
                 .collect::<Vec<_>>(),
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(json_err("policy: create_role"))?;
         let envs_json = serde_json::to_string(
             &role
                 .environments
@@ -556,7 +557,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 .map(|e| e.as_str())
                 .collect::<Vec<_>>(),
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(json_err("policy: create_role"))?;
         conn.execute(
             "INSERT INTO roles (name, permissions_json, databases_json, environments_json, built_in)
              VALUES (?1, ?2, ?3, ?4, 0)",
@@ -575,14 +576,14 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let mut stmt = conn
             .prepare("SELECT name, permissions_json, databases_json, environments_json FROM roles")
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: list_roles"))?;
         let rows = stmt
             .query_map([], row_to_role)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: list_roles"))?;
         let mut results = Vec::new();
         for row in rows {
-            let r = row.map_err(|e| AppError::Internal(e.to_string()))?;
-            results.push(r.map_err(|e| AppError::Internal(e.to_string()))?);
+            let r = row.map_err(db_err("policy: list_roles"))?;
+            results.push(r?);
         }
         Ok(results)
     }
@@ -601,18 +602,18 @@ impl PolicyRepo for SqlitePolicyRepo {
         );
         let mut stmt = conn
             .prepare(&sql)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: get_roles_by_names"))?;
         let params: Vec<&dyn rusqlite::types::ToSql> = names
             .iter()
             .map(|n| n as &dyn rusqlite::types::ToSql)
             .collect();
         let rows = stmt
             .query_map(params.as_slice(), row_to_role)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: get_roles_by_names"))?;
         let mut results = Vec::new();
         for row in rows {
-            let r = row.map_err(|e| AppError::Internal(e.to_string()))?;
-            results.push(r.map_err(|e| AppError::Internal(e.to_string()))?);
+            let r = row.map_err(db_err("policy: get_roles_by_names"))?;
+            results.push(r?);
         }
         Ok(results)
     }
@@ -624,7 +625,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 "DELETE FROM roles WHERE name = ?1 AND built_in = 0",
                 params![name],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: delete_role"))?;
         Ok(changed > 0)
     }
 
@@ -632,7 +633,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let count: u32 = conn
             .query_row("SELECT COUNT(*) FROM roles", [], |row| row.get(0))
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: count_roles"))?;
         Ok(count)
     }
 
@@ -659,7 +660,7 @@ impl PolicyRepo for SqlitePolicyRepo {
              WHERE config_synced = 1 OR built_in = 0",
             rusqlite::params![role.name, perms_json, dbs_str, envs_str],
         )
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(db_err("policy: upsert_config_role"))?;
         // Check if a non-config-synced role with this name already existed (API-managed)
         let updated = conn.changes();
         if updated == 0 {
@@ -684,7 +685,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         if active_names.is_empty() {
             conn.execute("DELETE FROM roles WHERE config_synced = 1", [])
-                .map_err(|e| AppError::Internal(e.to_string()))?;
+                .map_err(db_err("policy: delete_stale_config_roles"))?;
         } else {
             let placeholders: String = active_names
                 .iter()
@@ -701,7 +702,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 .map(|n| n as &dyn rusqlite::ToSql)
                 .collect();
             conn.execute(&sql, params.as_slice())
-                .map_err(|e| AppError::Internal(e.to_string()))?;
+                .map_err(db_err("policy: delete_stale_config_roles"))?;
         }
         Ok(())
     }
@@ -710,7 +711,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let n = conn
             .execute("DELETE FROM workflows WHERE source = ?1", [source])
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: delete_workflows_by_source"))?;
         Ok(n as u64)
     }
 
@@ -718,7 +719,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let n = conn
             .execute("DELETE FROM execution_policies WHERE source = ?1", [source])
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: delete_execution_policies_by_source"))?;
         Ok(n as u64)
     }
 
@@ -726,7 +727,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let conn = self.conn.lock();
         let n = conn
             .execute("DELETE FROM result_policies WHERE source = ?1", [source])
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: delete_result_policies_by_source"))?;
         Ok(n as u64)
     }
 
@@ -737,7 +738,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 "DELETE FROM notification_policies WHERE source = ?1",
                 [source],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: delete_notification_policies_by_source"))?;
         Ok(n as u64)
     }
 
@@ -748,7 +749,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 "DELETE FROM roles WHERE source = ?1 AND built_in = 0",
                 [source],
             )
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(db_err("policy: delete_roles_by_source"))?;
         Ok(n as u64)
     }
 }
@@ -776,14 +777,14 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
             let conn = self.conn.lock();
             let mut stmt = conn.prepare(
                 "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows",
-            ).map_err(|e| AppError::Internal(e.to_string()))?;
+            ).map_err(db_err("policy: evaluate_workflow"))?;
             let rows = stmt
                 .query_map([], row_to_workflow)
-                .map_err(|e| AppError::Internal(e.to_string()))?;
+                .map_err(db_err("policy: evaluate_workflow"))?;
             let mut wfs = Vec::new();
             for row in rows {
-                let r = row.map_err(|e| AppError::Internal(e.to_string()))?;
-                wfs.push(r.map_err(|e| AppError::Internal(e.to_string()))?);
+                let r = row.map_err(db_err("policy: evaluate_workflow"))?;
+                wfs.push(r?);
             }
             wfs
         };
@@ -876,10 +877,10 @@ fn row_to_workflow(row: &rusqlite::Row) -> rusqlite::Result<Result<Workflow, App
         let database = DatabaseName::new(db_str).map_err(|e| AppError::Internal(e.to_string()))?;
         let environment =
             Environment::new(env_str).map_err(|e| AppError::Internal(e.to_string()))?;
-        let operations =
-            serde_json::from_str(&ops_json).map_err(|e| AppError::Internal(e.to_string()))?;
+        let operations: Vec<Operation> =
+            serde_json::from_str(&ops_json).map_err(json_err("policy: row_to_workflow"))?;
         let steps =
-            serde_json::from_str(&steps_json).map_err(|e| AppError::Internal(e.to_string()))?;
+            serde_json::from_str(&steps_json).map_err(json_err("policy: row_to_workflow"))?;
         Ok(Workflow {
             id,
             database,
@@ -944,19 +945,19 @@ fn row_to_role(row: &rusqlite::Row) -> rusqlite::Result<Result<RoleDefinition, A
 
     Ok((|| {
         let perm_strs: Vec<String> =
-            serde_json::from_str(&perms_json).map_err(|e| AppError::Internal(e.to_string()))?;
+            serde_json::from_str(&perms_json).map_err(json_err("policy: row_to_role"))?;
         let permissions: Vec<Permission> = perm_strs
             .iter()
             .map(|s| s.parse::<Permission>().map_err(AppError::Internal))
             .collect::<Result<_, _>>()?;
         let db_strs: Vec<String> =
-            serde_json::from_str(&dbs_json).map_err(|e| AppError::Internal(e.to_string()))?;
+            serde_json::from_str(&dbs_json).map_err(json_err("policy: row_to_role"))?;
         let databases: Vec<DatabaseName> = db_strs
             .into_iter()
             .map(|s| DatabaseName::new(s).map_err(|e| AppError::Internal(e.to_string())))
             .collect::<Result<_, _>>()?;
         let env_strs: Vec<String> =
-            serde_json::from_str(&envs_json).map_err(|e| AppError::Internal(e.to_string()))?;
+            serde_json::from_str(&envs_json).map_err(json_err("policy: row_to_role"))?;
         let environments: Vec<Environment> = env_strs
             .into_iter()
             .map(|s| Environment::new(s).map_err(|e| AppError::Internal(e.to_string())))
