@@ -63,10 +63,12 @@ default_role = "readonly"
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `mode` | String | | `"both"` | Authentication mode: `"token"`, `"oidc"`, `"both"`. |
+| `mode` | String | | `"token"` if `[auth.oidc]` absent; `"both"` if `[auth.oidc]` present | Authentication mode: `"token"`, `"oidc"`, `"both"`. Requires Pro license for `"oidc"`/`"both"`. |
 | `default_role` | String | | — | Role assigned when no binding matches. Unset = reject unmatched users. |
 
 ### [auth.oidc]
+
+Requires `auth.mode = "oidc"` or `"both"` (explicit or implicit). Requires Pro license.
 
 ```toml
 [auth.oidc]
@@ -76,10 +78,10 @@ audience = "dbward"
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `issuer_url` | String | ✓ | — | OIDC issuer URL for token validation. Alias: `issuer`. |
-| `audience` | String | | `""` | Expected `aud` claim. Empty string disables audience validation. |
-| `jwks_uri` | String | | — | Override JWKS endpoint (useful in Docker/internal networks). |
-| `client_id` | String | | — | Client ID for PKCE flows. Defaults to `audience` if unset. |
+| `issuer_url` | String | ✓ | — | OIDC issuer URL. Must be `http://` or `https://`. Alias: `issuer`. |
+| `audience` | String | | `""` | Expected `aud` claim for JWT validation. At least one of `audience` or `client_id` must be non-empty. |
+| `jwks_uri` | String | | — | Override JWKS endpoint. Must be `http://` or `https://` if set. |
+| `client_id` | String | | — | Client ID used as `aud` claim if set. Takes precedence over `audience`. |
 | `default_role` | String | | — | Role for OIDC users when no mapping matches. Falls back to `[auth].default_role`. |
 
 ### [[auth.oidc.role_mappings]]
