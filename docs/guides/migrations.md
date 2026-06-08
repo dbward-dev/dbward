@@ -150,11 +150,6 @@ Share migration results with your team:
 dbward migrate up --share-with "group:backend-team"
 ```
 
-## See also
-
-- [CI/CD](ci-cd.md) — Automate migrations in pipelines
-- [Workflows](policies/workflows.md) — Configure approval for migrations
-
 ---
 
 ## Safety features
@@ -207,3 +202,8 @@ dbward migrate repair --emergency --action remove --version 20240601_add_index -
 ```
 
 This command only modifies the `schema_migrations` table — it does not alter the actual database schema. Always verify DB state before using repair.
+
+## See also
+
+- [CI/CD](ci-cd.md) — Automate migrations in pipelines
+- [Workflows](policies/workflows.md) — Configure approval for migrations

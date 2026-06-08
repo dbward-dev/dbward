@@ -3,9 +3,9 @@
 #
 # Usage:
 #   1. Copy this file and create server.toml + agent.toml
-#   2. docker compose up -d
-#   3. Read bootstrap tokens: docker compose exec server cat /data/admin-token
-#   4. Update agent.toml with the agent token, then restart agent
+#   2. docker compose up -d server
+#   3. Read bootstrap tokens: docker compose exec server cat /data/agent-token
+#   4. Set DBWARD_AGENT_TOKEN and DATABASE_URL env vars, then: docker compose up -d agent
 
 services:
   server:
