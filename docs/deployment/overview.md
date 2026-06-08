@@ -1,6 +1,6 @@
 ---
 title: Deployment Overview
-description: Production deployment architecture
+description: Production deployment architecture and method selection
 ---
 
 # Deployment Overview
@@ -14,21 +14,11 @@ description: Production deployment architecture
 └─────────────┘       └─────────────┘       └─────────────┘       └──────────┘
 ```
 
-## Key design decisions
-
 - **Clients never touch the database.** They submit requests to the server and retrieve results.
 - **Server never touches the database.** It manages approval state, audit logs, and routes requests.
 - **Agent polls the server.** It runs in a network that can reach the database and fetches approved work via outbound HTTP.
 
 ## Deployment models
-
-### Single machine
-
-All three components in one process. Ideal for development and small teams.
-
-```bash
-dbward dev --database-url "postgres://..."
-```
 
 ### Separated
 
@@ -50,56 +40,19 @@ Server ◀────────────────┤
 
 Agents register with capabilities; the server matches requests to the appropriate agent.
 
-## Quick start with Docker Compose
+## Choose a deployment method
 
-Generate config files first:
+| Method | Page | Best for |
+|--------|------|----------|
+| Binary / systemd | [server.md](server.md) + [agent.md](agent.md) | Bare metal / VM |
+| Docker Compose | [docker.md](docker.md) | Small teams, single host |
+| ECS Fargate | [ecs.md](ecs.md) | AWS native |
+| Kubernetes | [kubernetes.md](kubernetes.md) | K8s clusters |
+| Helm | [helm.md](helm.md) | GitOps / Helm-managed clusters |
 
-```bash
-dbward init --preset small-team
-```
+**Binary / systemd:** Deploy the server first, obtain bootstrap tokens, then deploy the agent.
 
-Then use Docker Compose:
-
-```yaml
-services:
-  server:
-    image: ghcr.io/dbward-dev/dbward-server:latest
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./server.toml:/etc/dbward/server.toml:ro
-      - server-data:/var/lib/dbward
-
-  agent:
-    image: ghcr.io/dbward-dev/dbward-agent:latest
-    volumes:
-      - ./agent.toml:/etc/dbward/agent.toml:ro
-    depends_on:
-      - server
-
-volumes:
-  server-data:
-```
-
-## Deployment templates
-
-Pre-built templates are available in the `deploy/` directory:
-
-| Method | Directory | Description |
-|--------|-----------|-------------|
-| Docker | `deploy/docker/` | Dockerfile and entrypoint script |
-| ECS (CloudFormation) | `deploy/ecs/` | Fargate with EFS, ALB, Service Connect |
-| Kubernetes | `deploy/kubernetes/` | Raw manifests (namespace, deployments, PVC, NetworkPolicy) |
-| Helm | `deploy/helm/dbward/` | Helm chart with configurable values |
-| Backup | `deploy/scripts/` | Litestream config and backup cron scripts |
-
-## Configuration files
-
-| Component | File | Purpose |
-|-----------|------|---------|
-| Server | `server.toml` | Listen address, auth keys, workflow policies, webhook config |
-| Agent | `agent.toml` | Server URL, database connection, capabilities |
-| Client | `client.toml` | Server URL, API token, default options |
+**server.md and agent.md** are component references. All platform-specific pages (Docker, ECS, K8s, Helm) link back to them for configuration details.
 
 ## Network requirements
 
@@ -121,7 +74,6 @@ Pre-built templates are available in the `deploy/` directory:
 
 ## Next steps
 
-- [Getting Started](../getting-started.md) — run dbward locally in 5 minutes
-- [Workflows Guide](../guides/policies/workflows.md) — configure approval policies
-- [MCP Integration](../guides/mcp-integration.md) — connect AI tools via MCP
-- [Configuration Reference](../reference/configuration.md) — full config options
+- [Server configuration](server.md) — all server settings and operations
+- [Agent configuration](agent.md) — agent settings, capabilities, resilience
+- [Troubleshooting](troubleshooting.md) — common deployment issues

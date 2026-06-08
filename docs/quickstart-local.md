@@ -103,7 +103,7 @@ role = "admin"
 min = 1
 ```
 
-Then run the server and agent separately instead of `dbward dev`. See the [Setup Guide](guides/setup-guide.md) for the full walkthrough.
+Then run the server and agent separately instead of `dbward dev`. See the [Deployment Overview](deployment/overview.md) for production options.
 
 ---
 
@@ -116,12 +116,12 @@ Then run the server and agent separately instead of `dbward dev`. See the [Setup
 4. Starts `dbward-agent` connected to your database
 5. Prints a `client.toml` path for the CLI
 
-In production, you run the server and agent as separate processes (or containers). See the [Setup Guide](guides/setup-guide.md) for details.
+In production, you run the server and agent as separate processes (or containers). See the [Deployment Overview](deployment/overview.md) for details.
 
 ---
 
 ## Next steps
 
 - [Try with Docker](quickstart-docker.md) — full approval flow demo with submit → approve → execute
-- [Setup Guide](guides/setup-guide.md) — understand the architecture, deploy to your team
+- [Deploy to production](deployment/overview.md) — choose a deployment method for your team
 - [MCP Integration](guides/mcp-integration.md) — connect AI agents (Claude, Cursor)

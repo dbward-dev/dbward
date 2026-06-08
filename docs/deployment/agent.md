@@ -7,30 +7,6 @@ description: Deploy the dbward agent
 
 The dbward agent is the **only component that connects to your database**. It polls the server for approved jobs, executes them, and returns results.
 
-## Quick start
-
-```bash
-# 1. Create agent config
-cat > dbward-agent.toml << 'EOF'
-agent_id = "prod-agent-1"
-
-[server]
-url = "https://dbward.internal:3000"
-agent_token = "${DBWARD_AGENT_TOKEN}"
-
-# Operations this agent handles (default: all)
-# operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "migrate_status"]
-
-[databases.app.production]
-url = "${DATABASE_URL}"
-EOF
-
-# 2. Start
-export DBWARD_AGENT_TOKEN="dbw_..."
-export DATABASE_URL="postgres://dbward:pass@db.internal:5432/app"
-dbward agent --config dbward-agent.toml
-```
-
 ## How the Agent Works
 
 ### Polling architecture
@@ -259,3 +235,4 @@ On SIGTERM/SIGINT:
 - [Server setup](server.md) — Configure the server
 - [Authentication](../guides/authentication.md) — Token management and OIDC
 - [Workflows](../guides/policies/workflows.md) — Configure approval rules
+- [Troubleshooting](troubleshooting.md) — Common deployment issues

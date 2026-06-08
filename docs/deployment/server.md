@@ -7,34 +7,6 @@ description: Deploy the dbward server
 
 The dbward server manages approval state, audit logs, and coordinates agents. It does **not** connect to your database.
 
-## Quick start
-
-```bash
-# 1. Create config
-cat > dbward-server.toml << 'EOF'
-
-state_dir = "/var/lib/dbward"
-
-[auth]
-mode = "token"
-
-[[workflows]]
-database = "*"
-environment = "production"
-
-[[workflows.steps]]
-type = "approval"
-
-[[workflows.steps.approvers]]
-role = "admin"
-min = 1
-EOF
-
-# 2. Start (auto-initializes on first run: creates DB, keys, tokens)
-dbward-server --config dbward-server.toml
-# First run writes tokens to: /var/lib/dbward/admin-token, /var/lib/dbward/agent-token
-```
-
 ## Configuration reference
 
 ### Top-level settings
@@ -297,3 +269,4 @@ secret = "${WEBHOOK_SECRET}"
 - [Agent setup](agent.md) — Connect agents to your databases
 - [Authentication](../guides/authentication.md) — Configure OIDC or manage tokens
 - [Workflows](../guides/policies/workflows.md) — Set up approval rules
+- [Troubleshooting](troubleshooting.md) — Common deployment issues

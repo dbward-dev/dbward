@@ -11,7 +11,7 @@ Choose how you want to try dbward:
 |------|----------|------|
 | [**Connect your database**](quickstart-local.md) | Quick smoke test with your own PostgreSQL/MySQL | 1 min |
 | [**Try with Docker**](quickstart-docker.md) | See the full approval workflow (submit → approve → execute) | 2 min |
-| [**Setup Guide**](guides/setup-guide.md) | Understand the architecture and deploy to your team | 10 min |
+| [**Deploy to your infrastructure**](deployment/overview.md) | Choose a deployment method for your team | 10 min |
 
 ---
 
