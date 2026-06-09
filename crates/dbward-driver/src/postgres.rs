@@ -304,49 +304,71 @@ impl DatabaseDriver for PostgresDriver {
         cancel: &CancelState,
         max_rows: Option<usize>,
     ) -> Result<QueryOutput, DriverError> {
-        let mut conn = self.pool.acquire().await.map_err(conn_err)?;
-        let ms = timeout_secs * 1000;
-        sqlx::query(&format!("SET statement_timeout = {ms}"))
-            .execute(&mut *conn)
-            .await
-            .map_err(query_err)?;
+        let conn = self.pool.acquire().await.map_err(conn_err)?;
+        let mut guard = crate::guard::CancellationGuard::new(conn);
+
         let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
-            .fetch_one(&mut *conn)
+            .fetch_one(&mut **guard.conn_mut())
             .await
             .map_err(query_err)?;
         cancel.set_connection_id(pid.to_string());
 
         if cancel.is_cancelled() {
+            guard.release();
             return Err(DriverError::Cancelled);
         }
 
-        let mut stream = sqlx::raw_sql(sql).fetch(&mut *conn);
-        let mut rows = Vec::new();
-        let mut total_bytes: usize = 0;
-        let mut truncated = false;
-        let mut truncation_reason = None;
-        let effective_max_rows = max_rows.unwrap_or(MAX_RESULT_ROWS).min(MAX_RESULT_ROWS);
+        // SAFE-1: read-only transaction prevents any writes regardless of SQL content
+        sqlx::query("BEGIN READ ONLY")
+            .execute(&mut **guard.conn_mut())
+            .await
+            .map_err(query_err)?;
 
-        while let Some(row) = stream.try_next().await.map_err(query_err)? {
-            let json = pg_row_to_json(&row);
-            total_bytes += json.to_string().len();
-            if rows.len() >= effective_max_rows {
-                truncated = true;
-                truncation_reason = Some(format!("max rows ({effective_max_rows})"));
-                break;
+        let ms = timeout_secs * 1000;
+        sqlx::query(&format!("SET LOCAL statement_timeout = '{ms}ms'"))
+            .execute(&mut **guard.conn_mut())
+            .await
+            .map_err(query_err)?;
+
+        let result = async {
+            let mut stream = sqlx::raw_sql(sql).fetch(&mut **guard.conn_mut());
+            let mut rows = Vec::new();
+            let mut total_bytes: usize = 0;
+            let mut truncated = false;
+            let mut truncation_reason = None;
+            let effective_max_rows = max_rows.unwrap_or(MAX_RESULT_ROWS).min(MAX_RESULT_ROWS);
+
+            while let Some(row) = stream.try_next().await.map_err(query_err)? {
+                let json = pg_row_to_json(&row);
+                total_bytes += json.to_string().len();
+                if rows.len() >= effective_max_rows {
+                    truncated = true;
+                    truncation_reason = Some(format!("max rows ({effective_max_rows})"));
+                    break;
+                }
+                if total_bytes >= MAX_RESULT_BYTES {
+                    truncated = true;
+                    truncation_reason = Some(format!("max size ({MAX_RESULT_BYTES} bytes)"));
+                    break;
+                }
+                rows.push(json);
             }
-            if total_bytes >= MAX_RESULT_BYTES {
-                truncated = true;
-                truncation_reason = Some(format!("max size ({MAX_RESULT_BYTES} bytes)"));
-                break;
-            }
-            rows.push(json);
+            Ok::<_, DriverError>(QueryOutput {
+                rows,
+                truncated,
+                truncation_reason,
+            })
         }
-        Ok(QueryOutput {
-            rows,
-            truncated,
-            truncation_reason,
-        })
+        .await;
+
+        let cleanup_ok = sqlx::query("ROLLBACK")
+            .execute(&mut **guard.conn_mut())
+            .await
+            .is_ok();
+        if cleanup_ok {
+            guard.release();
+        }
+        result
     }
 
     async fn execute_cancellable(
@@ -355,31 +377,49 @@ impl DatabaseDriver for PostgresDriver {
         timeout_secs: u64,
         cancel: &CancelState,
     ) -> Result<u64, DriverError> {
-        let mut conn = self.pool.acquire().await.map_err(conn_err)?;
-        let ms = timeout_secs * 1000;
-        sqlx::query(&format!("SET statement_timeout = {ms}"))
-            .execute(&mut *conn)
-            .await
-            .map_err(query_err)?;
+        let conn = self.pool.acquire().await.map_err(conn_err)?;
+        let mut guard = crate::guard::CancellationGuard::new(conn);
+
         let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
-            .fetch_one(&mut *conn)
+            .fetch_one(&mut **guard.conn_mut())
             .await
             .map_err(query_err)?;
         cancel.set_connection_id(pid.to_string());
 
         if cancel.is_cancelled() {
+            guard.release();
             return Err(DriverError::Cancelled);
         }
 
-        // Use raw_sql + fetch_many to support multi-statement and sum rows_affected
-        let mut stream = sqlx::raw_sql(sql).fetch_many(&mut *conn);
-        let mut total_affected = 0u64;
-        while let Some(either) = stream.try_next().await.map_err(query_err)? {
-            if let sqlx::Either::Left(result) = either {
-                total_affected += result.rows_affected();
+        let ms = timeout_secs * 1000;
+        sqlx::query(&format!("SET statement_timeout = {ms}"))
+            .execute(&mut **guard.conn_mut())
+            .await
+            .map_err(query_err)?;
+
+        let result = async {
+            let mut stream = sqlx::raw_sql(sql).fetch_many(&mut **guard.conn_mut());
+            let mut total_affected = 0u64;
+            while let Some(either) = stream.try_next().await.map_err(query_err)? {
+                if let sqlx::Either::Left(result) = either {
+                    total_affected += result.rows_affected();
+                }
             }
+            Ok::<_, DriverError>(total_affected)
         }
-        Ok(total_affected)
+        .await;
+        let cleanup_ok = sqlx::query("ROLLBACK")
+            .execute(&mut **guard.conn_mut())
+            .await
+            .is_ok()
+            && sqlx::query("RESET statement_timeout")
+                .execute(&mut **guard.conn_mut())
+                .await
+                .is_ok();
+        if cleanup_ok {
+            guard.release();
+        }
+        result
     }
 
     async fn cancel_query(&self, connection_id: &str) -> Result<bool, DriverError> {
@@ -567,8 +607,8 @@ impl DatabaseDriver for PostgresDriver {
     ) -> Result<serde_json::Value, DriverError> {
         use sqlx::Row;
         let mut conn = self.pool.acquire().await.map_err(conn_err)?;
-        // BEGIN transaction so SET LOCAL is scoped correctly
-        sqlx::query("BEGIN")
+        // BEGIN READ ONLY so SET LOCAL is scoped correctly and no writes possible
+        sqlx::query("BEGIN READ ONLY")
             .execute(&mut *conn)
             .await
             .map_err(query_err)?;

@@ -77,6 +77,13 @@ pub struct ClaimResponse {
     pub max_rows: Option<u32>,
     #[serde(default)]
     pub lease_expires_at: Option<String>,
+    /// Parser-derived statement texts (SAFE-3). When present, agent executes
+    /// these instead of raw `detail`. Old agents ignore via #[serde(default)].
+    #[serde(default)]
+    pub execution_plan: Option<Vec<String>>,
+    /// Raw JSON string of execution_plan for hash verification (avoids re-serialization).
+    #[serde(default)]
+    pub execution_plan_json: Option<String>,
 }
 
 /// POST /api/agent/jobs/{id}/heartbeat — response

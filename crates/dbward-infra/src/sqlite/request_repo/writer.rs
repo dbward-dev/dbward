@@ -20,8 +20,8 @@ impl RequestWriter for SqliteRequestRepo {
             serde_json::to_string(&req.share_with).map_err(json_err("request: insert"))?;
 
         let insert_result = tx.execute(
-            "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, decision_trace_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+            "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, decision_trace_json, execution_plan_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 req.id,
                 req.requester,
@@ -37,6 +37,7 @@ impl RequestWriter for SqliteRequestRepo {
                 req.no_store as i64,
                 req.workflow_snapshot_json,
                 req.decision_trace_json,
+                req.execution_plan_json,
                 req.cancelled_by,
                 req.cancel_reason,
                 req.created_at.to_rfc3339(),
@@ -68,8 +69,8 @@ impl RequestWriter for SqliteRequestRepo {
             .map_err(json_err("request: create_and_dispatch"))?;
 
         let insert_result = tx.execute(
-            "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, decision_trace_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+            "INSERT INTO requests (id, requester, operation, database_id, detail, status, emergency, reason, idempotency_key, metadata_json, share_with_json, no_store, workflow_snapshot_json, decision_trace_json, execution_plan_json, cancelled_by, cancel_reason, created_at, updated_at, resolved_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 req.id,
                 req.requester,
@@ -85,6 +86,7 @@ impl RequestWriter for SqliteRequestRepo {
                 req.no_store as i64,
                 req.workflow_snapshot_json,
                 req.decision_trace_json,
+                req.execution_plan_json,
                 req.cancelled_by,
                 req.cancel_reason,
                 req.created_at.to_rfc3339(),

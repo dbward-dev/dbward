@@ -305,29 +305,43 @@ impl DatabaseDriver for MysqlDriver {
         cancel: &CancelState,
         max_rows: Option<usize>,
     ) -> Result<QueryOutput, DriverError> {
-        let mut conn = self.pool.acquire().await.map_err(conn_err)?;
-        let ms = timeout_secs * 1000;
-        sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
-            .execute(&mut *conn)
-            .await
-            .map_err(query_err)?;
+        let conn = self.pool.acquire().await.map_err(conn_err)?;
+        let mut guard = crate::guard::CancellationGuard::new(conn);
+
         let id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
-            .fetch_one(&mut *conn)
+            .fetch_one(&mut **guard.conn_mut())
             .await
             .map_err(query_err)?;
         cancel.set_connection_id(id.to_string());
 
         if cancel.is_cancelled() {
+            guard.release();
             return Err(DriverError::Cancelled);
         }
 
-        // Execute on same connection with external timeout fallback
+        let ms = timeout_secs * 1000;
+        sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
+            .execute(&mut **guard.conn_mut())
+            .await
+            .map_err(query_err)?;
+
+        // MySQL prepared protocol does not support BEGIN/START TRANSACTION
+        // Use SET TRANSACTION READ ONLY + SET autocommit=0 instead
+        sqlx::query("SET TRANSACTION READ ONLY")
+            .execute(&mut **guard.conn_mut())
+            .await
+            .map_err(query_err)?;
+        sqlx::query("SET autocommit = 0")
+            .execute(&mut **guard.conn_mut())
+            .await
+            .map_err(query_err)?;
+
         let conn_id = id;
-        let pool = self.pool.clone();
+        let url = self.url.clone();
         let deadline = Duration::from_secs(timeout_secs + 5);
 
         let exec_result = tokio::time::timeout(deadline, async {
-            let mut stream = sqlx::raw_sql(sql).fetch(&mut *conn);
+            let mut stream = sqlx::raw_sql(sql).fetch(&mut **guard.conn_mut());
             let mut rows = Vec::new();
             let mut total_bytes: usize = 0;
             let mut truncated = false;
@@ -358,14 +372,41 @@ impl DatabaseDriver for MysqlDriver {
         .await;
 
         match exec_result {
-            Ok(r) => r,
+            Ok(result) => {
+                let cleanup_ok = sqlx::query("ROLLBACK")
+                    .execute(&mut **guard.conn_mut())
+                    .await
+                    .is_ok()
+                    && sqlx::query("SET autocommit = 1")
+                        .execute(&mut **guard.conn_mut())
+                        .await
+                        .is_ok()
+                    && sqlx::query("SET SESSION max_execution_time = 0")
+                        .execute(&mut **guard.conn_mut())
+                        .await
+                        .is_ok();
+                if cleanup_ok {
+                    guard.release();
+                }
+                // else: guard drops → detach (connection destroyed)
+                result
+            }
             Err(_) => {
+                // Timeout: guard drops → conn detached. KILL via dedicated connection.
+                drop(guard);
                 tokio::spawn(async move {
-                    if let Ok(mut k) = pool.acquire().await {
-                        let _ = sqlx::query(&format!("KILL {conn_id}"))
-                            .execute(&mut *k)
-                            .await;
-                    }
+                    let kill_result = async {
+                        let kill_pool = sqlx::mysql::MySqlPoolOptions::new()
+                            .max_connections(1)
+                            .connect(&url)
+                            .await?;
+                        sqlx::query(&format!("KILL {conn_id}"))
+                            .execute(&kill_pool)
+                            .await?;
+                        kill_pool.close().await;
+                        Ok::<(), sqlx::Error>(())
+                    };
+                    let _ = tokio::time::timeout(Duration::from_secs(5), kill_result).await;
                 });
                 Err(DriverError::QueryFailed(format!(
                     "query timed out after {timeout_secs}s"
@@ -380,56 +421,59 @@ impl DatabaseDriver for MysqlDriver {
         timeout_secs: u64,
         cancel: &CancelState,
     ) -> Result<u64, DriverError> {
-        let mut conn = self.pool.acquire().await.map_err(conn_err)?;
-        let ms = timeout_secs * 1000;
-        sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
-            .execute(&mut *conn)
-            .await
-            .map_err(query_err)?;
+        let conn = self.pool.acquire().await.map_err(conn_err)?;
+        let mut guard = crate::guard::CancellationGuard::new(conn);
+
         let id = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
-            .fetch_one(&mut *conn)
+            .fetch_one(&mut **guard.conn_mut())
             .await
             .map_err(query_err)?;
         cancel.set_connection_id(id.to_string());
 
         if cancel.is_cancelled() {
+            guard.release();
             return Err(DriverError::Cancelled);
         }
 
+        let ms = timeout_secs * 1000;
+        sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
+            .execute(&mut **guard.conn_mut())
+            .await
+            .map_err(query_err)?;
+
         let conn_id = id;
-        let pool = self.pool.clone();
+        let url = self.url.clone();
         let deadline = Duration::from_secs(timeout_secs + 5);
         let is_multi = is_multi_statement(sql);
         let stmts = split_statements(sql);
 
-        let exec_result = tokio::time::timeout(deadline, async move {
+        let exec_result = tokio::time::timeout(deadline, async {
             if !is_multi {
-                // Single statement or parse-failed: execute directly
                 let r = sqlx::query(&stmts[0])
-                    .execute(&mut *conn)
+                    .execute(&mut **guard.conn_mut())
                     .await
                     .map_err(query_err)?;
                 return Ok::<_, DriverError>(r.rows_affected());
             }
-            // Multi-statement: wrap in transaction for atomicity, sum rows_affected
-            sqlx::query("BEGIN")
-                .execute(&mut *conn)
+            sqlx::query("SET autocommit = 0")
+                .execute(&mut **guard.conn_mut())
                 .await
                 .map_err(query_err)?;
             let mut total = 0u64;
             for stmt in &stmts {
-                let r = match sqlx::query(stmt).execute(&mut *conn).await {
+                let r = match sqlx::query(stmt).execute(&mut **guard.conn_mut()).await {
                     Ok(r) => r,
                     Err(e) => {
-                        // Rollback on error to avoid leaking open transaction
-                        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                        let _ = sqlx::query("ROLLBACK")
+                            .execute(&mut **guard.conn_mut())
+                            .await;
                         return Err(query_err(e));
                     }
                 };
                 total += r.rows_affected();
             }
             sqlx::query("COMMIT")
-                .execute(&mut *conn)
+                .execute(&mut **guard.conn_mut())
                 .await
                 .map_err(query_err)?;
             Ok(total)
@@ -437,14 +481,40 @@ impl DatabaseDriver for MysqlDriver {
         .await;
 
         match exec_result {
-            Ok(r) => r,
+            Ok(result) => {
+                let cleanup_ok = sqlx::query("ROLLBACK")
+                    .execute(&mut **guard.conn_mut())
+                    .await
+                    .is_ok()
+                    && sqlx::query("SET autocommit = 1")
+                        .execute(&mut **guard.conn_mut())
+                        .await
+                        .is_ok()
+                    && sqlx::query("SET SESSION max_execution_time = 0")
+                        .execute(&mut **guard.conn_mut())
+                        .await
+                        .is_ok();
+                if cleanup_ok {
+                    guard.release();
+                }
+                result
+            }
             Err(_) => {
+                // Timeout: guard drops → conn detached. KILL via dedicated connection.
+                drop(guard);
                 tokio::spawn(async move {
-                    if let Ok(mut k) = pool.acquire().await {
-                        let _ = sqlx::query(&format!("KILL {conn_id}"))
-                            .execute(&mut *k)
-                            .await;
-                    }
+                    let kill_result = async {
+                        let kill_pool = sqlx::mysql::MySqlPoolOptions::new()
+                            .max_connections(1)
+                            .connect(&url)
+                            .await?;
+                        sqlx::query(&format!("KILL {conn_id}"))
+                            .execute(&kill_pool)
+                            .await?;
+                        kill_pool.close().await;
+                        Ok::<(), sqlx::Error>(())
+                    };
+                    let _ = tokio::time::timeout(Duration::from_secs(5), kill_result).await;
                 });
                 Err(DriverError::QueryFailed(format!(
                     "query timed out after {timeout_secs}s"
@@ -645,11 +715,22 @@ impl DatabaseDriver for MysqlDriver {
             .execute(&mut conn)
             .await
             .map_err(query_err)?;
-        let explain_sql = format!("EXPLAIN FORMAT=JSON {sql}");
-        let row = sqlx::query(&explain_sql)
-            .fetch_one(&mut conn)
+        // MySQL prepared protocol does not support START TRANSACTION — split into two stmts
+        sqlx::query("SET TRANSACTION READ ONLY")
+            .execute(&mut conn)
             .await
             .map_err(query_err)?;
+        sqlx::query("SET autocommit = 0")
+            .execute(&mut conn)
+            .await
+            .map_err(query_err)?;
+        let explain_sql = format!("EXPLAIN FORMAT=JSON {sql}");
+        let result = sqlx::query(&explain_sql)
+            .fetch_one(&mut conn)
+            .await
+            .map_err(query_err);
+        let _ = sqlx::query("ROLLBACK").execute(&mut conn).await;
+        let row = result?;
         let plan: String = row.try_get(0).map_err(query_err)?;
         serde_json::from_str(&plan)
             .map_err(|e| DriverError::QueryFailed(format!("invalid EXPLAIN JSON: {e}")))

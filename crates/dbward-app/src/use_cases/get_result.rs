@@ -568,6 +568,7 @@ mod tests {
             no_store: false,
             workflow_snapshot_json: None,
             decision_trace_json: None,
+            execution_plan_json: None,
             cancelled_by: None,
             cancel_reason: None,
             created_at: now,

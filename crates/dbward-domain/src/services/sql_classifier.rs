@@ -113,6 +113,14 @@ const DANGEROUS_FUNCTIONS: &[&str] = &[
     "lo_export",
     "lo_import",
     "lo_unlink",
+    // PG Large Object mutators (SAFE-1: would bypass read-only tx)
+    "lo_create",
+    "lo_creat",
+    "lo_from_bytea",
+    "lo_put",
+    "lo_truncate",
+    "lo_truncate64",
+    "lowrite",
     "pg_read_file",
     "pg_read_binary_file",
     "pg_ls_dir",
@@ -126,11 +134,20 @@ const DANGEROUS_FUNCTIONS: &[&str] = &[
     "pg_advisory_lock",
     "pg_advisory_xact_lock",
     "pg_notify",
+    // PG sequence mutators (SAFE-1: side effects in read-only context)
+    "nextval",
+    "setval",
     "sys_exec",
     "sys_eval",
     "load_file",
     "sleep",
     "benchmark",
+    // MySQL advisory locks
+    "get_lock",
+    "release_lock",
+    "release_all_locks",
+    "is_free_lock",
+    "is_used_lock",
 ];
 
 /// SET variables that are safe to change without approval.
@@ -291,7 +308,37 @@ fn classify_query_node(query: &sqlparser::ast::Query) -> InternalClass {
         result = result.escalate(InternalClass::Dml(DmlReason::DangerousFunction));
     }
 
+    // Layer 2: FOR UPDATE/SHARE/NO KEY UPDATE/KEY SHARE → explicit row locking (recursive)
+    if query_has_lock_clause(query) {
+        result = result.escalate(InternalClass::Dml(DmlReason::SemanticEscalation));
+    }
+
     result
+}
+
+fn query_has_lock_clause(query: &sqlparser::ast::Query) -> bool {
+    use sqlparser::ast::{Query, Visit, Visitor};
+    use std::ops::ControlFlow;
+
+    struct LockVisitor {
+        found: bool,
+    }
+
+    impl Visitor for LockVisitor {
+        type Break = ();
+
+        fn pre_visit_query(&mut self, q: &Query) -> ControlFlow<()> {
+            if !q.locks.is_empty() {
+                self.found = true;
+                return ControlFlow::Break(());
+            }
+            ControlFlow::Continue(())
+        }
+    }
+
+    let mut visitor = LockVisitor { found: false };
+    let _ = query.visit(&mut visitor);
+    visitor.found
 }
 
 fn query_contains_dml(query: &sqlparser::ast::Query) -> bool {
@@ -967,5 +1014,123 @@ mod tests {
         if let Ok(stmts) = stmts {
             assert!(!is_safe_ddl_statement(&stmts[0], Some(Dialect::PostgreSql)));
         }
+    }
+
+    // SAFE-1: dangerous function additions
+    #[test]
+    fn nextval_classified_as_dml() {
+        let r = pg("SELECT nextval('my_seq')").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+        assert_eq!(r.dml_reason, Some(DmlReason::DangerousFunction));
+    }
+
+    #[test]
+    fn setval_classified_as_dml() {
+        let r = pg("SELECT setval('my_seq', 100)").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+        assert_eq!(r.dml_reason, Some(DmlReason::DangerousFunction));
+    }
+
+    #[test]
+    fn mysql_get_lock_classified_as_dml() {
+        let r = mysql("SELECT GET_LOCK('mylock', 10)").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+        assert_eq!(r.dml_reason, Some(DmlReason::DangerousFunction));
+    }
+
+    #[test]
+    fn lo_create_classified_as_dml() {
+        let r = pg("SELECT lo_create(0)").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+        assert_eq!(r.dml_reason, Some(DmlReason::DangerousFunction));
+    }
+
+    // SAFE-1: FOR UPDATE/SHARE detection
+    #[test]
+    fn for_update_classified_as_dml() {
+        let r = pg("SELECT * FROM users FOR UPDATE").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+        assert_eq!(r.dml_reason, Some(DmlReason::SemanticEscalation));
+    }
+
+    #[test]
+    fn for_share_classified_as_dml() {
+        let r = pg("SELECT * FROM users FOR SHARE").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+        assert_eq!(r.dml_reason, Some(DmlReason::SemanticEscalation));
+    }
+
+    #[test]
+    fn for_no_key_update_classified_as_dml() {
+        // sqlparser 0.61 cannot parse FOR NO KEY UPDATE → ParseFailure → ExecuteDml
+        let r = pg("SELECT * FROM users FOR NO KEY UPDATE").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+    }
+
+    #[test]
+    fn for_key_share_classified_as_dml() {
+        // sqlparser 0.61 cannot parse FOR KEY SHARE → ParseFailure → ExecuteDml
+        let r = pg("SELECT * FROM users FOR KEY SHARE").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+    }
+
+    #[test]
+    fn subquery_for_update_classified_as_dml() {
+        let r = pg("SELECT * FROM (SELECT id FROM users FOR UPDATE) sub").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+    }
+
+    #[test]
+    fn currval_remains_execute_select() {
+        let r = pg("SELECT currval('my_seq')").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteSelect);
+    }
+
+    #[test]
+    fn lastval_remains_execute_select() {
+        let r = pg("SELECT lastval()").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteSelect);
+    }
+
+    #[test]
+    fn release_lock_classified_as_dml() {
+        let r = mysql("SELECT RELEASE_LOCK('x')").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+        assert_eq!(r.dml_reason, Some(DmlReason::DangerousFunction));
+    }
+
+    #[test]
+    fn is_free_lock_classified_as_dml() {
+        let r = mysql("SELECT IS_FREE_LOCK('x')").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+        assert_eq!(r.dml_reason, Some(DmlReason::DangerousFunction));
+    }
+
+    #[test]
+    fn lo_put_classified_as_dml() {
+        let r = pg("SELECT lo_put(1, 0, '\\x00')").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+        assert_eq!(r.dml_reason, Some(DmlReason::DangerousFunction));
+    }
+
+    #[test]
+    fn lowrite_classified_as_dml() {
+        let r = pg("SELECT lowrite(1, '\\x00')").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+        assert_eq!(r.dml_reason, Some(DmlReason::DangerousFunction));
+    }
+
+    #[test]
+    fn for_update_in_cte_classified_as_dml() {
+        let r =
+            pg("WITH locked AS (SELECT id FROM users FOR UPDATE) SELECT * FROM locked").unwrap();
+        assert_eq!(r.operation, Operation::ExecuteDml);
+    }
+
+    #[test]
+    fn classification_statements_are_canonical() {
+        let r = pg("select  id ,  name   from  users  where  active = true").unwrap();
+        assert_eq!(r.statement_count, 1);
+        assert!(r.statements[0].contains("SELECT"));
     }
 }

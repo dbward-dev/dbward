@@ -1,6 +1,7 @@
 pub mod cancel_state;
 pub(crate) mod common;
 pub mod error;
+pub(crate) mod guard;
 mod mysql;
 pub(crate) mod pg_array;
 mod postgres;

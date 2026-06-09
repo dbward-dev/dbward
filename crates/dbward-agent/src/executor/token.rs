@@ -54,10 +54,11 @@ impl ExecutionToken {
             return Err(AgentError::TokenVerification("environment mismatch".into()));
         }
 
-        // Canonicalize JSON for migration mutations to ensure deterministic hash.
-        // Relies on serde_json::Value using BTreeMap (alphabetical key sort).
-        // Must match the canonicalization in server's agent_claim.rs.
-        let canonical_detail = if claim.operation == "migrate_up"
+        // SAFE-3: when execution_plan_json is present, hash the raw JSON string directly.
+        // This avoids re-serialization and guarantees hash consistency with the server.
+        let canonical_detail = if let Some(ref plan_json) = claim.execution_plan_json {
+            plan_json.clone()
+        } else if claim.operation == "migrate_up"
             || claim.operation == "migrate_down"
             || claim.operation == "migrate_repair"
         {
@@ -117,6 +118,8 @@ mod tests {
             statement_timeout_secs: None,
             max_rows: None,
             lease_expires_at: None,
+            execution_plan: None,
+            execution_plan_json: None,
         }
     }
 
@@ -287,5 +290,161 @@ mod tests {
         bad_claim.environment = "staging".into();
         let err = token.verify(&bad_claim, &pk).unwrap_err();
         assert!(err.to_string().contains("environment mismatch"));
+    }
+
+    #[test]
+    fn verify_with_execution_plan_json() {
+        let sk = make_signing_key();
+        let pk = sk.verifying_key();
+        let plan_json = r#"["SELECT id, name FROM users"]"#.to_string();
+        let mut claim = make_claim();
+        claim.execution_plan_json = Some(plan_json.clone());
+        claim.execution_plan = Some(vec!["SELECT id, name FROM users".into()]);
+
+        // Sign with plan_json hash
+        let detail_hash = hex::encode(Sha256::digest(plan_json.as_bytes()));
+        let expires_at = (chrono::Utc::now() + chrono::Duration::minutes(5))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let message = format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}",
+            claim.request_id,
+            claim.operation,
+            claim.environment,
+            claim.database,
+            detail_hash,
+            expires_at,
+            "",
+            "",
+        );
+        let sig = sk.sign(message.as_bytes());
+        let raw = serde_json::json!({
+            "request_id": claim.request_id,
+            "operation": claim.operation,
+            "environment": claim.environment,
+            "database": claim.database,
+            "detail_hash": detail_hash,
+            "expires_at": expires_at,
+            "signature": hex::encode(sig.to_bytes()),
+        })
+        .to_string();
+
+        let token = ExecutionToken::parse(&raw).unwrap();
+        assert!(token.verify(&claim, &pk).is_ok());
+    }
+
+    #[test]
+    fn verify_execution_plan_json_tampered() {
+        let sk = make_signing_key();
+        let pk = sk.verifying_key();
+        let plan_json = r#"["SELECT id FROM users"]"#.to_string();
+        let mut claim = make_claim();
+        claim.execution_plan_json = Some(plan_json.clone());
+
+        let raw = sign_token(&claim, &sk); // signs with claim.detail hash
+        let token = ExecutionToken::parse(&raw).unwrap();
+        // Token was signed against detail, but verify uses execution_plan_json → mismatch
+        let err = token.verify(&claim, &pk).unwrap_err();
+        assert!(err.to_string().contains("detail_hash mismatch"));
+    }
+
+    #[test]
+    fn verify_falls_back_to_detail_when_execution_plan_json_none() {
+        // execution_plan_json = None → token verification uses claim.detail
+        let sk = make_signing_key();
+        let pk = sk.verifying_key();
+        let claim = make_claim(); // execution_plan_json = None
+        let raw = sign_token(&claim, &sk); // signs with detail hash
+        let token = ExecutionToken::parse(&raw).unwrap();
+        assert!(token.verify(&claim, &pk).is_ok());
+    }
+
+    #[test]
+    fn verify_execution_plan_json_takes_precedence_over_detail() {
+        // When both exist but disagree, hash must use execution_plan_json
+        let sk = make_signing_key();
+        let pk = sk.verifying_key();
+        let plan_json = r#"["SELECT 42"]"#.to_string();
+        let mut claim = make_claim();
+        claim.detail = "SELECT 999".into(); // different from plan
+        claim.execution_plan_json = Some(plan_json.clone());
+
+        // Sign with plan_json hash (what server does)
+        let detail_hash = hex::encode(Sha256::digest(plan_json.as_bytes()));
+        let expires_at = (chrono::Utc::now() + chrono::Duration::minutes(5))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let message = format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}",
+            claim.request_id,
+            claim.operation,
+            claim.environment,
+            claim.database,
+            detail_hash,
+            expires_at,
+            "",
+            "",
+        );
+        let sig = sk.sign(message.as_bytes());
+        let raw = serde_json::json!({
+            "request_id": claim.request_id,
+            "operation": claim.operation,
+            "environment": claim.environment,
+            "database": claim.database,
+            "detail_hash": detail_hash,
+            "expires_at": expires_at,
+            "signature": hex::encode(sig.to_bytes()),
+        })
+        .to_string();
+
+        let token = ExecutionToken::parse(&raw).unwrap();
+        // Passes because verify uses execution_plan_json, not detail
+        assert!(token.verify(&claim, &pk).is_ok());
+    }
+
+    #[test]
+    fn verify_migration_canonicalizes_json_field_order() {
+        // Server canonicalizes migration JSON before hashing (alphabetical keys).
+        // Agent must do the same — different field order must still verify.
+        let sk = make_signing_key();
+        let pk = sk.verifying_key();
+
+        let mut claim = make_claim();
+        claim.operation = "migrate_up".into();
+        // Detail with non-alphabetical field order
+        claim.detail = r#"{"version":"001","sql":"CREATE TABLE t (id INT)"}"#.into();
+        claim.execution_plan_json = None; // migrations don't have execution_plan
+
+        // Server canonicalizes: keys sorted alphabetically
+        let canonical = serde_json::to_string(
+            &serde_json::from_str::<serde_json::Value>(&claim.detail).unwrap(),
+        )
+        .unwrap();
+        let detail_hash = hex::encode(Sha256::digest(canonical.as_bytes()));
+        let expires_at = (chrono::Utc::now() + chrono::Duration::minutes(5))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let message = format!(
+            "{}|{}|{}|{}|{}|{}|{}|{}",
+            claim.request_id,
+            claim.operation,
+            claim.environment,
+            claim.database,
+            detail_hash,
+            expires_at,
+            "",
+            "",
+        );
+        let sig = sk.sign(message.as_bytes());
+        let raw = serde_json::json!({
+            "request_id": claim.request_id,
+            "operation": claim.operation,
+            "environment": claim.environment,
+            "database": claim.database,
+            "detail_hash": detail_hash,
+            "expires_at": expires_at,
+            "signature": hex::encode(sig.to_bytes()),
+        })
+        .to_string();
+
+        let token = ExecutionToken::parse(&raw).unwrap();
+        assert!(token.verify(&claim, &pk).is_ok());
     }
 }

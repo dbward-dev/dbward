@@ -40,11 +40,24 @@ impl Operation {
         timeout_secs: u64,
         cancel: &CancelState,
         max_rows: Option<usize>,
+        execution_plan_json: Option<&str>,
     ) -> Result<ExecutionResult, AgentError> {
         match self {
             Self::ExecuteSelect => {
+                // SAFE-3: derive SQL from the signed execution_plan_json (not the unsigned execution_plan field)
+                let sql = match execution_plan_json {
+                    Some(json) => {
+                        let stmts: Vec<String> = serde_json::from_str(json).map_err(|e| {
+                            AgentError::TokenVerification(format!(
+                                "malformed execution_plan_json: {e}"
+                            ))
+                        })?;
+                        stmts.join(";\n")
+                    }
+                    None => detail.to_string(),
+                };
                 let output = driver
-                    .query_cancellable(detail, timeout_secs, cancel, max_rows)
+                    .query_cancellable(&sql, timeout_secs, cancel, max_rows)
                     .await?;
                 let data = serde_json::to_string(&serde_json::json!({
                     "rows": output.rows,
@@ -58,8 +71,20 @@ impl Operation {
                 })
             }
             Self::ExecuteDml => {
+                // SAFE-3: derive SQL from the signed execution_plan_json
+                let sql = match execution_plan_json {
+                    Some(json) => {
+                        let stmts: Vec<String> = serde_json::from_str(json).map_err(|e| {
+                            AgentError::TokenVerification(format!(
+                                "malformed execution_plan_json: {e}"
+                            ))
+                        })?;
+                        stmts.join(";\n")
+                    }
+                    None => detail.to_string(),
+                };
                 let affected = driver
-                    .execute_cancellable(detail, timeout_secs, cancel)
+                    .execute_cancellable(&sql, timeout_secs, cancel)
                     .await?;
                 Ok(ExecutionResult::Execute {
                     rows_affected: affected,
@@ -171,5 +196,44 @@ mod tests {
         assert!(err.to_string().contains("unsupported operation"));
         let err = Operation::resolve("").unwrap_err();
         assert!(err.to_string().contains("unsupported operation"));
+    }
+
+    /// Helper: simulates the SQL derivation logic from handlers (no driver needed)
+    fn derive_sql(execution_plan_json: Option<&str>, detail: &str) -> Result<String, AgentError> {
+        match execution_plan_json {
+            Some(json) => {
+                let stmts: Vec<String> = serde_json::from_str(json).map_err(|e| {
+                    AgentError::TokenVerification(format!("malformed execution_plan_json: {e}"))
+                })?;
+                Ok(stmts.join(";\n"))
+            }
+            None => Ok(detail.to_string()),
+        }
+    }
+
+    #[test]
+    fn handlers_derive_sql_from_execution_plan_json() {
+        let json = r#"["SELECT 1","SELECT 2"]"#;
+        let sql = derive_sql(Some(json), "ignored detail").unwrap();
+        assert_eq!(sql, "SELECT 1;\nSELECT 2");
+    }
+
+    #[test]
+    fn handlers_malformed_execution_plan_json_returns_error() {
+        let err = derive_sql(Some("not valid json"), "SELECT 1").unwrap_err();
+        assert!(err.to_string().contains("malformed execution_plan_json"));
+    }
+
+    #[test]
+    fn handlers_fallback_to_detail_when_none() {
+        let sql = derive_sql(None, "SELECT fallback").unwrap();
+        assert_eq!(sql, "SELECT fallback");
+    }
+
+    #[test]
+    fn handlers_join_multiple_statements() {
+        let json = r#"["SET statement_timeout = '5s'","SELECT 1","SELECT 2"]"#;
+        let sql = derive_sql(Some(json), "ignored").unwrap();
+        assert_eq!(sql, "SET statement_timeout = '5s';\nSELECT 1;\nSELECT 2");
     }
 }

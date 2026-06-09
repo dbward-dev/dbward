@@ -151,6 +151,7 @@ mod tests {
                     emergency: false,
                     workflow_snapshot_json: None,
                     decision_trace_json: None,
+                    execution_plan_json: None,
                     metadata_json: "{}".into(),
                     no_store: false,
                     cancel_reason: None,

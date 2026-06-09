@@ -247,7 +247,7 @@ impl JobExecutor {
 
         let result = tokio::select! {
             biased;
-            result = operation.execute(driver, &claim.detail, timeout_secs, &cancel_state, max_rows) => result,
+            result = operation.execute(driver, &claim.detail, timeout_secs, &cancel_state, max_rows, claim.execution_plan_json.as_deref()) => result,
             _ = cancel_state.wait_for_kill() => {
                 Err(AgentError::Driver(DriverError::Cancelled))
             }
