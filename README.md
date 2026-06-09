@@ -77,7 +77,9 @@ dbward --config ~/.dbward/dev/client.toml --database app execute "SELECT 1"
 
 Dev mode auto-approves everything for fast iteration. See [Connect Your Database](https://dbward.dev/docs/quickstart-local/) for details.
 
-### MCP Mode (AI agents)
+## MCP (AI Agents)
+
+> Full reference: [docs/reference/mcp.md](docs/reference/mcp.md)
 
 ```json
 {
@@ -128,7 +130,7 @@ Results are persisted locally by default (configurable to S3 or stream-only) —
 
 ## Policy Engine
 
-Defined in `dbward-server.toml` (synced to SQLite on startup) or managed via REST API.
+Defined in `server.toml` and hot-reloaded via SIGHUP. See [Configuration Reference](docs/reference/configuration.md).
 
 ### Workflows
 
@@ -189,11 +191,14 @@ format = "slack"
 
 ## CLI Reference
 
+> Full reference: [docs/reference/cli.md](docs/reference/cli.md)
+
 ```
 dbward [OPTIONS] <COMMAND>
 
 Commands:
   init          Interactive setup wizard
+  doctor        Diagnose connectivity and configuration
   login         OIDC login (browser or --device for headless)
   logout        Revoke tokens and delete credentials
   whoami        Show current identity and role
@@ -201,7 +206,7 @@ Commands:
   execute       Execute SQL (--emergency --reason for break-glass)
   audit         Search audit log (--verify for hash chain check)
   mcp           Start MCP stdio server
-  server        Server management (start, token create/revoke)
+  server        Server management (start, token create/revoke, reload)
   agent         Start the agent
   dev           Start local dev server + agent
   request       Manage requests:
@@ -307,6 +312,8 @@ Global Options:
 
 ## Security
 
+> Threat model and hardening guide: [docs/security/](docs/security/)
+
 - **Zero-trust client** — developer machines never have DB credentials
 - **Signed execution tokens** — Ed25519. Token includes SHA-256 hash of SQL + target database
 - **Token replay prevention** — executed/failed requests don't issue new tokens
@@ -342,6 +349,8 @@ Pre-built binaries are available on [GitHub Releases](https://github.com/dbward-
 Auto-detected from URL scheme (`postgres://` or `mysql://`).
 
 ## Authentication
+
+> Full guide: [docs/guides/authentication.md](docs/guides/authentication.md)
 
 ### API Tokens (Free)
 
@@ -395,6 +404,8 @@ dbward execute "SELECT pg_terminate_backend(12345)" \
 - **Not available via MCP** (AI agents cannot trigger break-glass)
 
 ## Configuration
+
+> Full reference: [docs/reference/configuration.md](docs/reference/configuration.md)
 
 Config is resolved in two layers:
 1. **Global** (`~/.config/dbward/config.toml`): server URL, token/OIDC
