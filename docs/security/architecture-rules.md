@@ -1,3 +1,8 @@
+---
+title: Architecture Rules
+description: Security rules for contributors to prevent authorization bypass and injection vulnerabilities
+---
+
 # Security Architecture Rules
 
 Rules for contributors to prevent authorization bypass and injection vulnerabilities.
