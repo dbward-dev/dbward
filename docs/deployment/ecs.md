@@ -254,6 +254,15 @@ aws secretsmanager delete-secret --secret-id dbward/agent-token --force-delete-w
 | DatabasePort | | DB port for SG rule (default: 5432) |
 | EcrRepositoryName | | ECR repo name |
 
+## Monitoring
+
+The CloudFormation templates configure ECS container health checks (`/health`) and ALB target group health checks (`/ready`) automatically. For alerting on service failures:
+
+- **ECS service events** → EventBridge rule → SNS topic for deploy failures and task crashes
+- **ALB unhealthy targets** → CloudWatch Alarm on `UnHealthyHostCount` metric
+
+For application-level monitoring (agent offline detection, queue depth), poll `GET /api/agents` with a `metrics.view` token. See [Server Health checks](server.md#health-checks).
+
 ## See also
 
 - [Server configuration](server.md) — full server settings reference

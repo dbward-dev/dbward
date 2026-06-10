@@ -187,8 +187,11 @@ To immediately revoke an agent's ability to execute:
 
 ### Recommended Alerts
 
-- Server `/ready` returning non-200
-- Agent liveness file missing (`/tmp/dbward-agent-alive`)
+- Server `/ready` returning non-200 (service degraded or draining)
+- Agent offline or saturated — poll `GET /api/agents` with a `metrics.view` token and check the `status` field
+- Agent liveness file missing (`/tmp/dbward-agent-alive`) — container runtime should restart
 - Audit chain verification failure (daily cron)
 - Unusual approval patterns (e.g., break-glass usage spike)
 - Token verification errors (may indicate attack attempts)
+
+For automated monitoring, create a dedicated token with `metrics.view` permission (not the admin token) and poll `GET /api/agents` via cron or Lambda.
