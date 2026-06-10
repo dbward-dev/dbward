@@ -1112,7 +1112,7 @@ mod tests {
         // With auto-approve disabled, it doesn't change the outcome but the code path runs
         let uc = make_uc(Arc::new(AllowAll));
         let mut input = make_input();
-        input.detail = "DELETE FROM users".into(); // no WHERE → risk_scorer should find this risky
+        input.detail = "DELETE FROM users WHERE id = 1".into(); // DML → risk_scorer computes risk
         let result = uc
             .execute(
                 input,

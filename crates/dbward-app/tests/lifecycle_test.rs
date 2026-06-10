@@ -500,7 +500,7 @@ fn make_input() -> CreateRequestInput {
         database: DatabaseName::new("app").unwrap(),
         environment: Environment::new("production").unwrap(),
         operation: Operation::ExecuteDml,
-        detail: "UPDATE users SET active = true".into(),
+        detail: "UPDATE users SET active = true WHERE id > 0".into(),
         reason: None,
         emergency: false,
         idempotency_key: None,
