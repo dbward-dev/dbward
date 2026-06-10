@@ -30,3 +30,51 @@ pub(crate) fn query_err(e: sqlx::Error) -> DriverError {
 pub(crate) fn conn_err(e: sqlx::Error) -> DriverError {
     DriverError::ConnectionFailed(e.to_string())
 }
+
+// --- Row collection with limit checks ---
+
+use crate::{MAX_RESULT_BYTES, MAX_RESULT_ROWS, QueryOutput};
+use serde_json::Value;
+
+/// Streaming collector that accumulates rows with limit checks.
+pub(crate) struct RowCollector {
+    pub rows: Vec<Value>,
+    pub total_bytes: usize,
+    max_rows: usize,
+}
+
+impl RowCollector {
+    pub fn new(max_rows: Option<usize>) -> Self {
+        Self {
+            rows: Vec::new(),
+            total_bytes: 0,
+            max_rows: max_rows.unwrap_or(MAX_RESULT_ROWS),
+        }
+    }
+
+    /// Push a row and return true if collection should stop (limit reached).
+    pub fn push(&mut self, json: Value) -> bool {
+        self.total_bytes += serde_json::to_string(&json).unwrap_or_default().len();
+        self.rows.push(json);
+        self.rows.len() >= self.max_rows || self.total_bytes >= MAX_RESULT_BYTES
+    }
+
+    pub fn finish(self) -> QueryOutput {
+        let truncated = self.rows.len() >= self.max_rows || self.total_bytes >= MAX_RESULT_BYTES;
+        let truncation_reason = if self.rows.len() >= self.max_rows {
+            Some(format!("row limit reached ({})", self.max_rows))
+        } else if self.total_bytes >= MAX_RESULT_BYTES {
+            Some(format!(
+                "size limit reached ({} MB)",
+                MAX_RESULT_BYTES / 1024 / 1024
+            ))
+        } else {
+            None
+        };
+        QueryOutput {
+            rows: self.rows,
+            truncated,
+            truncation_reason,
+        }
+    }
+}

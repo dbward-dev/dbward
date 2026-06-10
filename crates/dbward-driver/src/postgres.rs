@@ -5,8 +5,8 @@ use sqlx::{Column, Row, TypeInfo, ValueRef};
 use crate::{MigrationDriver, QueryDriver, SchemaDriver};
 
 use crate::{
-    CancelState, ColumnMapping, DatabaseDriver, DriverError, JsonMapping, MAX_RESULT_BYTES,
-    MAX_RESULT_ROWS, QueryOutput, pg_array::parse_pg_array, text_to_json,
+    CancelState, ColumnMapping, DatabaseDriver, DriverError, JsonMapping, MAX_RESULT_ROWS,
+    QueryOutput, pg_array::parse_pg_array, text_to_json,
 };
 
 /// Reject migration version strings containing characters that could escape
@@ -132,35 +132,13 @@ fn classify_connect_error(e: sqlx::Error) -> DriverError {
 impl QueryDriver for PostgresDriver {
     async fn query(&self, sql: &str) -> Result<QueryOutput, DriverError> {
         let mut stream = sqlx::raw_sql(sql).fetch(&self.pool);
-        let mut rows = Vec::new();
-        let mut total_bytes: usize = 0;
-        let mut truncated = false;
-        let mut truncation_reason = None;
-
+        let mut collector = crate::common::RowCollector::new(None);
         while let Some(row) = stream.try_next().await.map_err(query_err)? {
-            let json = pg_row_to_json(&row);
-            total_bytes += serde_json::to_string(&json).unwrap_or_default().len();
-            rows.push(json);
-            if rows.len() >= MAX_RESULT_ROWS {
-                truncated = true;
-                truncation_reason = Some(format!("row limit reached ({MAX_RESULT_ROWS})"));
-                break;
-            }
-            if total_bytes >= MAX_RESULT_BYTES {
-                truncated = true;
-                truncation_reason = Some(format!(
-                    "size limit reached ({} MB)",
-                    MAX_RESULT_BYTES / 1024 / 1024
-                ));
+            if collector.push(pg_row_to_json(&row)) {
                 break;
             }
         }
-
-        Ok(QueryOutput {
-            rows,
-            truncated,
-            truncation_reason,
-        })
+        Ok(collector.finish())
     }
 
     async fn execute(&self, sql: &str) -> Result<u64, DriverError> {
@@ -207,32 +185,15 @@ impl QueryDriver for PostgresDriver {
 
         let result = async {
             let mut stream = sqlx::raw_sql(sql).fetch(&mut **guard.conn_mut());
-            let mut rows = Vec::new();
-            let mut total_bytes: usize = 0;
-            let mut truncated = false;
-            let mut truncation_reason = None;
             let effective_max_rows = max_rows.unwrap_or(MAX_RESULT_ROWS).min(MAX_RESULT_ROWS);
+            let mut collector = crate::common::RowCollector::new(Some(effective_max_rows));
 
             while let Some(row) = stream.try_next().await.map_err(query_err)? {
-                let json = pg_row_to_json(&row);
-                total_bytes += json.to_string().len();
-                if rows.len() >= effective_max_rows {
-                    truncated = true;
-                    truncation_reason = Some(format!("max rows ({effective_max_rows})"));
+                if collector.push(pg_row_to_json(&row)) {
                     break;
                 }
-                if total_bytes >= MAX_RESULT_BYTES {
-                    truncated = true;
-                    truncation_reason = Some(format!("max size ({MAX_RESULT_BYTES} bytes)"));
-                    break;
-                }
-                rows.push(json);
             }
-            Ok::<_, DriverError>(QueryOutput {
-                rows,
-                truncated,
-                truncation_reason,
-            })
+            Ok::<_, DriverError>(collector.finish())
         }
         .await;
 
