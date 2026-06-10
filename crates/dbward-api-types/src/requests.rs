@@ -1,7 +1,59 @@
 use serde::{Deserialize, Serialize};
 
 /// Request status as returned by the API.
-pub type RequestStatus = String;
+/// Mirrors domain::RequestStatus with an additional `Unknown` variant for forward-compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestStatus {
+    Pending,
+    Approved,
+    AutoApproved,
+    BreakGlass,
+    Dispatched,
+    Running,
+    Executed,
+    Failed,
+    Rejected,
+    Cancelled,
+    Expired,
+    ExecutionLost,
+    /// Forward-compatibility: unknown status from newer server version.
+    #[serde(other)]
+    Unknown,
+}
+
+impl RequestStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Approved => "approved",
+            Self::AutoApproved => "auto_approved",
+            Self::BreakGlass => "break_glass",
+            Self::Dispatched => "dispatched",
+            Self::Running => "running",
+            Self::Executed => "executed",
+            Self::Failed => "failed",
+            Self::Rejected => "rejected",
+            Self::Cancelled => "cancelled",
+            Self::Expired => "expired",
+            Self::ExecutionLost => "execution_lost",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl std::fmt::Display for RequestStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl RequestStatus {
+    /// Parse from a JSON Value (e.g. `resp["status"]`). Returns Unknown for null/unrecognized.
+    pub fn from_json(v: &serde_json::Value) -> Self {
+        serde_json::from_value(v.clone()).unwrap_or(Self::Unknown)
+    }
+}
 
 /// POST /api/requests — request body
 #[derive(Debug, Serialize, Deserialize)]

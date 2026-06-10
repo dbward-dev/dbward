@@ -18,10 +18,12 @@ pub enum Outcome {
     Approved { request_id: String },
 }
 
+use dbward_api_types::requests::RequestStatus;
+
 /// Result of request creation (before orchestration).
 pub struct CreateResult {
     pub request_id: String,
-    pub status: String,
+    pub status: RequestStatus,
     pub approvers: Vec<String>,
 }
 
@@ -43,20 +45,25 @@ pub async fn create_request(
 pub async fn wait_for_completion(
     sc: &ServerClient,
     request_id: &str,
-    status: &str,
+    status: RequestStatus,
     verbose: bool,
 ) -> Result<Value, CliError> {
     match status {
-        "dispatched" | "running" => wait_and_resolve(sc, request_id, verbose).await,
-        "approved" | "auto_approved" | "break_glass" => {
+        RequestStatus::Dispatched | RequestStatus::Running => {
+            wait_and_resolve(sc, request_id, verbose).await
+        }
+        RequestStatus::Approved | RequestStatus::AutoApproved | RequestStatus::BreakGlass => {
             sc.resume(request_id)
                 .await
                 .map_err(|e| CliError::Server(e.body.clone()))?;
             wait_and_resolve(sc, request_id, verbose).await
         }
-        "executed" | "failed" => resolve_terminal_result(sc, request_id).await,
+        RequestStatus::Executed | RequestStatus::Failed => {
+            resolve_terminal_result(sc, request_id).await
+        }
         _ => Err(CliError::Server(format!(
-            "unexpected status for wait: {status}"
+            "unexpected status for wait: {}",
+            status
         ))),
     }
 }
@@ -72,25 +79,25 @@ pub async fn submit_and_orchestrate(
 ) -> Result<Outcome, CliError> {
     let cr = create_request(sc, params).await?;
 
-    match cr.status.as_str() {
-        "dispatched" | "break_glass" | "running" => {
+    match cr.status {
+        RequestStatus::Dispatched | RequestStatus::BreakGlass | RequestStatus::Running => {
             let result = wait_and_resolve(sc, &cr.request_id, verbose).await?;
             Ok(Outcome::Completed {
                 request_id: cr.request_id,
                 result,
             })
         }
-        "executed" | "failed" => {
+        RequestStatus::Executed | RequestStatus::Failed => {
             let result = resolve_terminal_result(sc, &cr.request_id).await?;
             Ok(Outcome::Completed {
                 request_id: cr.request_id,
                 result,
             })
         }
-        "approved" | "auto_approved" => Ok(Outcome::Approved {
+        RequestStatus::Approved | RequestStatus::AutoApproved => Ok(Outcome::Approved {
             request_id: cr.request_id,
         }),
-        "pending" => Ok(Outcome::Pending {
+        RequestStatus::Pending => Ok(Outcome::Pending {
             request_id: cr.request_id,
             approvers: cr.approvers,
         }),
@@ -163,13 +170,13 @@ fn spawn_progress_reporter(sc: ServerClient, request_id: String) -> AbortOnDrop 
                 Ok(Ok(r)) => r,
                 _ => continue,
             };
-            let status = req["status"].as_str().unwrap_or("").to_string();
+            let status = RequestStatus::from_json(&req["status"]);
             let queue_hint = req["queue_hint"].as_str().unwrap_or("").to_string();
             let key = format!("{status}:{queue_hint}");
             let elapsed = start.elapsed().as_secs();
             if key != last_key {
-                match status.as_str() {
-                    "dispatched" => match queue_hint.as_str() {
+                match status {
+                    RequestStatus::Dispatched => match queue_hint.as_str() {
                         "no_agents" => eprintln!(
                             "  → queued — no agents online. Contact your admin  [{}s]",
                             elapsed
@@ -185,15 +192,15 @@ fn spawn_progress_reporter(sc: ServerClient, request_id: String) -> AbortOnDrop 
                         }
                         _ => eprintln!("  → queued (waiting for agent)  [{}s]", elapsed),
                     },
-                    "executing" | "running" => {
+                    RequestStatus::Running => {
                         let agent = req["claimed_by"].as_str().unwrap_or("agent");
                         eprintln!("  → executing by {}  [{}s]", agent, elapsed);
                     }
-                    "execution_lost" => {
+                    RequestStatus::ExecutionLost => {
                         eprintln!("  → execution_lost (agent disconnected)");
                         break;
                     }
-                    "approved" => {
+                    RequestStatus::Approved => {
                         eprintln!("  → resume expired (no agent picked up)");
                         break;
                     }
@@ -223,16 +230,16 @@ async fn poll_until_terminal(
         let remaining_secs = deadline
             .saturating_duration_since(std::time::Instant::now())
             .as_secs();
-        let status = req["status"].as_str().unwrap_or("");
+        let status = RequestStatus::from_json(&req["status"]);
         match status {
-            "executed" | "failed" => {
+            RequestStatus::Executed | RequestStatus::Failed => {
                 return resolve_from_request(sc, request_id, &req).await.map(Some);
             }
-            "dispatched" | "running" => {
+            RequestStatus::Dispatched | RequestStatus::Running => {
                 let wait = remaining_secs.min(REQUEST_STATUS_WAIT_SECS);
                 req = sc.get_request_with_wait(request_id, wait).await?;
             }
-            "approved" | "auto_approved" | "break_glass" => {
+            RequestStatus::Approved | RequestStatus::AutoApproved | RequestStatus::BreakGlass => {
                 // Stream failed and resume lease expired. Re-resume.
                 match sc.resume(request_id).await {
                     Ok(_) => {
@@ -247,7 +254,7 @@ async fn poll_until_terminal(
                     }
                 }
             }
-            "pending" => {
+            RequestStatus::Pending => {
                 return Err(CliError::Server(format!(
                     "Request {request_id} requires approval. Check status: dbward request show {request_id}"
                 )));
@@ -267,20 +274,22 @@ async fn resolve_from_request(
     request_id: &str,
     req: &Value,
 ) -> Result<Value, CliError> {
-    let status = req["status"].as_str().unwrap_or("");
+    let status = RequestStatus::from_json(&req["status"]);
 
     if let Some(payload) = terminal_payload_from_request(req) {
         return Ok(payload);
     }
 
     match status {
-        "executed" | "failed" => match sc.get_result_content(request_id, None).await {
-            Ok(result) => Ok(result),
-            Err(err) if is_missing_result_content_error(&err) => {
-                Ok(synthesized_terminal_payload(status, request_id))
+        RequestStatus::Executed | RequestStatus::Failed => {
+            match sc.get_result_content(request_id, None).await {
+                Ok(result) => Ok(result),
+                Err(err) if is_missing_result_content_error(&err) => {
+                    Ok(synthesized_terminal_payload(status.as_str(), request_id))
+                }
+                Err(err) => Err(err),
             }
-            Err(err) => Err(err),
-        },
+        }
         _ => Err(CliError::Server(format!(
             "unexpected status: {status}. Try: dbward request resume {request_id}"
         ))),
@@ -289,14 +298,14 @@ async fn resolve_from_request(
 
 /// Extract terminal payload from embedded execution_result/execution_error fields.
 fn terminal_payload_from_request(req: &Value) -> Option<Value> {
-    let status = req["status"].as_str().unwrap_or("");
+    let status = RequestStatus::from_json(&req["status"]);
 
     if let Some(err) = req.get("execution_error") {
         return Some(serde_json::json!({"success": false, "error": err}));
     }
     if let Some(result) = req.get("execution_result") {
         return Some(serde_json::json!({
-            "success": status != "failed",
+            "success": status != RequestStatus::Failed,
             "result": result
         }));
     }

@@ -159,7 +159,14 @@ impl ServerClient {
     pub async fn create_request(
         &self,
         req: CreateRequest<'_>,
-    ) -> Result<(String, String, Vec<String>), CliError> {
+    ) -> Result<
+        (
+            String,
+            dbward_api_types::requests::RequestStatus,
+            Vec<String>,
+        ),
+        CliError,
+    > {
         let mut body = serde_json::json!({
             "operation": req.operation,
             "environment": req.environment,
@@ -202,7 +209,7 @@ impl ServerClient {
         let cr: dbward_api_types::requests::CreateRequestResponse = serde_json::from_value(body)
             .map_err(|e| CliError::Server(format!("create request: invalid response: {e}")))?;
         let id = cr.id;
-        let status = cr.status.as_str().to_string();
+        let status = cr.status;
         let approvers = cr.approvers;
 
         Ok((id, status, approvers))

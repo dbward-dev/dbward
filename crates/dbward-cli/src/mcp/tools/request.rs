@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use dbward_api_types::requests::RequestStatus;
 use serde_json::{Value, json};
 
 use super::super::defs::{
@@ -104,7 +105,7 @@ async fn submit_and_wait_resume(
     const TIMEOUT: Duration = Duration::from_secs(120);
 
     // 2. Pending → return immediately with request_id
-    if cr.status == "pending" {
+    if cr.status == RequestStatus::Pending {
         return Ok(format!(
             "Request {} requires approval. \
              Use dbward_wait_request to wait for completion.",
@@ -115,7 +116,7 @@ async fn submit_and_wait_resume(
     // 3. Wait with timeout (request_id preserved on timeout)
     match tokio::time::timeout(
         TIMEOUT,
-        workflow::wait_for_completion(client, &cr.request_id, &cr.status, false),
+        workflow::wait_for_completion(client, &cr.request_id, cr.status, false),
     )
     .await
     {
@@ -305,13 +306,21 @@ pub(super) async fn handle_wait_request(
         .get_request_with_wait(request_id, timeout)
         .await
         .map_err(|e| e.to_string())?;
-    let status = resp["status"].as_str().unwrap_or("unknown");
+    let status: RequestStatus =
+        serde_json::from_value(resp["status"].clone()).unwrap_or(RequestStatus::Unknown);
 
     match status {
-        "pending" => Ok(format!("Request {request_id} is still pending approval.")),
-        "approved" | "auto_approved" | "break_glass" | "dispatched" | "running" => {
+        RequestStatus::Pending => Ok(format!("Request {request_id} is still pending approval.")),
+        RequestStatus::Approved
+        | RequestStatus::AutoApproved
+        | RequestStatus::BreakGlass
+        | RequestStatus::Dispatched
+        | RequestStatus::Running => {
             // Resume if needed, then wait for result
-            if status == "approved" || status == "auto_approved" || status == "break_glass" {
+            if matches!(
+                status,
+                RequestStatus::Approved | RequestStatus::AutoApproved | RequestStatus::BreakGlass
+            ) {
                 let _ = client.resume(request_id).await;
             }
             match tokio::time::timeout(
@@ -327,18 +336,18 @@ pub(super) async fn handle_wait_request(
                 )),
             }
         }
-        "executed" | "failed" => {
+        RequestStatus::Executed | RequestStatus::Failed => {
             let result = crate::commands::workflow::resolve_terminal_result(client, request_id)
                 .await
                 .map_err(|e| e.to_string())?;
             format_result(&result)
         }
-        "rejected" => Ok(format!("Request {request_id} was rejected.")),
-        "cancelled" => Ok(format!("Request {request_id} was cancelled.")),
-        "expired" => Ok(format!("Request {request_id} has expired.")),
-        "execution_lost" => Ok(format!(
+        RequestStatus::Rejected => Ok(format!("Request {request_id} was rejected.")),
+        RequestStatus::Cancelled => Ok(format!("Request {request_id} was cancelled.")),
+        RequestStatus::Expired => Ok(format!("Request {request_id} has expired.")),
+        RequestStatus::ExecutionLost => Ok(format!(
             "Request {request_id} execution was lost (agent lease expired). It can be re-resumed."
         )),
-        _ => Ok(format!("Request {request_id} status: {status}")),
+        _ => Ok(format!("Request {request_id} status: {}", status)),
     }
 }
