@@ -39,7 +39,7 @@ $ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
 │  Approval engine │ Policy engine │ Audit log (hash chain) │
 │  Ed25519 token signing │ OIDC/API auth │ Webhooks        │
 │  In-memory result relay │ NO database credentials        │
-└──────────┬───────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────┘
            ▲ Agent polls (outbound HTTPS)
            │
 ┌──────────┴───────────────────────────────────────────────┐
