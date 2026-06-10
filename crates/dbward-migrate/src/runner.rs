@@ -166,7 +166,9 @@ impl MigrationRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbward_driver::{DriverError, QueryOutput};
+    use dbward_driver::{
+        DatabaseDriver, DriverError, MigrationDriver, QueryDriver, QueryOutput, SchemaDriver,
+    };
     use std::sync::Arc;
 
     /// Minimal mock driver for testing migration runner logic.
@@ -183,13 +185,40 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl DatabaseDriver for MockDriver {
+    impl QueryDriver for MockDriver {
         async fn query(&self, _sql: &str) -> Result<QueryOutput, DriverError> {
             unimplemented!()
         }
         async fn execute(&self, _sql: &str) -> Result<u64, DriverError> {
             Ok(0)
         }
+        async fn query_cancellable(
+            &self,
+            _sql: &str,
+            _timeout: u64,
+            _cancel: &CancelState,
+            _max_rows: Option<usize>,
+        ) -> Result<QueryOutput, DriverError> {
+            unimplemented!()
+        }
+        async fn execute_cancellable(
+            &self,
+            _sql: &str,
+            _timeout: u64,
+            _cancel: &CancelState,
+        ) -> Result<u64, DriverError> {
+            unimplemented!()
+        }
+        async fn cancel_query(&self, _connection_id: &str) -> Result<bool, DriverError> {
+            Ok(true)
+        }
+        fn dialect(&self) -> &'static str {
+            "postgresql"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationDriver for MockDriver {
         async fn apply_migration(
             &self,
             _sql: &str,
@@ -243,36 +272,20 @@ mod tests {
             self.applied.lock().unwrap().retain(|v| v != version);
             Ok(())
         }
-        async fn query_cancellable(
-            &self,
-            _sql: &str,
-            _timeout: u64,
-            _cancel: &CancelState,
-            _max_rows: Option<usize>,
-        ) -> Result<QueryOutput, DriverError> {
-            unimplemented!()
-        }
-        async fn execute_cancellable(
-            &self,
-            _sql: &str,
-            _timeout: u64,
-            _cancel: &CancelState,
-        ) -> Result<u64, DriverError> {
-            unimplemented!()
-        }
-        async fn cancel_query(&self, _connection_id: &str) -> Result<bool, DriverError> {
-            Ok(true)
-        }
+    }
+
+    #[async_trait::async_trait]
+    impl SchemaDriver for MockDriver {
         async fn collect_schema(&self) -> Result<dbward_driver::SchemaSnapshot, DriverError> {
             Ok(dbward_driver::SchemaSnapshot { tables: vec![] })
         }
         async fn explain(&self, _: &str, _: u64) -> Result<serde_json::Value, DriverError> {
             Ok(serde_json::json!({}))
         }
-        fn dialect(&self) -> &'static str {
-            "postgresql"
-        }
     }
+
+    #[async_trait::async_trait]
+    impl DatabaseDriver for MockDriver {}
 
     fn make_detail(direction: &str, migrations: Vec<(&str, &str)>) -> String {
         make_detail_with_tx(
@@ -400,13 +413,40 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl DatabaseDriver for TrackingMockDriver {
+    impl QueryDriver for TrackingMockDriver {
         async fn query(&self, _: &str) -> Result<QueryOutput, DriverError> {
             unimplemented!()
         }
         async fn execute(&self, _: &str) -> Result<u64, DriverError> {
             unimplemented!()
         }
+        async fn query_cancellable(
+            &self,
+            _: &str,
+            _: u64,
+            _: &CancelState,
+            _: Option<usize>,
+        ) -> Result<QueryOutput, DriverError> {
+            unimplemented!()
+        }
+        async fn execute_cancellable(
+            &self,
+            _: &str,
+            _: u64,
+            _: &CancelState,
+        ) -> Result<u64, DriverError> {
+            unimplemented!()
+        }
+        async fn cancel_query(&self, _: &str) -> Result<bool, DriverError> {
+            unimplemented!()
+        }
+        fn dialect(&self) -> &'static str {
+            "postgresql"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationDriver for TrackingMockDriver {
         async fn apply_migration(
             &self,
             _sql: &str,
@@ -468,36 +508,20 @@ mod tests {
             self.applied.lock().unwrap().retain(|v| v != version);
             Ok(())
         }
-        async fn query_cancellable(
-            &self,
-            _: &str,
-            _: u64,
-            _: &CancelState,
-            _: Option<usize>,
-        ) -> Result<QueryOutput, DriverError> {
-            unimplemented!()
-        }
-        async fn execute_cancellable(
-            &self,
-            _: &str,
-            _: u64,
-            _: &CancelState,
-        ) -> Result<u64, DriverError> {
-            unimplemented!()
-        }
-        async fn cancel_query(&self, _: &str) -> Result<bool, DriverError> {
-            unimplemented!()
-        }
+    }
+
+    #[async_trait::async_trait]
+    impl SchemaDriver for TrackingMockDriver {
         async fn collect_schema(&self) -> Result<dbward_driver::SchemaSnapshot, DriverError> {
             unimplemented!()
         }
         async fn explain(&self, _: &str, _: u64) -> Result<serde_json::Value, DriverError> {
             unimplemented!()
         }
-        fn dialect(&self) -> &'static str {
-            "postgresql"
-        }
     }
+
+    #[async_trait::async_trait]
+    impl DatabaseDriver for TrackingMockDriver {}
 
     #[tokio::test]
     async fn run_up_uses_no_tx_when_transactional_false() {

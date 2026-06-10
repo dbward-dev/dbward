@@ -2,6 +2,8 @@ use futures::TryStreamExt;
 use sqlx::postgres::{PgTypeInfo, PgTypeKind};
 use sqlx::{Column, Row, TypeInfo, ValueRef};
 
+use crate::{MigrationDriver, QueryDriver, SchemaDriver};
+
 use crate::{
     CancelState, ColumnMapping, DatabaseDriver, DriverError, JsonMapping, MAX_RESULT_BYTES,
     MAX_RESULT_ROWS, QueryOutput, pg_array::parse_pg_array, text_to_json,
@@ -127,7 +129,7 @@ fn classify_connect_error(e: sqlx::Error) -> DriverError {
 }
 
 #[async_trait::async_trait]
-impl DatabaseDriver for PostgresDriver {
+impl QueryDriver for PostgresDriver {
     async fn query(&self, sql: &str) -> Result<QueryOutput, DriverError> {
         let mut stream = sqlx::raw_sql(sql).fetch(&self.pool);
         let mut rows = Vec::new();
@@ -168,133 +170,6 @@ impl DatabaseDriver for PostgresDriver {
             .await
             .map_err(query_err)?;
         Ok(result.rows_affected())
-    }
-
-    async fn apply_migration(
-        &self,
-        sql: &str,
-        version: &str,
-        timeout_secs: u64,
-    ) -> Result<(), DriverError> {
-        validate_migration_version(version)?;
-        // SET LOCAL is effective within the implicit transaction of PG simple query protocol.
-        // statement_timeout applies per-statement, not cumulatively across the batch.
-        let timeout_stmt = if timeout_secs > 0 {
-            format!("SET LOCAL statement_timeout = '{}s';\n", timeout_secs)
-        } else {
-            String::new()
-        };
-        let batch = format!(
-            "{timeout_stmt}{sql}\n;\nINSERT INTO schema_migrations (version) VALUES ('{version}');"
-        );
-        sqlx::raw_sql(&batch)
-            .execute(&self.pool)
-            .await
-            .map_err(query_err)?;
-        Ok(())
-    }
-
-    async fn revert_migration(
-        &self,
-        down_sql: &str,
-        version: &str,
-        timeout_secs: u64,
-    ) -> Result<(), DriverError> {
-        validate_migration_version(version)?;
-        let timeout_stmt = if timeout_secs > 0 {
-            format!("SET LOCAL statement_timeout = '{}s';\n", timeout_secs)
-        } else {
-            String::new()
-        };
-        let batch = format!(
-            "{timeout_stmt}{down_sql}\n;\nDELETE FROM schema_migrations WHERE version = '{version}';"
-        );
-        sqlx::raw_sql(&batch)
-            .execute(&self.pool)
-            .await
-            .map_err(query_err)?;
-        Ok(())
-    }
-
-    async fn apply_migration_no_tx(
-        &self,
-        sql: &str,
-        version: &str,
-        timeout_secs: u64,
-    ) -> Result<(), DriverError> {
-        validate_migration_version(version)?;
-        if has_multiple_statements(sql) {
-            return Err(DriverError::QueryFailed(
-                "transactional=false migrations must contain a single SQL statement".into(),
-            ));
-        }
-        self.run_no_tx_migration(
-            sql,
-            &format!("INSERT INTO schema_migrations (version) VALUES ('{version}')"),
-            version,
-            "migration SQL applied successfully but version record failed",
-            "mark-applied",
-            timeout_secs,
-        )
-        .await
-    }
-
-    async fn revert_migration_no_tx(
-        &self,
-        down_sql: &str,
-        version: &str,
-        timeout_secs: u64,
-    ) -> Result<(), DriverError> {
-        validate_migration_version(version)?;
-        if has_multiple_statements(down_sql) {
-            return Err(DriverError::QueryFailed(
-                "transactional=false migrations must contain a single SQL statement".into(),
-            ));
-        }
-        self.run_no_tx_migration(
-            down_sql,
-            &format!("DELETE FROM schema_migrations WHERE version = '{version}'"),
-            version,
-            "revert SQL applied successfully but version removal failed",
-            "remove",
-            timeout_secs,
-        )
-        .await
-    }
-
-    async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
-        sqlx::query("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY)")
-            .execute(&self.pool)
-            .await
-            .map_err(query_err)?;
-        Ok(())
-    }
-
-    async fn applied_versions(&self) -> Result<Vec<String>, DriverError> {
-        let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT version FROM schema_migrations ORDER BY version")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(query_err)?;
-        Ok(rows.into_iter().map(|(v,)| v).collect())
-    }
-
-    async fn mark_applied(&self, version: &str) -> Result<(), DriverError> {
-        sqlx::query("INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT DO NOTHING")
-            .bind(version)
-            .execute(&self.pool)
-            .await
-            .map_err(query_err)?;
-        Ok(())
-    }
-
-    async fn remove_version(&self, version: &str) -> Result<(), DriverError> {
-        sqlx::query("DELETE FROM schema_migrations WHERE version = $1")
-            .bind(version)
-            .execute(&self.pool)
-            .await
-            .map_err(query_err)?;
-        Ok(())
     }
 
     async fn query_cancellable(
@@ -439,6 +314,143 @@ impl DatabaseDriver for PostgresDriver {
         Ok(cancelled)
     }
 
+    fn dialect(&self) -> &'static str {
+        "postgresql"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationDriver for PostgresDriver {
+    async fn apply_migration(
+        &self,
+        sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
+        validate_migration_version(version)?;
+        // SET LOCAL is effective within the implicit transaction of PG simple query protocol.
+        // statement_timeout applies per-statement, not cumulatively across the batch.
+        let timeout_stmt = if timeout_secs > 0 {
+            format!("SET LOCAL statement_timeout = '{}s';\n", timeout_secs)
+        } else {
+            String::new()
+        };
+        let batch = format!(
+            "{timeout_stmt}{sql}\n;\nINSERT INTO schema_migrations (version) VALUES ('{version}');"
+        );
+        sqlx::raw_sql(&batch)
+            .execute(&self.pool)
+            .await
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    async fn revert_migration(
+        &self,
+        down_sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
+        validate_migration_version(version)?;
+        let timeout_stmt = if timeout_secs > 0 {
+            format!("SET LOCAL statement_timeout = '{}s';\n", timeout_secs)
+        } else {
+            String::new()
+        };
+        let batch = format!(
+            "{timeout_stmt}{down_sql}\n;\nDELETE FROM schema_migrations WHERE version = '{version}';"
+        );
+        sqlx::raw_sql(&batch)
+            .execute(&self.pool)
+            .await
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    async fn apply_migration_no_tx(
+        &self,
+        sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
+        validate_migration_version(version)?;
+        if has_multiple_statements(sql) {
+            return Err(DriverError::QueryFailed(
+                "transactional=false migrations must contain a single SQL statement".into(),
+            ));
+        }
+        self.run_no_tx_migration(
+            sql,
+            &format!("INSERT INTO schema_migrations (version) VALUES ('{version}')"),
+            version,
+            "migration SQL applied successfully but version record failed",
+            "mark-applied",
+            timeout_secs,
+        )
+        .await
+    }
+
+    async fn revert_migration_no_tx(
+        &self,
+        down_sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
+        validate_migration_version(version)?;
+        if has_multiple_statements(down_sql) {
+            return Err(DriverError::QueryFailed(
+                "transactional=false migrations must contain a single SQL statement".into(),
+            ));
+        }
+        self.run_no_tx_migration(
+            down_sql,
+            &format!("DELETE FROM schema_migrations WHERE version = '{version}'"),
+            version,
+            "revert SQL applied successfully but version removal failed",
+            "remove",
+            timeout_secs,
+        )
+        .await
+    }
+
+    async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
+        sqlx::query("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY)")
+            .execute(&self.pool)
+            .await
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    async fn applied_versions(&self) -> Result<Vec<String>, DriverError> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT version FROM schema_migrations ORDER BY version")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(query_err)?;
+        Ok(rows.into_iter().map(|(v,)| v).collect())
+    }
+
+    async fn mark_applied(&self, version: &str) -> Result<(), DriverError> {
+        sqlx::query("INSERT INTO schema_migrations (version) VALUES ($1) ON CONFLICT DO NOTHING")
+            .bind(version)
+            .execute(&self.pool)
+            .await
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    async fn remove_version(&self, version: &str) -> Result<(), DriverError> {
+        sqlx::query("DELETE FROM schema_migrations WHERE version = $1")
+            .bind(version)
+            .execute(&self.pool)
+            .await
+            .map_err(query_err)?;
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl SchemaDriver for PostgresDriver {
     async fn collect_schema(&self) -> Result<crate::SchemaSnapshot, DriverError> {
         use crate::schema::*;
         use sqlx::Row;
@@ -628,11 +640,10 @@ impl DatabaseDriver for PostgresDriver {
         let plan: serde_json::Value = row.try_get(0).map_err(query_err)?;
         Ok(plan)
     }
-
-    fn dialect(&self) -> &'static str {
-        "postgresql"
-    }
 }
+
+#[async_trait::async_trait]
+impl DatabaseDriver for PostgresDriver {}
 
 fn pg_row_to_json(row: &sqlx::postgres::PgRow) -> serde_json::Value {
     let mut map = serde_json::Map::new();
