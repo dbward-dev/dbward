@@ -219,23 +219,26 @@ risk = "low"
 
 Static SQL analysis rules. Typos in field names cause startup error (`deny_unknown_fields`).
 
+By default, high-risk destructive operations are **blocked** (rejected immediately). To relax rules for development environments, override them in your TOML config:
+
 ```toml
 [sql_review]
-no_where_delete = "block"
-drop_table = "block"
-truncate = "warn"
+no_where_delete = "warn"   # or "off" to disable entirely
+no_where_update = "warn"
+drop_table = "off"
+truncate = "off"
 ```
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `no_where_delete` | String | | `"warn"` | DELETE without WHERE. Values: `"block"`, `"warn"`, `"off"`. |
-| `no_where_update` | String | | `"warn"` | UPDATE without WHERE. |
-| `drop_table` | String | | `"warn"` | DROP TABLE. |
+| `no_where_delete` | String | | `"block"` | DELETE without WHERE. Values: `"block"`, `"warn"`, `"off"`. |
+| `no_where_update` | String | | `"block"` | UPDATE without WHERE. |
+| `drop_table` | String | | `"block"` | DROP TABLE. |
 | `drop_column` | String | | `"warn"` | ALTER TABLE DROP COLUMN. |
 | `not_null_without_default` | String | | `"warn"` | NOT NULL column without DEFAULT. |
 | `create_index_not_concurrently` | String | | `"warn"` | CREATE INDEX without CONCURRENTLY (PostgreSQL). |
 | `alter_column_type` | String | | `"warn"` | ALTER COLUMN TYPE. |
-| `truncate` | String | | `"warn"` | TRUNCATE. |
+| `truncate` | String | | `"block"` | TRUNCATE. |
 | `mixed_ddl_dml` | String | | `"warn"` | DDL and DML in same request. |
 | `large_in_list` | String | | `"warn"` | IN clause with excessive values. |
 

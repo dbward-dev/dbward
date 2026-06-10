@@ -55,14 +55,14 @@ pub struct ReviewRules {
 impl Default for ReviewRules {
     fn default() -> Self {
         Self {
-            no_where_delete: RuleAction::Warn,
-            no_where_update: RuleAction::Warn,
-            drop_table: RuleAction::Warn,
+            no_where_delete: RuleAction::Block,
+            no_where_update: RuleAction::Block,
+            drop_table: RuleAction::Block,
             drop_column: RuleAction::Warn,
             not_null_without_default: RuleAction::Warn,
             create_index_not_concurrently: RuleAction::Warn,
             alter_column_type: RuleAction::Warn,
-            truncate: RuleAction::Warn,
+            truncate: RuleAction::Block,
             mixed_ddl_dml: RuleAction::Warn,
             large_in_list: RuleAction::Warn,
         }

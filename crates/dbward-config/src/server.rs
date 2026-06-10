@@ -825,11 +825,11 @@ fn default_user_status() -> String {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SqlReviewConfig {
-    #[serde(default = "default_warn")]
+    #[serde(default = "default_block")]
     pub no_where_delete: String,
-    #[serde(default = "default_warn")]
+    #[serde(default = "default_block")]
     pub no_where_update: String,
-    #[serde(default = "default_warn")]
+    #[serde(default = "default_block")]
     pub drop_table: String,
     #[serde(default = "default_warn")]
     pub drop_column: String,
@@ -839,7 +839,7 @@ pub struct SqlReviewConfig {
     pub create_index_not_concurrently: String,
     #[serde(default = "default_warn")]
     pub alter_column_type: String,
-    #[serde(default = "default_warn")]
+    #[serde(default = "default_block")]
     pub truncate: String,
     #[serde(default = "default_warn")]
     pub mixed_ddl_dml: String,
@@ -850,18 +850,22 @@ pub struct SqlReviewConfig {
 impl Default for SqlReviewConfig {
     fn default() -> Self {
         Self {
-            no_where_delete: "warn".into(),
-            no_where_update: "warn".into(),
-            drop_table: "warn".into(),
+            no_where_delete: "block".into(),
+            no_where_update: "block".into(),
+            drop_table: "block".into(),
             drop_column: "warn".into(),
             not_null_without_default: "warn".into(),
             create_index_not_concurrently: "warn".into(),
             alter_column_type: "warn".into(),
-            truncate: "warn".into(),
+            truncate: "block".into(),
             mixed_ddl_dml: "warn".into(),
             large_in_list: "warn".into(),
         }
     }
+}
+
+fn default_block() -> String {
+    "block".into()
 }
 
 fn default_warn() -> String {
