@@ -271,8 +271,8 @@ This is the best available fleet-level view. Local probe files (`/tmp/dbward-age
 ## Metrics
 
 ```bash
-# Requires admin authentication
-curl http://localhost:3000/metrics -H "Authorization: Bearer $ADMIN_TOKEN"
+# Requires metrics.view permission
+curl http://localhost:3000/metrics -H "Authorization: Bearer $TOKEN"
 # → Prometheus text format
 ```
 

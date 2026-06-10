@@ -256,7 +256,7 @@ aws secretsmanager delete-secret --secret-id dbward/agent-token --force-delete-w
 
 ## Monitoring
 
-The CloudFormation templates configure ECS container health checks (`/health`) and ALB target group health checks (`/ready`) automatically. For alerting on service failures:
+The CloudFormation templates configure ECS container health checks (`/health`) and ALB target group health checks (`/ready`) automatically. To receive alerts when something fails, add:
 
 - **ECS service events** → EventBridge rule → SNS topic for deploy failures and task crashes
 - **ALB unhealthy targets** → CloudWatch Alarm on `UnHealthyHostCount` metric
