@@ -224,25 +224,59 @@ For API-based token management, see [REST API Reference](../reference/api.md#tok
 
 ## Health checks
 
-```bash
-# Liveness (returns version info)
-curl http://localhost:3000/health
-# → {"status":"ok","version":"0.1.2","min_agent_version":"0.1.2"}
+Two endpoints are available without authentication:
 
-# Readiness (returns 200 or 503 with checks status)
+| Endpoint | Purpose | Use for |
+|----------|---------|---------|
+| `GET /health` | Process liveness — always returns 200 if the server is running | Container liveness probes, external uptime monitors |
+| `GET /ready` | Service readiness — returns 503 when degraded or draining | Load balancer target health, rollout gating |
+
+```bash
+curl http://localhost:3000/health
+# → {"status":"ok","version":"0.1.5","min_agent_version":"0.1.5"}
+
 curl http://localhost:3000/ready
 # → {"status":"ok","checks":{"sqlite":"ok","result_store":"ok"}}
+# → 503 {"status":"degraded",...} when SQLite or result store is unavailable
 ```
 
-All responses include an `X-Dbward-Version` header with the server's version.
+**Choosing between them:** Use `/health` for restart decisions and "is it up at all?" checks. Use `/ready` for load balancer health and traffic routing — it intentionally returns 503 during graceful shutdown and maintenance drains.
+
+For external uptime monitoring (e.g., Route53 Health Check, UptimeRobot), point at `/health`. This avoids false alerts during planned rolling deploys where `/ready` temporarily returns 503.
+
+All responses include an `X-Dbward-Version` header.
+
+### Agent status
+
+The server tracks agent liveness via poll heartbeats. Query the fleet status with:
+
+```bash
+curl http://localhost:3000/api/agents -H "Authorization: Bearer $TOKEN"
+# Requires metrics.view permission
+```
+
+Each agent has a `status` field:
+
+| Status | Meaning |
+|--------|---------|
+| `healthy` | Polling and has spare capacity |
+| `saturated` | Polling but at max concurrency (`in_flight >= max_concurrent`) |
+| `offline` | No poll received for 60+ seconds |
+| `draining` | Graceful shutdown in progress |
+
+> **Note:** An agent in degraded mode (e.g., lost DB connection) still polls with `limit=0` and appears `healthy` here. Check application logs or the agent's readiness probe for degraded state.
+
+This is the best available fleet-level view. Local probe files (`/tmp/dbward-agent-alive`, `/tmp/dbward-agent-ready`) are for the container runtime only.
 
 ## Metrics
 
 ```bash
-# Requires admin authentication
-curl http://localhost:3000/metrics -H "Authorization: Bearer $ADMIN_TOKEN"
+# Requires metrics.view permission
+curl http://localhost:3000/metrics -H "Authorization: Bearer $TOKEN"
 # → Prometheus text format
 ```
+
+If you use Prometheus/Grafana, scrape `/metrics` for request queue depth (`dbward_requests_current`) and general activity. Note that `/metrics` does **not** reflect agent offline state — the `dbward_agents_active` gauge counts configured agents regardless of `last_seen`. For offline detection, poll `GET /api/agents` which applies the 60-second heartbeat check.
 
 ## Backup
 
