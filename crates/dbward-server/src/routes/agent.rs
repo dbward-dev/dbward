@@ -264,6 +264,8 @@ pub async fn claim(
             "statement_timeout_secs": output.statement_timeout_secs,
             "max_rows": output.max_rows,
             "lease_expires_at": output.lease_expires_at.to_rfc3339(),
+            "execution_plan": output.execution_plan,
+            "execution_plan_json": output.execution_plan_json,
         })),
     ))
 }

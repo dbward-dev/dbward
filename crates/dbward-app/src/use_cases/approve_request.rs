@@ -309,6 +309,7 @@ mod tests {
             no_store: false,
             workflow_snapshot_json: Some(serde_json::to_string(workflow).unwrap()),
             decision_trace_json: None,
+            execution_plan_json: None,
             cancel_reason: None,
             cancelled_by: None,
             created_at: Utc::now(),

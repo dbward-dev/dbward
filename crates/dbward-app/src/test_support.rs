@@ -207,23 +207,27 @@ impl RequestReader for FakeRequestReader {
 
 pub struct FakeRequestWriter {
     pub written: Mutex<bool>,
+    pub last_request: Mutex<Option<Request>>,
 }
 
 impl FakeRequestWriter {
     pub fn new() -> Self {
         Self {
             written: Mutex::new(false),
+            last_request: Mutex::new(None),
         }
     }
 }
 
 impl RequestWriter for FakeRequestWriter {
-    fn insert(&self, _: &Request) -> Result<(), AppError> {
+    fn insert(&self, req: &Request) -> Result<(), AppError> {
         *self.written.lock().unwrap() = true;
+        *self.last_request.lock().unwrap() = Some(req.clone());
         Ok(())
     }
-    fn create_and_dispatch(&self, _: &Request) -> Result<(), AppError> {
+    fn create_and_dispatch(&self, req: &Request) -> Result<(), AppError> {
         *self.written.lock().unwrap() = true;
+        *self.last_request.lock().unwrap() = Some(req.clone());
         Ok(())
     }
     fn mark_approved(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {

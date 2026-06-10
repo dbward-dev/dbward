@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Request, RequestStatus};
-use dbward_domain::services::classification::{ClassifyError, Dialect};
+use dbward_domain::services::classification::{ClassifyError, Dialect, DmlReason};
 use dbward_domain::services::risk_scorer;
 use dbward_domain::services::sql_classifier;
 use dbward_domain::services::status_machine::{
@@ -111,18 +111,18 @@ impl CreateRequest {
         };
 
         // 1. Determine operation: migration types are explicit, others classified from SQL
-        let operation = match input.operation {
+        let (operation, classification) = match input.operation {
             Operation::MigrateUp
             | Operation::MigrateDown
             | Operation::MigrateStatus
-            | Operation::MigrateRepair => input.operation,
+            | Operation::MigrateRepair => (input.operation, None),
             _ => {
-                let classification =
-                    sql_classifier::classify(&input.detail, dialect).map_err(|e| match e {
-                        ClassifyError::Empty => AppError::Validation("empty query".into()),
-                        ClassifyError::Rejected { reason } => AppError::Validation(reason),
-                    })?;
-                classification.operation
+                let c = sql_classifier::classify(&input.detail, dialect).map_err(|e| match e {
+                    ClassifyError::Empty => AppError::Validation("empty query".into()),
+                    ClassifyError::Rejected { reason } => AppError::Validation(reason),
+                })?;
+                let op = c.operation;
+                (op, Some(c))
             }
         };
 
@@ -565,6 +565,13 @@ impl CreateRequest {
             no_store: input.no_store,
             workflow_snapshot_json,
             decision_trace_json: Some(decision_trace_json),
+            execution_plan_json: classification.as_ref().and_then(|c| {
+                if c.dml_reason == Some(DmlReason::ParseFailure) {
+                    None
+                } else {
+                    Some(serde_json::to_string(&c.statements).unwrap())
+                }
+            }),
             cancel_reason: None,
             cancelled_by: None,
             created_at: now,
@@ -1115,5 +1122,46 @@ mod tests {
             .unwrap();
         // With empty steps workflow → auto-approved (risk doesn't block because config disabled)
         assert_eq!(result.status, RequestStatus::Dispatched);
+    }
+
+    #[test]
+    fn execution_plan_json_set_for_normal_select() {
+        let writer = Arc::new(FakeRequestWriter::new());
+        let uc = CreateRequest {
+            request_writer: writer.clone(),
+            ..make_uc(Arc::new(AllowAll))
+        };
+        let input = make_input(); // SELECT 1
+        uc.execute(
+            input,
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
+        let req = writer.last_request.lock().unwrap();
+        let plan = req.as_ref().unwrap().execution_plan_json.as_ref().unwrap();
+        let stmts: Vec<String> = serde_json::from_str(plan).unwrap();
+        assert_eq!(stmts.len(), 1);
+        assert!(stmts[0].contains("SELECT"));
+    }
+
+    #[test]
+    fn execution_plan_json_none_for_migration() {
+        let writer = Arc::new(FakeRequestWriter::new());
+        let uc = CreateRequest {
+            request_writer: writer.clone(),
+            ..make_uc(Arc::new(AllowAll))
+        };
+        let mut input = make_input();
+        input.operation = Operation::MigrateUp;
+        input.detail = r#"{"version":"001","sql":"CREATE TABLE t(id INT)","files":[]}"#.into();
+        uc.execute(
+            input,
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
+        let req = writer.last_request.lock().unwrap();
+        assert!(req.as_ref().unwrap().execution_plan_json.is_none());
     }
 }

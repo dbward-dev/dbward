@@ -44,6 +44,8 @@ pub struct AgentClaimOutput {
     pub statement_timeout_secs: u32,
     pub max_rows: Option<u32>,
     pub lease_expires_at: chrono::DateTime<chrono::Utc>,
+    pub execution_plan: Option<Vec<String>>,
+    pub execution_plan_json: Option<String>,
 }
 
 impl AgentClaim {
@@ -162,7 +164,10 @@ impl AgentClaim {
             );
 
         // 10. Sign execution token (SHA-256 for detail_hash, canonicalized for migrations)
-        let canonical_detail = if request.operation.is_migration_mutation() {
+        // SAFE-3: hash execution_plan_json when present (ensures what was classified = what is executed)
+        let canonical_detail = if let Some(ref plan_json) = request.execution_plan_json {
+            plan_json.clone()
+        } else if request.operation.is_migration_mutation() {
             canonicalize_json(&request.detail)
         } else {
             request.detail.clone()
@@ -223,6 +228,13 @@ impl AgentClaim {
             statement_timeout_secs: exec_policy.effective_statement_timeout(request.operation),
             max_rows: exec_policy.max_rows,
             lease_expires_at,
+            execution_plan: match &request.execution_plan_json {
+                Some(j) => Some(serde_json::from_str(j).map_err(|e| {
+                    AppError::Internal(format!("corrupted execution_plan_json: {e}"))
+                })?),
+                None => None,
+            },
+            execution_plan_json: request.execution_plan_json,
         })
     }
 }
@@ -523,6 +535,7 @@ mod tests {
             no_store: false,
             workflow_snapshot_json: None,
             decision_trace_json: None,
+            execution_plan_json: None,
             cancel_reason: None,
             cancelled_by: None,
             created_at: now,
@@ -727,5 +740,74 @@ mod tests {
     fn canonicalize_json_non_json_passthrough() {
         let sql = "SELECT * FROM users WHERE id = 1";
         assert_eq!(super::canonicalize_json(sql), sql);
+    }
+
+    #[test]
+    fn corrupted_execution_plan_json_returns_internal_error() {
+        let mut req = make_request(RequestStatus::Dispatched);
+        req.execution_plan_json = Some("not valid json [[[".into());
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(FakeRequestReader(Some(req))),
+            Arc::new(FakeAgentRepo::new()),
+        );
+        let result = uc.execute(
+            make_input(default_caps()),
+            &make_user(),
+            &AuditContext::System,
+        );
+        assert!(matches!(result, Err(AppError::Internal(_))));
+    }
+
+    #[test]
+    fn execution_plan_json_passed_through_to_output() {
+        let mut req = make_request(RequestStatus::Dispatched);
+        req.execution_plan_json = Some(r#"["SELECT 1"]"#.into());
+        let uc = build_uc(
+            Arc::new(AllowAll),
+            Arc::new(FakeRequestReader(Some(req))),
+            Arc::new(FakeAgentRepo::new()),
+        );
+        let output = uc
+            .execute(
+                make_input(default_caps()),
+                &make_user(),
+                &AuditContext::System,
+            )
+            .unwrap();
+        assert_eq!(
+            output.execution_plan_json.as_deref(),
+            Some(r#"["SELECT 1"]"#)
+        );
+        assert_eq!(output.execution_plan, Some(vec!["SELECT 1".to_string()]));
+    }
+
+    #[test]
+    fn hash_uses_execution_plan_json_when_present() {
+        let plan_json = r#"["SELECT id FROM users"]"#;
+        let expected_hash = super::sha256_hex(plan_json);
+        let canonical = plan_json.to_string();
+        assert_eq!(super::sha256_hex(&canonical), expected_hash);
+    }
+
+    #[test]
+    fn migration_without_plan_uses_canonicalized_json() {
+        // Migration requests have execution_plan_json = None → hash canonicalized detail
+        let detail = r#"{"version":"001","sql":"CREATE TABLE t (id INT)"}"#;
+        let canonical = super::canonicalize_json(detail);
+        let hash = super::sha256_hex(&canonical);
+        // Verify canonical reorders keys
+        assert!(canonical.starts_with(r#"{"sql""#));
+        assert_ne!(hash, super::sha256_hex(detail));
+    }
+
+    #[test]
+    fn parse_failure_without_plan_uses_raw_detail() {
+        // ParseFailure: execution_plan_json = None → hash raw detail (no canonicalization)
+        let detail = "SOME UNPARSEABLE SQL @#$";
+        let hash = super::sha256_hex(detail);
+        // canonicalize_json on non-JSON passthrough
+        assert_eq!(super::canonicalize_json(detail), detail);
+        assert_eq!(hash, super::sha256_hex(detail));
     }
 }

@@ -85,6 +85,10 @@ pub struct Request {
     pub no_store: bool,
     pub workflow_snapshot_json: Option<String>,
     pub decision_trace_json: Option<String>,
+    /// Parser-derived statement texts for execution (SAFE-3).
+    /// JSON array of canonical SQL strings from sqlparser.
+    /// Agent executes these instead of raw `detail`.
+    pub execution_plan_json: Option<String>,
     pub cancel_reason: Option<String>,
     pub cancelled_by: Option<String>,
     pub created_at: DateTime<Utc>,
