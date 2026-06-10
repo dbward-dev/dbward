@@ -28,10 +28,40 @@ pub struct QueryOutput {
 }
 
 #[async_trait::async_trait]
-pub trait DatabaseDriver: Send + Sync {
+pub trait QueryDriver: Send + Sync {
     async fn query(&self, sql: &str) -> Result<QueryOutput, DriverError>;
     async fn execute(&self, sql: &str) -> Result<u64, DriverError>;
 
+    /// Cancellable query: acquire connection → set timeout → set pid on cancel_state → execute.
+    /// All on the same connection. Cancel state is shared with heartbeat task.
+    async fn query_cancellable(
+        &self,
+        sql: &str,
+        timeout_secs: u64,
+        cancel: &CancelState,
+        max_rows: Option<usize>,
+    ) -> Result<QueryOutput, DriverError>;
+
+    /// Cancellable execute: same guarantees as query_cancellable.
+    /// For multi-statement SQL, returns the **sum** of rows_affected across all statements.
+    async fn execute_cancellable(
+        &self,
+        sql: &str,
+        timeout_secs: u64,
+        cancel: &CancelState,
+    ) -> Result<u64, DriverError>;
+
+    /// Cancel a running query by its connection ID. Returns true if the cancel
+    /// signal was actually delivered to the target backend.
+    /// Opens a fresh connection internally to avoid pool saturation.
+    async fn cancel_query(&self, connection_id: &str) -> Result<bool, DriverError>;
+
+    /// Return the dialect identifier ("postgresql" or "mysql").
+    fn dialect(&self) -> &'static str;
+}
+
+#[async_trait::async_trait]
+pub trait MigrationDriver: Send + Sync {
     /// Apply a migration. timeout_secs: 0 means no timeout (unlimited).
     async fn apply_migration(
         &self,
@@ -64,41 +94,22 @@ pub trait DatabaseDriver: Send + Sync {
     async fn mark_applied(&self, version: &str) -> Result<(), DriverError>;
     /// Force-delete a version from schema_migrations (metadata repair).
     async fn remove_version(&self, version: &str) -> Result<(), DriverError>;
+}
 
-    /// Cancellable query: acquire connection → set timeout → set pid on cancel_state → execute.
-    /// All on the same connection. Cancel state is shared with heartbeat task.
-    async fn query_cancellable(
-        &self,
-        sql: &str,
-        timeout_secs: u64,
-        cancel: &CancelState,
-        max_rows: Option<usize>,
-    ) -> Result<QueryOutput, DriverError>;
-
-    /// Cancellable execute: same guarantees as query_cancellable.
-    /// For multi-statement SQL, returns the **sum** of rows_affected across all statements.
-    async fn execute_cancellable(
-        &self,
-        sql: &str,
-        timeout_secs: u64,
-        cancel: &CancelState,
-    ) -> Result<u64, DriverError>;
-
-    /// Cancel a running query by its connection ID. Returns true if the cancel
-    /// signal was actually delivered to the target backend.
-    /// Opens a fresh connection internally to avoid pool saturation.
-    async fn cancel_query(&self, connection_id: &str) -> Result<bool, DriverError>;
-
+#[async_trait::async_trait]
+pub trait SchemaDriver: Send + Sync {
     /// Collect schema information from the database.
     async fn collect_schema(&self) -> Result<SchemaSnapshot, DriverError>;
 
     /// Execute EXPLAIN (FORMAT JSON) in a read-only transaction.
     async fn explain(&self, sql: &str, timeout_secs: u64)
     -> Result<serde_json::Value, DriverError>;
-
-    /// Return the dialect identifier ("postgresql" or "mysql").
-    fn dialect(&self) -> &'static str;
 }
+
+/// Convenience super-trait for contexts that need all driver capabilities.
+/// Object-safe: consumers use `dyn DatabaseDriver`.
+#[async_trait::async_trait]
+pub trait DatabaseDriver: QueryDriver + MigrationDriver + SchemaDriver {}
 
 pub async fn connect(
     url: &str,

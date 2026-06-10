@@ -2,6 +2,8 @@ use futures::TryStreamExt;
 use sqlx::{Column, TypeInfo, ValueRef};
 use std::time::Duration;
 
+use crate::{MigrationDriver, QueryDriver, SchemaDriver};
+
 use crate::common::{conn_err, query_err};
 use crate::{
     CancelState, DatabaseDriver, DriverError, JsonMapping, MAX_RESULT_BYTES, MAX_RESULT_ROWS,
@@ -149,7 +151,7 @@ fn classify_mysql_connect_error(e: sqlx::Error) -> DriverError {
 }
 
 #[async_trait::async_trait]
-impl DatabaseDriver for MysqlDriver {
+impl QueryDriver for MysqlDriver {
     async fn query(&self, sql: &str) -> Result<QueryOutput, DriverError> {
         let mut stream = sqlx::raw_sql(sql).fetch(&self.pool);
         let mut rows = Vec::new();
@@ -205,97 +207,6 @@ impl DatabaseDriver for MysqlDriver {
         }
         tx.commit().await.map_err(query_err)?;
         Ok(total_affected)
-    }
-
-    async fn apply_migration(
-        &self,
-        sql: &str,
-        version: &str,
-        timeout_secs: u64,
-    ) -> Result<(), DriverError> {
-        let stmts = split_statements(sql);
-        self.run_migration_tx(
-            &stmts,
-            "INSERT INTO schema_migrations (version) VALUES (?)",
-            version,
-            timeout_secs,
-        )
-        .await
-    }
-
-    async fn revert_migration(
-        &self,
-        down_sql: &str,
-        version: &str,
-        timeout_secs: u64,
-    ) -> Result<(), DriverError> {
-        let stmts = split_statements(down_sql);
-        self.run_migration_tx(
-            &stmts,
-            "DELETE FROM schema_migrations WHERE version = ?",
-            version,
-            timeout_secs,
-        )
-        .await
-    }
-
-    async fn apply_migration_no_tx(
-        &self,
-        _sql: &str,
-        _version: &str,
-        _timeout_secs: u64,
-    ) -> Result<(), DriverError> {
-        Err(DriverError::QueryFailed(
-            "non-transactional migrations are not supported for MySQL".into(),
-        ))
-    }
-
-    async fn revert_migration_no_tx(
-        &self,
-        _down_sql: &str,
-        _version: &str,
-        _timeout_secs: u64,
-    ) -> Result<(), DriverError> {
-        Err(DriverError::QueryFailed(
-            "non-transactional migrations are not supported for MySQL".into(),
-        ))
-    }
-
-    async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS schema_migrations (version VARCHAR(255) PRIMARY KEY)",
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(query_err)?;
-        Ok(())
-    }
-
-    async fn applied_versions(&self) -> Result<Vec<String>, DriverError> {
-        let rows: Vec<(String,)> =
-            sqlx::query_as("SELECT version FROM schema_migrations ORDER BY version")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(query_err)?;
-        Ok(rows.into_iter().map(|(v,)| v).collect())
-    }
-
-    async fn mark_applied(&self, version: &str) -> Result<(), DriverError> {
-        sqlx::query("INSERT IGNORE INTO schema_migrations (version) VALUES (?)")
-            .bind(version)
-            .execute(&self.pool)
-            .await
-            .map_err(query_err)?;
-        Ok(())
-    }
-
-    async fn remove_version(&self, version: &str) -> Result<(), DriverError> {
-        sqlx::query("DELETE FROM schema_migrations WHERE version = ?")
-            .bind(version)
-            .execute(&self.pool)
-            .await
-            .map_err(query_err)?;
-        Ok(())
     }
 
     async fn query_cancellable(
@@ -540,6 +451,107 @@ impl DatabaseDriver for MysqlDriver {
         Ok(true)
     }
 
+    fn dialect(&self) -> &'static str {
+        "mysql"
+    }
+}
+
+#[async_trait::async_trait]
+impl MigrationDriver for MysqlDriver {
+    async fn apply_migration(
+        &self,
+        sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
+        let stmts = split_statements(sql);
+        self.run_migration_tx(
+            &stmts,
+            "INSERT INTO schema_migrations (version) VALUES (?)",
+            version,
+            timeout_secs,
+        )
+        .await
+    }
+
+    async fn revert_migration(
+        &self,
+        down_sql: &str,
+        version: &str,
+        timeout_secs: u64,
+    ) -> Result<(), DriverError> {
+        let stmts = split_statements(down_sql);
+        self.run_migration_tx(
+            &stmts,
+            "DELETE FROM schema_migrations WHERE version = ?",
+            version,
+            timeout_secs,
+        )
+        .await
+    }
+
+    async fn apply_migration_no_tx(
+        &self,
+        _sql: &str,
+        _version: &str,
+        _timeout_secs: u64,
+    ) -> Result<(), DriverError> {
+        Err(DriverError::QueryFailed(
+            "non-transactional migrations are not supported for MySQL".into(),
+        ))
+    }
+
+    async fn revert_migration_no_tx(
+        &self,
+        _down_sql: &str,
+        _version: &str,
+        _timeout_secs: u64,
+    ) -> Result<(), DriverError> {
+        Err(DriverError::QueryFailed(
+            "non-transactional migrations are not supported for MySQL".into(),
+        ))
+    }
+
+    async fn ensure_migrations_table(&self) -> Result<(), DriverError> {
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (version VARCHAR(255) PRIMARY KEY)",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(query_err)?;
+        Ok(())
+    }
+
+    async fn applied_versions(&self) -> Result<Vec<String>, DriverError> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT version FROM schema_migrations ORDER BY version")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(query_err)?;
+        Ok(rows.into_iter().map(|(v,)| v).collect())
+    }
+
+    async fn mark_applied(&self, version: &str) -> Result<(), DriverError> {
+        sqlx::query("INSERT IGNORE INTO schema_migrations (version) VALUES (?)")
+            .bind(version)
+            .execute(&self.pool)
+            .await
+            .map_err(query_err)?;
+        Ok(())
+    }
+
+    async fn remove_version(&self, version: &str) -> Result<(), DriverError> {
+        sqlx::query("DELETE FROM schema_migrations WHERE version = ?")
+            .bind(version)
+            .execute(&self.pool)
+            .await
+            .map_err(query_err)?;
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl SchemaDriver for MysqlDriver {
     async fn collect_schema(&self) -> Result<crate::SchemaSnapshot, DriverError> {
         use crate::schema::*;
         use sqlx::Row;
@@ -735,11 +747,10 @@ impl DatabaseDriver for MysqlDriver {
         serde_json::from_str(&plan)
             .map_err(|e| DriverError::QueryFailed(format!("invalid EXPLAIN JSON: {e}")))
     }
-
-    fn dialect(&self) -> &'static str {
-        "mysql"
-    }
 }
+
+#[async_trait::async_trait]
+impl DatabaseDriver for MysqlDriver {}
 
 use sqlparser::dialect::MySqlDialect;
 use sqlparser::parser::Parser;

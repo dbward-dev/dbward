@@ -75,7 +75,9 @@ impl CancelToken {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dbward_driver::{DatabaseDriver, DriverError, QueryOutput};
+    use dbward_driver::{
+        DatabaseDriver, DriverError, MigrationDriver, QueryDriver, QueryOutput, SchemaDriver,
+    };
 
     struct MockCancelDriver {
         should_succeed: bool,
@@ -83,13 +85,44 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl DatabaseDriver for MockCancelDriver {
+    impl QueryDriver for MockCancelDriver {
         async fn query(&self, _: &str) -> Result<QueryOutput, DriverError> {
             unimplemented!()
         }
         async fn execute(&self, _: &str) -> Result<u64, DriverError> {
             unimplemented!()
         }
+        async fn query_cancellable(
+            &self,
+            _: &str,
+            _: u64,
+            _: &CancelState,
+            _: Option<usize>,
+        ) -> Result<QueryOutput, DriverError> {
+            unimplemented!()
+        }
+        async fn execute_cancellable(
+            &self,
+            _: &str,
+            _: u64,
+            _: &CancelState,
+        ) -> Result<u64, DriverError> {
+            unimplemented!()
+        }
+        async fn cancel_query(&self, _: &str) -> Result<bool, DriverError> {
+            if self.should_succeed {
+                Ok(self.return_value)
+            } else {
+                Err(DriverError::ConnectionFailed("refused".into()))
+            }
+        }
+        fn dialect(&self) -> &'static str {
+            "postgresql"
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl MigrationDriver for MockCancelDriver {
         async fn apply_migration(&self, _: &str, _: &str, _: u64) -> Result<(), DriverError> {
             unimplemented!()
         }
@@ -119,40 +152,20 @@ mod tests {
         async fn remove_version(&self, _: &str) -> Result<(), DriverError> {
             unimplemented!()
         }
-        async fn query_cancellable(
-            &self,
-            _: &str,
-            _: u64,
-            _: &CancelState,
-            _: Option<usize>,
-        ) -> Result<QueryOutput, DriverError> {
-            unimplemented!()
-        }
-        async fn execute_cancellable(
-            &self,
-            _: &str,
-            _: u64,
-            _: &CancelState,
-        ) -> Result<u64, DriverError> {
-            unimplemented!()
-        }
-        async fn cancel_query(&self, _: &str) -> Result<bool, DriverError> {
-            if self.should_succeed {
-                Ok(self.return_value)
-            } else {
-                Err(DriverError::ConnectionFailed("refused".into()))
-            }
-        }
+    }
+
+    #[async_trait::async_trait]
+    impl SchemaDriver for MockCancelDriver {
         async fn collect_schema(&self) -> Result<dbward_driver::SchemaSnapshot, DriverError> {
             unimplemented!()
         }
         async fn explain(&self, _: &str, _: u64) -> Result<serde_json::Value, DriverError> {
             unimplemented!()
         }
-        fn dialect(&self) -> &'static str {
-            "postgresql"
-        }
     }
+
+    #[async_trait::async_trait]
+    impl DatabaseDriver for MockCancelDriver {}
 
     #[test]
     fn cancel_token_basic() {
