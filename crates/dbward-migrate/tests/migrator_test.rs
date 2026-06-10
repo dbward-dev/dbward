@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
+#[allow(unused_imports)]
+use dbward_driver::QueryDriver;
 use dbward_migrate::Migrator;
 
 fn fixtures_dir() -> PathBuf {
@@ -40,7 +42,12 @@ async fn migrate_up_and_status() {
 
     // Verify table exists via driver
     let rows = drv
-        .query("SELECT COUNT(*)::int AS cnt FROM users")
+        .query_cancellable(
+            "SELECT COUNT(*)::int AS cnt FROM users",
+            30,
+            &dbward_driver::CancelState::new(),
+            None,
+        )
         .await
         .unwrap()
         .rows;

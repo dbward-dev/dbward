@@ -86,12 +86,6 @@ mod tests {
 
     #[async_trait::async_trait]
     impl QueryDriver for MockCancelDriver {
-        async fn query(&self, _: &str) -> Result<QueryOutput, DriverError> {
-            unimplemented!()
-        }
-        async fn execute(&self, _: &str) -> Result<u64, DriverError> {
-            unimplemented!()
-        }
         async fn query_cancellable(
             &self,
             _: &str,

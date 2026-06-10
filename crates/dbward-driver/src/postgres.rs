@@ -130,26 +130,6 @@ fn classify_connect_error(e: sqlx::Error) -> DriverError {
 
 #[async_trait::async_trait]
 impl QueryDriver for PostgresDriver {
-    async fn query(&self, sql: &str) -> Result<QueryOutput, DriverError> {
-        let mut stream = sqlx::raw_sql(sql).fetch(&self.pool);
-        let mut collector = crate::common::RowCollector::new(None);
-        while let Some(row) = stream.try_next().await.map_err(query_err)? {
-            if collector.push(pg_row_to_json(&row)) {
-                break;
-            }
-        }
-        Ok(collector.finish())
-    }
-
-    async fn execute(&self, sql: &str) -> Result<u64, DriverError> {
-        // PostgreSQL simple query protocol guarantees atomicity for multi-statement
-        let result = sqlx::raw_sql(sql)
-            .execute(&self.pool)
-            .await
-            .map_err(query_err)?;
-        Ok(result.rows_affected())
-    }
-
     async fn query_cancellable(
         &self,
         sql: &str,
