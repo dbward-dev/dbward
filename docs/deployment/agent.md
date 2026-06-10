@@ -210,7 +210,7 @@ During normal operation:
 - If a database connection is lost during job execution, the agent enters **degraded mode**: stops accepting jobs, attempts reconnection every poll interval, and resumes when connectivity is restored
 - SIGTERM/SIGINT triggers graceful shutdown at any phase (including during startup retries)
 
-**Server-side offline detection:** The server considers an agent offline if no poll is received for 60 seconds. This covers all failure modes — process crash, network partition, or host failure. Check agent status via `GET /api/agents` (requires `metrics.view` permission). See [Server Health checks](server.md#health-checks) for details.
+**Server-side visibility:** From the operator's perspective, the server considers an agent offline if no poll is received for 60 seconds — regardless of the cause (process crash, network partition, or host failure). Query `GET /api/agents` (requires `metrics.view` permission) to check. See [Server Health checks](server.md#health-checks).
 
 ### Configuration
 
