@@ -186,12 +186,6 @@ mod tests {
 
     #[async_trait::async_trait]
     impl QueryDriver for MockDriver {
-        async fn query(&self, _sql: &str) -> Result<QueryOutput, DriverError> {
-            unimplemented!()
-        }
-        async fn execute(&self, _sql: &str) -> Result<u64, DriverError> {
-            Ok(0)
-        }
         async fn query_cancellable(
             &self,
             _sql: &str,
@@ -414,12 +408,6 @@ mod tests {
 
     #[async_trait::async_trait]
     impl QueryDriver for TrackingMockDriver {
-        async fn query(&self, _: &str) -> Result<QueryOutput, DriverError> {
-            unimplemented!()
-        }
-        async fn execute(&self, _: &str) -> Result<u64, DriverError> {
-            unimplemented!()
-        }
         async fn query_cancellable(
             &self,
             _: &str,

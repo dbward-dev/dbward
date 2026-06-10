@@ -29,9 +29,6 @@ pub struct QueryOutput {
 
 #[async_trait::async_trait]
 pub trait QueryDriver: Send + Sync {
-    async fn query(&self, sql: &str) -> Result<QueryOutput, DriverError>;
-    async fn execute(&self, sql: &str) -> Result<u64, DriverError>;
-
     /// Cancellable query: acquire connection → set timeout → set pid on cancel_state → execute.
     /// All on the same connection. Cancel state is shared with heartbeat task.
     async fn query_cancellable(

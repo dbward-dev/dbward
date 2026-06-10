@@ -152,41 +152,6 @@ fn classify_mysql_connect_error(e: sqlx::Error) -> DriverError {
 
 #[async_trait::async_trait]
 impl QueryDriver for MysqlDriver {
-    async fn query(&self, sql: &str) -> Result<QueryOutput, DriverError> {
-        let mut stream = sqlx::raw_sql(sql).fetch(&self.pool);
-        let mut collector = crate::common::RowCollector::new(None);
-        while let Some(row) = stream.try_next().await.map_err(query_err)? {
-            if collector.push(mysql_row_to_json(&row)) {
-                break;
-            }
-        }
-        Ok(collector.finish())
-    }
-
-    async fn execute(&self, sql: &str) -> Result<u64, DriverError> {
-        if !is_multi_statement(sql) {
-            let result = sqlx::raw_sql(sql)
-                .execute(&self.pool)
-                .await
-                .map_err(query_err)?;
-            return Ok(result.rows_affected());
-        }
-
-        // MySQL: wrap multi-statement in explicit transaction for atomicity
-        let stmts = split_statements(sql);
-        let mut tx = self.pool.begin().await.map_err(query_err)?;
-        let mut total_affected = 0u64;
-        for stmt in &stmts {
-            let r = sqlx::query(stmt)
-                .execute(&mut *tx)
-                .await
-                .map_err(query_err)?;
-            total_affected += r.rows_affected();
-        }
-        tx.commit().await.map_err(query_err)?;
-        Ok(total_affected)
-    }
-
     async fn query_cancellable(
         &self,
         sql: &str,
