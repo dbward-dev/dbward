@@ -402,12 +402,16 @@ pub(crate) fn print_approve_result(body: &serde_json::Value, id: &str) {
         .or_else(|| body["step_completed"].as_u64().map(|v| v + 1))
         .unwrap_or(0);
     let total = body["total_steps"].as_u64().unwrap_or(0);
-    let status = body["status"].as_str().unwrap_or("pending");
+    let status = dbward_api_types::requests::RequestStatus::from_json(&body["status"]);
     let short_id = short_request_id(id);
 
     println!("Approved step {step}/{total}");
     println!("Request: {short_id}");
-    if status == "approved" || status == "dispatched" {
+    if matches!(
+        status,
+        dbward_api_types::requests::RequestStatus::Approved
+            | dbward_api_types::requests::RequestStatus::Dispatched
+    ) {
         println!("All steps complete. Run: dbward request resume {short_id}");
     } else {
         println!("Waiting for further approvals.");

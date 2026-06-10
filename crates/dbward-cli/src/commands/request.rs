@@ -228,7 +228,9 @@ async fn run_cancel(
     let req_info = sc.get_json(&format!("/api/requests/{id}")).await;
     if !json_output {
         if let Ok(info) = &req_info {
-            if info["status"].as_str() == Some("running") {
+            if dbward_api_types::requests::RequestStatus::from_json(&info["status"])
+                == dbward_api_types::requests::RequestStatus::Running
+            {
                 eprintln!("⚠ Query is currently executing on the database.");
                 eprintln!("  Cancelling will kill the running query and roll back any changes.");
                 eprint!("  Continue? [y/N] ");
@@ -316,9 +318,12 @@ async fn run_resume(
 ) -> Result<(), CliError> {
     // DML re-resume warning
     let req = sc.get_request(id).await?;
-    let status = req["status"].as_str().unwrap_or("");
+    let status = dbward_api_types::requests::RequestStatus::from_json(&req["status"]);
     let operation = req["operation"].as_str().unwrap_or("");
-    if !json_output && status == "execution_lost" && operation == "execute_query" {
+    if !json_output
+        && status == dbward_api_types::requests::RequestStatus::ExecutionLost
+        && operation == "execute_query"
+    {
         let detail = req["detail"].as_str().unwrap_or("");
         eprintln!("⚠️  WARNING: This request previously failed with execution_lost.");
         eprintln!("   The previous execution may have partially completed.");
@@ -339,24 +344,25 @@ async fn run_resume(
         if e.status == 409 {
             // Fetch current status for a helpful message
             if let Ok(req) = sc.get_request(id).await {
-                let status = req.get("status").and_then(|v| v.as_str()).unwrap_or("");
+                use dbward_api_types::requests::RequestStatus;
+                let status = RequestStatus::from_json(&req["status"]);
                 match status {
-                    "executed" => {
+                    RequestStatus::Executed => {
                         eprintln!("Already executed. Run: dbward request result {id}");
                     }
-                    "failed" => {
+                    RequestStatus::Failed => {
                         eprintln!("Request failed. Run: dbward request show {id}");
                     }
-                    "cancelled" => {
+                    RequestStatus::Cancelled => {
                         eprintln!("Request was cancelled.");
                     }
-                    "dispatched" | "running" => {
+                    RequestStatus::Dispatched | RequestStatus::Running => {
                         eprintln!("Already resumed. Waiting for agent...");
                     }
-                    "execution_lost" => {
+                    RequestStatus::ExecutionLost => {
                         eprintln!("Execution lost. Retry: dbward request resume {id}");
                     }
-                    "pending" => {
+                    RequestStatus::Pending => {
                         eprintln!("Still pending approval.");
                     }
                     _ => {
