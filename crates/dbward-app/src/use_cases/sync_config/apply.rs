@@ -51,9 +51,9 @@ impl SyncConfig {
             )));
         }
 
-        // 3. Stale reconciliation (StrongRuntime): handled by caller via repo
-        // Returns (stale_count, upserted) — stale processing done in mod.rs
-        Ok((0, upserted))
+        // 3. Stale reconciliation (StrongRuntime): orphan if FK-referenced, delete otherwise
+        let (orphaned, deleted) = self.database_registry.reconcile_stale(&toml_ids)?;
+        Ok((orphaned + deleted, upserted))
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -229,8 +229,10 @@ impl SyncConfig {
             self.webhook_repo.create(webhook)?;
         }
 
-        // CancelDependents: stale processing done in mod.rs
-        Ok((0, parsed.len() as u64))
+        // CancelDependents: delete stale webhooks
+        let toml_ids: Vec<String> = parsed.iter().map(|w| w.id.clone()).collect();
+        let deleted = self.webhook_repo.delete_stale_config(&toml_ids)?;
+        Ok((deleted, parsed.len() as u64))
     }
 
     // ─────────────────────────────────────────────────────────────────────────

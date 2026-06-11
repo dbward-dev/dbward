@@ -91,4 +91,43 @@ impl DatabaseRegistry for SqliteDatabaseRegistry {
             .map_err(db_err("database: delete_by_source"))?;
         Ok(n as u64)
     }
+
+    fn reconcile_stale(&self, active_ids: &[String]) -> Result<(u64, u64), AppError> {
+        let conn = self.conn.lock();
+        if active_ids.is_empty() {
+            // Orphan those with FK refs, delete the rest
+            let orphaned = conn.execute(
+                "UPDATE databases SET lifecycle_state = 'orphan' WHERE source = 'config' AND lifecycle_state = 'active' AND EXISTS (SELECT 1 FROM requests WHERE requests.database_id = databases.id)",
+                [],
+            ).map_err(db_err("database: reconcile_stale orphan"))? as u64;
+            let deleted = conn.execute(
+                "DELETE FROM databases WHERE source = 'config' AND lifecycle_state = 'active' AND NOT EXISTS (SELECT 1 FROM requests WHERE requests.database_id = databases.id)",
+                [],
+            ).map_err(db_err("database: reconcile_stale delete"))? as u64;
+            return Ok((orphaned, deleted));
+        }
+        let placeholders: String = (1..=active_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        // Orphan stale with FK refs
+        let sql_orphan = format!(
+            "UPDATE databases SET lifecycle_state = 'orphan' WHERE source = 'config' AND lifecycle_state = 'active' AND id NOT IN ({placeholders}) AND EXISTS (SELECT 1 FROM requests WHERE requests.database_id = databases.id)"
+        );
+        let params: Vec<&dyn rusqlite::types::ToSql> = active_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let orphaned = conn
+            .execute(&sql_orphan, params.as_slice())
+            .map_err(db_err("database: reconcile_stale orphan"))? as u64;
+        // Delete stale without FK refs
+        let sql_delete = format!(
+            "DELETE FROM databases WHERE source = 'config' AND lifecycle_state = 'active' AND id NOT IN ({placeholders}) AND NOT EXISTS (SELECT 1 FROM requests WHERE requests.database_id = databases.id)"
+        );
+        let deleted = conn
+            .execute(&sql_delete, params.as_slice())
+            .map_err(db_err("database: reconcile_stale delete"))? as u64;
+        Ok((orphaned, deleted))
+    }
 }

@@ -335,6 +335,10 @@ pub trait WebhookRepo: Send + Sync {
     fn delete_by_source(&self, _source: &str) -> Result<u64, AppError> {
         Ok(0)
     }
+    /// CancelDependents: delete stale webhooks (those not in active_ids).
+    fn delete_stale_config(&self, _active_ids: &[String]) -> Result<u64, AppError> {
+        Ok(0)
+    }
 }
 
 // --- DatabaseRegistry ---
@@ -350,6 +354,10 @@ pub trait DatabaseRegistry: Send + Sync {
     }
     fn delete_by_source(&self, _source: &str) -> Result<u64, AppError> {
         Ok(0)
+    }
+    /// StrongRuntime reconciliation: orphan stale databases with FK refs, delete others.
+    fn reconcile_stale(&self, _active_ids: &[String]) -> Result<(u64, u64), AppError> {
+        Ok((0, 0)) // (orphaned, deleted)
     }
 }
 
