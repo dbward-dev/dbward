@@ -717,14 +717,18 @@ fn build_sync_uc(
         database_registry: state.database_registry().clone(),
         user_repo: state.user_repo().clone(),
         group_repo: Arc::new(dbward_infra::sqlite::SqliteGroupRepo::new(conn.clone())),
-        role_binding_repo: Arc::new(dbward_infra::sqlite::SqliteRoleBindingRepo::new(conn)),
+        role_binding_repo: Arc::new(dbward_infra::sqlite::SqliteRoleBindingRepo::new(
+            conn.clone(),
+        )),
         notifier: state.notifier().clone(),
         clock: state.clock().clone(),
         id_gen: state.id_generator().clone(),
         transaction,
         license_checker: state.license_checker().clone(),
         ssrf_validator,
-        config_generation_repo: Arc::new(dbward_app::ports::NoopConfigGenerationRepo),
+        config_generation_repo: Arc::new(dbward_infra::sqlite::SqliteConfigGenerationRepo::new(
+            conn,
+        )),
     }
 }
 
