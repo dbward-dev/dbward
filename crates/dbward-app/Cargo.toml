@@ -6,6 +6,7 @@ edition.workspace = true
 description = "Application layer for dbward — use cases and port traits"
 
 [dependencies]
+dbward-config = { path = "../dbward-config" }
 dbward-domain = { path = "../dbward-domain" }
 async-trait = "0.1"
 bytes = "1"
