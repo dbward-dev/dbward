@@ -7,6 +7,7 @@ pub enum DeliveryStatus {
     Pending,
     InProgress,
     Delivered,
+    Cancelled,
     Dead,
 }
 

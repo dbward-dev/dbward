@@ -19,16 +19,54 @@ impl DatabaseRegistry for SqliteDatabaseRegistry {
         let conn = self.conn.lock();
         let id = format!("{}:{}", db, env);
         conn.execute(
-            "INSERT INTO databases (id, name, environment, source, created_at) VALUES (?1, ?2, ?3, 'config', ?4) ON CONFLICT(id) DO UPDATE SET source='config'",
+            "INSERT INTO databases (id, name, environment, source, lifecycle_state, created_at) \
+             VALUES (?1, ?2, ?3, 'config', 'active', ?4) \
+             ON CONFLICT(id) DO UPDATE SET source='config', lifecycle_state='active'",
             rusqlite::params![id, db.to_string(), env.to_string(), chrono::Utc::now().to_rfc3339()],
         )
         .map_err(db_err("database: register"))?;
         Ok(())
     }
 
-    fn exists(&self, db: &DatabaseName, env: &Environment) -> Result<bool, AppError> {
+    fn exists_active(&self, db: &DatabaseName, env: &Environment) -> Result<bool, AppError> {
         let conn = self.conn.lock();
         let id = format!("{}:{}", db, env);
+        let result: Result<String, _> = conn.query_row(
+            "SELECT id FROM databases WHERE id = ?1 AND lifecycle_state = 'active'",
+            rusqlite::params![id],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(_) => Ok(true),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(db_err("database: exists_active")(e)),
+        }
+    }
+
+    fn list_active(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT name, environment FROM databases WHERE lifecycle_state = 'active'")
+            .map_err(db_err("database: list_active"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(db_err("database: list_active"))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            let (name, env) = row.map_err(db_err("database: list_active"))?;
+            let db = DatabaseName::new(name).map_err(|e| AppError::Internal(e.to_string()))?;
+            let environment =
+                Environment::new(env).map_err(|e| AppError::Internal(e.to_string()))?;
+            results.push((db, environment));
+        }
+        Ok(results)
+    }
+
+    fn get_by_id(&self, id: &str) -> Result<bool, AppError> {
+        let conn = self.conn.lock();
         let result: Result<String, _> = conn.query_row(
             "SELECT id FROM databases WHERE id = ?1",
             rusqlite::params![id],
@@ -37,30 +75,8 @@ impl DatabaseRegistry for SqliteDatabaseRegistry {
         match result {
             Ok(_) => Ok(true),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
-            Err(e) => Err(db_err("database: exists")(e)),
+            Err(e) => Err(db_err("database: get_by_id")(e)),
         }
-    }
-
-    fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
-        let conn = self.conn.lock();
-        let mut stmt = conn
-            .prepare("SELECT name, environment FROM databases")
-            .map_err(db_err("database: list"))?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(db_err("database: list"))?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            let (name, env) = row.map_err(db_err("database: list"))?;
-            let db = DatabaseName::new(name).map_err(|e| AppError::Internal(e.to_string()))?;
-            let environment =
-                Environment::new(env).map_err(|e| AppError::Internal(e.to_string()))?;
-            results.push((db, environment));
-        }
-        Ok(results)
     }
 
     fn delete_by_source(&self, source: &str) -> Result<u64, AppError> {

@@ -220,7 +220,7 @@ impl SyncConfig {
             role_bindings: self.sync_role_bindings(role_bindings)?,
             webhooks: {
                 let w = self.sync_webhooks(webhooks)?;
-                let total = self.webhook_repo.list()?.len() as u32;
+                let total = self.webhook_repo.list_active()?.len() as u32;
                 if total > self.license_checker.max_webhooks() {
                     return Err(AppError::Validation(format!(
                         "webhook limit exceeded (max {}, have {total})",
@@ -353,7 +353,7 @@ mod tests {
         fn get(&self, _: &str) -> Result<Option<Webhook>, AppError> {
             Ok(None)
         }
-        fn list(&self) -> Result<Vec<Webhook>, AppError> {
+        fn list_active(&self) -> Result<Vec<Webhook>, AppError> {
             Ok(vec![])
         }
         fn update(&self, _: &Webhook) -> Result<(), AppError> {
@@ -369,10 +369,10 @@ mod tests {
         fn register(&self, _: &DatabaseName, _: &Environment) -> Result<(), AppError> {
             Ok(())
         }
-        fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
+        fn exists_active(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
             Ok(false)
         }
-        fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+        fn list_active(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
             Ok(vec![])
         }
     }
@@ -614,6 +614,12 @@ mod tests {
                 self.deleted_source.lock().unwrap().push(source.into());
                 Ok(0)
             }
+            fn delete_stale_config(&self, active_ids: &[String]) -> Result<u64, AppError> {
+                // Track that stale deletion was called (not delete_by_source)
+                self.deleted_source.lock().unwrap().push("stale_config".into());
+                let _ = active_ids;
+                Ok(0)
+            }
             fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
                 Ok(None)
             }
@@ -654,8 +660,8 @@ mod tests {
         let sources = tracking.deleted_source.lock().unwrap();
         assert_eq!(
             &*sources,
-            &["config"],
-            "only source='config' should be deleted"
+            &["stale_config"],
+            "should use delete_stale_config, not delete_by_source"
         );
     }
 
@@ -704,13 +710,13 @@ mod tests {
                 self.entries.lock().unwrap().push((db.clone(), env.clone()));
                 Ok(())
             }
-            fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+            fn list_active(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
                 Ok(self.entries.lock().unwrap().clone())
             }
             fn delete_by_source(&self, _: &str) -> Result<u64, AppError> {
                 Ok(0)
             }
-            fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
+            fn exists_active(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
                 Ok(true)
             }
         }

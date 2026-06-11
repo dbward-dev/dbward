@@ -17,7 +17,7 @@ pub async fn list(
         .authorizer
         .authorize_global(&user, Permission::WorkflowRead)
         .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
-    let webhooks = state.webhook_repo().list().map_err(map_error)?;
+    let webhooks = state.webhook_repo().list_active().map_err(map_error)?;
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({ "webhooks": webhooks })),
@@ -80,6 +80,7 @@ pub(super) async fn list_deliveries(
                         dbward_domain::entities::DeliveryStatus::Pending => "pending",
                         dbward_domain::entities::DeliveryStatus::InProgress => "in_progress",
                         dbward_domain::entities::DeliveryStatus::Delivered => "delivered",
+                        dbward_domain::entities::DeliveryStatus::Cancelled => "cancelled",
                         dbward_domain::entities::DeliveryStatus::Dead => "dead",
                     },
                     "attempts": d.attempts,

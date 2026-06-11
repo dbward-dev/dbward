@@ -53,6 +53,18 @@ pub(super) fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
 
     // S6: auto_approve_consistency
     check_auto_approve_consistency(ctx, &cfg);
+
+    // S7: built_in_role_collision
+    check_built_in_role_collision(ctx, &cfg);
+
+    // S8: role_binding_duplicates
+    check_role_binding_duplicates(ctx, &cfg);
+
+    // S9: notification_webhook_refs
+    check_notification_webhook_refs(ctx, &cfg);
+
+    // S10: role_binding_empty
+    check_role_binding_empty(ctx, &cfg);
 }
 
 fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
@@ -321,6 +333,120 @@ fn check_auto_approve_consistency(ctx: &mut DoctorContext, cfg: &dbward_config::
                 orphaned.join(", ")
             ),
             hint: Some("These auto_approve rules will never trigger".into()),
+        });
+    }
+}
+
+fn check_built_in_role_collision(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
+    let builtin = ["admin", "developer", "readonly", "agent-default"];
+    let mut collisions = Vec::new();
+    for r in &cfg.auth.roles {
+        if builtin.contains(&r.name.as_str()) {
+            collisions.push(r.name.clone());
+        }
+    }
+    if collisions.is_empty() {
+        ctx.record(CheckResult {
+            id: "built_in_role_collision",
+            status: Status::Pass,
+            message: "no collisions with built-in roles".into(),
+            hint: None,
+        });
+    } else {
+        ctx.record(CheckResult {
+            id: "built_in_role_collision",
+            status: Status::Fail,
+            message: format!("collides with built-in: {}", collisions.join(", ")),
+            hint: Some("Choose different names for custom roles".into()),
+        });
+    }
+}
+
+fn check_role_binding_duplicates(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut dups = Vec::new();
+    for (i, rb) in cfg.auth.role_bindings.iter().enumerate() {
+        let mut sorted_subjects = rb.subjects.clone();
+        sorted_subjects.sort();
+        sorted_subjects.dedup();
+        let mut sorted_groups = rb.groups.clone();
+        sorted_groups.sort();
+        sorted_groups.dedup();
+        let key = format!(
+            "{}|{}|{}",
+            rb.role,
+            sorted_subjects.join(","),
+            sorted_groups.join(",")
+        );
+        if !seen.insert(key) {
+            dups.push(format!("role_bindings[{i}] role='{}'", rb.role));
+        }
+    }
+    if dups.is_empty() {
+        ctx.record(CheckResult {
+            id: "role_binding_duplicates",
+            status: Status::Pass,
+            message: format!("{} bindings, no duplicates", cfg.auth.role_bindings.len()),
+            hint: None,
+        });
+    } else {
+        ctx.record(CheckResult {
+            id: "role_binding_duplicates",
+            status: Status::Fail,
+            message: format!("{} duplicate(s): {}", dups.len(), dups.join("; ")),
+            hint: Some("Remove duplicate role_bindings".into()),
+        });
+    }
+}
+
+fn check_notification_webhook_refs(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
+    let webhook_ids: std::collections::HashSet<&str> =
+        cfg.webhooks.iter().map(|w| w.id.as_str()).collect();
+    let mut missing = Vec::new();
+    for (i, np) in cfg.notification_policies.iter().enumerate() {
+        for wh_id in &np.webhooks {
+            if !webhook_ids.contains(wh_id.as_str()) {
+                missing.push(format!("notification_policies[{i}].webhooks: '{wh_id}'"));
+            }
+        }
+    }
+    if missing.is_empty() {
+        ctx.record(CheckResult {
+            id: "notification_webhook_refs",
+            status: Status::Pass,
+            message: "all webhook references valid".into(),
+            hint: None,
+        });
+    } else {
+        ctx.record(CheckResult {
+            id: "notification_webhook_refs",
+            status: Status::Fail,
+            message: format!("{} undefined: {}", missing.len(), missing.join("; ")),
+            hint: Some("Define referenced webhooks in [[webhooks]]".into()),
+        });
+    }
+}
+
+fn check_role_binding_empty(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
+    let mut empty = Vec::new();
+    for (i, rb) in cfg.auth.role_bindings.iter().enumerate() {
+        if rb.subjects.is_empty() && rb.groups.is_empty() {
+            empty.push(format!("role_bindings[{i}] role='{}'", rb.role));
+        }
+    }
+    if empty.is_empty() {
+        ctx.record(CheckResult {
+            id: "role_binding_empty",
+            status: Status::Pass,
+            message: "all bindings have at least one target".into(),
+            hint: None,
+        });
+    } else {
+        ctx.record(CheckResult {
+            id: "role_binding_empty",
+            status: Status::Warn,
+            message: format!("{} no-op binding(s): {}", empty.len(), empty.join("; ")),
+            hint: Some("Add subjects or groups to these bindings".into()),
         });
     }
 }

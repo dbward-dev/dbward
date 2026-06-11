@@ -28,7 +28,7 @@ pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<serde_jso
     let mut checks = serde_json::Map::new();
     let mut all_ok = true;
 
-    match state.database_registry().list() {
+    match state.database_registry().list_active() {
         Ok(_) => {
             checks.insert("sqlite".into(), serde_json::json!("ok"));
         }

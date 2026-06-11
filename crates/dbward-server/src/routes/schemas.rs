@@ -27,7 +27,7 @@ pub async fn get_schema(
     Query(query): Query<SchemaQuery>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     // 1. Check DB is registered
-    let all_pairs = state.database_registry().list().map_err(map_error)?;
+    let all_pairs = state.database_registry().list_active().map_err(map_error)?;
     let envs_for_db: Vec<&str> = all_pairs
         .iter()
         .filter(|(d, _)| d.as_str() == db)

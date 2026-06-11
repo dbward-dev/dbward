@@ -71,7 +71,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn list_workflows(&self) -> Result<Vec<Workflow>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows",
+            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows WHERE lifecycle_state = 'active'",
         ).map_err(db_err("policy: list_workflows"))?;
         let rows = stmt
             .query_map([], row_to_workflow)
@@ -95,7 +95,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn count_workflows(&self) -> Result<u32, AppError> {
         let conn = self.conn.lock();
         let count: u32 = conn
-            .query_row("SELECT COUNT(*) FROM workflows", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM workflows WHERE lifecycle_state = 'active'", [], |row| row.get(0))
             .map_err(db_err("policy: count_workflows"))?;
         Ok(count)
     }
@@ -138,7 +138,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn list_execution_policies(&self) -> Result<Vec<ExecutionPolicy>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs, max_rows, migration_lease_duration_secs, migration_statement_timeout_secs FROM execution_policies",
+            "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs, max_rows, migration_lease_duration_secs, migration_statement_timeout_secs FROM execution_policies WHERE lifecycle_state = 'active'",
         ).map_err(db_err("policy: list_execution_policies"))?;
         let rows = stmt
             .query_map([], row_to_execution_policy)
@@ -166,7 +166,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, database_name, environment, retention_days, delivery_mode, access_json FROM result_policies",
+            "SELECT id, database_name, environment, retention_days, delivery_mode, access_json FROM result_policies WHERE lifecycle_state = 'active'",
         ).map_err(db_err("policy: find_result_policy"))?;
         let rows = stmt
             .query_map([], |row| {
@@ -315,7 +315,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn list_result_policies(&self) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT id, database_name, environment, retention_days, delivery_mode, access_json FROM result_policies")
+            .prepare("SELECT id, database_name, environment, retention_days, delivery_mode, access_json FROM result_policies WHERE lifecycle_state = 'active'")
             .map_err(db_err("policy: list_result_policies"))?;
         let rows = stmt
             .query_map([], |row| {
@@ -469,7 +469,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT id, database_name, environment, webhooks_json, events_json FROM notification_policies")
+            .prepare("SELECT id, database_name, environment, webhooks_json, events_json FROM notification_policies WHERE lifecycle_state = 'active'")
             .map_err(db_err("policy: list_notification_policies"))?;
         let rows = stmt
             .query_map([], |row| {
@@ -575,7 +575,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn list_roles(&self) -> Result<Vec<RoleDefinition>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT name, permissions_json, databases_json, environments_json FROM roles")
+            .prepare("SELECT name, permissions_json, databases_json, environments_json FROM roles WHERE lifecycle_state = 'active'")
             .map_err(db_err("policy: list_roles"))?;
         let rows = stmt
             .query_map([], row_to_role)
@@ -597,7 +597,7 @@ impl PolicyRepo for SqlitePolicyRepo {
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!(
-            "SELECT name, permissions_json, databases_json, environments_json FROM roles WHERE name IN ({})",
+            "SELECT name, permissions_json, databases_json, environments_json FROM roles WHERE name IN ({}) AND lifecycle_state = 'active'",
             placeholders
         );
         let mut stmt = conn
@@ -632,7 +632,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn count_roles(&self) -> Result<u32, AppError> {
         let conn = self.conn.lock();
         let count: u32 = conn
-            .query_row("SELECT COUNT(*) FROM roles", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM roles WHERE lifecycle_state = 'active'", [], |row| row.get(0))
             .map_err(db_err("policy: count_roles"))?;
         Ok(count)
     }
@@ -776,7 +776,7 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
         let workflows = {
             let conn = self.conn.lock();
             let mut stmt = conn.prepare(
-                "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows",
+                "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows WHERE lifecycle_state = 'active'",
             ).map_err(db_err("policy: evaluate_workflow"))?;
             let rows = stmt
                 .query_map([], row_to_workflow)
@@ -798,7 +798,7 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
         let policies = {
             let conn = self.conn.lock();
             let mut stmt = match conn.prepare(
-                "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs, max_rows, migration_lease_duration_secs, migration_statement_timeout_secs FROM execution_policies",
+                "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs, max_rows, migration_lease_duration_secs, migration_statement_timeout_secs FROM execution_policies WHERE lifecycle_state = 'active'",
             ) {
                 Ok(s) => s,
                 Err(_) => return ExecutionPolicy::default(),

@@ -473,6 +473,36 @@ impl ServerConfig {
             )));
         }
 
+        // role_binding duplicates (same role + sorted subjects + sorted groups)
+        {
+            let mut seen: HashSet<String> = HashSet::new();
+            for (i, rb) in self.auth.role_bindings.iter().enumerate() {
+                if rb.subjects.is_empty() && rb.groups.is_empty() {
+                    return Err(ConfigError::Validation(format!(
+                        "auth.role_bindings[{i}]: must have at least one subject or group"
+                    )));
+                }
+                let mut sorted_subjects = rb.subjects.clone();
+                sorted_subjects.sort();
+                sorted_subjects.dedup();
+                let mut sorted_groups = rb.groups.clone();
+                sorted_groups.sort();
+                sorted_groups.dedup();
+                let key = format!(
+                    "{}|{}|{}",
+                    rb.role,
+                    sorted_subjects.join(","),
+                    sorted_groups.join(",")
+                );
+                if !seen.insert(key) {
+                    return Err(ConfigError::Validation(format!(
+                        "auth.role_bindings[{i}]: duplicate binding for role '{}' with same subjects/groups",
+                        rb.role
+                    )));
+                }
+            }
+        }
+
         Ok(())
     }
 }

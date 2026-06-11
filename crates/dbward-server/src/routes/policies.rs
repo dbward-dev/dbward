@@ -247,7 +247,7 @@ pub async fn policy_resolution(
 
     let registered = state
         .database_registry()
-        .exists(&db, &env)
+        .exists_active(&db, &env)
         .map_err(map_error)?;
     if !registered {
         return Ok((

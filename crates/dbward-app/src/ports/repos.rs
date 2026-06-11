@@ -261,6 +261,10 @@ pub trait UserRepo: Send + Sync {
     fn delete_by_source(&self, _source: &str) -> Result<u64, AppError> {
         Ok(0)
     }
+    /// Delete config-managed users not in the active set.
+    fn delete_stale_config(&self, _active_ids: &[String]) -> Result<u64, AppError> {
+        Ok(0)
+    }
     fn set_source(&self, _user_id: &str, _source: &str) -> Result<(), AppError> {
         Ok(())
     }
@@ -275,6 +279,10 @@ pub trait GroupRepo: Send + Sync {
     fn delete_by_source(&self, source: &str) -> Result<u64, AppError>;
     fn create(&self, name: &str, members: &[String], source: &str) -> Result<(), AppError>;
     fn list(&self) -> Result<Vec<(String, Vec<String>)>, AppError>;
+    /// Delete config-managed groups not in the active set.
+    fn delete_stale_config(&self, _active_names: &[String]) -> Result<u64, AppError> {
+        Ok(0)
+    }
 }
 
 // --- RoleBindingRepo (CFG-24) ---
@@ -293,6 +301,10 @@ pub trait RoleBindingRepo: Send + Sync {
         source: &str,
     ) -> Result<(), AppError>;
     fn list(&self) -> Result<Vec<RoleBindingEntry>, AppError>;
+    /// Delete config-managed role_bindings not in the active set.
+    fn delete_stale_config(&self, _active_ids: &[String]) -> Result<u64, AppError> {
+        Ok(0)
+    }
 }
 
 // --- TokenRepo ---
@@ -317,7 +329,7 @@ pub trait TokenRepo: Send + Sync {
 pub trait WebhookRepo: Send + Sync {
     fn create(&self, webhook: &Webhook) -> Result<(), AppError>;
     fn get(&self, id: &str) -> Result<Option<Webhook>, AppError>;
-    fn list(&self) -> Result<Vec<Webhook>, AppError>;
+    fn list_active(&self) -> Result<Vec<Webhook>, AppError>;
     fn update(&self, webhook: &Webhook) -> Result<(), AppError>;
     fn delete(&self, id: &str) -> Result<(), AppError>;
     fn delete_by_source(&self, _source: &str) -> Result<u64, AppError> {
@@ -329,8 +341,13 @@ pub trait WebhookRepo: Send + Sync {
 
 pub trait DatabaseRegistry: Send + Sync {
     fn register(&self, db: &DatabaseName, env: &Environment) -> Result<(), AppError>;
-    fn exists(&self, db: &DatabaseName, env: &Environment) -> Result<bool, AppError>;
-    fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError>;
+    fn exists_active(&self, db: &DatabaseName, env: &Environment) -> Result<bool, AppError>;
+    fn list_active(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError>;
+    /// Raw lookup without lifecycle filter (for resolving existing requests).
+    fn get_by_id(&self, id: &str) -> Result<bool, AppError> {
+        let _ = id;
+        Ok(false)
+    }
     fn delete_by_source(&self, _source: &str) -> Result<u64, AppError> {
         Ok(0)
     }
@@ -577,6 +594,21 @@ pub trait PolicyRepo: Send + Sync {
     fn delete_roles_by_source(&self, _source: &str) -> Result<u64, AppError> {
         Ok(0)
     }
+
+    // --- Stale deletion (CFG-24: UPSERT+Reconcile) ---
+
+    fn delete_stale_workflows(&self, _active_ids: &[String]) -> Result<u64, AppError> {
+        Ok(0)
+    }
+    fn delete_stale_execution_policies(&self, _active_ids: &[String]) -> Result<u64, AppError> {
+        Ok(0)
+    }
+    fn delete_stale_result_policies(&self, _active_ids: &[String]) -> Result<u64, AppError> {
+        Ok(0)
+    }
+    fn delete_stale_notification_policies(&self, _active_ids: &[String]) -> Result<u64, AppError> {
+        Ok(0)
+    }
 }
 
 // --- LicenseChecker ---
@@ -690,6 +722,7 @@ pub trait WebhookDeliveryRepo: Send + Sync {
         attempts: u32,
     ) -> Result<(), AppError>;
     fn mark_dead(&self, id: &str) -> Result<(), AppError>;
+    fn mark_cancelled(&self, id: &str) -> Result<(), AppError>;
     fn reclaim_stale(&self, older_than: &str) -> Result<u32, AppError>;
     fn list_by_status(
         &self,

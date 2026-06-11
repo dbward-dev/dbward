@@ -46,16 +46,16 @@ impl WebhookRepo for SqliteWebhookRepo {
         }
     }
 
-    fn list(&self) -> Result<Vec<Webhook>, AppError> {
+    fn list_active(&self) -> Result<Vec<Webhook>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT id, url, events_json, format, secret, status FROM webhooks")
-            .map_err(db_err("webhook: list"))?;
+            .prepare("SELECT id, url, events_json, format, secret, status FROM webhooks WHERE lifecycle_state = 'active'")
+            .map_err(db_err("webhook: list_active"))?;
         let rows = stmt
             .query_map([], row_to_webhook)
-            .map_err(db_err("webhook: list"))?;
+            .map_err(db_err("webhook: list_active"))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(db_err("webhook: list"))
+            .map_err(db_err("webhook: list_active"))
     }
 
     fn update(&self, webhook: &Webhook) -> Result<(), AppError> {

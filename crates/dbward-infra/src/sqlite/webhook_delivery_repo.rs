@@ -21,6 +21,7 @@ fn parse_status(s: &str) -> DeliveryStatus {
     match s {
         "in_progress" => DeliveryStatus::InProgress,
         "delivered" => DeliveryStatus::Delivered,
+        "cancelled" => DeliveryStatus::Cancelled,
         "dead" => DeliveryStatus::Dead,
         _ => DeliveryStatus::Pending,
     }
@@ -31,6 +32,7 @@ fn status_str(s: DeliveryStatus) -> &'static str {
         DeliveryStatus::Pending => "pending",
         DeliveryStatus::InProgress => "in_progress",
         DeliveryStatus::Delivered => "delivered",
+        DeliveryStatus::Cancelled => "cancelled",
         DeliveryStatus::Dead => "dead",
     }
 }
@@ -143,6 +145,16 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
             params![id],
         )
         .map_err(db_err("webhook_delivery: mark_dead"))?;
+        Ok(())
+    }
+
+    fn mark_cancelled(&self, id: &str) -> Result<(), AppError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE webhook_deliveries SET status = 'cancelled', claimed_at = NULL WHERE id = ?1",
+            params![id],
+        )
+        .map_err(db_err("webhook_delivery: mark_cancelled"))?;
         Ok(())
     }
 

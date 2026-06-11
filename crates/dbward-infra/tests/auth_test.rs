@@ -235,14 +235,14 @@ fn database_registry_exists_and_list() {
     let db = DatabaseName::new("app").unwrap();
     let env = Environment::new("production").unwrap();
 
-    assert!(registry.exists(&db, &env).unwrap());
+    assert!(registry.exists_active(&db, &env).unwrap());
     assert!(
         !registry
-            .exists(&DatabaseName::new("other").unwrap(), &env)
+            .exists_active(&DatabaseName::new("other").unwrap(), &env)
             .unwrap()
     );
 
-    let list = registry.list().unwrap();
+    let list = registry.list_active().unwrap();
     assert_eq!(list.len(), 1);
     assert_eq!(list[0].0.as_str(), "app");
     assert_eq!(list[0].1.as_str(), "production");
