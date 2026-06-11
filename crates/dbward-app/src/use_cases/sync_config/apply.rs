@@ -40,7 +40,10 @@ impl SyncConfig {
             }
         }
 
-        // 2. License check
+        // 2. Stale reconciliation (StrongRuntime): orphan if FK-referenced, delete otherwise
+        let (orphaned, deleted) = self.database_registry.reconcile_stale(&toml_ids)?;
+
+        // 3. License check (after reconcile so stale rows are removed/orphaned)
         let all = self.database_registry.list_active()?;
         let unique_names: std::collections::HashSet<_> = all.iter().map(|(name, _)| name).collect();
         let total = unique_names.len() as u32;
@@ -51,8 +54,6 @@ impl SyncConfig {
             )));
         }
 
-        // 3. Stale reconciliation (StrongRuntime): orphan if FK-referenced, delete otherwise
-        let (orphaned, deleted) = self.database_registry.reconcile_stale(&toml_ids)?;
         Ok((orphaned + deleted, upserted))
     }
 
@@ -163,12 +164,8 @@ impl SyncConfig {
             upserted += 1;
         }
         // ValidatedInBatch: delete stale roles (not in current TOML)
-        let deleted = self
-            .policy_repo
-            .delete_stale_config_roles(&toml_ids)
-            .map(|_| 0u64)
-            .unwrap_or(0);
-        Ok((deleted, upserted))
+        self.policy_repo.delete_stale_config_roles(&toml_ids)?;
+        Ok((0, upserted))
     }
 
     // ─────────────────────────────────────────────────────────────────────────

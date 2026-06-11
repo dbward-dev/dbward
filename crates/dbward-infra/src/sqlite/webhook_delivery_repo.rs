@@ -214,7 +214,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
         let conn = self.conn.lock();
         let changed = conn
             .execute(
-                "DELETE FROM webhook_deliveries WHERE status IN ('delivered', 'dead') AND created_at < ?1",
+                "DELETE FROM webhook_deliveries WHERE status IN ('delivered', 'dead', 'cancelled') AND created_at < ?1",
                 params![before],
             )
             .map_err(db_err("webhook_delivery: purge_old"))?;

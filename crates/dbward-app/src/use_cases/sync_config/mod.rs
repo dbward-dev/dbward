@@ -181,8 +181,12 @@ impl SyncConfig {
         if result.is_ok()
             && let Err(e) = self.notifier.reload()
         {
-            tracing::error!("notifier reload failed after config sync: {e}");
-            return Err(AppError::Internal(format!("notifier reload failed: {e}")));
+            tracing::error!(
+                "notifier reload failed after config sync (DB committed, restart required): {e}"
+            );
+            return Err(AppError::Internal(format!(
+                "notifier reload failed (DB committed, restart required): {e}"
+            )));
         }
 
         // Record config generation + summary log
