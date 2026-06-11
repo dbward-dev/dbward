@@ -695,8 +695,11 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn delete_stale_config_roles(&self, active_names: &[String]) -> Result<(), AppError> {
         let conn = self.conn.lock();
         if active_names.is_empty() {
-            conn.execute("DELETE FROM roles WHERE config_synced = 1", [])
-                .map_err(db_err("policy: delete_stale_config_roles"))?;
+            conn.execute(
+                "DELETE FROM roles WHERE source = 'config' AND built_in = 0",
+                [],
+            )
+            .map_err(db_err("policy: delete_stale_config_roles"))?;
         } else {
             let placeholders: String = active_names
                 .iter()
@@ -705,7 +708,7 @@ impl PolicyRepo for SqlitePolicyRepo {
                 .collect::<Vec<_>>()
                 .join(",");
             let sql = format!(
-                "DELETE FROM roles WHERE config_synced = 1 AND name NOT IN ({})",
+                "DELETE FROM roles WHERE source = 'config' AND built_in = 0 AND name NOT IN ({})",
                 placeholders
             );
             let params: Vec<&dyn rusqlite::ToSql> = active_names
