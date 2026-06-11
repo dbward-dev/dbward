@@ -162,8 +162,12 @@ impl SyncConfig {
             toml_ids.push(r.name.clone());
             upserted += 1;
         }
-        let deleted = self.policy_repo.delete_roles_by_source("config")?;
-        // delete_roles_by_source already excludes built_in=1
+        // ValidatedInBatch: delete stale roles (not in current TOML)
+        let deleted = self
+            .policy_repo
+            .delete_stale_config_roles(&toml_ids)
+            .map(|_| 0u64)
+            .unwrap_or(0);
         Ok((deleted, upserted))
     }
 

@@ -27,7 +27,7 @@ impl GroupRepo for SqliteGroupRepo {
         let members_json = serde_json::to_string(members).map_err(json_err("group: create"))?;
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO groups (name, members_json, source, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO groups (name, members_json, source, lifecycle_state, created_at, updated_at) VALUES (?1, ?2, ?3, 'active', ?4, ?5) ON CONFLICT(name) DO UPDATE SET members_json=excluded.members_json, lifecycle_state='active', updated_at=excluded.updated_at",
             rusqlite::params![name, members_json, source, now, now],
         )
         .map_err(db_err("group: create"))?;
@@ -54,5 +54,29 @@ impl GroupRepo for SqliteGroupRepo {
             results.push((name, members));
         }
         Ok(results)
+    }
+
+    fn delete_stale_config(&self, active_names: &[String]) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        if active_names.is_empty() {
+            let n = conn
+                .execute("DELETE FROM groups WHERE source = 'config'", [])
+                .map_err(db_err("group: delete_stale"))?;
+            return Ok(n as u64);
+        }
+        let placeholders: String = (1..=active_names.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql =
+            format!("DELETE FROM groups WHERE source = 'config' AND name NOT IN ({placeholders})");
+        let params: Vec<&dyn rusqlite::types::ToSql> = active_names
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let n = conn
+            .execute(&sql, params.as_slice())
+            .map_err(db_err("group: delete_stale"))?;
+        Ok(n as u64)
     }
 }

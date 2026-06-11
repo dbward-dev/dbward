@@ -29,8 +29,9 @@ impl PolicyRepo for SqlitePolicyRepo {
         let steps_json =
             serde_json::to_string(&wf.steps).map_err(json_err("policy: create_workflow"))?;
         conn.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs, source, lifecycle_state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'config', 'active')
+             ON CONFLICT(id) DO UPDATE SET database_name=excluded.database_name, environment=excluded.environment, operations_json=excluded.operations_json, steps_json=excluded.steps_json, require_reason=excluded.require_reason, allow_self_approve=excluded.allow_self_approve, allow_same_approver_across_steps=excluded.allow_same_approver_across_steps, explain=excluded.explain, pending_ttl_secs=excluded.pending_ttl_secs, approval_ttl_secs=excluded.approval_ttl_secs, statement_timeout_secs=excluded.statement_timeout_secs, lifecycle_state='active'",
             params![
                 wf.id,
                 wf.database.as_str(),
@@ -107,8 +108,9 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn create_execution_policy(&self, ep: &ExecutionPolicy) -> Result<(), AppError> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs, max_rows, migration_lease_duration_secs, migration_statement_timeout_secs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO execution_policies (id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs, max_rows, migration_lease_duration_secs, migration_statement_timeout_secs, source, lifecycle_state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'config', 'active')
+             ON CONFLICT(id) DO UPDATE SET database_name=excluded.database_name, environment=excluded.environment, max_executions=excluded.max_executions, execution_window_secs=excluded.execution_window_secs, retry_on_failure=excluded.retry_on_failure, statement_timeout_secs=excluded.statement_timeout_secs, max_statement_timeout_secs=excluded.max_statement_timeout_secs, max_rows=excluded.max_rows, migration_lease_duration_secs=excluded.migration_lease_duration_secs, migration_statement_timeout_secs=excluded.migration_statement_timeout_secs, lifecycle_state='active'",
             params![
                 ep.id,
                 ep.database.as_str(),
@@ -244,7 +246,7 @@ impl PolicyRepo for SqlitePolicyRepo {
             .trim_matches('"')
             .to_string();
         conn.execute(
-            "INSERT INTO result_policies (id, database_name, environment, retention_days, delivery_mode, access_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO result_policies (id, database_name, environment, retention_days, delivery_mode, access_json, source, lifecycle_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'config', 'active') ON CONFLICT(id) DO UPDATE SET database_name=excluded.database_name, environment=excluded.environment, retention_days=excluded.retention_days, delivery_mode=excluded.delivery_mode, access_json=excluded.access_json, lifecycle_state='active'",
             params![
                 policy.id,
                 policy.database.as_str(),
@@ -406,7 +408,7 @@ impl PolicyRepo for SqlitePolicyRepo {
         let events_json = serde_json::to_string(&policy.events)
             .map_err(json_err("policy: create_notification_policy"))?;
         conn.execute(
-            "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, events_json) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO notification_policies (id, database_name, environment, webhooks_json, events_json, source, lifecycle_state) VALUES (?1, ?2, ?3, ?4, ?5, 'config', 'active') ON CONFLICT(id) DO UPDATE SET database_name=excluded.database_name, environment=excluded.environment, webhooks_json=excluded.webhooks_json, events_json=excluded.events_json, lifecycle_state='active'",
             params![
                 policy.id,
                 policy.database.as_str(),
@@ -563,8 +565,9 @@ impl PolicyRepo for SqlitePolicyRepo {
         )
         .map_err(json_err("policy: create_role"))?;
         conn.execute(
-            "INSERT INTO roles (name, permissions_json, databases_json, environments_json, built_in)
-             VALUES (?1, ?2, ?3, ?4, 0)",
+            "INSERT INTO roles (name, permissions_json, databases_json, environments_json, built_in, source, lifecycle_state)
+             VALUES (?1, ?2, ?3, ?4, 0, 'config', 'active')
+             ON CONFLICT(name) DO UPDATE SET permissions_json=excluded.permissions_json, databases_json=excluded.databases_json, environments_json=excluded.environments_json, lifecycle_state='active'",
             params![role.name, perms_json, dbs_json, envs_json],
         ).map_err(|e| {
             if e.to_string().contains("UNIQUE constraint failed") {
@@ -758,6 +761,108 @@ impl PolicyRepo for SqlitePolicyRepo {
                 [source],
             )
             .map_err(db_err("policy: delete_roles_by_source"))?;
+        Ok(n as u64)
+    }
+
+    fn delete_stale_workflows(&self, active_ids: &[String]) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        if active_ids.is_empty() {
+            let n = conn
+                .execute("DELETE FROM workflows WHERE source = 'config'", [])
+                .map_err(db_err("policy: delete_stale_workflows"))?;
+            return Ok(n as u64);
+        }
+        let placeholders: String = (1..=active_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql =
+            format!("DELETE FROM workflows WHERE source = 'config' AND id NOT IN ({placeholders})");
+        let params: Vec<&dyn rusqlite::ToSql> = active_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+        let n = conn
+            .execute(&sql, params.as_slice())
+            .map_err(db_err("policy: delete_stale_workflows"))?;
+        Ok(n as u64)
+    }
+
+    fn delete_stale_execution_policies(&self, active_ids: &[String]) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        if active_ids.is_empty() {
+            let n = conn
+                .execute("DELETE FROM execution_policies WHERE source = 'config'", [])
+                .map_err(db_err("policy: delete_stale_execution_policies"))?;
+            return Ok(n as u64);
+        }
+        let placeholders: String = (1..=active_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "DELETE FROM execution_policies WHERE source = 'config' AND id NOT IN ({placeholders})"
+        );
+        let params: Vec<&dyn rusqlite::ToSql> = active_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+        let n = conn
+            .execute(&sql, params.as_slice())
+            .map_err(db_err("policy: delete_stale_execution_policies"))?;
+        Ok(n as u64)
+    }
+
+    fn delete_stale_result_policies(&self, active_ids: &[String]) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        if active_ids.is_empty() {
+            let n = conn
+                .execute("DELETE FROM result_policies WHERE source = 'config'", [])
+                .map_err(db_err("policy: delete_stale_result_policies"))?;
+            return Ok(n as u64);
+        }
+        let placeholders: String = (1..=active_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "DELETE FROM result_policies WHERE source = 'config' AND id NOT IN ({placeholders})"
+        );
+        let params: Vec<&dyn rusqlite::ToSql> = active_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+        let n = conn
+            .execute(&sql, params.as_slice())
+            .map_err(db_err("policy: delete_stale_result_policies"))?;
+        Ok(n as u64)
+    }
+
+    fn delete_stale_notification_policies(&self, active_ids: &[String]) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        if active_ids.is_empty() {
+            let n = conn
+                .execute(
+                    "DELETE FROM notification_policies WHERE source = 'config'",
+                    [],
+                )
+                .map_err(db_err("policy: delete_stale_notification_policies"))?;
+            return Ok(n as u64);
+        }
+        let placeholders: String = (1..=active_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "DELETE FROM notification_policies WHERE source = 'config' AND id NOT IN ({placeholders})"
+        );
+        let params: Vec<&dyn rusqlite::ToSql> = active_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::ToSql)
+            .collect();
+        let n = conn
+            .execute(&sql, params.as_slice())
+            .map_err(db_err("policy: delete_stale_notification_policies"))?;
         Ok(n as u64)
     }
 }
