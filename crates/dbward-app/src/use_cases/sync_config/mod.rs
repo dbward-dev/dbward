@@ -31,6 +31,7 @@ pub struct SyncConfig {
     pub license_checker: Arc<dyn LicenseChecker>,
     pub ssrf_validator: Arc<dyn SsrfValidator>,
     pub config_generation_repo: Arc<dyn ConfigGenerationRepo>,
+    pub config_digest: String,
 }
 
 // --- Input DTOs ---
@@ -204,7 +205,7 @@ impl SyncConfig {
                 "notification_policies": {"upserted": summary.notification_policies.1, "stale": summary.notification_policies.0},
             });
             self.config_generation_repo
-                .record_generation("", &summary_json.to_string());
+                .record_generation(&self.config_digest, &summary_json.to_string());
             tracing::info!(
                 "config synced: databases(+{}/-{}) webhooks(+{}/-{}) workflows(+{}/-{})",
                 summary.databases.1,
@@ -540,6 +541,7 @@ mod tests {
             license_checker: Arc::new(FakeLicenseChecker),
             ssrf_validator: Arc::new(FakeSsrfValidator),
             config_generation_repo: Arc::new(crate::ports::NoopConfigGenerationRepo),
+            config_digest: String::new(),
         }
     }
 

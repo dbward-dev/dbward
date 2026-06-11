@@ -699,7 +699,13 @@ fn sync_all_config(
     ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator>,
     conn: dbward_infra::sqlite::DbConn,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let uc = build_sync_uc(state, conn, ssrf_validator);
+    let digest = {
+        use sha2::{Digest, Sha256};
+        let serialized = format!("{cfg:?}");
+        format!("{:x}", Sha256::digest(serialized.as_bytes()))
+    };
+    let mut uc = build_sync_uc(state, conn, ssrf_validator);
+    uc.config_digest = digest;
     build_sync_inputs_and_run(&uc, cfg)
 }
 
@@ -729,6 +735,7 @@ fn build_sync_uc(
         config_generation_repo: Arc::new(dbward_infra::sqlite::SqliteConfigGenerationRepo::new(
             conn,
         )),
+        config_digest: String::new(),
     }
 }
 
