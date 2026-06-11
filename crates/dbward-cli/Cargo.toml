@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 dbward-api-types = { path = "../dbward-api-types" }
+dbward-api-client = { path = "../dbward-api-client" }
 dbward-config = { path = "../dbward-config" }
 dbward-domain = { path = "../dbward-domain" }
 dbward-migrate = { path = "../dbward-migrate", version = "0.1.1" }

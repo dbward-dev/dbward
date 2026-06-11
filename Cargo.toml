@@ -7,6 +7,7 @@ members = [
     "crates/dbward-infra",
     "crates/dbward-driver",
     "crates/dbward-api-types",
+    "crates/dbward-api-client",
     "crates/dbward-migrate",
     "crates/dbward-server",
     "crates/dbward-agent",
