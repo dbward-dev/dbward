@@ -1,5 +1,5 @@
 mod apply;
-mod convert;
+pub mod convert;
 
 use std::sync::Arc;
 

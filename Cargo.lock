@@ -672,6 +672,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
+ "dbward-config",
  "dbward-domain",
  "futures-core",
  "hex",

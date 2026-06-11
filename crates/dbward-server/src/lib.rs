@@ -15,11 +15,7 @@ use arc_swap::ArcSwap;
 use axum::Router;
 use config::{AutoApproveExt, SqlReviewExt};
 use dbward_app::ports::ResultStore;
-use dbward_app::use_cases::sync_config::{
-    ApproverInput, DatabaseInput, ExecutionPolicyInput, GroupInput, NotificationPolicyInput,
-    ResultPolicyInput, RoleBindingInput, RoleInput, SyncConfig, UserInput, WebhookInput,
-    WorkflowInput, WorkflowStepInput,
-};
+use dbward_app::use_cases::sync_config::SyncConfig;
 use dbward_domain::values::{DatabaseName, Environment};
 
 /// Convert a TOML RoleConfig into a domain RoleDefinition.
@@ -865,159 +861,19 @@ fn build_sync_inputs_and_run(
     uc: &SyncConfig,
     cfg: &config::ServerConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let databases: Vec<DatabaseInput> = cfg
-        .databases
-        .iter()
-        .map(|d| DatabaseInput {
-            name: d.name.clone(),
-            environments: d.environments.clone(),
-        })
-        .collect();
-    let users: Vec<UserInput> = cfg
-        .users
-        .iter()
-        .map(|u| UserInput {
-            id: u.id.clone(),
-            status: u.status.clone(),
-        })
-        .collect();
-    let groups: Vec<GroupInput> = cfg
-        .auth
-        .groups
-        .iter()
-        .map(|g| GroupInput {
-            name: g.name.clone(),
-            members: g.members.clone(),
-        })
-        .collect();
-    let roles: Vec<RoleInput> = cfg
-        .auth
-        .roles
-        .iter()
-        .map(|r| RoleInput {
-            name: r.name.clone(),
-            permissions: r.permissions.clone(),
-            databases: r.databases.clone(),
-            environments: r.environments.clone(),
-        })
-        .collect();
-    let role_bindings: Vec<RoleBindingInput> = cfg
-        .auth
-        .role_bindings
-        .iter()
-        .map(|rb| RoleBindingInput {
-            role: rb.role.clone(),
-            subjects: rb.subjects.clone(),
-            groups: rb.groups.clone(),
-        })
-        .collect();
-    let webhooks: Vec<WebhookInput> = cfg
-        .webhooks
-        .iter()
-        .map(|wh| WebhookInput {
-            id: wh.id.clone(),
-            url: wh.url.clone(),
-            events: wh.events.clone(),
-            format: wh.format.clone(),
-            secret: wh.secret.clone(),
-        })
-        .collect();
-    let workflows: Vec<WorkflowInput> = cfg
-        .workflows
-        .iter()
-        .map(|wf| WorkflowInput {
-            database: wf.database.clone(),
-            environment: wf.environment.clone(),
-            operations: wf.operations.clone(),
-            steps: wf
-                .steps
-                .iter()
-                .map(|step_val| {
-                    let mode = step_val
-                        .get("mode")
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("all")
-                        .to_string();
-                    let approvers = step_val
-                        .get("approvers")
-                        .and_then(|a| a.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|a| {
-                                    let min =
-                                        a.get("min").and_then(|m| m.as_u64()).unwrap_or(1) as u32;
-                                    let (selector_type, value) = if let Some(role) =
-                                        a.get("role").and_then(|r| r.as_str())
-                                    {
-                                        ("role", role)
-                                    } else if let Some(group) =
-                                        a.get("group").and_then(|g| g.as_str())
-                                    {
-                                        ("group", group)
-                                    } else if let Some(user) =
-                                        a.get("user").and_then(|u| u.as_str())
-                                    {
-                                        ("user", user)
-                                    } else {
-                                        return None;
-                                    };
-                                    Some(ApproverInput {
-                                        selector_type: selector_type.to_string(),
-                                        value: value.to_string(),
-                                        min,
-                                    })
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    WorkflowStepInput { mode, approvers }
-                })
-                .collect(),
-            require_reason: wf.require_reason,
-            allow_self_approve: wf.allow_self_approve,
-            allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
-            explain: wf.explain,
-            pending_ttl_secs: wf.pending_ttl_secs,
-            statement_timeout_secs: wf.statement_timeout_secs,
-        })
-        .collect();
-    let execution_policies: Vec<ExecutionPolicyInput> = cfg
-        .execution_policies
-        .iter()
-        .map(|ep| ExecutionPolicyInput {
-            database: ep.database.clone(),
-            environment: ep.environment.clone(),
-            max_executions: ep.max_executions,
-            execution_window_secs: ep.execution_window_secs,
-            retry_on_failure: ep.retry_on_failure,
-            statement_timeout_secs: ep.statement_timeout_secs,
-            max_statement_timeout_secs: ep.max_statement_timeout_secs,
-            max_rows: ep.max_rows,
-            migration_lease_duration_secs: ep.migration_lease_duration_secs,
-            migration_statement_timeout_secs: ep.migration_statement_timeout_secs,
-        })
-        .collect();
-    let result_policies: Vec<ResultPolicyInput> = cfg
-        .result_policies
-        .iter()
-        .map(|rp| ResultPolicyInput {
-            database: rp.database.clone(),
-            environment: rp.environment.clone(),
-            retention_days: rp.retention_days,
-            delivery_mode: rp.delivery_mode.clone(),
-            access: rp.access.clone(),
-        })
-        .collect();
-    let notification_policies: Vec<NotificationPolicyInput> = cfg
-        .notification_policies
-        .iter()
-        .map(|np| NotificationPolicyInput {
-            database: np.database.clone(),
-            environment: np.environment.clone(),
-            webhooks: np.webhooks.clone(),
-            events: np.events.clone(),
-        })
-        .collect();
+    use dbward_app::use_cases::sync_config::convert;
+
+    let databases = convert::databases_from_config(&cfg.databases);
+    let users = convert::users_from_config(&cfg.users);
+    let groups = convert::groups_from_config(&cfg.auth.groups);
+    let roles = convert::roles_from_config(&cfg.auth.roles);
+    let role_bindings = convert::role_bindings_from_config(&cfg.auth.role_bindings);
+    let webhooks = convert::webhooks_from_config(&cfg.webhooks);
+    let workflows = convert::workflows_from_config(&cfg.workflows);
+    let execution_policies = convert::execution_policies_from_config(&cfg.execution_policies);
+    let result_policies = convert::result_policies_from_config(&cfg.result_policies);
+    let notification_policies =
+        convert::notification_policies_from_config(&cfg.notification_policies);
 
     uc.sync_all(
         databases,
