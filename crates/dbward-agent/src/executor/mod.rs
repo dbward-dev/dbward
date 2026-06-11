@@ -293,7 +293,7 @@ impl JobExecutor {
     fn is_retryable(err: &AgentError) -> bool {
         match err {
             AgentError::ServerError { status, .. } => *status >= 500 || *status == 429,
-            AgentError::Http(e) => e.is_timeout() || e.is_connect(),
+            AgentError::Http { retryable, .. } => *retryable,
             _ => false,
         }
     }

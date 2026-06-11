@@ -2,8 +2,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum AgentError {
-    #[error("HTTP error: {0}")]
-    Http(#[from] reqwest::Error),
+    #[error("HTTP error: {message}")]
+    Http { message: String, retryable: bool },
     #[error("config error: {0}")]
     Config(String),
     #[error("token verification failed: {0}")]

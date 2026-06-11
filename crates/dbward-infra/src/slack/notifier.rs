@@ -21,6 +21,7 @@ pub struct SlackNotifier {
 }
 
 impl SlackNotifier {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: Arc<dyn SlackClient>,
         message_repo: Arc<dyn SlackMessageRepo>,

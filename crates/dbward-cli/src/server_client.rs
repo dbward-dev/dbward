@@ -1,34 +1,12 @@
-use crate::error::CliError;
-use reqwest::Client;
-use serde_json::Value;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-const API_TIMEOUT: Duration = Duration::from_secs(30);
+use dbward_api_client::{ApiClient, ApiError, ResponseHook};
+use serde_json::Value;
+
+use crate::error::CliError;
 
 const MAX_ERROR_BODY_PREVIEW: usize = 200;
-
-/// Emit a one-time warning if the server version differs from the CLI version.
-fn check_version_header(resp: &reqwest::Response) {
-    static WARNED: OnceLock<()> = OnceLock::new();
-    if WARNED.get().is_some() {
-        return;
-    }
-    if let Some(sv) = resp
-        .headers()
-        .get("x-dbward-version")
-        .and_then(|v| v.to_str().ok())
-    {
-        let cv = env!("CARGO_PKG_VERSION");
-        if sv != cv {
-            WARNED.get_or_init(|| {
-                eprintln!(
-                    "warning: server is v{sv}, CLI is v{cv}. Run 'dbward self-update' to update."
-                );
-            });
-        }
-    }
-}
 
 /// Structured HTTP error from the server.
 #[derive(Debug)]
@@ -92,11 +70,32 @@ impl ServerError {
     }
 }
 
+fn version_check_hook() -> ResponseHook {
+    Box::new(|resp: &reqwest::Response| {
+        static WARNED: OnceLock<()> = OnceLock::new();
+        if WARNED.get().is_some() {
+            return;
+        }
+        if let Some(sv) = resp
+            .headers()
+            .get("x-dbward-version")
+            .and_then(|v| v.to_str().ok())
+        {
+            let cv = env!("CARGO_PKG_VERSION");
+            if sv != cv {
+                WARNED.get_or_init(|| {
+                    eprintln!(
+                        "warning: server is v{sv}, CLI is v{cv}. Run 'dbward self-update' to update."
+                    );
+                });
+            }
+        }
+    })
+}
+
 #[derive(Clone)]
 pub struct ServerClient {
-    base_url: String,
-    api_token: String,
-    client: Client,
+    api: ApiClient,
 }
 
 pub struct CreateRequest<'a> {
@@ -114,46 +113,15 @@ pub struct CreateRequest<'a> {
 
 impl ServerClient {
     pub fn new(base_url: &str, api_token: &str) -> Self {
-        Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
-            api_token: api_token.to_string(),
-            client: Client::builder()
-                .timeout(std::time::Duration::from_secs(600))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("failed to build HTTP client"),
-        }
-    }
-
-    async fn parse_response(
-        &self,
-        resp: reqwest::Response,
-        context: &str,
-    ) -> Result<Value, CliError> {
-        check_version_header(&resp);
-        let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| CliError::Server(format!("{context}: {e}")))?;
-        if !status.is_success() {
-            return Err(ServerError::from_response(status.as_u16(), text).into_cli_error(context));
-        }
-        serde_json::from_str(&text)
-            .map_err(|e| CliError::Server(format!("{context}: invalid JSON: {e}")))
-    }
-
-    async fn parse_response_detailed(&self, resp: reqwest::Response) -> Result<Value, ServerError> {
-        check_version_header(&resp);
-        let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|_| ServerError::from_response(0, "failed to read response".into()))?;
-        if !status.is_success() {
-            return Err(ServerError::from_response(status.as_u16(), text));
-        }
-        serde_json::from_str(&text).map_err(|_| ServerError::from_response(status.as_u16(), text))
+        let api = ApiClient::new(
+            base_url,
+            api_token,
+            Duration::from_secs(30),
+            Duration::from_secs(10),
+        )
+        .expect("failed to build HTTP client")
+        .with_response_hook(version_check_hook());
+        Self { api }
     }
 
     pub async fn create_request(
@@ -191,28 +159,18 @@ impl ServerClient {
         if req.no_store {
             body["no_store"] = serde_json::json!(true);
         }
-        let resp = self
-            .client
-            .post(format!("{}/api/requests", self.base_url))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .json(&body)
-            .send()
+
+        let (status, text) = self
+            .api
+            .post_with_status("/api/requests", &body)
             .await
-            .map_err(|_| {
-                ServerError::from_response(0, "create request failed".into())
-                    .into_cli_error("create request")
-            })?;
-
-        let body = self.parse_response(resp, "create request").await?;
-
-        let cr: dbward_api_types::requests::CreateRequestResponse = serde_json::from_value(body)
+            .map_err(|e| api_to_cli(e, "create request"))?;
+        if status >= 400 {
+            return Err(ServerError::from_response(status, text).into_cli_error("create request"));
+        }
+        let cr: dbward_api_types::requests::CreateRequestResponse = serde_json::from_str(&text)
             .map_err(|e| CliError::Server(format!("create request: invalid response: {e}")))?;
-        let id = cr.id;
-        let status = cr.status;
-        let approvers = cr.approvers;
-
-        Ok((id, status, approvers))
+        Ok((cr.id, cr.status, cr.approvers))
     }
 
     pub async fn list_requests(
@@ -223,7 +181,7 @@ impl ServerClient {
         environment: Option<&str>,
         user: Option<&str>,
     ) -> Result<Value, CliError> {
-        let mut url = format!("{}/api/requests", self.base_url);
+        let mut url = "/api/requests".to_string();
         let mut query_parts: Vec<String> = Vec::new();
         if let Some(l) = limit {
             query_parts.push(format!("limit={l}"));
@@ -243,33 +201,15 @@ impl ServerClient {
         if !query_parts.is_empty() {
             url = format!("{url}?{}", query_parts.join("&"));
         }
-        let resp = self
-            .client
-            .get(&url)
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| CliError::Server(format!("list requests failed: {e}")))?;
-
-        self.parse_response(resp, "list requests").await
+        self.get_json(&url).await
     }
 
     pub async fn list_pending_for_me(&self, limit: Option<u32>) -> Result<Value, CliError> {
-        let mut url = format!("{}/api/requests?pending_for_me=true", self.base_url);
+        let mut url = "/api/requests?pending_for_me=true".to_string();
         if let Some(l) = limit {
             url = format!("{url}&limit={l}");
         }
-        let resp = self
-            .client
-            .get(&url)
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| CliError::Server(format!("list pending-for-me failed: {e}")))?;
-
-        self.parse_response(resp, "list pending-for-me").await
+        self.get_json(&url).await
     }
 
     pub async fn get_request(&self, request_id: &str) -> Result<Value, CliError> {
@@ -281,56 +221,40 @@ impl ServerClient {
         request_id: &str,
         wait: u64,
     ) -> Result<Value, CliError> {
-        let mut url = format!("{}/api/requests/{}", self.base_url, request_id);
+        let mut path = format!("/api/requests/{}", request_id);
         if wait > 0 {
-            url = format!("{url}?wait={wait}");
+            path = format!("{path}?wait={wait}");
         }
-        let timeout = if wait > 0 {
-            Duration::from_secs(wait + 30)
+        if wait > 0 {
+            let timeout = Duration::from_secs(wait + 30);
+            self.api
+                .get_with_timeout::<Value>(&path, timeout)
+                .await
+                .map_err(|e| api_to_cli(e, "get request"))
         } else {
-            API_TIMEOUT
-        };
-        let resp = self
-            .client
-            .get(&url)
-            .timeout(timeout)
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| CliError::Server(format!("get request failed: {e}")))?;
-
-        self.parse_response(resp, "get request").await
+            self.get_json(&path).await
+        }
     }
 
     pub async fn resume(&self, request_id: &str) -> Result<Value, ServerError> {
-        let resp = self
-            .client
-            .post(format!(
-                "{}/api/requests/{}/resume",
-                self.base_url, request_id
-            ))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .send()
+        let path = format!("/api/requests/{}/resume", request_id);
+        let (status, text) = self
+            .api
+            .post_empty_with_status(&path)
             .await
-            .map_err(|e| ServerError::from_response(0, format!("resume failed: {e}")))?;
-
-        self.parse_response_detailed(resp).await
+            .map_err(|e| ServerError::from_response(0, e.to_string()))?;
+        if status >= 400 {
+            return Err(ServerError::from_response(status, text));
+        }
+        serde_json::from_str(&text).map_err(|_| ServerError::from_response(status, text))
     }
 
     pub async fn stream_result(&self, request_id: &str) -> Result<Value, CliError> {
-        let resp = self
-            .client
-            .get(format!(
-                "{}/api/requests/{}/result/stream",
-                self.base_url, request_id
-            ))
-            .bearer_auth(&self.api_token)
-            .send()
+        let path = format!("/api/requests/{}/result/stream", request_id);
+        self.api
+            .get_with_timeout::<Value>(&path, Duration::from_secs(600))
             .await
-            .map_err(|e| CliError::Server(format!("stream result failed: {e}")))?;
-
-        self.parse_response(resp, "stream result").await
+            .map_err(|e| api_to_cli(e, "stream result"))
     }
 
     pub async fn approve(
@@ -342,20 +266,16 @@ impl ServerClient {
             Some(c) => serde_json::json!({ "comment": c }),
             None => serde_json::json!({}),
         };
-        let resp = self
-            .client
-            .post(format!(
-                "{}/api/requests/{}/approve",
-                self.base_url, request_id
-            ))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .json(&body)
-            .send()
+        let path = format!("/api/requests/{}/approve", request_id);
+        let (status, text) = self
+            .api
+            .post_with_status(&path, &body)
             .await
-            .map_err(|e| ServerError::from_response(0, format!("approve failed: {e}")))?;
-
-        self.parse_response_detailed(resp).await
+            .map_err(|e| ServerError::from_response(0, e.to_string()))?;
+        if status >= 400 {
+            return Err(ServerError::from_response(status, text));
+        }
+        serde_json::from_str(&text).map_err(|_| ServerError::from_response(status, text))
     }
 
     pub async fn reject(
@@ -367,20 +287,16 @@ impl ServerClient {
             Some(c) => serde_json::json!({ "comment": c }),
             None => serde_json::json!({}),
         };
-        let resp = self
-            .client
-            .post(format!(
-                "{}/api/requests/{}/reject",
-                self.base_url, request_id
-            ))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .json(&body)
-            .send()
+        let path = format!("/api/requests/{}/reject", request_id);
+        let (status, text) = self
+            .api
+            .post_with_status(&path, &body)
             .await
-            .map_err(|e| ServerError::from_response(0, format!("reject failed: {e}")))?;
-
-        self.parse_response_detailed(resp).await
+            .map_err(|e| ServerError::from_response(0, e.to_string()))?;
+        if status >= 400 {
+            return Err(ServerError::from_response(status, text));
+        }
+        serde_json::from_str(&text).map_err(|_| ServerError::from_response(status, text))
     }
 
     pub async fn cancel_request(
@@ -392,20 +308,16 @@ impl ServerClient {
             Some(r) => serde_json::json!({ "reason": r }),
             None => serde_json::json!({}),
         };
-        let resp = self
-            .client
-            .post(format!(
-                "{}/api/requests/{}/cancel",
-                self.base_url, request_id
-            ))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .json(&body)
-            .send()
+        let path = format!("/api/requests/{}/cancel", request_id);
+        let (status, text) = self
+            .api
+            .post_with_status(&path, &body)
             .await
-            .map_err(|e| ServerError::from_response(0, format!("cancel failed: {e}")))?;
-
-        self.parse_response_detailed(resp).await
+            .map_err(|e| ServerError::from_response(0, e.to_string()))?;
+        if status >= 400 {
+            return Err(ServerError::from_response(status, text));
+        }
+        serde_json::from_str(&text).map_err(|_| ServerError::from_response(status, text))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -454,48 +366,27 @@ impl ServerClient {
             parts.push(format!("until={v}"));
         }
         let url = if parts.is_empty() {
-            format!("{}/api/audit/events", self.base_url)
+            "/api/audit/events".to_string()
         } else {
-            format!("{}/api/audit/events?{}", self.base_url, parts.join("&"))
+            format!("/api/audit/events?{}", parts.join("&"))
         };
-        let resp = self
-            .client
-            .get(&url)
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| CliError::Server(format!("list audit events: {e}")))?;
-        self.parse_response(resp, "list audit events").await
+        self.get_json(&url).await
     }
 
     pub async fn get_json(&self, path: &str) -> Result<Value, CliError> {
-        let resp = self
-            .client
-            .get(format!("{}{}", self.base_url, path))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .send()
+        self.api
+            .get::<Value>(path)
             .await
-            .map_err(|e| CliError::Server(format!("get {path}: {e}")))?;
-        self.parse_response(resp, path).await
+            .map_err(|e| api_to_cli(e, path))
     }
 
     /// GET with status code for MCP tools that need granular error handling.
     pub async fn get_json_with_status(&self, path: &str) -> Result<(u16, Value), CliError> {
-        let resp = self
-            .client
-            .get(format!("{}{}", self.base_url, path))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .send()
+        let (status, text) = self
+            .api
+            .get_with_status(path)
             .await
-            .map_err(|e| CliError::Server(format!("get {path}: {e}")))?;
-        let status = resp.status().as_u16();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| CliError::Server(format!("get {path}: failed to read body: {e}")))?;
+            .map_err(|e| api_to_cli(e, path))?;
         let body: Value = serde_json::from_str(&text).map_err(|_| {
             CliError::Server(format!(
                 "get {path}: server returned non-JSON response (HTTP {status})"
@@ -509,62 +400,25 @@ impl ServerClient {
         request_id: &str,
         execution_id: Option<&str>,
     ) -> Result<Value, CliError> {
-        let mut url = format!(
-            "{}/api/requests/{}/result/content",
-            self.base_url, request_id
-        );
+        let mut path = format!("/api/requests/{}/result/content", request_id);
         if let Some(eid) = execution_id {
-            url.push_str(&format!("?execution_id={eid}"));
+            path.push_str(&format!("?execution_id={eid}"));
         }
-        let resp = self
-            .client
-            .get(&url)
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| CliError::Server(format!("get result: {e}")))?;
-        check_version_header(&resp);
-        self.parse_response(resp, "get result content").await
+        self.get_json(&path).await
     }
 
     pub async fn get_executions(&self, request_id: &str, limit: u32) -> Result<Value, CliError> {
-        let resp = self
-            .client
-            .get(format!(
-                "{}/api/requests/{}/executions?limit={limit}",
-                self.base_url, request_id
-            ))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| CliError::Server(format!("get executions: {e}")))?;
-        self.parse_response(resp, "get executions").await
+        let path = format!("/api/requests/{}/executions?limit={limit}", request_id);
+        self.get_json(&path).await
     }
 
     pub async fn list_results(&self, limit: u32) -> Result<Value, CliError> {
-        let resp = self
-            .client
-            .get(format!("{}/api/results?limit={limit}", self.base_url))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| CliError::Server(format!("list results: {e}")))?;
-        self.parse_response(resp, "list results").await
+        let path = format!("/api/results?limit={limit}");
+        self.get_json(&path).await
     }
 
     pub async fn get(&self, path: &str) -> Result<Value, CliError> {
-        let resp = self
-            .client
-            .get(format!("{}{path}", self.base_url))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .send()
-            .await
-            .map_err(|e| CliError::Server(format!("GET {path}: {e}")))?;
-        self.parse_response(resp, path).await
+        self.get_json(path).await
     }
 
     pub async fn patch(
@@ -572,29 +426,18 @@ impl ServerClient {
         path: &str,
         body: &serde_json::Map<String, Value>,
     ) -> Result<Value, CliError> {
-        let resp = self
-            .client
-            .patch(format!("{}{path}", self.base_url))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .json(body)
-            .send()
+        self.api
+            .patch::<_, Value>(path, body)
             .await
-            .map_err(|e| CliError::Server(format!("PATCH {path}: {e}")))?;
-        self.parse_response(resp, path).await
+            .map_err(|e| api_to_cli(e, path))
     }
+
     pub async fn create_token(&self, body: &Value) -> Result<Value, CliError> {
-        let resp = self
-            .client
-            .post(format!("{}/api/tokens", self.base_url))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .json(body)
-            .send()
+        let (status, text) = self
+            .api
+            .post_with_status("/api/tokens", body)
             .await
-            .map_err(|e| CliError::Server(format!("request failed: {e}")))?;
-        let status = resp.status().as_u16();
-        let text = resp.text().await.unwrap_or_default();
+            .map_err(|e| api_to_cli(e, "token create"))?;
         if status == 201 {
             serde_json::from_str(&text)
                 .map_err(|e| CliError::Server(format!("invalid response: {e}")))
@@ -608,22 +451,28 @@ impl ServerClient {
     }
 
     pub async fn revoke_token(&self, id: &str) -> Result<Value, CliError> {
-        let resp = self
-            .client
-            .delete(format!("{}/api/tokens/{id}", self.base_url))
-            .timeout(API_TIMEOUT)
-            .bearer_auth(&self.api_token)
-            .send()
+        let path = format!("/api/tokens/{id}");
+        let (status, text) = self
+            .api
+            .delete_with_status(&path)
             .await
-            .map_err(|e| CliError::Server(format!("request failed: {e}")))?;
-        let status = resp.status().as_u16();
-        let text = resp.text().await.unwrap_or_default();
+            .map_err(|e| api_to_cli(e, "token revoke"))?;
         if status == 200 {
             serde_json::from_str(&text)
                 .map_err(|e| CliError::Server(format!("invalid response: {e}")))
         } else {
             Err(ServerError::from_response(status, text).into_cli_error("token revoke"))
         }
+    }
+}
+
+fn api_to_cli(e: ApiError, context: &str) -> CliError {
+    match e {
+        ApiError::Http { status, body } => {
+            ServerError::from_response(status, body).into_cli_error(context)
+        }
+        ApiError::Network(e) => CliError::Server(format!("{context}: {e}")),
+        ApiError::Deserialize(msg) => CliError::Server(format!("{context}: invalid JSON: {msg}")),
     }
 }
 

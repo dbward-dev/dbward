@@ -1,51 +1,40 @@
 use std::time::Duration;
 
+use dbward_api_client::{ApiClient, ApiError};
 use dbward_api_types::agent::{
     ClaimResponse, HeartbeatResponse, PollRequest, PollResponse, ResultBody,
 };
 use ed25519_dalek::VerifyingKey;
-use reqwest::Client;
+use serde_json::Value;
 
 use crate::AgentError;
 
 pub struct AgentClient {
-    http: Client,
-    base_url: String,
-    agent_token: String,
+    api: ApiClient,
 }
 
 impl AgentClient {
     pub fn new(server_url: &str, agent_token: &str) -> Result<Self, AgentError> {
-        let http = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .connect_timeout(Duration::from_secs(10))
-            .build()?;
-        Ok(Self {
-            http,
-            base_url: server_url.trim_end_matches('/').to_string(),
-            agent_token: agent_token.to_string(),
-        })
+        let api = ApiClient::new(
+            server_url,
+            agent_token,
+            Duration::from_secs(30),
+            Duration::from_secs(10),
+        )
+        .map_err(|e| AgentError::Http {
+            message: e.to_string(),
+            retryable: false,
+        })?;
+        Ok(Self { api })
     }
 
     pub async fn fetch_public_key(&self) -> Result<VerifyingKey, AgentError> {
-        let resp = self
-            .http
-            .get(format!("{}/api/public-key", self.base_url))
-            .bearer_auth(&self.agent_token)
-            .send()
-            .await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AgentError::ServerError {
-                status: status.as_u16(),
-                body,
-            });
-        }
-        let body: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| AgentError::TokenVerification(format!("invalid response: {e}")))?;
+        let body: Value = self.api.get("/api/public-key").await.map_err(|e| match e {
+            ApiError::Deserialize(msg) => {
+                AgentError::TokenVerification(format!("invalid response: {msg}"))
+            }
+            other => map_err(other),
+        })?;
         let hex_str = body["public_key"]
             .as_str()
             .ok_or_else(|| AgentError::TokenVerification("missing public_key field".into()))?;
@@ -59,44 +48,31 @@ impl AgentClient {
     }
 
     pub async fn poll(&self, req: &PollRequest) -> Result<PollResponse, AgentError> {
-        let resp = self
-            .http
-            .post(format!("{}/api/agent/poll", self.base_url))
-            .bearer_auth(&self.agent_token)
-            .json(req)
-            .send()
-            .await?;
-        self.parse_response(resp).await
+        self.api.post("/api/agent/poll", req).await.map_err(map_err)
     }
 
     pub async fn claim(&self, request_id: &str) -> Result<ClaimResponse, AgentError> {
-        let resp = self
-            .http
-            .post(format!(
-                "{}/api/agent/jobs/{}/claim",
-                self.base_url, request_id
-            ))
-            .bearer_auth(&self.agent_token)
-            .send()
-            .await?;
-        let status = resp.status();
-        if status.as_u16() == 409 {
+        let path = format!("/api/agent/jobs/{}/claim", request_id);
+        let (status, text) = self
+            .api
+            .post_empty_with_status(&path)
+            .await
+            .map_err(map_err)?;
+        if status == 409 {
             return Err(AgentError::AlreadyClaimed);
         }
-        self.parse_response(resp).await
+        if status >= 400 {
+            return Err(AgentError::ServerError { status, body: text });
+        }
+        serde_json::from_str(&text).map_err(|e| AgentError::Http {
+            message: format!("invalid response: {e}"),
+            retryable: false,
+        })
     }
 
     pub async fn heartbeat(&self, execution_id: &str) -> Result<HeartbeatResponse, AgentError> {
-        let resp = self
-            .http
-            .post(format!(
-                "{}/api/agent/jobs/{}/heartbeat",
-                self.base_url, execution_id
-            ))
-            .bearer_auth(&self.agent_token)
-            .send()
-            .await?;
-        self.parse_response(resp).await
+        let path = format!("/api/agent/jobs/{}/heartbeat", execution_id);
+        self.api.post_empty(&path).await.map_err(map_err)
     }
 
     pub async fn submit_result(
@@ -104,49 +80,28 @@ impl AgentClient {
         execution_id: &str,
         body: &ResultBody,
     ) -> Result<(), AgentError> {
-        let resp = self
-            .http
-            .post(format!(
-                "{}/api/agent/jobs/{}/result",
-                self.base_url, execution_id
-            ))
-            .bearer_auth(&self.agent_token)
-            .json(body)
-            .send()
-            .await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AgentError::ServerError {
-                status: status.as_u16(),
-                body,
-            });
-        }
+        let path = format!("/api/agent/jobs/{}/result", execution_id);
+        let _: Value = self.api.post(&path, body).await.map_err(map_err)?;
         Ok(())
     }
 
     pub async fn dry_run_claim(&self, job_id: &str) -> Result<String, AgentError> {
-        let resp = self
-            .http
-            .post(format!(
-                "{}/api/agent/dry-run/{}/claim",
-                self.base_url, job_id
-            ))
-            .bearer_auth(&self.agent_token)
-            .send()
-            .await?;
-        let status = resp.status();
-        if status.as_u16() == 409 {
+        let path = format!("/api/agent/dry-run/{}/claim", job_id);
+        let (status, text) = self
+            .api
+            .post_empty_with_status(&path)
+            .await
+            .map_err(map_err)?;
+        if status == 409 {
             return Err(AgentError::AlreadyClaimed);
         }
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AgentError::ServerError {
-                status: status.as_u16(),
-                body,
-            });
+        if status >= 400 {
+            return Err(AgentError::ServerError { status, body: text });
         }
-        let body: serde_json::Value = resp.json().await?;
+        let body: Value = serde_json::from_str(&text).map_err(|e| AgentError::Http {
+            message: format!("invalid response: {e}"),
+            retryable: false,
+        })?;
         body["claim_token"]
             .as_str()
             .map(|s| s.to_string())
@@ -168,26 +123,18 @@ impl AgentClient {
             "result": result,
             "error": error,
         });
-        let resp = self
-            .http
-            .post(format!(
-                "{}/api/agent/dry-run/{}/result",
-                self.base_url, job_id
-            ))
-            .bearer_auth(&self.agent_token)
-            .json(&body)
-            .send()
-            .await?;
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AgentError::ServerError {
-                status: status.as_u16(),
-                body,
-            });
+        let path = format!("/api/agent/dry-run/{}/result", job_id);
+        let (status, text) = self
+            .api
+            .post_with_status(&path, &body)
+            .await
+            .map_err(map_err)?;
+        if status >= 400 {
+            return Err(AgentError::ServerError { status, body: text });
         }
         Ok(())
     }
+
     pub async fn schema_sync(
         &self,
         database: &str,
@@ -205,36 +152,34 @@ impl AgentClient {
             "snapshot": snapshot,
             "error_message": error_message,
         });
-        let resp = self
-            .http
-            .post(format!("{}/api/agent/schema-sync", self.base_url))
-            .bearer_auth(&self.agent_token)
-            .json(&body)
-            .send()
-            .await?;
-        let status_code = resp.status();
-        if !status_code.is_success() {
-            let body = resp.text().await.unwrap_or_default();
+        let (resp_status, text) = self
+            .api
+            .post_with_status("/api/agent/schema-sync", &body)
+            .await
+            .map_err(map_err)?;
+        if resp_status >= 400 {
             return Err(AgentError::ServerError {
-                status: status_code.as_u16(),
-                body,
+                status: resp_status,
+                body: text,
             });
         }
         Ok(())
     }
+}
 
-    async fn parse_response<T: serde::de::DeserializeOwned>(
-        &self,
-        resp: reqwest::Response,
-    ) -> Result<T, AgentError> {
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AgentError::ServerError {
-                status: status.as_u16(),
-                body,
-            });
+fn map_err(e: ApiError) -> AgentError {
+    match e {
+        ApiError::Http { status, body } => AgentError::ServerError { status, body },
+        ApiError::Network(e) => {
+            let retryable = e.is_timeout() || e.is_connect();
+            AgentError::Http {
+                message: e.to_string(),
+                retryable,
+            }
         }
-        Ok(resp.json().await?)
+        ApiError::Deserialize(msg) => AgentError::Http {
+            message: msg,
+            retryable: false,
+        },
     }
 }

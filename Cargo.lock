@@ -607,6 +607,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clap",
+ "dbward-api-client",
  "dbward-api-types",
  "dbward-config",
  "dbward-domain",
@@ -636,6 +637,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "clap",
+ "dbward-api-client",
  "dbward-api-types",
  "dbward-config",
  "dbward-domain",
@@ -645,7 +647,6 @@ dependencies = [
  "hex",
  "hostname",
  "rand 0.8.6",
- "reqwest",
  "serde",
  "serde_json",
  "sha2",
@@ -655,6 +656,17 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "dbward-api-client"
+version = "0.1.4"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]
