@@ -39,10 +39,24 @@ pub(crate) async fn run_webhook_retry_once(state: &AppState) -> TickResult {
             Ok(deliveries) => {
                 for delivery in deliveries {
                     // Backstop: if webhook was deleted, cancel the delivery
-                    let webhook = state
-                        .background()
-                        .webhook_repo()
-                        .and_then(|r| r.get(&delivery.webhook_id).ok().flatten());
+                    let webhook = match state.background().webhook_repo() {
+                        Some(r) => match r.get(&delivery.webhook_id) {
+                            Ok(w) => w,
+                            Err(e) => {
+                                // DB error — retry later, don't cancel
+                                let next = now + Duration::seconds(60);
+                                let _ = repo.mark_failed(
+                                    &delivery.id,
+                                    &format!("webhook lookup error: {e}"),
+                                    &next.to_rfc3339(),
+                                    delivery.attempts,
+                                );
+                                result.failed += 1;
+                                continue;
+                            }
+                        },
+                        None => None,
+                    };
                     let (url, secret) = match webhook {
                         Some(w) => (w.url, w.secret),
                         None => {
