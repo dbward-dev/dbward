@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use crate::error::AppError;
 use crate::ports::{
-    Clock, DatabaseRegistry, GroupRepo, IdGenerator, LicenseChecker, Notifier, PolicyRepo,
-    RoleBindingRepo, SsrfValidator, UserRepo, WebhookRepo,
+    Clock, ConfigGenerationRepo, DatabaseRegistry, GroupRepo, IdGenerator, LicenseChecker,
+    Notifier, PolicyRepo, RoleBindingRepo, SsrfValidator, UserRepo, WebhookRepo,
 };
 
 /// Provides transaction semantics for config sync.
@@ -30,6 +30,7 @@ pub struct SyncConfig {
     pub transaction: Arc<dyn SyncTransaction>,
     pub license_checker: Arc<dyn LicenseChecker>,
     pub ssrf_validator: Arc<dyn SsrfValidator>,
+    pub config_generation_repo: Arc<dyn ConfigGenerationRepo>,
 }
 
 // --- Input DTOs ---
@@ -180,7 +181,35 @@ impl SyncConfig {
         if result.is_ok()
             && let Err(e) = self.notifier.reload()
         {
-            tracing::warn!("failed to reload notifier after config sync: {e}");
+            tracing::error!("notifier reload failed after config sync: {e}");
+            return Err(AppError::Internal(format!("notifier reload failed: {e}")));
+        }
+
+        // Record config generation + summary log
+        if let Ok(ref summary) = result {
+            let summary_json = serde_json::json!({
+                "databases": {"upserted": summary.databases.1, "stale": summary.databases.0},
+                "users": {"upserted": summary.users.1, "stale": summary.users.0},
+                "groups": {"upserted": summary.groups.1, "stale": summary.groups.0},
+                "roles": {"upserted": summary.roles.1, "stale": summary.roles.0},
+                "role_bindings": {"upserted": summary.role_bindings.1, "stale": summary.role_bindings.0},
+                "webhooks": {"upserted": summary.webhooks.1, "stale": summary.webhooks.0},
+                "workflows": {"upserted": summary.workflows.1, "stale": summary.workflows.0},
+                "execution_policies": {"upserted": summary.execution_policies.1, "stale": summary.execution_policies.0},
+                "result_policies": {"upserted": summary.result_policies.1, "stale": summary.result_policies.0},
+                "notification_policies": {"upserted": summary.notification_policies.1, "stale": summary.notification_policies.0},
+            });
+            self.config_generation_repo
+                .record_generation("", &summary_json.to_string());
+            tracing::info!(
+                "config synced: databases(+{}/-{}) webhooks(+{}/-{}) workflows(+{}/-{})",
+                summary.databases.1,
+                summary.databases.0,
+                summary.webhooks.1,
+                summary.webhooks.0,
+                summary.workflows.1,
+                summary.workflows.0,
+            );
         }
 
         result
@@ -506,6 +535,7 @@ mod tests {
             transaction: Arc::new(FakeSyncTransaction),
             license_checker: Arc::new(FakeLicenseChecker),
             ssrf_validator: Arc::new(FakeSsrfValidator),
+            config_generation_repo: Arc::new(crate::ports::NoopConfigGenerationRepo),
         }
     }
 
@@ -616,7 +646,10 @@ mod tests {
             }
             fn delete_stale_config(&self, active_ids: &[String]) -> Result<u64, AppError> {
                 // Track that stale deletion was called (not delete_by_source)
-                self.deleted_source.lock().unwrap().push("stale_config".into());
+                self.deleted_source
+                    .lock()
+                    .unwrap()
+                    .push("stale_config".into());
                 let _ = active_ids;
                 Ok(0)
             }

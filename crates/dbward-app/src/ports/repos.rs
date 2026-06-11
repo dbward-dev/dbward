@@ -612,6 +612,16 @@ pub trait PolicyRepo: Send + Sync {
 }
 
 // --- LicenseChecker ---
+// --- ConfigGenerationRepo (CFG-24) ---
+
+pub trait ConfigGenerationRepo: Send + Sync {
+    /// Record a completed config sync generation.
+    fn record_generation(&self, _digest: &str, _summary_json: &str) {}
+}
+
+/// No-op implementation for tests.
+pub struct NoopConfigGenerationRepo;
+impl ConfigGenerationRepo for NoopConfigGenerationRepo {}
 
 pub trait LicenseChecker: Send + Sync {
     fn max_databases(&self) -> u32;

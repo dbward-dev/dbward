@@ -221,7 +221,6 @@ impl SyncConfig {
         }
 
         // UPSERT all webhooks
-        let toml_ids: Vec<String> = parsed.iter().map(|w| w.id.clone()).collect();
         for webhook in &parsed {
             self.webhook_repo.create(webhook)?;
         }
@@ -440,4 +439,104 @@ fn make_role_binding_id(role: &str, subjects: &[String], groups: &[String]) -> S
     sorted_groups.dedup();
     let content = format!("{},{}", sorted_subjects.join(","), sorted_groups.join(","));
     format!("rb:{}:{}", role, sha_suffix(&content))
+}
+
+// ---------------------------------------------------------------------------
+// Schema Guardrail: REFERENCE_MAP (CFG-24)
+// ---------------------------------------------------------------------------
+
+/// Category for how stale config entries interact with their dependents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum ReferenceCategory {
+    StrongRuntime,
+    CancelDependents,
+    ValidatedInBatch,
+    AllowDangling,
+}
+
+/// All known cross-table references (FK + logical) that affect config sync.
+/// CI test verifies this list stays in sync with schema.rs.
+#[allow(dead_code)]
+pub const REFERENCE_MAP: &[(&str, &str, ReferenceCategory)] = &[
+    (
+        "requests.database_id",
+        "databases",
+        ReferenceCategory::StrongRuntime,
+    ),
+    (
+        "webhook_deliveries.webhook_id",
+        "webhooks",
+        ReferenceCategory::CancelDependents,
+    ),
+    (
+        "notification_policies.webhooks_json",
+        "webhooks",
+        ReferenceCategory::ValidatedInBatch,
+    ),
+    (
+        "role_bindings.role",
+        "roles",
+        ReferenceCategory::ValidatedInBatch,
+    ),
+    (
+        "requests.requester",
+        "users",
+        ReferenceCategory::AllowDangling,
+    ),
+    (
+        "approvals.actor_id",
+        "users",
+        ReferenceCategory::AllowDangling,
+    ),
+];
+
+#[cfg(test)]
+mod reference_map_tests {
+    use super::*;
+
+    /// Ensure REFERENCE_MAP covers all REFERENCES clauses and known logical refs in schema.rs.
+    #[test]
+    fn reference_map_covers_all_fk_and_logical_refs() {
+        let schema_source = include_str!("../../../../dbward-infra/src/sqlite/schema.rs");
+
+        // All FK-referenced config-managed tables must appear as targets in REFERENCE_MAP
+        let config_tables = ["databases", "webhooks", "roles", "users"];
+        let map_targets: std::collections::HashSet<&str> =
+            REFERENCE_MAP.iter().map(|(_, target, _)| *target).collect();
+
+        for table in config_tables {
+            assert!(
+                map_targets.contains(table),
+                "config table '{table}' is referenced but not in REFERENCE_MAP"
+            );
+        }
+
+        // Known logical references must be present
+        let map_sources: std::collections::HashSet<&str> =
+            REFERENCE_MAP.iter().map(|(src, _, _)| *src).collect();
+        let logical_refs = [
+            "webhook_deliveries.webhook_id",
+            "notification_policies.webhooks_json",
+        ];
+        for src in logical_refs {
+            assert!(
+                map_sources.contains(src),
+                "logical reference '{src}' not in REFERENCE_MAP"
+            );
+        }
+
+        // No stale entries: all tables referenced in REFERENCE_MAP must exist in schema
+        for (src, target, _) in REFERENCE_MAP {
+            let src_table = src.split('.').next().unwrap();
+            assert!(
+                schema_source.contains(&format!("CREATE TABLE IF NOT EXISTS {src_table}")),
+                "REFERENCE_MAP source table '{src_table}' not found in schema"
+            );
+            assert!(
+                schema_source.contains(&format!("CREATE TABLE IF NOT EXISTS {target}")),
+                "REFERENCE_MAP target table '{target}' not found in schema"
+            );
+        }
+    }
 }

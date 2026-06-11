@@ -22,7 +22,12 @@ impl DatabaseRegistry for SqliteDatabaseRegistry {
             "INSERT INTO databases (id, name, environment, source, lifecycle_state, created_at) \
              VALUES (?1, ?2, ?3, 'config', 'active', ?4) \
              ON CONFLICT(id) DO UPDATE SET source='config', lifecycle_state='active'",
-            rusqlite::params![id, db.to_string(), env.to_string(), chrono::Utc::now().to_rfc3339()],
+            rusqlite::params![
+                id,
+                db.to_string(),
+                env.to_string(),
+                chrono::Utc::now().to_rfc3339()
+            ],
         )
         .map_err(db_err("database: register"))?;
         Ok(())

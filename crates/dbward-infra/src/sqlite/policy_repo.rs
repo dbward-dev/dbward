@@ -95,7 +95,11 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn count_workflows(&self) -> Result<u32, AppError> {
         let conn = self.conn.lock();
         let count: u32 = conn
-            .query_row("SELECT COUNT(*) FROM workflows WHERE lifecycle_state = 'active'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM workflows WHERE lifecycle_state = 'active'",
+                [],
+                |row| row.get(0),
+            )
             .map_err(db_err("policy: count_workflows"))?;
         Ok(count)
     }
@@ -632,7 +636,11 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn count_roles(&self) -> Result<u32, AppError> {
         let conn = self.conn.lock();
         let count: u32 = conn
-            .query_row("SELECT COUNT(*) FROM roles WHERE lifecycle_state = 'active'", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM roles WHERE lifecycle_state = 'active'",
+                [],
+                |row| row.get(0),
+            )
             .map_err(db_err("policy: count_roles"))?;
         Ok(count)
     }

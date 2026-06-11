@@ -39,7 +39,9 @@ pub(crate) async fn run_webhook_retry_once(state: &AppState) -> TickResult {
             Ok(deliveries) => {
                 for delivery in deliveries {
                     // Backstop: if webhook was deleted, cancel the delivery
-                    let webhook = state.background().webhook_repo()
+                    let webhook = state
+                        .background()
+                        .webhook_repo()
                         .and_then(|r| r.get(&delivery.webhook_id).ok().flatten());
                     let (url, secret) = match webhook {
                         Some(w) => (w.url, w.secret),

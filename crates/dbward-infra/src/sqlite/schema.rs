@@ -142,6 +142,7 @@ const MIGRATION_V15: &str = "
 ALTER TABLE requests ADD COLUMN execution_plan_json TEXT;
 ";
 
+#[allow(dead_code)]
 const MIGRATION_V16: &str = "
 -- lifecycle_state column on all config-managed tables
 ALTER TABLE databases ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active';
@@ -220,9 +221,7 @@ fn apply_migration_v16(conn: &Connection) -> Result<(), rusqlite::Error> {
     )?;
 
     // databases: FK-safe orphan
-    conn.execute_batch(
-        "UPDATE databases SET lifecycle_state = 'orphan' WHERE source = 'config';",
-    )?;
+    conn.execute_batch("UPDATE databases SET lifecycle_state = 'orphan' WHERE source = 'config';")?;
 
     // webhook_deliveries: mark in-flight as dead
     conn.execute_batch(

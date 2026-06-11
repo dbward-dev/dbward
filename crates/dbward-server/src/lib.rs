@@ -724,6 +724,7 @@ fn build_sync_uc(
         transaction,
         license_checker: state.license_checker().clone(),
         ssrf_validator,
+        config_generation_repo: Arc::new(dbward_app::ports::NoopConfigGenerationRepo),
     }
 }
 
