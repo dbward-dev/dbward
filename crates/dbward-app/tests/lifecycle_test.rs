@@ -356,10 +356,10 @@ impl DatabaseRegistry for FakeDbRegistry {
     fn register(&self, _: &DatabaseName, _: &Environment) -> Result<(), AppError> {
         Ok(())
     }
-    fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
+    fn exists_active(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
         Ok(true)
     }
-    fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+    fn list_active(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
         Ok(vec![])
     }
 }

@@ -21,7 +21,11 @@ impl WebhookRepo for SqliteWebhookRepo {
             serde_json::to_string(&webhook.events).map_err(json_err("webhook: create"))?;
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO webhooks (id, url, events_json, format, secret, status, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            "INSERT INTO webhooks (id, url, events_json, format, secret, status, source, lifecycle_state, created_at, updated_at) \
+             VALUES (?1,?2,?3,?4,?5,?6,'config','active',?7,?8) \
+             ON CONFLICT(id) DO UPDATE SET url=excluded.url, events_json=excluded.events_json, \
+             format=excluded.format, secret=excluded.secret, status=excluded.status, \
+             lifecycle_state='active', updated_at=excluded.updated_at",
             rusqlite::params![
                 webhook.id, webhook.url, events_json,
                 format_str(webhook.format), webhook.secret, wh_status_str(webhook.status),
@@ -46,16 +50,16 @@ impl WebhookRepo for SqliteWebhookRepo {
         }
     }
 
-    fn list(&self) -> Result<Vec<Webhook>, AppError> {
+    fn list_active(&self) -> Result<Vec<Webhook>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT id, url, events_json, format, secret, status FROM webhooks")
-            .map_err(db_err("webhook: list"))?;
+            .prepare("SELECT id, url, events_json, format, secret, status FROM webhooks WHERE lifecycle_state = 'active'")
+            .map_err(db_err("webhook: list_active"))?;
         let rows = stmt
             .query_map([], row_to_webhook)
-            .map_err(db_err("webhook: list"))?;
+            .map_err(db_err("webhook: list_active"))?;
         rows.collect::<Result<Vec<_>, _>>()
-            .map_err(db_err("webhook: list"))
+            .map_err(db_err("webhook: list_active"))
     }
 
     fn update(&self, webhook: &Webhook) -> Result<(), AppError> {
@@ -85,6 +89,30 @@ impl WebhookRepo for SqliteWebhookRepo {
         let n = conn
             .execute("DELETE FROM webhooks WHERE source = ?1", [source])
             .map_err(db_err("webhook: delete_by_source"))?;
+        Ok(n as u64)
+    }
+
+    fn delete_stale_config(&self, active_ids: &[String]) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        if active_ids.is_empty() {
+            let n = conn
+                .execute("DELETE FROM webhooks WHERE source = 'config'", [])
+                .map_err(db_err("webhook: delete_stale"))?;
+            return Ok(n as u64);
+        }
+        let placeholders: String = (1..=active_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql =
+            format!("DELETE FROM webhooks WHERE source = 'config' AND id NOT IN ({placeholders})");
+        let params: Vec<&dyn rusqlite::types::ToSql> = active_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let n = conn
+            .execute(&sql, params.as_slice())
+            .map_err(db_err("webhook: delete_stale"))?;
         Ok(n as u64)
     }
 }

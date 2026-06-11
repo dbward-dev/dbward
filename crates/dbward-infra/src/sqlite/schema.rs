@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 15;
+const SCHEMA_VERSION: u32 = 16;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -142,6 +142,111 @@ const MIGRATION_V15: &str = "
 ALTER TABLE requests ADD COLUMN execution_plan_json TEXT;
 ";
 
+#[allow(dead_code)]
+const MIGRATION_V16: &str = "
+-- lifecycle_state column on all config-managed tables
+ALTER TABLE databases ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE webhooks ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE workflows ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE execution_policies ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE result_policies ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE notification_policies ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE users ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE groups ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE roles ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE role_bindings ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active';
+
+-- Old index-based ID rows: delete (next sync re-creates with stable IDs)
+DELETE FROM notification_policies WHERE source = 'config';
+DELETE FROM result_policies WHERE source = 'config';
+DELETE FROM execution_policies WHERE source = 'config';
+DELETE FROM workflows WHERE source = 'config';
+DELETE FROM role_bindings WHERE source = 'config';
+
+-- databases: FK-safe orphan (restored on next sync via UPSERT)
+UPDATE databases SET lifecycle_state = 'orphan' WHERE source = 'config';
+
+-- webhook_deliveries: mark in-flight as dead (pre-public release, acceptable loss)
+UPDATE webhook_deliveries SET status = 'dead' WHERE status IN ('pending', 'in_progress');
+
+-- Index for CancelDependents performance
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id
+    ON webhook_deliveries(webhook_id);
+
+-- Config generation tracking
+CREATE TABLE IF NOT EXISTS config_generations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    config_digest TEXT NOT NULL,
+    synced_at TEXT NOT NULL,
+    summary_json TEXT NOT NULL DEFAULT '{}'
+);
+";
+
+/// Apply V16 lifecycle_state + stable ID migration idempotently.
+fn apply_migration_v16(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let tables = [
+        "databases",
+        "webhooks",
+        "workflows",
+        "execution_policies",
+        "result_policies",
+        "notification_policies",
+        "users",
+        "groups",
+        "roles",
+        "role_bindings",
+    ];
+    for table in tables {
+        let has_col: bool = conn
+            .prepare(&format!(
+                "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='lifecycle_state'"
+            ))
+            .and_then(|mut s| s.query_row([], |r| r.get::<_, i64>(0)))
+            .unwrap_or(0)
+            > 0;
+        if !has_col {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'active';"
+            ))?;
+        }
+    }
+
+    // Clean up old index-based IDs (next sync re-creates with stable IDs)
+    conn.execute_batch(
+        "DELETE FROM notification_policies WHERE source = 'config';
+         DELETE FROM result_policies WHERE source = 'config';
+         DELETE FROM execution_policies WHERE source = 'config';
+         DELETE FROM workflows WHERE source = 'config';
+         DELETE FROM role_bindings WHERE source = 'config';",
+    )?;
+
+    // databases: FK-safe orphan
+    conn.execute_batch("UPDATE databases SET lifecycle_state = 'orphan' WHERE source = 'config';")?;
+
+    // webhook_deliveries: mark in-flight as dead
+    conn.execute_batch(
+        "UPDATE webhook_deliveries SET status = 'dead' WHERE status IN ('pending', 'in_progress');",
+    )?;
+
+    // Index for CancelDependents performance
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id
+            ON webhook_deliveries(webhook_id);",
+    )?;
+
+    // Config generation tracking
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS config_generations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            config_digest TEXT NOT NULL,
+            synced_at TEXT NOT NULL,
+            summary_json TEXT NOT NULL DEFAULT '{}'
+        );",
+    )?;
+
+    Ok(())
+}
+
 /// Apply V14 source-column additions idempotently.
 fn apply_migration_v14(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(MIGRATION_V14)?;
@@ -218,6 +323,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(MIGRATION_V13)?;
         apply_migration_v14(conn)?;
         conn.execute_batch(MIGRATION_V15)?;
+        apply_migration_v16(conn)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -271,6 +377,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 15 {
             conn.execute_batch(MIGRATION_V15)?;
+        }
+        if current < 16 {
+            apply_migration_v16(conn)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }

@@ -155,7 +155,7 @@ async fn free_database_limit_blocks_at_max() {
     // register_databases no longer checks limits (sync does), so this succeeds
     assert!(result.is_ok());
     // But the total is now 4, which exceeds max_databases=3
-    assert_eq!(registry.list().unwrap().len(), 4);
+    assert_eq!(registry.list_active().unwrap().len(), 4);
 }
 
 // === Test 2: Free plan — workflows are unlimited ===
@@ -197,7 +197,7 @@ async fn pro_database_limit_allows_20() {
         registry.register(&db, &env).unwrap();
     }
 
-    assert_eq!(registry.list().unwrap().len(), 20);
+    assert_eq!(registry.list_active().unwrap().len(), 20);
     assert_eq!(state.license_checker().max_databases(), 20);
 }
 
@@ -226,7 +226,7 @@ async fn pro_database_limit_blocks_at_21() {
     }];
     let result = dbward_server::register_databases(&state, &dbs);
     assert!(result.is_ok(), "register_databases no longer checks limits");
-    assert_eq!(registry.list().unwrap().len(), 21);
+    assert_eq!(registry.list_active().unwrap().len(), 21);
 }
 
 // === Test 5: Enterprise — no database limit ===
@@ -247,7 +247,7 @@ async fn enterprise_no_database_limit() {
         registry.register(&db, &env).unwrap();
     }
 
-    assert_eq!(registry.list().unwrap().len(), 50);
+    assert_eq!(registry.list_active().unwrap().len(), 50);
     assert_eq!(state.license_checker().max_databases(), u32::MAX);
     assert!(state.license_checker().is_enterprise());
 }

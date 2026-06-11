@@ -361,14 +361,14 @@ impl CreateRequest {
         // 2. DB registered?
         if !self
             .db_registry
-            .exists(&input.database, &input.environment)?
+            .exists_active(&input.database, &input.environment)?
         {
             let mut msg = format!(
                 "database '{}' not registered in environment '{}'",
                 input.database, input.environment
             );
             // Show available environments for this database if <=5
-            if let Ok(pairs) = self.db_registry.list() {
+            if let Ok(pairs) = self.db_registry.list_active() {
                 let envs: Vec<&str> = pairs
                     .iter()
                     .filter(|(db, _)| db == &input.database)
@@ -938,10 +938,10 @@ mod tests {
         fn register(&self, _: &DatabaseName, _: &Environment) -> Result<(), AppError> {
             Ok(())
         }
-        fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
+        fn exists_active(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
             Ok(false)
         }
-        fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+        fn list_active(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
             Ok(vec![])
         }
     }

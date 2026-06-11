@@ -84,6 +84,7 @@ pub struct WebhookDispatcher {
 
 #[derive(Clone)]
 pub struct WebhookConfig {
+    pub id: String,
     pub url: String,
     pub events: Vec<String>,
     pub format: String,
@@ -174,7 +175,7 @@ impl Notifier for WebhookDispatcher {
             if let (Some(repo), Some(id_gen)) = (&self.delivery_repo, &self.id_gen) {
                 let delivery = WebhookDelivery {
                     id: format!("wd-{}", id_gen.generate()),
-                    webhook_id: url.clone(),
+                    webhook_id: hook.id.clone(),
                     event_type: event.event_type.clone(),
                     payload: body.clone(),
                     status: DeliveryStatus::Pending,
@@ -218,11 +219,12 @@ impl Notifier for WebhookDispatcher {
 
     fn reload(&self) -> Result<(), dbward_app::error::AppError> {
         if let Some(ref repo) = self.webhook_repo {
-            let webhooks = repo.list()?;
+            let webhooks = repo.list_active()?;
             let configs: Vec<WebhookConfig> = webhooks
                 .into_iter()
                 .filter(|w| w.status == WebhookStatus::Active)
                 .map(|w| WebhookConfig {
+                    id: w.id,
                     url: w.url,
                     events: w.events,
                     format: format!("{:?}", w.format).to_lowercase(),

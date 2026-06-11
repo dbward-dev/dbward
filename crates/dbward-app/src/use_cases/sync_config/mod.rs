@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use crate::error::AppError;
 use crate::ports::{
-    Clock, DatabaseRegistry, GroupRepo, IdGenerator, LicenseChecker, Notifier, PolicyRepo,
-    RoleBindingRepo, SsrfValidator, UserRepo, WebhookRepo,
+    Clock, ConfigGenerationRepo, DatabaseRegistry, GroupRepo, IdGenerator, LicenseChecker,
+    Notifier, PolicyRepo, RoleBindingRepo, SsrfValidator, UserRepo, WebhookRepo,
 };
 
 /// Provides transaction semantics for config sync.
@@ -30,6 +30,8 @@ pub struct SyncConfig {
     pub transaction: Arc<dyn SyncTransaction>,
     pub license_checker: Arc<dyn LicenseChecker>,
     pub ssrf_validator: Arc<dyn SsrfValidator>,
+    pub config_generation_repo: Arc<dyn ConfigGenerationRepo>,
+    pub config_digest: String,
 }
 
 // --- Input DTOs ---
@@ -180,7 +182,39 @@ impl SyncConfig {
         if result.is_ok()
             && let Err(e) = self.notifier.reload()
         {
-            tracing::warn!("failed to reload notifier after config sync: {e}");
+            tracing::error!(
+                "notifier reload failed after config sync (DB committed, restart required): {e}"
+            );
+            return Err(AppError::Internal(format!(
+                "notifier reload failed (DB committed, restart required): {e}"
+            )));
+        }
+
+        // Record config generation + summary log
+        if let Ok(ref summary) = result {
+            let summary_json = serde_json::json!({
+                "databases": {"upserted": summary.databases.1, "stale": summary.databases.0},
+                "users": {"upserted": summary.users.1, "stale": summary.users.0},
+                "groups": {"upserted": summary.groups.1, "stale": summary.groups.0},
+                "roles": {"upserted": summary.roles.1, "stale": summary.roles.0},
+                "role_bindings": {"upserted": summary.role_bindings.1, "stale": summary.role_bindings.0},
+                "webhooks": {"upserted": summary.webhooks.1, "stale": summary.webhooks.0},
+                "workflows": {"upserted": summary.workflows.1, "stale": summary.workflows.0},
+                "execution_policies": {"upserted": summary.execution_policies.1, "stale": summary.execution_policies.0},
+                "result_policies": {"upserted": summary.result_policies.1, "stale": summary.result_policies.0},
+                "notification_policies": {"upserted": summary.notification_policies.1, "stale": summary.notification_policies.0},
+            });
+            self.config_generation_repo
+                .record_generation(&self.config_digest, &summary_json.to_string());
+            tracing::info!(
+                "config synced: databases(+{}/-{}) webhooks(+{}/-{}) workflows(+{}/-{})",
+                summary.databases.1,
+                summary.databases.0,
+                summary.webhooks.1,
+                summary.webhooks.0,
+                summary.workflows.1,
+                summary.workflows.0,
+            );
         }
 
         result
@@ -220,7 +254,7 @@ impl SyncConfig {
             role_bindings: self.sync_role_bindings(role_bindings)?,
             webhooks: {
                 let w = self.sync_webhooks(webhooks)?;
-                let total = self.webhook_repo.list()?.len() as u32;
+                let total = self.webhook_repo.list_active()?.len() as u32;
                 if total > self.license_checker.max_webhooks() {
                     return Err(AppError::Validation(format!(
                         "webhook limit exceeded (max {}, have {total})",
@@ -353,7 +387,7 @@ mod tests {
         fn get(&self, _: &str) -> Result<Option<Webhook>, AppError> {
             Ok(None)
         }
-        fn list(&self) -> Result<Vec<Webhook>, AppError> {
+        fn list_active(&self) -> Result<Vec<Webhook>, AppError> {
             Ok(vec![])
         }
         fn update(&self, _: &Webhook) -> Result<(), AppError> {
@@ -369,10 +403,10 @@ mod tests {
         fn register(&self, _: &DatabaseName, _: &Environment) -> Result<(), AppError> {
             Ok(())
         }
-        fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
+        fn exists_active(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
             Ok(false)
         }
-        fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+        fn list_active(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
             Ok(vec![])
         }
     }
@@ -506,6 +540,8 @@ mod tests {
             transaction: Arc::new(FakeSyncTransaction),
             license_checker: Arc::new(FakeLicenseChecker),
             ssrf_validator: Arc::new(FakeSsrfValidator),
+            config_generation_repo: Arc::new(crate::ports::NoopConfigGenerationRepo),
+            config_digest: String::new(),
         }
     }
 
@@ -614,6 +650,15 @@ mod tests {
                 self.deleted_source.lock().unwrap().push(source.into());
                 Ok(0)
             }
+            fn delete_stale_config(&self, active_ids: &[String]) -> Result<u64, AppError> {
+                // Track that stale deletion was called (not delete_by_source)
+                self.deleted_source
+                    .lock()
+                    .unwrap()
+                    .push("stale_config".into());
+                let _ = active_ids;
+                Ok(0)
+            }
             fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
                 Ok(None)
             }
@@ -654,8 +699,8 @@ mod tests {
         let sources = tracking.deleted_source.lock().unwrap();
         assert_eq!(
             &*sources,
-            &["config"],
-            "only source='config' should be deleted"
+            &["stale_config"],
+            "should use delete_stale_config, not delete_by_source"
         );
     }
 
@@ -704,13 +749,13 @@ mod tests {
                 self.entries.lock().unwrap().push((db.clone(), env.clone()));
                 Ok(())
             }
-            fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+            fn list_active(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
                 Ok(self.entries.lock().unwrap().clone())
             }
             fn delete_by_source(&self, _: &str) -> Result<u64, AppError> {
                 Ok(0)
             }
-            fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
+            fn exists_active(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
                 Ok(true)
             }
         }

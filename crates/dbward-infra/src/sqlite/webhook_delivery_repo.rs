@@ -21,6 +21,7 @@ fn parse_status(s: &str) -> DeliveryStatus {
     match s {
         "in_progress" => DeliveryStatus::InProgress,
         "delivered" => DeliveryStatus::Delivered,
+        "cancelled" => DeliveryStatus::Cancelled,
         "dead" => DeliveryStatus::Dead,
         _ => DeliveryStatus::Pending,
     }
@@ -31,6 +32,7 @@ fn status_str(s: DeliveryStatus) -> &'static str {
         DeliveryStatus::Pending => "pending",
         DeliveryStatus::InProgress => "in_progress",
         DeliveryStatus::Delivered => "delivered",
+        DeliveryStatus::Cancelled => "cancelled",
         DeliveryStatus::Dead => "dead",
     }
 }
@@ -146,6 +148,16 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
         Ok(())
     }
 
+    fn mark_cancelled(&self, id: &str) -> Result<(), AppError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE webhook_deliveries SET status = 'cancelled', claimed_at = NULL WHERE id = ?1",
+            params![id],
+        )
+        .map_err(db_err("webhook_delivery: mark_cancelled"))?;
+        Ok(())
+    }
+
     fn reclaim_stale(&self, older_than: &str) -> Result<u32, AppError> {
         let conn = self.conn.lock();
         let changed = conn
@@ -202,7 +214,7 @@ impl WebhookDeliveryRepo for SqliteWebhookDeliveryRepo {
         let conn = self.conn.lock();
         let changed = conn
             .execute(
-                "DELETE FROM webhook_deliveries WHERE status IN ('delivered', 'dead') AND created_at < ?1",
+                "DELETE FROM webhook_deliveries WHERE status IN ('delivered', 'dead', 'cancelled') AND created_at < ?1",
                 params![before],
             )
             .map_err(db_err("webhook_delivery: purge_old"))?;

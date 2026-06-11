@@ -1,6 +1,7 @@
 use dbward_domain::entities::{Webhook, WebhookFormat, WebhookStatus};
 use dbward_domain::policies::{DeliveryMode, ExecutionPolicy, NotificationPolicy, ResultPolicy};
 use dbward_domain::values::{DatabaseName, Environment, Selector};
+use sha2::{Digest, Sha256};
 
 use crate::error::AppError;
 
@@ -9,13 +10,24 @@ use super::{
     RoleBindingInput, RoleInput, SyncConfig, UserInput, WebhookInput, WorkflowInput,
 };
 
+/// Generate a stable ID suffix from content via SHA-256 truncated to 12 hex chars.
+fn sha_suffix(content: &str) -> String {
+    let hash = Sha256::digest(content.as_bytes());
+    hex::encode(&hash[..6])
+}
+
 impl SyncConfig {
+    // ─────────────────────────────────────────────────────────────────────────
+    // databases (StrongRuntime)
+    // ─────────────────────────────────────────────────────────────────────────
+
     pub(super) fn sync_databases(
         &self,
         inputs: Vec<DatabaseInput>,
     ) -> Result<(u64, u64), AppError> {
-        let deleted = self.database_registry.delete_by_source("config")?;
-        let mut inserted = 0u64;
+        // 1. UPSERT all TOML entries
+        let mut toml_ids = Vec::new();
+        let mut upserted = 0u64;
         for db in &inputs {
             for env in &db.environments {
                 let db_name = DatabaseName::new(&db.name)
@@ -23,11 +35,16 @@ impl SyncConfig {
                 let environment = Environment::new(env)
                     .map_err(|e| AppError::Validation(format!("environment: {e}")))?;
                 self.database_registry.register(&db_name, &environment)?;
-                inserted += 1;
+                toml_ids.push(format!("{}:{}", db_name, environment));
+                upserted += 1;
             }
         }
-        // License check: count unique database names (not db+env pairs)
-        let all = self.database_registry.list()?;
+
+        // 2. Stale reconciliation (StrongRuntime): orphan if FK-referenced, delete otherwise
+        let (orphaned, deleted) = self.database_registry.reconcile_stale(&toml_ids)?;
+
+        // 3. License check (after reconcile so stale rows are removed/orphaned)
+        let all = self.database_registry.list_active()?;
         let unique_names: std::collections::HashSet<_> = all.iter().map(|(name, _)| name).collect();
         let total = unique_names.len() as u32;
         if total > self.license_checker.max_databases() {
@@ -36,12 +53,17 @@ impl SyncConfig {
                 self.license_checker.max_databases()
             )));
         }
-        Ok((deleted, inserted))
+
+        Ok((orphaned + deleted, upserted))
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // users (AllowDangling)
+    // ─────────────────────────────────────────────────────────────────────────
+
     pub(super) fn sync_users(&self, inputs: Vec<UserInput>) -> Result<(u64, u64), AppError> {
-        let deleted = self.user_repo.delete_by_source("config")?;
-        let mut inserted = 0u64;
+        let mut toml_ids = Vec::new();
+        let mut upserted = 0u64;
         let now = self.clock.now();
         for u in &inputs {
             let status = match u.status.as_str() {
@@ -61,24 +83,37 @@ impl SyncConfig {
             };
             self.user_repo.upsert(&user)?;
             self.user_repo.set_source(&u.id, "config")?;
-            inserted += 1;
+            toml_ids.push(u.id.clone());
+            upserted += 1;
         }
-        Ok((deleted, inserted))
+        // AllowDangling: unconditional delete of stale
+        let deleted = self.user_repo.delete_stale_config(&toml_ids)?;
+        Ok((deleted, upserted))
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // groups (AllowDangling)
+    // ─────────────────────────────────────────────────────────────────────────
 
     pub(super) fn sync_groups(&self, inputs: Vec<GroupInput>) -> Result<(u64, u64), AppError> {
-        let deleted = self.group_repo.delete_by_source("config")?;
-        let mut inserted = 0u64;
+        let mut toml_ids = Vec::new();
+        let mut upserted = 0u64;
         for g in &inputs {
             self.group_repo.create(&g.name, &g.members, "config")?;
-            inserted += 1;
+            toml_ids.push(g.name.clone());
+            upserted += 1;
         }
-        Ok((deleted, inserted))
+        let deleted = self.group_repo.delete_stale_config(&toml_ids)?;
+        Ok((deleted, upserted))
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // roles (ValidatedInBatch)
+    // ─────────────────────────────────────────────────────────────────────────
+
     pub(super) fn sync_roles(&self, inputs: Vec<RoleInput>) -> Result<(u64, u64), AppError> {
-        let deleted = self.policy_repo.delete_roles_by_source("config")?;
-        let mut inserted = 0u64;
+        let mut toml_ids = Vec::new();
+        let mut upserted = 0u64;
         for r in &inputs {
             let perms: Vec<dbward_domain::auth::Permission> = r
                 .permissions
@@ -125,32 +160,43 @@ impl SyncConfig {
                 environments,
             };
             self.policy_repo.create_role(&def)?;
-            inserted += 1;
+            toml_ids.push(r.name.clone());
+            upserted += 1;
         }
-        Ok((deleted, inserted))
+        // ValidatedInBatch: delete stale roles (not in current TOML)
+        self.policy_repo.delete_stale_config_roles(&toml_ids)?;
+        Ok((0, upserted))
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // role_bindings (ValidatedInBatch)
+    // ─────────────────────────────────────────────────────────────────────────
 
     pub(super) fn sync_role_bindings(
         &self,
         inputs: Vec<RoleBindingInput>,
     ) -> Result<(u64, u64), AppError> {
-        let deleted = self.role_binding_repo.delete_by_source("config")?;
-        let mut inserted = 0u64;
-        for (i, rb) in inputs.iter().enumerate() {
-            let id = format!("rb-{i}");
+        let mut toml_ids = Vec::new();
+        let mut upserted = 0u64;
+        for rb in inputs.iter() {
+            let id = make_role_binding_id(&rb.role, &rb.subjects, &rb.groups);
             self.role_binding_repo
                 .create(&id, &rb.role, &rb.subjects, &rb.groups, "config")?;
-            inserted += 1;
+            toml_ids.push(id);
+            upserted += 1;
         }
-        Ok((deleted, inserted))
+        let deleted = self.role_binding_repo.delete_stale_config(&toml_ids)?;
+        Ok((deleted, upserted))
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // webhooks (CancelDependents)
+    // ─────────────────────────────────────────────────────────────────────────
+
     pub fn sync_webhooks(&self, webhooks: Vec<WebhookInput>) -> Result<(u64, u64), AppError> {
-        // Validate all webhooks BEFORE deleting
         let mut parsed = Vec::with_capacity(webhooks.len());
         let now = self.clock.now();
         for wh in webhooks.iter() {
-            // SSRF check on webhook URL
             self.ssrf_validator
                 .validate_url(&wh.url)
                 .map_err(|e| AppError::Validation(format!("webhook '{}': {e}", wh.id)))?;
@@ -175,44 +221,46 @@ impl SyncConfig {
             });
         }
 
-        let deleted = self.webhook_repo.delete_by_source("config")?;
-        // TODO(CFG-24): Remove config-wh-{i} cleanup after v0.1.6 (legacy IDs)
-        for i in 0..100 {
-            let _ = self.webhook_repo.delete(&format!("config-wh-{i}"));
-        }
-
+        // UPSERT all webhooks
         for webhook in &parsed {
             self.webhook_repo.create(webhook)?;
         }
+
+        // CancelDependents: delete stale webhooks
+        let toml_ids: Vec<String> = parsed.iter().map(|w| w.id.clone()).collect();
+        let deleted = self.webhook_repo.delete_stale_config(&toml_ids)?;
         Ok((deleted, parsed.len() as u64))
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // workflows (ValidatedInBatch)
+    // ─────────────────────────────────────────────────────────────────────────
+
     pub fn sync_workflows(&self, workflows: Vec<WorkflowInput>) -> Result<(u64, u64), AppError> {
-        // Validate all workflows BEFORE deleting
         let mut parsed = Vec::with_capacity(workflows.len());
-        for (i, wf) in workflows.iter().enumerate() {
-            let id = format!("wf-{i}");
+        for wf in workflows.iter() {
+            let id = make_workflow_id(&wf.database, &wf.environment, &wf.operations);
             let workflow = super::convert::parse_workflow(&id, wf)?;
             parsed.push(workflow);
         }
 
-        let deleted = self.policy_repo.delete_workflows_by_source("config")?;
-        // TODO(CFG-24): Remove config-wf-{i} cleanup after v0.1.6 (legacy IDs)
-        for i in 0..100 {
-            let _ = self.policy_repo.delete_workflow(&format!("config-wf-{i}"));
-        }
-
+        // UPSERT (create_workflow uses ON CONFLICT DO UPDATE)
         for workflow in &parsed {
             self.policy_repo.create_workflow(workflow)?;
         }
+        let toml_ids: Vec<String> = parsed.iter().map(|w| w.id.clone()).collect();
+        let deleted = self.policy_repo.delete_stale_workflows(&toml_ids)?;
         Ok((deleted, parsed.len() as u64))
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // execution_policies (ValidatedInBatch)
+    // ─────────────────────────────────────────────────────────────────────────
 
     pub fn sync_execution_policies(
         &self,
         policies: Vec<ExecutionPolicyInput>,
     ) -> Result<(u64, u64), AppError> {
-        // Validate all BEFORE deleting
         let mut parsed = Vec::with_capacity(policies.len());
         for (i, ep) in policies.iter().enumerate() {
             let database = if ep.database == "*" {
@@ -228,9 +276,10 @@ impl SyncConfig {
                     .map_err(|e| AppError::Validation(format!("execution_policy[{i}] env: {e}")))?
             };
 
+            let id = format!("ep:{}:{}", ep.database, ep.environment);
             let defaults = ExecutionPolicy::default();
             parsed.push(ExecutionPolicy {
-                id: format!("ep-{i}"),
+                id,
                 database,
                 environment,
                 max_executions: ep.max_executions.unwrap_or(defaults.max_executions),
@@ -252,28 +301,25 @@ impl SyncConfig {
             });
         }
 
-        // Validate all policies (timeout constraints etc.)
         for (i, policy) in parsed.iter().enumerate() {
             policy
                 .validate()
                 .map_err(|e| AppError::Validation(format!("execution_policy[{i}]: {e}")))?;
         }
 
-        let deleted = self
-            .policy_repo
-            .delete_execution_policies_by_source("config")?;
-        // TODO(CFG-24): Remove config-ep-{i} cleanup after v0.1.6 (legacy IDs)
-        for i in 0..100 {
-            let _ = self
-                .policy_repo
-                .delete_execution_policy(&format!("config-ep-{i}"));
-        }
-
         for policy in &parsed {
             self.policy_repo.create_execution_policy(policy)?;
         }
+        let toml_ids: Vec<String> = parsed.iter().map(|p| p.id.clone()).collect();
+        let deleted = self
+            .policy_repo
+            .delete_stale_execution_policies(&toml_ids)?;
         Ok((deleted, parsed.len() as u64))
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // result_policies (ValidatedInBatch)
+    // ─────────────────────────────────────────────────────────────────────────
 
     pub(super) fn sync_result_policies(
         &self,
@@ -308,8 +354,9 @@ impl SyncConfig {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
 
+            let id = format!("rp:{}:{}", rp.database, rp.environment);
             parsed.push(ResultPolicy {
-                id: format!("rp-{i}"),
+                id,
                 database,
                 environment,
                 retention_days: rp.retention_days,
@@ -320,14 +367,17 @@ impl SyncConfig {
             });
         }
 
-        let deleted = self
-            .policy_repo
-            .delete_result_policies_by_source("config")?;
         for policy in &parsed {
             self.policy_repo.create_result_policy(policy)?;
         }
+        let toml_ids: Vec<String> = parsed.iter().map(|p| p.id.clone()).collect();
+        let deleted = self.policy_repo.delete_stale_result_policies(&toml_ids)?;
         Ok((deleted, parsed.len() as u64))
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // notification_policies (ValidatedInBatch)
+    // ─────────────────────────────────────────────────────────────────────────
 
     pub(super) fn sync_notification_policies(
         &self,
@@ -349,8 +399,9 @@ impl SyncConfig {
                     AppError::Validation(format!("notification_policy[{i}] env: {e}"))
                 })?
             };
+            let id = format!("np:{}:{}", np.database, np.environment);
             parsed.push(NotificationPolicy {
-                id: format!("np-{i}"),
+                id,
                 database,
                 environment,
                 webhooks: np.webhooks.clone(),
@@ -358,12 +409,137 @@ impl SyncConfig {
             });
         }
 
-        let deleted = self
-            .policy_repo
-            .delete_notification_policies_by_source("config")?;
         for policy in &parsed {
             self.policy_repo.create_notification_policy(policy)?;
         }
+        let toml_ids: Vec<String> = parsed.iter().map(|p| p.id.clone()).collect();
+        let deleted = self
+            .policy_repo
+            .delete_stale_notification_policies(&toml_ids)?;
         Ok((deleted, parsed.len() as u64))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stable ID generation helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Workflow ID: `wf:{db}:{env}:{sha(sorted_ops)[..12]}`
+fn make_workflow_id(database: &str, environment: &str, operations: &[String]) -> String {
+    let mut sorted_ops = operations.to_vec();
+    sorted_ops.sort();
+    let ops_str = sorted_ops.join(",");
+    format!("wf:{}:{}:{}", database, environment, sha_suffix(&ops_str))
+}
+
+/// RoleBinding ID: `rb:{role}:{sha(sorted_subjects+sorted_groups)[..12]}`
+fn make_role_binding_id(role: &str, subjects: &[String], groups: &[String]) -> String {
+    let mut sorted_subjects = subjects.to_vec();
+    sorted_subjects.sort();
+    sorted_subjects.dedup();
+    let mut sorted_groups = groups.to_vec();
+    sorted_groups.sort();
+    sorted_groups.dedup();
+    let content = format!("{},{}", sorted_subjects.join(","), sorted_groups.join(","));
+    format!("rb:{}:{}", role, sha_suffix(&content))
+}
+
+// ---------------------------------------------------------------------------
+// Schema Guardrail: REFERENCE_MAP (CFG-24)
+// ---------------------------------------------------------------------------
+
+/// Category for how stale config entries interact with their dependents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum ReferenceCategory {
+    StrongRuntime,
+    CancelDependents,
+    ValidatedInBatch,
+    AllowDangling,
+}
+
+/// All known cross-table references (FK + logical) that affect config sync.
+/// CI test verifies this list stays in sync with schema.rs.
+#[allow(dead_code)]
+pub const REFERENCE_MAP: &[(&str, &str, ReferenceCategory)] = &[
+    (
+        "requests.database_id",
+        "databases",
+        ReferenceCategory::StrongRuntime,
+    ),
+    (
+        "webhook_deliveries.webhook_id",
+        "webhooks",
+        ReferenceCategory::CancelDependents,
+    ),
+    (
+        "notification_policies.webhooks_json",
+        "webhooks",
+        ReferenceCategory::ValidatedInBatch,
+    ),
+    (
+        "role_bindings.role",
+        "roles",
+        ReferenceCategory::ValidatedInBatch,
+    ),
+    (
+        "requests.requester",
+        "users",
+        ReferenceCategory::AllowDangling,
+    ),
+    (
+        "approvals.actor_id",
+        "users",
+        ReferenceCategory::AllowDangling,
+    ),
+];
+
+#[cfg(test)]
+mod reference_map_tests {
+    use super::*;
+
+    /// Ensure REFERENCE_MAP covers all REFERENCES clauses and known logical refs in schema.rs.
+    #[test]
+    fn reference_map_covers_all_fk_and_logical_refs() {
+        let schema_source = include_str!("../../../../dbward-infra/src/sqlite/schema.rs");
+
+        // All FK-referenced config-managed tables must appear as targets in REFERENCE_MAP
+        let config_tables = ["databases", "webhooks", "roles", "users"];
+        let map_targets: std::collections::HashSet<&str> =
+            REFERENCE_MAP.iter().map(|(_, target, _)| *target).collect();
+
+        for table in config_tables {
+            assert!(
+                map_targets.contains(table),
+                "config table '{table}' is referenced but not in REFERENCE_MAP"
+            );
+        }
+
+        // Known logical references must be present
+        let map_sources: std::collections::HashSet<&str> =
+            REFERENCE_MAP.iter().map(|(src, _, _)| *src).collect();
+        let logical_refs = [
+            "webhook_deliveries.webhook_id",
+            "notification_policies.webhooks_json",
+        ];
+        for src in logical_refs {
+            assert!(
+                map_sources.contains(src),
+                "logical reference '{src}' not in REFERENCE_MAP"
+            );
+        }
+
+        // No stale entries: all tables referenced in REFERENCE_MAP must exist in schema
+        for (src, target, _) in REFERENCE_MAP {
+            let src_table = src.split('.').next().unwrap();
+            assert!(
+                schema_source.contains(&format!("CREATE TABLE IF NOT EXISTS {src_table}")),
+                "REFERENCE_MAP source table '{src_table}' not found in schema"
+            );
+            assert!(
+                schema_source.contains(&format!("CREATE TABLE IF NOT EXISTS {target}")),
+                "REFERENCE_MAP target table '{target}' not found in schema"
+            );
+        }
     }
 }

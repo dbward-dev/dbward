@@ -416,7 +416,7 @@ impl AppState {
         self.authorizer
             .authorize_global(user, dbward_domain::auth::Permission::RequestView)
             .map_err(dbward_app::error::AppError::Forbidden)?;
-        self.database_registry.list()
+        self.database_registry.list_active()
     }
 
     pub(crate) fn render_metrics(
@@ -541,6 +541,9 @@ impl<'a> BackgroundAccess<'a> {
         &self,
     ) -> &Option<Arc<dyn dbward_app::ports::WebhookDeliveryRepo>> {
         &self.0.webhook_delivery_repo
+    }
+    pub(crate) fn webhook_repo(&self) -> Option<&Arc<dyn WebhookRepo>> {
+        Some(&self.0.webhook_repo)
     }
     pub(crate) fn result_store(&self) -> &Arc<dyn ResultStore> {
         &self.0.result_store

@@ -180,6 +180,30 @@ impl UserRepo for SqliteUserRepo {
         Ok(n as u64)
     }
 
+    fn delete_stale_config(&self, active_ids: &[String]) -> Result<u64, AppError> {
+        let conn = self.conn.lock();
+        if active_ids.is_empty() {
+            let n = conn
+                .execute("DELETE FROM users WHERE source = 'config'", [])
+                .map_err(db_err("user: delete_stale"))?;
+            return Ok(n as u64);
+        }
+        let placeholders: String = (1..=active_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql =
+            format!("DELETE FROM users WHERE source = 'config' AND id NOT IN ({placeholders})");
+        let params: Vec<&dyn rusqlite::types::ToSql> = active_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let n = conn
+            .execute(&sql, params.as_slice())
+            .map_err(db_err("user: delete_stale"))?;
+        Ok(n as u64)
+    }
+
     fn set_source(&self, user_id: &str, source: &str) -> Result<(), AppError> {
         let conn = self.conn.lock();
         conn.execute(

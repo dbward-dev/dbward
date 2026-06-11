@@ -62,7 +62,7 @@ impl SchemaSync {
         if let (Ok(db), Ok(env)) = (
             DatabaseName::new(&input.database),
             Environment::new(&input.environment),
-        ) && !self.database_registry.exists(&db, &env)?
+        ) && !self.database_registry.exists_active(&db, &env)?
         {
             return Err(AppError::Validation(
                 "database/environment not registered".into(),

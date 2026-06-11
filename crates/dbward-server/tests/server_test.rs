@@ -403,7 +403,7 @@ impl WebhookRepo for StubWebhookRepo {
     fn get(&self, _: &str) -> Result<Option<Webhook>, AppError> {
         Ok(None)
     }
-    fn list(&self) -> Result<Vec<Webhook>, AppError> {
+    fn list_active(&self) -> Result<Vec<Webhook>, AppError> {
         Ok(vec![])
     }
     fn update(&self, _: &Webhook) -> Result<(), AppError> {
@@ -522,10 +522,10 @@ impl DatabaseRegistry for StubDatabaseRegistry {
     fn register(&self, _: &DatabaseName, _: &Environment) -> Result<(), AppError> {
         Ok(())
     }
-    fn exists(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
+    fn exists_active(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
         Ok(false)
     }
-    fn list(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+    fn list_active(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
         Ok(vec![])
     }
 }

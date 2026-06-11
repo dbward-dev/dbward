@@ -4,6 +4,7 @@ mod schema;
 mod agent_repo;
 mod audit_helper;
 mod audit_repo;
+mod config_generation_repo;
 mod context_repo;
 mod database_repo;
 mod dry_run_repo;
@@ -23,6 +24,7 @@ pub use schema::initialize;
 
 pub use agent_repo::SqliteAgentRepo;
 pub use audit_repo::{SqliteAuditLogger, SqliteAuditRepo};
+pub use config_generation_repo::SqliteConfigGenerationRepo;
 pub use context_repo::SqliteContextRepo;
 pub use database_repo::SqliteDatabaseRegistry;
 pub use dry_run_repo::SqliteDryRunRepo;
