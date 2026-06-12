@@ -160,11 +160,13 @@ pub trait AgentRepo: Send + Sync {
         execution_id: &str,
         status: ExecutionStatus,
     ) -> Result<(), AppError>;
+    /// Extends lease only if execution is still `claimed`. Returns false if
+    /// execution was already marked lost/failed (orphan detection).
     fn extend_lease(
         &self,
         execution_id: &str,
         new_expiry: chrono::DateTime<chrono::Utc>,
-    ) -> Result<(), AppError>;
+    ) -> Result<bool, AppError>;
     fn find_dispatched_jobs(
         &self,
         databases: &[(DatabaseName, Environment)],

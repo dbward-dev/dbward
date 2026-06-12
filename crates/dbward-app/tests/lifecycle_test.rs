@@ -1325,12 +1325,17 @@ impl AgentRepo for SharedAgentRepo {
         }
         Ok(())
     }
-    fn extend_lease(&self, id: &str, new_expiry: DateTime<Utc>) -> Result<(), AppError> {
+    fn extend_lease(&self, id: &str, new_expiry: DateTime<Utc>) -> Result<bool, AppError> {
         let mut execs = self.executions.lock().unwrap();
-        if let Some(e) = execs.iter_mut().find(|e| e.id == id) {
+        if let Some(e) = execs
+            .iter_mut()
+            .find(|e| e.id == id && e.status == ExecutionStatus::Claimed)
+        {
             e.lease_expires_at = new_expiry;
+            Ok(true)
+        } else {
+            Ok(false)
         }
-        Ok(())
     }
     fn find_dispatched_jobs(
         &self,

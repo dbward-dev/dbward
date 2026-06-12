@@ -482,8 +482,8 @@ mod tests {
         fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> {
             Ok(())
         }
-        fn extend_lease(&self, _: &str, _: DateTime<Utc>) -> Result<(), AppError> {
-            Ok(())
+        fn extend_lease(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+            Ok(true)
         }
         fn find_dispatched_jobs(
             &self,

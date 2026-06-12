@@ -67,8 +67,12 @@ impl SyncConfig {
         let now = self.clock.now();
         for u in &inputs {
             let status = match u.status.as_str() {
+                "active" => dbward_domain::entities::UserStatus::Active,
                 "suspended" => dbward_domain::entities::UserStatus::Suspended,
-                _ => dbward_domain::entities::UserStatus::Active,
+                other => {
+                    tracing::warn!(user_id = %u.id, status = other, "unknown user status in config, treating as suspended");
+                    dbward_domain::entities::UserStatus::Suspended
+                }
             };
             let user = dbward_domain::entities::User {
                 id: u.id.clone(),
