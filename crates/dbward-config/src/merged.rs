@@ -44,6 +44,8 @@ struct RawServerSection {
     url: Option<String>,
     token: Option<String>,
     oidc: Option<OidcSection>,
+    #[serde(default)]
+    allow_insecure: Option<bool>,
 }
 
 /// Platform-aware global config directory.
@@ -140,6 +142,7 @@ pub fn load_merged(
     let mut server_url = String::new();
     let mut server_token: Option<String> = None;
     let mut server_oidc: Option<OidcSection> = None;
+    let mut server_allow_insecure: Option<bool> = None;
     let mut default_database: Option<String> = None;
     let mut default_environment: Option<String> = None;
     let mut migrations_dir = PathBuf::from("migrations");
@@ -161,6 +164,9 @@ pub fn load_merged(
             if let Some(ref o) = s.oidc {
                 server_oidc = Some(o.clone());
                 auth_source = Some(Source::Global);
+            }
+            if s.allow_insecure.is_some() {
+                server_allow_insecure = s.allow_insecure;
             }
         }
         if let Some(ref d) = g.default_database {
@@ -213,6 +219,9 @@ pub fn load_merged(
                 if s.token.is_none() {
                     server_token = None;
                 }
+            }
+            if s.allow_insecure.is_some() {
+                server_allow_insecure = s.allow_insecure;
             }
         }
         if let Some(ref d) = p.default_database {
@@ -322,6 +331,11 @@ pub fn load_merged(
             url: server_url,
             token: server_token,
             oidc: server_oidc,
+            allow_insecure: if let Ok(v) = std::env::var("DBWARD_ALLOW_INSECURE") {
+                Some(v == "true" || v == "1")
+            } else {
+                server_allow_insecure
+            },
         },
         databases,
         results,

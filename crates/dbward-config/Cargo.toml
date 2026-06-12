@@ -16,6 +16,7 @@ thiserror = { workspace = true }
 hostname = "0.4"
 dirs = "6"
 sha2 = "0.10"
+url = "2"
 dbward-domain = { path = "../dbward-domain" }
 
 [dev-dependencies]
