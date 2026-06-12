@@ -50,7 +50,8 @@ impl GroupRepo for SqliteGroupRepo {
         let mut results = Vec::new();
         for row in rows {
             let (name, json) = row.map_err(db_err("group: list"))?;
-            let members: Vec<String> = serde_json::from_str(&json).unwrap_or_default();
+            let members: Vec<String> =
+                serde_json::from_str(&json).map_err(json_err("group: members"))?;
             results.push((name, members));
         }
         Ok(results)

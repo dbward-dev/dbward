@@ -640,7 +640,7 @@ fn row_to_agent(r: AgentRow) -> Result<Agent, AppError> {
     let databases: Vec<DatabaseCapability> =
         serde_json::from_str(&r.databases_json).map_err(json_err("agent: row_to_agent"))?;
     let active_jobs: Vec<ActiveJobEntry> =
-        serde_json::from_str(&r.active_jobs_json).unwrap_or_default();
+        serde_json::from_str(&r.active_jobs_json).map_err(json_err("agent: active_jobs"))?;
     Ok(Agent {
         id: r.id,
         token_id: r.token_id,

@@ -205,9 +205,9 @@ impl PolicyRepo for SqlitePolicyRepo {
             if score > best_score || best.is_none() {
                 let delivery_mode: dbward_domain::policies::DeliveryMode =
                     serde_json::from_value(serde_json::Value::String(delivery_str))
-                        .unwrap_or_default();
-                let access_strs: Vec<String> =
-                    serde_json::from_str(&access_json).unwrap_or_default();
+                        .map_err(json_err("result_policy: delivery_mode"))?;
+                let access_strs: Vec<String> = serde_json::from_str(&access_json)
+                    .map_err(json_err("result_policy: access"))?;
                 let access = access_strs
                     .iter()
                     .filter_map(|s| dbward_domain::values::Selector::parse(s).ok())
@@ -344,8 +344,10 @@ impl PolicyRepo for SqlitePolicyRepo {
             let environment =
                 Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
             let delivery_mode: dbward_domain::policies::DeliveryMode =
-                serde_json::from_value(serde_json::Value::String(delivery_str)).unwrap_or_default();
-            let access_strs: Vec<String> = serde_json::from_str(&access_json).unwrap_or_default();
+                serde_json::from_value(serde_json::Value::String(delivery_str))
+                    .map_err(json_err("result_policy: delivery_mode"))?;
+            let access_strs: Vec<String> =
+                serde_json::from_str(&access_json).map_err(json_err("result_policy: access"))?;
             let access = access_strs
                 .iter()
                 .filter_map(|s| dbward_domain::values::Selector::parse(s).ok())
@@ -496,8 +498,10 @@ impl PolicyRepo for SqlitePolicyRepo {
                 DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
             let environment =
                 Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
-            let webhooks: Vec<String> = serde_json::from_str(&webhooks_json).unwrap_or_default();
-            let events: Vec<String> = serde_json::from_str(&events_json).unwrap_or_default();
+            let webhooks: Vec<String> =
+                serde_json::from_str(&webhooks_json).map_err(json_err("notification: webhooks"))?;
+            let events: Vec<String> =
+                serde_json::from_str(&events_json).map_err(json_err("notification: events"))?;
             result.push(dbward_domain::policies::NotificationPolicy {
                 id,
                 database,

@@ -140,7 +140,9 @@ fn row_to_request(row: &rusqlite::Row<'_>) -> Result<Request, rusqlite::Error> {
     })?;
 
     let share_with_json: String = row.get("share_with_json")?;
-    let share_with: Vec<String> = serde_json::from_str(&share_with_json).unwrap_or_default();
+    let share_with: Vec<String> = serde_json::from_str(&share_with_json).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+    })?;
 
     let created_at_str: String = row.get("created_at")?;
     let updated_at_str: String = row.get("updated_at")?;
