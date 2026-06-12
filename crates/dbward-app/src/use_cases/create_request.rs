@@ -977,6 +977,13 @@ fn extract_approvers(req: &dbward_domain::entities::Request) -> Vec<String> {
             .as_ref()
             .and_then(|json| {
                 serde_json::from_str::<serde_json::Value>(json)
+                    .inspect_err(|e| {
+                        tracing::warn!(
+                            error = %e,
+                            request_id = %req.id,
+                            "corrupt workflow_snapshot_json in extract_approvers"
+                        );
+                    })
                     .ok()
                     .and_then(|v| {
                         v["steps"][0]["approvers"].as_array().map(|arr| {

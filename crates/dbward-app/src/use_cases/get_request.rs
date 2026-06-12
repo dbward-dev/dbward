@@ -64,15 +64,18 @@ impl GetRequest {
         let approval_progress = req
             .workflow_snapshot_json
             .as_deref()
-            .and_then(|json| serde_json::from_str::<Workflow>(json).ok())
-            .and_then(|wf| {
-                self.approval_repo
-                    .get_approvals(&req.id)
-                    .ok()
-                    .map(|approvals| build_progress(&wf.steps, &approvals))
-            });
+            .map(|json| {
+                serde_json::from_str::<Workflow>(json)
+                    .map_err(|e| AppError::Internal(format!("corrupt workflow snapshot: {e}")))
+            })
+            .transpose()?
+            .map(|wf| -> Result<_, AppError> {
+                let approvals = self.approval_repo.get_approvals(&req.id)?;
+                Ok(build_progress(&wf.steps, &approvals))
+            })
+            .transpose()?;
 
-        let context = self.context_repo.get(&req.id).unwrap_or(None);
+        let context = self.context_repo.get(&req.id)?;
 
         Ok(GetRequestOutput {
             request: req,

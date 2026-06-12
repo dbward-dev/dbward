@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use rusqlite::params;
+use rusqlite::{OptionalExtension, params};
 
 use dbward_app::error::AppError;
 use dbward_app::ports::ApprovalRepo;
@@ -84,7 +84,8 @@ impl ApprovalRepo for SqliteRequestRepo {
                 params![approval.request_id],
                 |row| row.get(0),
             )
-            .ok()
+            .optional()
+            .map_err(db_err("request: get workflow_snapshot"))?
             .flatten();
         let current_step = compute_current_step(&snapshot, &all_approvals)?;
         populate_pending_approvers(&tx, &approval.request_id, &snapshot, current_step)?;

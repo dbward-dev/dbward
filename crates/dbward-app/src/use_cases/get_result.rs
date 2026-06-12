@@ -51,9 +51,9 @@ impl GetResult {
         // Check if delivery_mode=Stream means result was intentionally not stored
         // Only applies to successful results (failures are always stored)
         if request.status != dbward_domain::entities::RequestStatus::Failed
-            && let Ok(Some(policy)) = self
+            && let Some(policy) = self
                 .policy_repo
-                .find_result_policy(&request.database, &request.environment)
+                .find_result_policy(&request.database, &request.environment)?
             && matches!(
                 policy.delivery_mode,
                 dbward_domain::policies::DeliveryMode::Stream
@@ -66,9 +66,9 @@ impl GetResult {
 
         // Merge access selectors: request.share_with + ResultPolicy.access
         let mut access_selectors = request.share_with.clone();
-        if let Ok(Some(policy)) = self
+        if let Some(policy) = self
             .policy_repo
-            .find_result_policy(&request.database, &request.environment)
+            .find_result_policy(&request.database, &request.environment)?
         {
             for sel in &policy.access {
                 let s = sel.to_string();
