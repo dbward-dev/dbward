@@ -130,9 +130,7 @@ impl ResumeRequest {
         // M-21: Skip streaming slot if policy says StoreOnly
         let delivery_mode = self
             .policy_repo
-            .find_result_policy(&request.database, &request.environment)
-            .ok()
-            .flatten()
+            .find_result_policy(&request.database, &request.environment)?
             .map(|p| p.delivery_mode)
             .unwrap_or_default();
         if delivery_mode != dbward_domain::policies::DeliveryMode::StoreOnly {

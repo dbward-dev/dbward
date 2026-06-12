@@ -45,9 +45,7 @@ impl StreamResult {
         // Live stream access: only requester + admin + ResultPolicy.access (NOT share_with)
         let policy_access: Vec<String> = self
             .policy_repo
-            .find_result_policy(&request.database, &request.environment)
-            .ok()
-            .flatten()
+            .find_result_policy(&request.database, &request.environment)?
             .map(|p| p.access.iter().map(|s| s.to_string()).collect())
             .unwrap_or_default();
         self.authorizer

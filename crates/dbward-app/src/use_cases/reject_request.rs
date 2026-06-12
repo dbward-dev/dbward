@@ -59,7 +59,11 @@ impl RejectRequest {
         let workflow: Option<Workflow> = request
             .workflow_snapshot_json
             .as_deref()
-            .and_then(|json| serde_json::from_str(json).ok());
+            .map(|json| {
+                serde_json::from_str(json)
+                    .map_err(|e| AppError::Internal(format!("corrupt workflow snapshot: {e}")))
+            })
+            .transpose()?;
         let approvals = self.approval_repo.get_approvals(&request.id)?;
         let current_step_index = workflow
             .as_ref()
