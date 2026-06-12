@@ -38,15 +38,19 @@ Every statement is classified into one of three categories:
 - `EXPLAIN ANALYZE` on DML statements (actually executes the inner statement)
 - `SELECT INTO`
 
-### Rejected (always blocked)
+### Rejected (blocked by default)
 
-- `DROP TABLE/VIEW/INDEX/SCHEMA/DATABASE`
+- `DROP TABLE/VIEW/INDEX/SEQUENCE` ¹
+- `CREATE SEQUENCE` ¹
+- `DROP SCHEMA/DATABASE/FUNCTION/ROLE`
 - `CREATE FUNCTION/PROCEDURE/TRIGGER/ROLE/DATABASE`
 - `GRANT`, `REVOKE`
 - `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`
 - `LOCK TABLE`
 - `LOAD DATA`
 - `SET` (unsafe variables)
+
+¹ Can be bypassed with `--emergency --allow-ddl` for schema repair. Requires `request.break_glass_ddl` permission. See [Break-Glass](../guides/break-glass.md).
 
 ### Special rules
 
@@ -67,7 +71,7 @@ Every statement is classified into one of three categories:
 Each rule has a configurable severity: `warn`, `block`, or `off`.
 
 - `warn` (default) — adds a finding to the risk assessment
-- `block` — rejects the request regardless of workflow
+- `block` — rejects the request regardless of workflow (DDL rules ² can be bypassed with `--emergency --allow-ddl`)
 - `off` — rule is disabled
 
 ```toml
@@ -98,6 +102,8 @@ large_in_list = "warn"
 | `truncate` | `TRUNCATE TABLE` | All data removed |
 | `mixed_ddl_dml` | DDL and DML in same request | Complex rollback |
 | `large_in_list` | `IN (...)` with > 100 values | Performance concern |
+
+² DDL rules (`drop_table`, `drop_column`, `truncate`, `create_index_not_concurrently`, `alter_column_type`, `not_null_without_default`) can be bypassed with `--emergency --allow-ddl`. DML safety rules (`no_where_delete`, `no_where_update`, `large_in_list`) and `mixed_ddl_dml` are never bypassable.
 
 ---
 

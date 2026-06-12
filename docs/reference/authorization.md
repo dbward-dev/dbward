@@ -87,6 +87,7 @@ default_role = "developer"
 | `request.cancel` | Cancel own requests |
 | `request.view` | View requests and status |
 | `request.break_glass` | Use emergency bypass |
+| `request.break_glass_ddl` | Allow DDL in emergency mode (requires `request.break_glass`) |
 
 ### Result permissions
 

@@ -85,6 +85,7 @@ dbward request approve <request-id> --comment "Verified the query is safe"
 | Flag | Description |
 |------|-------------|
 | `--emergency` | Break-glass bypass (requires `--reason`) |
+| `--allow-ddl` | Allow DDL statements in emergency mode (requires `--emergency`) |
 | `--reason <text>` | Reason for the request (required for emergency) |
 | `--output <path>` | Save result to a file |
 | `--no-save` | Do not save result locally |
