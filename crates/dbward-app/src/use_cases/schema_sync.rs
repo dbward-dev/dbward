@@ -102,7 +102,9 @@ impl SchemaSync {
         );
         event.database_name = Some(record.database_name);
         event.environment = Some(record.environment);
-        let _ = self.audit_logger.record(&event);
+        if let Err(e) = self.audit_logger.record(&event) {
+            tracing::error!(error = %e, "failed to record schema_synced audit event");
+        }
 
         Ok(())
     }

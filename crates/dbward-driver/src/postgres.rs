@@ -115,10 +115,13 @@ impl PostgresDriver {
                 .map(|_| ()),
             Err(e) => Err(e),
         };
-        if let Some(ref orig) = original_timeout {
-            let _ = sqlx::query(&format!("SET statement_timeout = '{orig}'"))
+        if let Some(ref orig) = original_timeout
+            && let Err(e) = sqlx::query(&format!("SET statement_timeout = '{orig}'"))
                 .execute(&mut *conn)
-                .await;
+                .await
+        {
+            tracing::error!(error = %e, "failed to restore statement_timeout, detaching connection");
+            conn.detach();
         }
         result
     }
