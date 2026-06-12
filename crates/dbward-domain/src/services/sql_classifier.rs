@@ -1,4 +1,6 @@
-use crate::services::classification::{Classification, ClassifyError, Dialect, DmlReason};
+use crate::services::classification::{
+    Classification, ClassifyError, Dialect, DmlReason, StatementCategory,
+};
 use sqlparser::ast::*;
 
 /// Check if a DDL statement is considered "safe" for auto-approve.
@@ -102,6 +104,185 @@ pub fn classify(sql: &str, dialect: Dialect) -> Result<Classification, ClassifyE
                 is_ddl_only: false,
             })
         }
+    }
+}
+
+/// Extended classification result that includes parsed AST.
+pub struct ClassifyResult {
+    pub classification: Result<Classification, ClassifyError>,
+    /// Parsed statements — None only when parser itself failed.
+    pub parsed_statements: Option<Vec<Statement>>,
+}
+
+/// Classify SQL and return parsed statements alongside the result.
+/// Eliminates the need for re-parsing in bypass paths.
+pub fn classify_full(sql: &str, dialect: Dialect) -> ClassifyResult {
+    match sql_parser::parse_statements(sql, dialect) {
+        Ok(statements) => {
+            let classification = classify_statements(&statements);
+            ClassifyResult {
+                classification,
+                parsed_statements: Some(statements),
+            }
+        }
+        Err(ParseError::Empty) => ClassifyResult {
+            classification: Err(ClassifyError::Empty),
+            parsed_statements: None,
+        },
+        Err(ParseError::ParseFailed) => ClassifyResult {
+            classification: Ok(Classification {
+                operation: Operation::ExecuteDml,
+                dml_reason: Some(DmlReason::ParseFailure),
+                statement_count: 1,
+                statements: vec![sql.trim().to_string()],
+                is_ddl_only: false,
+            }),
+            parsed_statements: None,
+        },
+        Err(ParseError::NullBytes) => ClassifyResult {
+            classification: Err(ClassifyError::Rejected {
+                reason: "query contains null bytes".into(),
+            }),
+            parsed_statements: None,
+        },
+        Err(ParseError::TooLarge) => ClassifyResult {
+            classification: Err(ClassifyError::Rejected {
+                reason: format!("query exceeds maximum size of {} bytes", 1_048_576),
+            }),
+            parsed_statements: None,
+        },
+        Err(ParseError::TooManyStatements) => ClassifyResult {
+            classification: Err(ClassifyError::Rejected {
+                reason: format!("query exceeds maximum of {} statements", 100),
+            }),
+            parsed_statements: None,
+        },
+        Err(ParseError::Rejected { reason }) => ClassifyResult {
+            classification: Err(ClassifyError::Rejected { reason }),
+            parsed_statements: None,
+        },
+    }
+}
+
+/// Categorize a statement for break-glass bypass decisions.
+pub fn categorize_statement(stmt: &Statement) -> StatementCategory {
+    match stmt {
+        Statement::Query(_)
+        | Statement::ExplainTable { .. }
+        | Statement::ShowVariable { .. }
+        | Statement::ShowTables { .. }
+        | Statement::ShowColumns { .. }
+        | Statement::ShowCreate { .. }
+        | Statement::ShowDatabases { .. }
+        | Statement::ShowSchemas { .. }
+        | Statement::ShowViews { .. }
+        | Statement::ShowCollation { .. }
+        | Statement::ShowStatus { .. }
+        | Statement::ShowVariables { .. }
+        | Statement::ShowFunctions { .. } => StatementCategory::ReadOnly,
+
+        Statement::Explain { analyze: false, .. } => StatementCategory::ReadOnly,
+        Statement::Explain {
+            analyze: true,
+            statement,
+            ..
+        } => categorize_statement(statement),
+
+        Statement::Insert(_)
+        | Statement::Update(_)
+        | Statement::Delete(_)
+        | Statement::Merge(_)
+        | Statement::Copy { .. }
+        | Statement::Call(_)
+        | Statement::Execute { .. }
+        | Statement::NOTIFY { .. }
+        | Statement::LISTEN { .. } => StatementCategory::Dml,
+
+        Statement::CreateTable(_)
+        | Statement::CreateView(_)
+        | Statement::CreateIndex(_)
+        | Statement::AlterTable(_) => StatementCategory::SafeDdl,
+
+        Statement::Drop { object_type, .. } => match object_type {
+            ObjectType::Table | ObjectType::View | ObjectType::Index | ObjectType::Sequence => {
+                StatementCategory::BreakGlassDdl
+            }
+            _ => StatementCategory::PrivilegeDdl,
+        },
+        Statement::CreateSequence { .. } => StatementCategory::BreakGlassDdl,
+        Statement::Truncate(_) => StatementCategory::BreakGlassDdl,
+
+        Statement::Grant(_)
+        | Statement::Revoke(_)
+        | Statement::CreateRole(_)
+        | Statement::AlterRole { .. }
+        | Statement::CreateSchema { .. }
+        | Statement::AlterSchema(_)
+        | Statement::CreateDatabase { .. }
+        | Statement::AlterIndex { .. }
+        | Statement::AlterView { .. }
+        | Statement::CreateType { .. } => StatementCategory::PrivilegeDdl,
+
+        Statement::CreateFunction(_)
+        | Statement::CreateProcedure { .. }
+        | Statement::LoadData { .. } => StatementCategory::CodeExecution,
+
+        Statement::StartTransaction { .. }
+        | Statement::Commit { .. }
+        | Statement::Rollback { .. }
+        | Statement::Savepoint { .. } => StatementCategory::TxControl,
+
+        Statement::LockTables { .. } => StatementCategory::SecurityBoundary,
+
+        Statement::Set(set) => categorize_set(set),
+
+        _ => StatementCategory::Unknown,
+    }
+}
+
+fn categorize_set(set: &Set) -> StatementCategory {
+    match set {
+        Set::SingleAssignment { variable, .. } => {
+            let var_name = variable
+                .0
+                .iter()
+                .map(|i| i.to_string().to_lowercase())
+                .collect::<Vec<_>>()
+                .join(".");
+            if SAFE_SET_VARIABLES
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(&var_name))
+            {
+                StatementCategory::ReadOnly
+            } else {
+                StatementCategory::SecurityBoundary
+            }
+        }
+        Set::SetRole { .. } | Set::SetSessionAuthorization(_) | Set::SetTransaction { .. } => {
+            StatementCategory::SecurityBoundary
+        }
+        Set::SetTimeZone { .. } | Set::SetNames { .. } | Set::SetNamesDefault { .. } => {
+            StatementCategory::ReadOnly
+        }
+        Set::MultipleAssignments { assignments } => {
+            for a in assignments {
+                let var_name = a
+                    .name
+                    .0
+                    .iter()
+                    .map(|i| i.to_string().to_lowercase())
+                    .collect::<Vec<_>>()
+                    .join(".");
+                if !SAFE_SET_VARIABLES
+                    .iter()
+                    .any(|s| s.eq_ignore_ascii_case(&var_name))
+                {
+                    return StatementCategory::SecurityBoundary;
+                }
+            }
+            StatementCategory::ReadOnly
+        }
+        _ => StatementCategory::SecurityBoundary,
     }
 }
 
@@ -479,6 +660,29 @@ fn classify_set(set: &Set) -> InternalClass {
         }
         _ => InternalClass::Rejected("unsupported SET variant".into()),
     }
+}
+
+/// Replace string literals with `?` for audit safety.
+pub fn redact_literals(sql: &str) -> String {
+    let mut result = String::with_capacity(sql.len());
+    let mut chars = sql.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\'' {
+            result.push('?');
+            while let Some(nc) = chars.next() {
+                if nc == '\'' {
+                    if chars.peek() == Some(&'\'') {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 #[cfg(test)]
@@ -1132,5 +1336,23 @@ mod tests {
         let r = pg("select  id ,  name   from  users  where  active = true").unwrap();
         assert_eq!(r.statement_count, 1);
         assert!(r.statements[0].contains("SELECT"));
+    }
+
+    #[test]
+    fn redact_literals_replaces_strings() {
+        assert_eq!(
+            redact_literals("SELECT * FROM users WHERE name = 'alice'"),
+            "SELECT * FROM users WHERE name = ?"
+        );
+    }
+
+    #[test]
+    fn redact_literals_handles_escaped_quotes() {
+        assert_eq!(redact_literals("SELECT 'it''s fine'"), "SELECT ?");
+    }
+
+    #[test]
+    fn redact_literals_no_strings() {
+        assert_eq!(redact_literals("SELECT 1"), "SELECT 1");
     }
 }

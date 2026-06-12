@@ -2,7 +2,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use dbward_app::ports::{AgentRepo, RequestReader};
+use dbward_app::ports::{AgentRepo, BreakGlassMetrics, RequestReader};
 
 /// Prometheus-compatible metrics registry.
 pub struct Metrics {
@@ -17,6 +17,12 @@ pub struct Metrics {
     pub webhook_deliveries_total: CounterVec<1>,
     pub result_storage_total: CounterVec<1>,
     pub background_panics_total: AtomicU64,
+
+    // Break-glass DDL counters
+    pub break_glass_ddl_attempted: AtomicU64,
+    pub break_glass_ddl_allowed: AtomicU64,
+    pub break_glass_ddl_denied: AtomicU64,
+    pub break_glass_audit_failure: AtomicU64,
 
     // Histograms
     pub http_request_duration: HistogramVec<2>,
@@ -44,10 +50,31 @@ impl Metrics {
             webhook_deliveries_total: CounterVec::new(),
             result_storage_total: CounterVec::new(),
             background_panics_total: AtomicU64::new(0),
+            break_glass_ddl_attempted: AtomicU64::new(0),
+            break_glass_ddl_allowed: AtomicU64::new(0),
+            break_glass_ddl_denied: AtomicU64::new(0),
+            break_glass_audit_failure: AtomicU64::new(0),
             http_request_duration: HistogramVec::new(),
             approval_wait: Histogram::new(),
             execution_duration: HistogramVec::new(),
         }
+    }
+}
+
+impl BreakGlassMetrics for Metrics {
+    fn record_ddl_attempted(&self) {
+        self.break_glass_ddl_attempted
+            .fetch_add(1, Ordering::Relaxed);
+    }
+    fn record_ddl_allowed(&self) {
+        self.break_glass_ddl_allowed.fetch_add(1, Ordering::Relaxed);
+    }
+    fn record_ddl_denied(&self) {
+        self.break_glass_ddl_denied.fetch_add(1, Ordering::Relaxed);
+    }
+    fn record_audit_failure(&self) {
+        self.break_glass_audit_failure
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -77,6 +104,34 @@ pub fn render(
         out,
         "dbward_break_glass_total {}",
         metrics.break_glass_total.load(Ordering::Relaxed)
+    )
+    .ok();
+    writeln!(out, "# TYPE dbward_break_glass_ddl_attempted_total counter").ok();
+    writeln!(
+        out,
+        "dbward_break_glass_ddl_attempted_total {}",
+        metrics.break_glass_ddl_attempted.load(Ordering::Relaxed)
+    )
+    .ok();
+    writeln!(out, "# TYPE dbward_break_glass_ddl_allowed_total counter").ok();
+    writeln!(
+        out,
+        "dbward_break_glass_ddl_allowed_total {}",
+        metrics.break_glass_ddl_allowed.load(Ordering::Relaxed)
+    )
+    .ok();
+    writeln!(out, "# TYPE dbward_break_glass_ddl_denied_total counter").ok();
+    writeln!(
+        out,
+        "dbward_break_glass_ddl_denied_total {}",
+        metrics.break_glass_ddl_denied.load(Ordering::Relaxed)
+    )
+    .ok();
+    writeln!(out, "# TYPE dbward_break_glass_audit_failure_total counter").ok();
+    writeln!(
+        out,
+        "dbward_break_glass_audit_failure_total {}",
+        metrics.break_glass_audit_failure.load(Ordering::Relaxed)
     )
     .ok();
     write_counter_vec(

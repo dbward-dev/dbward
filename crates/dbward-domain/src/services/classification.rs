@@ -42,3 +42,31 @@ impl fmt::Display for ClassifyError {
 }
 
 impl std::error::Error for ClassifyError {}
+
+/// Statement-level categorization for break-glass bypass decisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatementCategory {
+    ReadOnly,
+    Dml,
+    /// DDL the classifier already allows (CREATE TABLE, VIEW, INDEX, ALTER TABLE)
+    SafeDdl,
+    /// DDL bypassable via break-glass --allow-ddl
+    BreakGlassDdl,
+    /// Privilege/infra DDL — NEVER bypassable
+    PrivilegeDdl,
+    /// Transaction control — NEVER bypassable
+    TxControl,
+    /// Security boundary — NEVER bypassable
+    SecurityBoundary,
+    /// Code execution — NEVER bypassable
+    CodeExecution,
+    /// Unknown — fail-closed as DML
+    Unknown,
+}
+
+impl StatementCategory {
+    /// Whether this category is eligible for break-glass DDL bypass.
+    pub fn is_break_glass_eligible(self) -> bool {
+        matches!(self, Self::BreakGlassDdl | Self::SafeDdl)
+    }
+}

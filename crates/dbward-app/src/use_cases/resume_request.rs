@@ -449,6 +449,9 @@ mod tests {
         ) -> Result<bool, AppError> {
             Ok(true)
         }
+        fn mark_audit_incomplete(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
     }
 
     fn make_request(status: RequestStatus) -> Request {

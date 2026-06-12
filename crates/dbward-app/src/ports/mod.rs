@@ -7,8 +7,8 @@ pub use authorizer::{Authorizer, OidcTokenVerifier, PolicyEvaluator, RoleResolve
 pub use clock::{Clock, IdGenerator, TokenValueGenerator};
 pub use repos::{
     AgentRepo, ApprovalRepo, AuditFilter, AuditLogger, AuditRepo, AuditVerifyResult,
-    BackgroundTaskRepo, CompletionOutcome, ConfigGenerationRepo, ContextRepo, DatabaseRegistry,
-    DryRunJobRecord, DryRunRepo, ExecutionTokenClaims, GroupRepo, LicenseChecker,
+    BackgroundTaskRepo, BreakGlassMetrics, CompletionOutcome, ConfigGenerationRepo, ContextRepo,
+    DatabaseRegistry, DryRunJobRecord, DryRunRepo, ExecutionTokenClaims, GroupRepo, LicenseChecker,
     NoopConfigGenerationRepo, PolicyRepo, PutOptions, RequestContextRecord, RequestReader,
     RequestWriter, ResultChannel, ResultStore, ResultStream, RoleBindingEntry, RoleBindingRepo,
     SchemaRepo, SchemaSnapshotRecord, SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner,

@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 16;
+const SCHEMA_VERSION: u32 = 17;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -247,6 +247,10 @@ fn apply_migration_v16(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+const MIGRATION_V17: &str = "
+ALTER TABLE requests ADD COLUMN audit_incomplete INTEGER NOT NULL DEFAULT 0;
+";
+
 /// Apply V14 source-column additions idempotently.
 fn apply_migration_v14(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(MIGRATION_V14)?;
@@ -324,6 +328,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         apply_migration_v14(conn)?;
         conn.execute_batch(MIGRATION_V15)?;
         apply_migration_v16(conn)?;
+        conn.execute_batch(MIGRATION_V17)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -380,6 +385,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 16 {
             apply_migration_v16(conn)?;
+        }
+        if current < 17 {
+            conn.execute_batch(MIGRATION_V17)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }

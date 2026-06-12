@@ -104,6 +104,7 @@ pub struct CreateRequest<'a> {
     pub database: &'a str,
     pub detail: &'a str,
     pub emergency: bool,
+    pub allow_ddl: bool,
     pub reason: Option<&'a str>,
     pub metadata: Option<&'a serde_json::Value>,
     pub idempotency_key: Option<&'a str>,
@@ -143,6 +144,9 @@ impl ServerClient {
         });
         if req.emergency {
             body["emergency"] = serde_json::json!(true);
+        }
+        if req.allow_ddl {
+            body["allow_ddl"] = serde_json::json!(true);
         }
         if let Some(r) = req.reason {
             body["reason"] = serde_json::json!(r);

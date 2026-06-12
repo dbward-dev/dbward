@@ -90,6 +90,9 @@ pub enum Command {
         /// Emergency bypass (skip approval, requires --reason)
         #[arg(long)]
         emergency: bool,
+        /// Allow schema DDL (DROP TABLE/VIEW/INDEX/SEQUENCE, CREATE SEQUENCE) in emergency mode
+        #[arg(long = "allow-ddl", requires = "emergency")]
+        allow_ddl: bool,
         /// Reason for this request
         #[arg(long)]
         reason: Option<String>,
@@ -399,6 +402,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         Command::Execute {
             ref sql,
             emergency,
+            allow_ddl,
             ref reason,
             ref output,
             ref ticket,
@@ -422,6 +426,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                 json_output,
                 sql,
                 emergency,
+                allow_ddl,
                 reason.as_deref(),
                 output.as_deref(),
                 cfg.results.dir.as_deref(),

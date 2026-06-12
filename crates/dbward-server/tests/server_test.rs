@@ -207,6 +207,9 @@ impl RequestWriter for StubRequestRepo {
     ) -> Result<bool, AppError> {
         Ok(true)
     }
+    fn mark_audit_incomplete(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 impl ApprovalRepo for StubRequestRepo {
