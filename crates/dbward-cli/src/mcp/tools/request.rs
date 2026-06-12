@@ -322,8 +322,14 @@ pub(super) async fn handle_wait_request(
             if matches!(
                 status,
                 RequestStatus::Approved | RequestStatus::AutoApproved | RequestStatus::BreakGlass
-            ) {
-                let _ = client.resume(request_id).await;
+            ) && let Err(e) = client.resume(request_id).await
+                // 409 Conflict = already resumed by another actor — continue waiting
+                && e.status != 409
+            {
+                return Ok(format!(
+                    "Failed to resume request {request_id}: {}",
+                    e.error_message.as_deref().unwrap_or(&e.body)
+                ));
             }
             match tokio::time::timeout(
                 Duration::from_secs(timeout),

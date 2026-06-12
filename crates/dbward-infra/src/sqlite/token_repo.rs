@@ -168,8 +168,12 @@ fn row_to_token(row: &rusqlite::Row) -> rusqlite::Result<Token> {
         subject_id: row.get(2)?,
         token_hash: row.get(3)?,
         token_prefix: row.get(4)?,
-        roles: serde_json::from_str(&roles_json).unwrap_or_default(),
-        groups: serde_json::from_str(&groups_json).unwrap_or_default(),
+        roles: serde_json::from_str(&roles_json).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
+        })?,
+        groups: serde_json::from_str(&groups_json).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
+        })?,
         name: row.get(7)?,
         status: parse_token_status(&status_s),
         expires_at: expires_str.and_then(|s| {

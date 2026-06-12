@@ -46,7 +46,17 @@ impl RequestSummary {
         let total_steps = if r.status == RequestStatus::Pending {
             r.workflow_snapshot_json
                 .as_deref()
-                .and_then(|json| serde_json::from_str::<Workflow>(json).ok())
+                .and_then(|json| {
+                    serde_json::from_str::<Workflow>(json)
+                        .inspect_err(|e| {
+                            tracing::warn!(
+                                error = %e,
+                                request_id = %r.id,
+                                "corrupt workflow_snapshot_json in request"
+                            );
+                        })
+                        .ok()
+                })
                 .map(|wf| wf.steps.len() as u32)
         } else {
             None

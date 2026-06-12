@@ -53,7 +53,7 @@ pub(crate) async fn run_record_purge_once(
                 result.processed += n;
                 info!(task = "record_purge", count = n, "purged old audit events");
                 // A8: Record the purge action itself
-                let _ = state
+                if let Err(e) = state
                     .background()
                     .audit_logger()
                     .record(&AuditEvent::simple(
@@ -63,7 +63,10 @@ pub(crate) async fn run_record_purge_once(
                         None,
                         state.background().clock().now(),
                         &AuditContext::System,
-                    ));
+                    ))
+                {
+                    tracing::error!(error = %e, "failed to record audit_purged event");
+                }
             }
         }
         Err(e) => {

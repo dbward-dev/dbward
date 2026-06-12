@@ -349,8 +349,12 @@ impl PolicyEvaluator for FakePolicy {
     ) -> Result<Option<Workflow>, AppError> {
         Ok(self.workflow.clone())
     }
-    fn get_execution_policy(&self, _: &DatabaseName, _: &Environment) -> ExecutionPolicy {
-        self.exec_policy.clone()
+    fn get_execution_policy(
+        &self,
+        _: &DatabaseName,
+        _: &Environment,
+    ) -> Result<ExecutionPolicy, AppError> {
+        Ok(self.exec_policy.clone())
     }
 }
 

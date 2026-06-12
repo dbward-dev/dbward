@@ -301,9 +301,12 @@ impl QueryDriver for MysqlDriver {
                 let r = match sqlx::query(stmt).execute(&mut **guard.conn_mut()).await {
                     Ok(r) => r,
                     Err(e) => {
-                        let _ = sqlx::query("ROLLBACK")
+                        if let Err(re) = sqlx::query("ROLLBACK")
                             .execute(&mut **guard.conn_mut())
-                            .await;
+                            .await
+                        {
+                            tracing::debug!(error = %re, "ROLLBACK failed after migration error");
+                        }
                         return Err(query_err(e));
                     }
                 };
@@ -667,7 +670,10 @@ impl SchemaDriver for MysqlDriver {
             .fetch_one(&mut conn)
             .await
             .map_err(query_err);
-        let _ = sqlx::query("ROLLBACK").execute(&mut conn).await;
+        if let Err(e) = sqlx::query("ROLLBACK").execute(&mut conn).await {
+            tracing::debug!(error = %e, "ROLLBACK failed after EXPLAIN, dropping connection");
+            drop(conn);
+        }
         let row = result?;
         let plan: String = row.try_get(0).map_err(query_err)?;
         serde_json::from_str(&plan)

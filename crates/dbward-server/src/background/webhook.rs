@@ -74,23 +74,26 @@ pub(crate) async fn run_webhook_retry_once(state: &AppState) -> TickResult {
                         .await;
                     match send_result {
                         Ok(()) => {
-                            let _ = repo.mark_delivered(&delivery.id, &now_str);
+                            if let Err(e) = repo.mark_delivered(&delivery.id, &now_str) {
+                                error!(task = "webhook_retry", id = %delivery.id, error = %e, "failed to mark delivered");
+                            }
                             result.processed += 1;
                         }
                         Err(e) => {
                             let attempts = delivery.attempts + 1;
                             if attempts >= delivery.max_attempts {
-                                let _ = repo.mark_dead(&delivery.id);
+                                if let Err(e2) = repo.mark_dead(&delivery.id) {
+                                    error!(task = "webhook_retry", id = %delivery.id, error = %e2, "failed to mark dead");
+                                }
                                 warn!(task = "webhook_retry", id = %delivery.id, "delivery marked dead");
                             } else {
                                 let backoff = (attempts as i64).pow(2) * 60;
                                 let next = now + Duration::seconds(backoff);
-                                let _ = repo.mark_failed(
-                                    &delivery.id,
-                                    &e,
-                                    &next.to_rfc3339(),
-                                    attempts,
-                                );
+                                if let Err(e2) =
+                                    repo.mark_failed(&delivery.id, &e, &next.to_rfc3339(), attempts)
+                                {
+                                    error!(task = "webhook_retry", id = %delivery.id, error = %e2, "failed to mark failed");
+                                }
                             }
                             result.failed += 1;
                         }

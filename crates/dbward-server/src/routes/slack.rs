@@ -20,7 +20,10 @@ async fn resolve_slack_auth_user(
         .map_err(|e| format!("DB error: {e}"))?
         .ok_or_else(|| "not_linked".to_string())?;
 
-    if user_repo.is_suspended(&subject_id).unwrap_or(true) {
+    if user_repo
+        .is_suspended(&subject_id)
+        .map_err(|e| format!("DB error: {e}"))?
+    {
         return Err("suspended".to_string());
     }
 
@@ -162,7 +165,9 @@ async fn handle_block_actions(
                         } else {
                             "⚠️ Authentication failed. Please contact an administrator.".to_string()
                         };
-                        let _ = sc.post_ephemeral(&channel, &slack_user_id, &msg).await;
+                        if let Err(e) = sc.post_ephemeral(&channel, &slack_user_id, &msg).await {
+                            tracing::warn!(error = %e, "slack notification failed");
+                        }
                     }
                     return;
                 }
@@ -200,9 +205,12 @@ async fn handle_block_actions(
                             None,
                             None,
                         );
-                        let _ = sc
+                        if let Err(e) = sc
                             .update_message(&channel, &message_ts, &blocks, "Dispatched")
-                            .await;
+                            .await
+                        {
+                            tracing::debug!(error = %e, "slack message update failed");
+                        }
                     }
                 }
                 Err(e) => {
@@ -217,7 +225,10 @@ async fn handle_block_actions(
                             }
                             _ => "⚠️ Resume failed. Please try again or use the CLI.",
                         };
-                        let _ = sc.post_ephemeral(&channel, &slack_user_id, user_msg).await;
+                        if let Err(e) = sc.post_ephemeral(&channel, &slack_user_id, user_msg).await
+                        {
+                            tracing::warn!(error = %e, "slack notification failed");
+                        }
                     }
                 }
             }
@@ -255,7 +266,9 @@ async fn handle_block_actions(
                                 &request_id,
                                 "Authentication failed.",
                             );
-                        let _ = sc.update_modal(&view_id, &err_modal).await;
+                        if let Err(e) = sc.update_modal(&view_id, &err_modal).await {
+                            tracing::debug!(error = %e, "slack modal update failed");
+                        }
                     }
                     return;
                 }
@@ -297,8 +310,10 @@ async fn handle_block_actions(
                         &text,
                         content_length,
                     );
-                    if let Some(ref sc) = state_clone.slack_client {
-                        let _ = sc.update_modal(&view_id, &modal).await;
+                    if let Some(ref sc) = state_clone.slack_client
+                        && let Err(e) = sc.update_modal(&view_id, &modal).await
+                    {
+                        tracing::debug!(error = %e, "slack modal update failed");
                     }
                 }
                 Err(dbward_app::error::AppError::Gone(msg)) => {
@@ -306,8 +321,10 @@ async fn handle_block_actions(
                         &request_id,
                         &msg,
                     );
-                    if let Some(ref sc) = state_clone.slack_client {
-                        let _ = sc.update_modal(&view_id, &modal).await;
+                    if let Some(ref sc) = state_clone.slack_client
+                        && let Err(e) = sc.update_modal(&view_id, &modal).await
+                    {
+                        tracing::debug!(error = %e, "slack modal update failed");
                     }
                 }
                 Err(dbward_app::error::AppError::Forbidden(_)) => {
@@ -316,7 +333,9 @@ async fn handle_block_actions(
                             &request_id,
                             "You don't have permission to view this result.",
                         );
-                        let _ = sc.update_modal(&view_id, &modal).await;
+                        if let Err(e) = sc.update_modal(&view_id, &modal).await {
+                            tracing::debug!(error = %e, "slack modal update failed");
+                        }
                     }
                 }
                 Err(_) => {
@@ -325,7 +344,9 @@ async fn handle_block_actions(
                             &request_id,
                             "Failed to load result.",
                         );
-                        let _ = sc.update_modal(&view_id, &modal).await;
+                        if let Err(e) = sc.update_modal(&view_id, &modal).await {
+                            tracing::debug!(error = %e, "slack modal update failed");
+                        }
                     }
                 }
             }
@@ -351,9 +372,12 @@ async fn handle_block_actions(
                 } else {
                     "⚠️ Account suspended or not found".to_string()
                 };
-                let _ = slack_client
+                if let Err(e) = slack_client
                     .post_ephemeral(&channel_id, &slack_user_id, &msg)
-                    .await;
+                    .await
+                {
+                    tracing::warn!(error = %e, "slack notification failed");
+                }
             }
             return StatusCode::OK;
         }
@@ -363,14 +387,16 @@ async fn handle_block_actions(
     let req = match state.request_reader().get(&request_id).ok().flatten() {
         Some(r) => r,
         None => {
-            if let Some(ref slack_client) = state.slack_client {
-                let _ = slack_client
+            if let Some(ref slack_client) = state.slack_client
+                && let Err(e) = slack_client
                     .post_ephemeral(
                         &channel_id,
                         &slack_user_id,
                         "⚠️ Request not found or expired",
                     )
-                    .await;
+                    .await
+            {
+                tracing::warn!(error = %e, "slack notification failed");
             }
             return StatusCode::OK;
         }
@@ -389,14 +415,16 @@ async fn handle_block_actions(
             .is_ok()
             || req.requester == auth_user.subject_id;
         if !can_view {
-            if let Some(ref slack_client) = state.slack_client {
-                let _ = slack_client
+            if let Some(ref slack_client) = state.slack_client
+                && let Err(e) = slack_client
                     .post_ephemeral(
                         &channel_id,
                         &slack_user_id,
                         "⚠️ You are not an approver for this request",
                     )
-                    .await;
+                    .await
+            {
+                tracing::warn!(error = %e, "slack notification failed");
             }
             return StatusCode::OK;
         }

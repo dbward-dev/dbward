@@ -91,7 +91,7 @@ impl ResumeRequest {
         // 5. Execution count check (applies to all dispatches including initial)
         let exec_policy = self
             .policy
-            .get_execution_policy(&request.database, &request.environment);
+            .get_execution_policy(&request.database, &request.environment)?;
         let exec_count = self
             .request_reader
             .count_completed_executions(&request.id)?;
@@ -130,9 +130,7 @@ impl ResumeRequest {
         // M-21: Skip streaming slot if policy says StoreOnly
         let delivery_mode = self
             .policy_repo
-            .find_result_policy(&request.database, &request.environment)
-            .ok()
-            .flatten()
+            .find_result_policy(&request.database, &request.environment)?
             .map(|p| p.delivery_mode)
             .unwrap_or_default();
         if delivery_mode != dbward_domain::policies::DeliveryMode::StoreOnly {
@@ -173,8 +171,8 @@ mod tests {
             &self,
             _: &DatabaseName,
             _: &Environment,
-        ) -> dbward_domain::policies::ExecutionPolicy {
-            Default::default()
+        ) -> Result<dbward_domain::policies::ExecutionPolicy, AppError> {
+            Ok(Default::default())
         }
     }
 
@@ -679,8 +677,8 @@ mod tests {
             &self,
             _: &DatabaseName,
             _: &Environment,
-        ) -> dbward_domain::policies::ExecutionPolicy {
-            self.exec_policy.clone()
+        ) -> Result<dbward_domain::policies::ExecutionPolicy, AppError> {
+            Ok(self.exec_policy.clone())
         }
     }
 

@@ -155,7 +155,7 @@ impl AgentClaim {
         // 8. Get execution policy for statement_timeout
         let exec_policy = self
             .policy
-            .get_execution_policy(&request.database, &request.environment);
+            .get_execution_policy(&request.database, &request.environment)?;
 
         // 9. Create execution record
         let lease_expires_at = now
@@ -178,16 +178,25 @@ impl AgentClaim {
             .get(&request.requester)?
             .map(|u| u.groups)
             .unwrap_or_default();
-        let requester_role = self
-            .role_resolver
-            .resolve(
-                &request.requester,
-                dbward_domain::auth::SubjectType::User,
-                &requester_groups,
-            )
-            .ok()
-            .and_then(|roles| roles.first().map(|r| r.name.clone()))
-            .unwrap_or_else(|| "unknown".into());
+        let requester_role = match self.role_resolver.resolve(
+            &request.requester,
+            dbward_domain::auth::SubjectType::User,
+            &requester_groups,
+        ) {
+            Ok(roles) => roles
+                .first()
+                .map(|r| r.name.clone())
+                .unwrap_or_else(|| "unknown".into()),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    requester = %request.requester,
+                    request_id = %request.id,
+                    "failed to resolve requester role for execution token"
+                );
+                "unknown".into()
+            }
+        };
         let token = self.token_signer.sign(&ExecutionTokenClaims {
             request_id: request.id.clone(),
             operation: request.operation.as_str().to_string(),

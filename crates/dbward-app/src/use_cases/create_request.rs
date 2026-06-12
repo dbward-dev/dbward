@@ -146,8 +146,7 @@ impl CreateRequest {
         // Resolve dialect once (used for classify, parse, review, risk)
         let dialect_str = self
             .schema_repo
-            .get_dialect(input.database.as_str(), input.environment.as_str())
-            .unwrap_or(None);
+            .get_dialect(input.database.as_str(), input.environment.as_str())?;
         let dialect = match dialect_str.as_deref() {
             Some(d) if d == dbward_domain::services::status_constants::dialect::MYSQL => {
                 Dialect::MySql
@@ -297,7 +296,9 @@ impl CreateRequest {
                             "blocked_rules": reasons,
                         })
                         .to_string();
-                        let _ = self.audit_logger.record(&audit_event);
+                        if let Err(e) = self.audit_logger.record(&audit_event) {
+                            tracing::error!(error = %e, "failed to record request_blocked_by_review audit event");
+                        }
                         return Err(AppError::Validation(format!(
                             "SQL blocked by review: {}",
                             reasons.join("; ")
@@ -703,7 +704,8 @@ impl CreateRequest {
                 auto_approve_threshold: trace_threshold,
             },
         };
-        let decision_trace_json = serde_json::to_string(&decision_trace).unwrap_or_default();
+        let decision_trace_json = serde_json::to_string(&decision_trace)
+            .map_err(|e| AppError::Internal(format!("serialize decision_trace: {e}")))?;
 
         let request = Request {
             id: id.clone(),
@@ -975,6 +977,13 @@ fn extract_approvers(req: &dbward_domain::entities::Request) -> Vec<String> {
             .as_ref()
             .and_then(|json| {
                 serde_json::from_str::<serde_json::Value>(json)
+                    .inspect_err(|e| {
+                        tracing::warn!(
+                            error = %e,
+                            request_id = %req.id,
+                            "corrupt workflow_snapshot_json in extract_approvers"
+                        );
+                    })
                     .ok()
                     .and_then(|v| {
                         v["steps"][0]["approvers"].as_array().map(|arr| {
@@ -1170,8 +1179,8 @@ mod tests {
             &self,
             _: &DatabaseName,
             _: &Environment,
-        ) -> dbward_domain::policies::ExecutionPolicy {
-            Default::default()
+        ) -> Result<dbward_domain::policies::ExecutionPolicy, AppError> {
+            Ok(Default::default())
         }
     }
 

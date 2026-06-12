@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::ExecutionStatus;
+use dbward_domain::policies::ExecutionPolicy;
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -64,12 +65,12 @@ impl AgentHeartbeat {
         // 5. Extend lease using execution policy (migration-aware)
         let request = self.request_reader.get(&execution.request_id)?;
         let req = request.as_ref();
-        let exec_policy = req
-            .map(|r| {
-                self.policy
-                    .get_execution_policy(&r.database, &r.environment)
-            })
-            .unwrap_or_default();
+        let exec_policy = match req {
+            Some(r) => self
+                .policy
+                .get_execution_policy(&r.database, &r.environment)?,
+            None => ExecutionPolicy::default(),
+        };
         let lease_secs = req
             .map(|r| exec_policy.lease_duration_for_operation(r.operation))
             .unwrap_or_else(|| exec_policy.lease_duration_secs());

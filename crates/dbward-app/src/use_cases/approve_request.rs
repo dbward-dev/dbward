@@ -78,7 +78,11 @@ impl ApproveRequest {
         let workflow: Workflow = request
             .workflow_snapshot_json
             .as_deref()
-            .and_then(|json| serde_json::from_str(json).ok())
+            .map(|json| {
+                serde_json::from_str(json)
+                    .map_err(|e| AppError::Internal(format!("corrupt workflow snapshot: {e}")))
+            })
+            .transpose()?
             .ok_or_else(|| AppError::Conflict("request has no approval workflow".into()))?;
 
         // 4. Get existing approvals

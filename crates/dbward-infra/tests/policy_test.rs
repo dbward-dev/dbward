@@ -167,10 +167,10 @@ fn execution_policy_specificity() {
     let prod = Environment::new("production").unwrap();
     let staging = Environment::new("staging").unwrap();
 
-    let ep = evaluator.get_execution_policy(&db, &prod);
+    let ep = evaluator.get_execution_policy(&db, &prod).unwrap();
     assert_eq!(ep.statement_timeout_secs, 60);
 
-    let ep = evaluator.get_execution_policy(&db, &staging);
+    let ep = evaluator.get_execution_policy(&db, &staging).unwrap();
     assert_eq!(ep.statement_timeout_secs, 10);
 }
 

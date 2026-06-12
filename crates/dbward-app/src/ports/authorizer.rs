@@ -76,5 +76,5 @@ pub trait PolicyEvaluator: Send + Sync {
         &self,
         db: &DatabaseName,
         env: &Environment,
-    ) -> dbward_domain::policies::ExecutionPolicy;
+    ) -> Result<dbward_domain::policies::ExecutionPolicy, AppError>;
 }

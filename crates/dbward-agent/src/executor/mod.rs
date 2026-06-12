@@ -117,13 +117,18 @@ impl JobExecutor {
                 let driver = entry.driver.read().await;
                 let (dialect, status, snapshot, error_message) = match driver.collect_schema().await
                 {
-                    Ok(snap) => {
-                        let json = serde_json::to_value(&snap).ok();
-                        (driver.dialect(), "ready", json, None)
-                    }
+                    Ok(snap) => match serde_json::to_value(&snap) {
+                        Ok(json) => (driver.dialect(), "ready", Some(json), None),
+                        Err(e) => (
+                            driver.dialect(),
+                            "failed",
+                            None,
+                            Some(format!("schema serialization failed: {e}")),
+                        ),
+                    },
                     Err(e) => (driver.dialect(), "failed", None, Some(e.to_string())),
                 };
-                let _ = self
+                if let Err(e) = self
                     .client
                     .schema_sync(
                         &claim.database,
@@ -133,7 +138,15 @@ impl JobExecutor {
                         snapshot.as_ref(),
                         error_message.as_deref(),
                     )
-                    .await;
+                    .await
+                {
+                    tracing::warn!(
+                        error = %e,
+                        database = %claim.database,
+                        environment = %claim.environment,
+                        "schema re-sync failed after migration"
+                    );
+                }
                 info!(
                     database = %claim.database,
                     environment = %claim.environment,

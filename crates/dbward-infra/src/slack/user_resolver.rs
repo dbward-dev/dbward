@@ -118,7 +118,9 @@ impl SlackUserResolver {
 
         match result {
             Ok(Ok(Some(uid))) => {
-                let _ = self.user_repo.update_slack_user_id(subject_id, Some(&uid));
+                if let Err(e) = self.user_repo.update_slack_user_id(subject_id, Some(&uid)) {
+                    tracing::debug!(error = %e, subject_id, "failed to cache slack user id");
+                }
                 self.insert_cache(subject_id, Some(uid.clone()));
                 Some(uid)
             }

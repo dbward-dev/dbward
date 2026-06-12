@@ -641,8 +641,12 @@ impl PolicyEvaluator for StubPolicyEvaluator {
     ) -> Result<Option<Workflow>, AppError> {
         Ok(None)
     }
-    fn get_execution_policy(&self, _: &DatabaseName, _: &Environment) -> ExecutionPolicy {
-        ExecutionPolicy::default()
+    fn get_execution_policy(
+        &self,
+        _: &DatabaseName,
+        _: &Environment,
+    ) -> Result<ExecutionPolicy, AppError> {
+        Ok(ExecutionPolicy::default())
     }
 }
 

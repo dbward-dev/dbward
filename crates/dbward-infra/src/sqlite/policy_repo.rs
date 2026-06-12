@@ -205,9 +205,9 @@ impl PolicyRepo for SqlitePolicyRepo {
             if score > best_score || best.is_none() {
                 let delivery_mode: dbward_domain::policies::DeliveryMode =
                     serde_json::from_value(serde_json::Value::String(delivery_str))
-                        .unwrap_or_default();
-                let access_strs: Vec<String> =
-                    serde_json::from_str(&access_json).unwrap_or_default();
+                        .map_err(json_err("result_policy: delivery_mode"))?;
+                let access_strs: Vec<String> = serde_json::from_str(&access_json)
+                    .map_err(json_err("result_policy: access"))?;
                 let access = access_strs
                     .iter()
                     .filter_map(|s| dbward_domain::values::Selector::parse(s).ok())
@@ -344,8 +344,10 @@ impl PolicyRepo for SqlitePolicyRepo {
             let environment =
                 Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
             let delivery_mode: dbward_domain::policies::DeliveryMode =
-                serde_json::from_value(serde_json::Value::String(delivery_str)).unwrap_or_default();
-            let access_strs: Vec<String> = serde_json::from_str(&access_json).unwrap_or_default();
+                serde_json::from_value(serde_json::Value::String(delivery_str))
+                    .map_err(json_err("result_policy: delivery_mode"))?;
+            let access_strs: Vec<String> =
+                serde_json::from_str(&access_json).map_err(json_err("result_policy: access"))?;
             let access = access_strs
                 .iter()
                 .filter_map(|s| dbward_domain::values::Selector::parse(s).ok())
@@ -496,8 +498,10 @@ impl PolicyRepo for SqlitePolicyRepo {
                 DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
             let environment =
                 Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
-            let webhooks: Vec<String> = serde_json::from_str(&webhooks_json).unwrap_or_default();
-            let events: Vec<String> = serde_json::from_str(&events_json).unwrap_or_default();
+            let webhooks: Vec<String> =
+                serde_json::from_str(&webhooks_json).map_err(json_err("notification: webhooks"))?;
+            let events: Vec<String> =
+                serde_json::from_str(&events_json).map_err(json_err("notification: events"))?;
             result.push(dbward_domain::policies::NotificationPolicy {
                 id,
                 database,
@@ -910,24 +914,23 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
         Ok(matched.cloned())
     }
 
-    fn get_execution_policy(&self, db: &DatabaseName, env: &Environment) -> ExecutionPolicy {
+    fn get_execution_policy(
+        &self,
+        db: &DatabaseName,
+        env: &Environment,
+    ) -> Result<ExecutionPolicy, AppError> {
         let policies = {
             let conn = self.conn.lock();
-            let mut stmt = match conn.prepare(
+            let mut stmt = conn.prepare(
                 "SELECT id, database_name, environment, max_executions, execution_window_secs, retry_on_failure, statement_timeout_secs, max_statement_timeout_secs, max_rows, migration_lease_duration_secs, migration_statement_timeout_secs FROM execution_policies WHERE lifecycle_state = 'active'",
-            ) {
-                Ok(s) => s,
-                Err(_) => return ExecutionPolicy::default(),
-            };
-            let rows = match stmt.query_map([], row_to_execution_policy) {
-                Ok(r) => r,
-                Err(_) => return ExecutionPolicy::default(),
-            };
+            ).map_err(db_err("policy: get_execution_policy"))?;
+            let rows = stmt
+                .query_map([], row_to_execution_policy)
+                .map_err(db_err("policy: get_execution_policy"))?;
             let mut eps = Vec::new();
             for row in rows {
-                if let Ok(Ok(ep)) = row {
-                    eps.push(ep);
-                }
+                let ep = row.map_err(db_err("policy: get_execution_policy"))??;
+                eps.push(ep);
             }
             eps
         };
@@ -945,7 +948,7 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
                 best_score = score;
             }
         }
-        best.cloned().unwrap_or_default()
+        Ok(best.cloned().unwrap_or_default())
     }
 }
 
@@ -1027,9 +1030,9 @@ fn row_to_execution_policy(
     let retry: bool = row.get(5)?;
     let timeout: u32 = row.get(6)?;
     let max_timeout: u32 = row.get(7)?;
-    let max_rows: Option<u32> = row.get::<_, Option<u32>>(8).unwrap_or(None);
-    let migration_lease: Option<u32> = row.get::<_, Option<u32>>(9).unwrap_or(None);
-    let migration_timeout: Option<u32> = row.get::<_, Option<u32>>(10).unwrap_or(None);
+    let max_rows: Option<u32> = row.get(8)?;
+    let migration_lease: Option<u32> = row.get(9)?;
+    let migration_timeout: Option<u32> = row.get(10)?;
 
     Ok((|| {
         let database = DatabaseName::new(db_str).map_err(|e| AppError::Internal(e.to_string()))?;

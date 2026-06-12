@@ -152,7 +152,9 @@ fn row_to_webhook(row: &rusqlite::Row) -> rusqlite::Result<Webhook> {
     Ok(Webhook {
         id: row.get(0)?,
         url: row.get(1)?,
-        events: serde_json::from_str(&events_json).unwrap_or_default(),
+        events: serde_json::from_str(&events_json).map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
+        })?,
         format: parse_format(&format_s),
         secret: row.get(4)?,
         status: parse_wh_status(&status_s),

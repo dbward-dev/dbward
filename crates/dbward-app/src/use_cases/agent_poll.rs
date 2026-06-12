@@ -75,15 +75,17 @@ impl AgentPoll {
         self.agent_repo.upsert(&agent)?;
 
         // 3b. Emit audit event for new agent registration
-        if is_new {
-            let _ = self.audit_logger.record(&AuditEvent::simple(
+        if is_new
+            && let Err(e) = self.audit_logger.record(&AuditEvent::simple(
                 "agent_registered",
                 "agent",
                 &user.subject_id,
                 Some(&user.subject_id),
                 self.clock.now(),
                 &dbward_domain::entities::AuditContext::System,
-            ));
+            ))
+        {
+            tracing::error!(error = %e, "failed to record agent_registered audit event");
         }
 
         // 4. Find dispatched jobs matching capabilities

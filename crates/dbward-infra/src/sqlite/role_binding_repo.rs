@@ -63,8 +63,10 @@ impl RoleBindingRepo for SqliteRoleBindingRepo {
         let mut results = Vec::new();
         for row in rows {
             let (id, role, subj_json, grp_json) = row.map_err(db_err("role_binding: list"))?;
-            let subjects: Vec<String> = serde_json::from_str(&subj_json).unwrap_or_default();
-            let groups: Vec<String> = serde_json::from_str(&grp_json).unwrap_or_default();
+            let subjects: Vec<String> =
+                serde_json::from_str(&subj_json).map_err(json_err("role_binding: subjects"))?;
+            let groups: Vec<String> =
+                serde_json::from_str(&grp_json).map_err(json_err("role_binding: groups"))?;
             results.push((id, role, subjects, groups));
         }
         Ok(results)

@@ -131,7 +131,9 @@ pub(super) async fn poll_loop(
                 in_flight,
                 active_jobs,
             );
-            let _ = client.poll(&req).await;
+            if let Err(e) = client.poll(&req).await {
+                tracing::debug!(error = %e, "shutdown poll notify failed");
+            }
             probes.remove_readiness();
             break;
         }
