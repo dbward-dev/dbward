@@ -578,7 +578,10 @@ impl SchemaDriver for PostgresDriver {
             .await
             .map_err(query_err);
         // Always rollback (read-only, no side effects)
-        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+        if let Err(e) = sqlx::query("ROLLBACK").execute(&mut *conn).await {
+            tracing::debug!(error = %e, "ROLLBACK failed after EXPLAIN, detaching connection");
+            conn.detach();
+        }
         let row = result?;
         // PG EXPLAIN (FORMAT JSON) returns a json column, decode directly
         let plan: serde_json::Value = row.try_get(0).map_err(query_err)?;

@@ -42,7 +42,9 @@ pub(super) async fn drain(
         0,
         vec![],
     );
-    let _ = client.poll(&req).await;
+    if let Err(e) = client.poll(&req).await {
+        tracing::debug!(error = %e, "shutdown poll notify failed");
+    }
 
     info!("agent shutdown complete");
     Ok(())

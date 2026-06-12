@@ -205,7 +205,7 @@ pub async fn run_stdio(
                         if outgoing_tx.send(resp).await.is_err() { break; }
                     }
                     "resources/subscribe" => {
-                        let _ = outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {}})).await;
+                        if outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {}})).await.is_err() { break; }
                     }
                     // Async handlers (spawn worker)
                     "tools/call" => {
@@ -242,10 +242,10 @@ pub async fn run_stdio(
                         });
                     }
                     _ => {
-                        let _ = outgoing_tx.send(json!({
+                        if outgoing_tx.send(json!({
                             "jsonrpc": "2.0", "id": id,
                             "error": {"code": -32601, "message": format!("Method not found: {method}")}
-                        })).await;
+                        })).await.is_err() { break; }
                     }
                 }
             }
