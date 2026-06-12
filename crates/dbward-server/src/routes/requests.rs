@@ -56,6 +56,7 @@ pub async fn create(
         detail: body.detail,
         reason: body.reason,
         emergency: body.emergency,
+        allow_ddl: body.allow_ddl,
         idempotency_key: body.idempotency_key,
         share_with: body.share_with,
         no_store: body.no_store,

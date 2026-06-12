@@ -232,6 +232,7 @@ pub async fn run_migrate(
                 database: db_name,
                 detail: &detail,
                 emergency,
+                allow_ddl: false,
                 reason,
                 metadata: metadata.as_ref(),
                 idempotency_key,

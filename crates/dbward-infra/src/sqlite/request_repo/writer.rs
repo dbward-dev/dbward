@@ -304,4 +304,14 @@ impl RequestWriter for SqliteRequestRepo {
             .map_err(db_err("request: mark_approved_from_dispatched_and_record"))?;
         Ok(true)
     }
+
+    fn mark_audit_incomplete(&self, id: &str) -> Result<(), AppError> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE requests SET audit_incomplete = 1 WHERE id = ?1",
+            params![id],
+        )
+        .map_err(db_err("request: mark_audit_incomplete"))?;
+        Ok(())
+    }
 }

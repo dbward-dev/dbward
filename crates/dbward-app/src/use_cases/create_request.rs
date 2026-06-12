@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::{Request, RequestStatus};
-use dbward_domain::services::classification::{ClassifyError, Dialect, DmlReason};
+use dbward_domain::services::classification::{Classification, ClassifyError, Dialect, DmlReason};
 use dbward_domain::services::risk_scorer;
 use dbward_domain::services::sql_classifier;
 use dbward_domain::services::status_machine::{
@@ -15,6 +15,36 @@ use crate::error::AppError;
 use crate::ports::*;
 use crate::use_cases::decision_trace::{self as dt};
 
+/// Structured denial reasons for break-glass DDL bypass.
+enum BreakGlassDenial {
+    RequiresEmergency,
+    McpNotAllowed,
+    MissingAllowDdl { original_reason: String },
+    NonBypassableStatement { reason: String },
+    NonBypassableReviewRule { reasons: Vec<String> },
+}
+
+impl BreakGlassDenial {
+    fn into_app_error(self) -> AppError {
+        match self {
+            Self::RequiresEmergency => {
+                AppError::Validation("--allow-ddl requires --emergency".into())
+            }
+            Self::McpNotAllowed => {
+                AppError::Validation("--allow-ddl is not allowed via MCP".into())
+            }
+            Self::MissingAllowDdl { original_reason } => AppError::Validation(format!(
+                "{original_reason}. Hint: add --allow-ddl to bypass in emergency mode"
+            )),
+            Self::NonBypassableStatement { reason } => AppError::Validation(reason),
+            Self::NonBypassableReviewRule { reasons } => AppError::Validation(format!(
+                "SQL blocked by review (not bypassable): {}",
+                reasons.join("; ")
+            )),
+        }
+    }
+}
+
 pub struct CreateRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub policy: Arc<dyn PolicyEvaluator>,
@@ -26,6 +56,7 @@ pub struct CreateRequest {
     pub context_repo: Arc<dyn ContextRepo>,
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub audit_logger: Arc<dyn AuditLogger>,
+    pub break_glass_metrics: Arc<dyn BreakGlassMetrics>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
     pub default_approval_ttl_secs: Option<u64>,
@@ -57,6 +88,7 @@ pub struct CreateRequestInput {
     pub detail: String,
     pub reason: Option<String>,
     pub emergency: bool,
+    pub allow_ddl: bool,
     pub idempotency_key: Option<String>,
     pub share_with: Vec<String>,
     pub no_store: bool,
@@ -98,6 +130,19 @@ impl CreateRequest {
             return Err(AppError::Validation("reason too long (max 1KB)".into()));
         }
 
+        // Early validation: --allow-ddl flags
+        if input.allow_ddl && !input.emergency {
+            return Err(BreakGlassDenial::RequiresEmergency.into_app_error());
+        }
+        if input.allow_ddl && input.channel == RequestChannel::Mcp {
+            return Err(BreakGlassDenial::McpNotAllowed.into_app_error());
+        }
+
+        // Record metric for all DDL bypass attempts (both classifier and reviewer paths)
+        if input.emergency && input.allow_ddl {
+            self.break_glass_metrics.record_ddl_attempted();
+        }
+
         // Resolve dialect once (used for classify, parse, review, risk)
         let dialect_str = self
             .schema_repo
@@ -111,18 +156,64 @@ impl CreateRequest {
         };
 
         // 1. Determine operation: migration types are explicit, others classified from SQL
-        let (operation, classification) = match input.operation {
+        let mut classifier_bypassed = false;
+        let mut reviewer_bypassed = false;
+        let (operation, classification, parsed_stmts) = match input.operation {
             Operation::MigrateUp
             | Operation::MigrateDown
             | Operation::MigrateStatus
-            | Operation::MigrateRepair => (input.operation, None),
+            | Operation::MigrateRepair => (input.operation, None, None),
             _ => {
-                let c = sql_classifier::classify(&input.detail, dialect).map_err(|e| match e {
-                    ClassifyError::Empty => AppError::Validation("empty query".into()),
-                    ClassifyError::Rejected { reason } => AppError::Validation(reason),
-                })?;
-                let op = c.operation;
-                (op, Some(c))
+                let result = sql_classifier::classify_full(&input.detail, dialect);
+                match result.classification {
+                    Ok(c) => {
+                        let op = c.operation;
+                        (op, Some(c), result.parsed_statements)
+                    }
+                    Err(ClassifyError::Empty) => {
+                        return Err(AppError::Validation("empty query".into()));
+                    }
+                    Err(ClassifyError::Rejected { reason }) => {
+                        if input.emergency && input.allow_ddl {
+                            // Break-glass DDL bypass attempt
+                            match result.parsed_statements {
+                                Some(ref stmts)
+                                    if !stmts.is_empty()
+                                        && stmts.iter().all(|s| {
+                                            sql_classifier::categorize_statement(s)
+                                                .is_break_glass_eligible()
+                                        }) =>
+                                {
+                                    let stmt_strings: Vec<String> =
+                                        stmts.iter().map(|s| s.to_string()).collect();
+                                    let c = Classification {
+                                        operation: Operation::ExecuteDml,
+                                        dml_reason: Some(DmlReason::Ddl),
+                                        statement_count: stmts.len(),
+                                        statements: stmt_strings,
+                                        is_ddl_only: true,
+                                    };
+                                    classifier_bypassed = true;
+                                    (c.operation, Some(c), result.parsed_statements)
+                                }
+                                _ => {
+                                    self.break_glass_metrics.record_ddl_denied();
+                                    return Err(BreakGlassDenial::NonBypassableStatement {
+                                        reason,
+                                    }
+                                    .into_app_error());
+                                }
+                            }
+                        } else if input.emergency && !input.allow_ddl {
+                            return Err(BreakGlassDenial::MissingAllowDdl {
+                                original_reason: reason,
+                            }
+                            .into_app_error());
+                        } else {
+                            return Err(AppError::Validation(reason));
+                        }
+                    }
+                }
             }
         };
 
@@ -134,32 +225,84 @@ impl CreateRequest {
                 let review =
                     sql_reviewer::review_statements(&stmts, Some(dialect), &self.review_rules);
                 if review.blocked {
-                    let reasons: Vec<&str> = review
-                        .findings
-                        .iter()
-                        .filter(|f| f.action == sql_reviewer::RuleAction::Block)
-                        .map(|f| f.message.as_str())
-                        .collect();
-                    // Audit: record blocked request
-                    let mut audit_event = dbward_domain::entities::AuditEvent::simple(
-                        "request_blocked_by_review",
-                        "request",
-                        &user.subject_id,
-                        None,
-                        self.clock.now(),
-                        ctx,
-                    );
-                    audit_event.database_name = Some(input.database.to_string());
-                    audit_event.environment = Some(input.environment.to_string());
-                    audit_event.metadata_json = serde_json::json!({
-                        "blocked_rules": reasons,
-                    })
-                    .to_string();
-                    let _ = self.audit_logger.record(&audit_event);
-                    return Err(AppError::Validation(format!(
-                        "SQL blocked by review: {}",
-                        reasons.join("; ")
-                    )));
+                    if input.emergency && input.allow_ddl {
+                        // Break-glass reviewer bypass
+                        let bypass_ok = match parsed_stmts.as_deref() {
+                            Some(ps) if !ps.is_empty() => ps.iter().all(|s| {
+                                sql_classifier::categorize_statement(s).is_break_glass_eligible()
+                            }),
+                            _ => false,
+                        };
+                        let non_bypassable: Vec<&str> = review
+                            .findings
+                            .iter()
+                            .filter(|f| {
+                                f.action == sql_reviewer::RuleAction::Block
+                                    && !f.rule.is_break_glass_bypassable()
+                            })
+                            .map(|f| f.message.as_str())
+                            .collect();
+                        if !bypass_ok || !non_bypassable.is_empty() {
+                            let reasons: Vec<&str> = review
+                                .findings
+                                .iter()
+                                .filter(|f| f.action == sql_reviewer::RuleAction::Block)
+                                .map(|f| f.message.as_str())
+                                .collect();
+                            let mut audit_event = dbward_domain::entities::AuditEvent::simple(
+                                "request_blocked_by_review",
+                                "request",
+                                &user.subject_id,
+                                None,
+                                self.clock.now(),
+                                ctx,
+                            );
+                            audit_event.metadata_json = serde_json::json!({
+                                "blocked_rules": reasons,
+                                "break_glass_attempted": true,
+                            })
+                            .to_string();
+                            if let Err(e) = self.audit_logger.record(&audit_event) {
+                                tracing::warn!(
+                                    "audit write failed for blocked break-glass attempt: {e}"
+                                );
+                            }
+                            self.break_glass_metrics.record_ddl_denied();
+                            return Err(BreakGlassDenial::NonBypassableReviewRule {
+                                reasons: reasons.iter().map(|s| s.to_string()).collect(),
+                            }
+                            .into_app_error());
+                        }
+                        // All blocks are bypassable DDL rules → proceed
+                        reviewer_bypassed = true;
+                    } else {
+                        let reasons: Vec<&str> = review
+                            .findings
+                            .iter()
+                            .filter(|f| f.action == sql_reviewer::RuleAction::Block)
+                            .map(|f| f.message.as_str())
+                            .collect();
+                        // Audit: record blocked request
+                        let mut audit_event = dbward_domain::entities::AuditEvent::simple(
+                            "request_blocked_by_review",
+                            "request",
+                            &user.subject_id,
+                            None,
+                            self.clock.now(),
+                            ctx,
+                        );
+                        audit_event.database_name = Some(input.database.to_string());
+                        audit_event.environment = Some(input.environment.to_string());
+                        audit_event.metadata_json = serde_json::json!({
+                            "blocked_rules": reasons,
+                        })
+                        .to_string();
+                        let _ = self.audit_logger.record(&audit_event);
+                        return Err(AppError::Validation(format!(
+                            "SQL blocked by review: {}",
+                            reasons.join("; ")
+                        )));
+                    }
                 }
                 let tables = table_extractor::extract_tables(&stmts);
                 let t_json = serde_json::to_string(
@@ -329,6 +472,19 @@ impl CreateRequest {
                 &ResourceContext::Global,
             )
             .map_err(AppError::Forbidden)?;
+
+        // Additional permission gate for DDL bypass
+        if input.allow_ddl {
+            self.authorizer
+                .authorize_scoped(
+                    user,
+                    Permission::RequestBreakGlassDdl,
+                    &input.database,
+                    &input.environment,
+                    &ResourceContext::Global,
+                )
+                .map_err(AppError::Forbidden)?;
+        }
 
         // 1b. Validate share_with selectors
         for sel in &input.share_with {
@@ -752,6 +908,43 @@ impl CreateRequest {
             }
         }
 
+        // Break-glass DDL audit event (after persist)
+        if classifier_bypassed || reviewer_bypassed {
+            self.break_glass_metrics.record_ddl_allowed();
+            let mut event = dbward_domain::entities::AuditEvent::simple(
+                "ddl_via_break_glass",
+                "request",
+                &user.subject_id,
+                Some(&id),
+                self.clock.now(),
+                ctx,
+            );
+            event.database_name = Some(request.database.as_str().to_string());
+            event.environment = Some(request.environment.as_str().to_string());
+            event.metadata_json = serde_json::json!({
+                "request_id": &id,
+                "sql_redacted": sql_classifier::redact_literals(&request.detail),
+                "statement_count": classification.as_ref().map(|c| c.statement_count).unwrap_or(0),
+                "reason": request.reason.as_deref().unwrap_or(""),
+                "classifier_bypassed": classifier_bypassed,
+                "reviewer_bypassed": reviewer_bypassed,
+            })
+            .to_string();
+            if let Err(e) = self.audit_logger.record(&event) {
+                tracing::error!(
+                    request_id = %id,
+                    "CRITICAL: break-glass audit write failed: {e}"
+                );
+                self.break_glass_metrics.record_audit_failure();
+                if let Err(e2) = self.request_writer.mark_audit_incomplete(&id) {
+                    tracing::error!(
+                        request_id = %id,
+                        "FATAL: cannot mark audit_incomplete: {e2}. Manual investigation required."
+                    );
+                }
+            }
+        }
+
         Ok(CreateRequestOutput {
             id,
             status: final_status,
@@ -815,6 +1008,7 @@ mod tests {
             context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
             audit_logger: Arc::new(NoopAuditLogger),
+            break_glass_metrics: Arc::new(NoopBreakGlassMetrics),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
@@ -848,6 +1042,7 @@ mod tests {
             detail: "SELECT 1".into(),
             reason: None,
             emergency: false,
+            allow_ddl: false,
             idempotency_key: None,
             share_with: vec![],
             no_store: false,
@@ -1038,6 +1233,7 @@ mod tests {
             context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
             audit_logger: Arc::new(NoopAuditLogger),
+            break_glass_metrics: Arc::new(NoopBreakGlassMetrics),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
@@ -1069,6 +1265,7 @@ mod tests {
             context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: Arc::new(NoopDispatcher),
             audit_logger: Arc::new(NoopAuditLogger),
+            break_glass_metrics: Arc::new(NoopBreakGlassMetrics),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,

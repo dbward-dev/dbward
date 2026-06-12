@@ -109,6 +109,7 @@ pub trait RequestWriter: Send + Sync {
         audit_event: &AuditEvent,
         now: &str,
     ) -> Result<bool, AppError>;
+    fn mark_audit_incomplete(&self, id: &str) -> Result<(), AppError>;
 }
 
 // --- ApprovalRepo ---
@@ -473,6 +474,15 @@ pub trait ContextRepo: Send + Sync {
 
 pub trait AuditLogger: Send + Sync {
     fn record(&self, event: &AuditEvent) -> Result<(), AppError>;
+}
+
+// --- BreakGlassMetrics ---
+
+pub trait BreakGlassMetrics: Send + Sync {
+    fn record_ddl_attempted(&self);
+    fn record_ddl_allowed(&self);
+    fn record_ddl_denied(&self);
+    fn record_audit_failure(&self);
 }
 
 // --- AuditRepo (query/verify) ---

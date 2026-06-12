@@ -32,6 +32,7 @@ dbward execute --emergency --reason "outage fix" "UPDATE config SET v = 'x'"
 |--------|---------|-------------|
 | `<SQL>` (positional) | — | **Required.** SQL statement |
 | `--emergency` | false | Break-glass bypass (requires --reason) |
+| `--allow-ddl` | false | Allow DDL in emergency mode (requires --emergency) |
 | `--reason <TEXT>` | | Reason for this request |
 | `--output <PATH>` | | Save result to file |
 | `--no-persist` | false | Do not persist result on server |

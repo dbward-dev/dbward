@@ -121,6 +121,7 @@ impl<'a> RequestUseCases<'a> {
             context_repo: s.context_repo.clone(),
             event_dispatcher: s.event_dispatcher.clone(),
             audit_logger: s.audit_logger.clone(),
+            break_glass_metrics: s.metrics.clone(),
             clock: s.clock.clone(),
             id_gen: s.id_generator.clone(),
             default_approval_ttl_secs: r.default_approval_ttl_secs,

@@ -24,6 +24,25 @@ pub enum RuleId {
     LargeInList,
 }
 
+impl RuleId {
+    /// Whether this rule can be bypassed during break-glass DDL.
+    /// Exhaustive match ensures new variants cause a compile error.
+    pub fn is_break_glass_bypassable(self) -> bool {
+        match self {
+            Self::DropTable => true,
+            Self::Truncate => true,
+            Self::DropColumn => true,
+            Self::CreateIndexNotConcurrently => true,
+            Self::AlterColumnType => true,
+            Self::NotNullWithoutDefault => true,
+            Self::NoWhereDelete => false,
+            Self::NoWhereUpdate => false,
+            Self::LargeInList => false,
+            Self::MixedDdlDml => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Finding {
     pub rule: RuleId,

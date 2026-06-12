@@ -238,6 +238,9 @@ impl RequestWriter for SharedRepo {
     ) -> Result<bool, AppError> {
         Ok(true)
     }
+    fn mark_audit_incomplete(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 impl ApprovalRepo for SharedRepo {
@@ -503,6 +506,7 @@ fn make_input() -> CreateRequestInput {
         detail: "UPDATE users SET active = true WHERE id > 0".into(),
         reason: None,
         emergency: false,
+        allow_ddl: false,
         idempotency_key: None,
         share_with: vec![],
         no_store: false,
@@ -548,6 +552,14 @@ impl AuditLogger for FakeAuditLogger {
     fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> {
         Ok(())
     }
+}
+
+struct NoopBreakGlassMetrics;
+impl BreakGlassMetrics for NoopBreakGlassMetrics {
+    fn record_ddl_attempted(&self) {}
+    fn record_ddl_allowed(&self) {}
+    fn record_ddl_denied(&self) {}
+    fn record_audit_failure(&self) {}
 }
 
 struct FakeLicenseChecker;
@@ -821,6 +833,7 @@ impl TestHarness {
             context_repo: Arc::new(FakeContextRepo),
             event_dispatcher: self.event_dispatcher.clone(),
             audit_logger: self.audit_logger.clone(),
+            break_glass_metrics: Arc::new(NoopBreakGlassMetrics),
             clock: self.clock.clone(),
             id_gen: self.id_gen.clone(),
             default_approval_ttl_secs: Some(3600),
@@ -2124,4 +2137,214 @@ fn token_prefix_is_raw_4_to_12() {
     assert!(output.token.starts_with("dbw_"));
     let expected_prefix = &output.token[4..12];
     assert_eq!(output.prefix, expected_prefix);
+}
+
+// === CFG-15: Break-glass DDL bypass tests ===
+
+#[test]
+fn break_glass_ddl_drop_table_succeeds() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.detail = "DROP TABLE broken_cache".into();
+    input.emergency = true;
+    input.allow_ddl = true;
+    input.reason = Some("corrupted table".into());
+
+    let created = h
+        .create_uc()
+        .execute(
+            input,
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
+    assert_eq!(created.status, RequestStatus::Dispatched);
+}
+
+#[test]
+fn break_glass_ddl_without_allow_ddl_rejected_with_hint() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.detail = "DROP TABLE t".into();
+    input.emergency = true;
+    input.allow_ddl = false;
+    input.reason = Some("fix".into());
+
+    let result = h.create_uc().execute(
+        input,
+        &requester,
+        &dbward_domain::entities::AuditContext::System,
+    );
+    let err = result.unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("Hint: add --allow-ddl"), "got: {msg}");
+}
+
+#[test]
+fn break_glass_ddl_allow_ddl_without_emergency_rejected() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.detail = "DROP TABLE t".into();
+    input.emergency = false;
+    input.allow_ddl = true;
+
+    let result = h.create_uc().execute(
+        input,
+        &requester,
+        &dbward_domain::entities::AuditContext::System,
+    );
+    let err = result.unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("--allow-ddl requires --emergency"),
+        "got: {msg}"
+    );
+}
+
+#[test]
+fn break_glass_ddl_grant_stays_rejected() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.detail = "GRANT ALL ON users TO public".into();
+    input.emergency = true;
+    input.allow_ddl = true;
+    input.reason = Some("fix".into());
+
+    let result = h.create_uc().execute(
+        input,
+        &requester,
+        &dbward_domain::entities::AuditContext::System,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn break_glass_ddl_begin_stays_rejected() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.detail = "BEGIN".into();
+    input.emergency = true;
+    input.allow_ddl = true;
+    input.reason = Some("fix".into());
+
+    let result = h.create_uc().execute(
+        input,
+        &requester,
+        &dbward_domain::entities::AuditContext::System,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn break_glass_ddl_mixed_batch_rejected() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.detail = "DROP TABLE t; DELETE FROM users".into();
+    input.emergency = true;
+    input.allow_ddl = true;
+    input.reason = Some("fix".into());
+
+    let result = h.create_uc().execute(
+        input,
+        &requester,
+        &dbward_domain::entities::AuditContext::System,
+    );
+    assert!(result.is_err());
+}
+
+#[test]
+fn break_glass_ddl_multi_stmt_repair_succeeds() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.detail = "DROP TABLE t; CREATE TABLE t (id INT PRIMARY KEY)".into();
+    input.emergency = true;
+    input.allow_ddl = true;
+    input.reason = Some("rebuild".into());
+
+    let created = h
+        .create_uc()
+        .execute(
+            input,
+            &requester,
+            &dbward_domain::entities::AuditContext::System,
+        )
+        .unwrap();
+    assert_eq!(created.status, RequestStatus::Dispatched);
+}
+
+#[test]
+fn break_glass_ddl_mcp_rejected() {
+    let h = TestHarness::new(Some(single_step_workflow()));
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.detail = "DROP TABLE t".into();
+    input.emergency = true;
+    input.allow_ddl = true;
+    input.reason = Some("fix".into());
+    input.channel = RequestChannel::Mcp;
+
+    let result = h.create_uc().execute(
+        input,
+        &requester,
+        &dbward_domain::entities::AuditContext::System,
+    );
+    let err = result.unwrap_err();
+    let msg = format!("{err}");
+    assert!(msg.contains("not allowed via MCP"), "got: {msg}");
+}
+
+#[test]
+fn break_glass_ddl_denied_without_permission() {
+    /// Allows everything except RequestBreakGlassDdl.
+    struct DenyDdlBypass;
+    impl Authorizer for DenyDdlBypass {
+        fn authorize_scoped(
+            &self,
+            _: &AuthUser,
+            p: Permission,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), dbward_app::error::AuthzError> {
+            if p == Permission::RequestBreakGlassDdl {
+                Err(dbward_app::error::AuthzError::Forbidden {
+                    permission: p,
+                    reason: "missing request.break_glass_ddl".into(),
+                })
+            } else {
+                Ok(())
+            }
+        }
+        fn authorize_global(
+            &self,
+            _: &AuthUser,
+            _: Permission,
+        ) -> Result<(), dbward_app::error::AuthzError> {
+            Ok(())
+        }
+    }
+
+    let mut h = TestHarness::new(Some(single_step_workflow()));
+    h.authorizer = Arc::new(DenyDdlBypass);
+
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.detail = "DROP TABLE t".into();
+    input.emergency = true;
+    input.allow_ddl = true;
+    input.reason = Some("schema repair".into());
+
+    let result = h.create_uc().execute(
+        input,
+        &requester,
+        &dbward_domain::entities::AuditContext::System,
+    );
+    assert!(matches!(result, Err(AppError::Forbidden(_))));
 }

@@ -100,6 +100,16 @@ impl crate::ports::AuditLogger for NoopAuditLogger {
     }
 }
 
+// --- BreakGlassMetrics ---
+
+pub struct NoopBreakGlassMetrics;
+impl crate::ports::BreakGlassMetrics for NoopBreakGlassMetrics {
+    fn record_ddl_attempted(&self) {}
+    fn record_ddl_allowed(&self) {}
+    fn record_ddl_denied(&self) {}
+    fn record_audit_failure(&self) {}
+}
+
 // --- RequestReader ---
 
 pub struct FakeRequestReader {
@@ -279,6 +289,9 @@ impl RequestWriter for FakeRequestWriter {
         _: &str,
     ) -> Result<bool, AppError> {
         Ok(true)
+    }
+    fn mark_audit_incomplete(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
     }
 }
 
