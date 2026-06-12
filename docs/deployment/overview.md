@@ -64,6 +64,8 @@ Agents register with capabilities; the server matches requests to the appropriat
 
 > The server needs no inbound access from the agent's network — the agent initiates all connections outbound.
 
+> **Transport security:** The agent refuses to start if its `[server].url` is external HTTP (non-private IP, non-localhost). Use HTTPS for the agent→server connection, or set `allow_insecure = true` if TLS is handled at a network layer not visible in the URL.
+
 ## Security model
 
 1. **No DB credentials on clients** — credentials exist only in the agent's config

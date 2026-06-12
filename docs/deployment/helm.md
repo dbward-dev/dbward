@@ -102,6 +102,8 @@ networkPolicy:
 
 For full configuration details, see [server.md](server.md) (server.toml options) and [agent.md](agent.md) (agent.toml options).
 
+> **Why HTTP?** The agent URL `http://dbward-server:3000` uses a bare hostname (no dots), which is recognized as cluster-internal communication. HTTPS is not required. If you use an external FQDN, configure HTTPS or set `allow_insecure = true`.
+
 ## Multi-agent
 
 The chart models a single agent configuration. For multiple databases or environments with different capabilities:
