@@ -43,6 +43,37 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
         hint: None,
     });
 
+    // C2.5: server_url_scheme — TLS transport safety
+    let has_oidc = cfg.server.oidc.is_some();
+    let allow_insecure = cfg.server.allow_insecure.unwrap_or(false);
+    match dbward_config::transport::check_transport_security(
+        &cfg.server.url,
+        allow_insecure,
+        has_oidc,
+    ) {
+        Ok(()) => {
+            let label = if cfg.server.url.to_ascii_lowercase().starts_with("https") {
+                "HTTPS"
+            } else {
+                "HTTP (local/internal)"
+            };
+            ctx.record(CheckResult {
+                id: "server_url_scheme",
+                status: Status::Pass,
+                message: label.into(),
+                hint: None,
+            });
+        }
+        Err(e) => {
+            ctx.record(CheckResult {
+                id: "server_url_scheme",
+                status: Status::Fail,
+                message: e.to_string(),
+                hint: Some("Production requires HTTPS. See docs/deployment/tls.md".into()),
+            });
+        }
+    }
+
     // C3: server_reachable
     let server_url_display = redact_url(&cfg.server.url);
     let health = check_server_health(&cfg.server.url, ctx.timeout).await;

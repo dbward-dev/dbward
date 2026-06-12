@@ -406,6 +406,7 @@ url = "${DATABASE_URL}"
 |---|---|---|---|---|
 | `url` | String | ✓ | — | Server URL to poll. |
 | `agent_token` | String | ✓ | — | Auth token. Use `${DBWARD_AGENT_TOKEN}` expansion. |
+| `allow_insecure` | bool | | `false` | Allow HTTP connections to non-local servers. The agent refuses to start with external HTTP unless this is `true`. See [Security Hardening](../security/hardening.md). |
 
 ### [databases.\<name\>.\<env\>]
 
@@ -443,6 +444,7 @@ url = "postgres://user:pass@db:5432/app"
 |---|---|---|---|---|
 | `url` | String | ✓ | — | Server URL. |
 | `token` | String | | — | API token. Mutually exclusive with `[server.oidc]`. |
+| `allow_insecure` | bool | | `false` | Allow HTTP connections to non-local servers. Suppresses the insecure-transport warning. Does not override OIDC+HTTP rejection. |
 
 ### [server.oidc]
 
@@ -488,6 +490,7 @@ migrations_dir = "migrations/analytics"
 | `DBWARD_DATABASE` | Default database. |
 | `DBWARD_ENV` | Default environment. |
 | `DBWARD_AGENT_TOKEN` | Agent token (referenced via `${DBWARD_AGENT_TOKEN}`). |
+| `DBWARD_ALLOW_INSECURE` | `true` or `1` to allow HTTP to non-local servers. Overrides config file setting. |
 | `DBWARD_LOG_FORMAT` | Force `"json"` log output. Overrides `[logging].format`. |
 
 ---

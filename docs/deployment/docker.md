@@ -34,7 +34,7 @@ agent_token = "${DBWARD_AGENT_TOKEN}"
 url = "${DATABASE_URL}"
 ```
 
-> **Note:** The agent's `[server].url` must be `http://server:3000` (the Compose service name).
+> **Note:** The agent's `[server].url` must be `http://server:3000` (the Compose service name). This is a bare hostname (no dots), which is recognized as cluster-internal — HTTPS is not required for intra-Compose communication.
 
 ### 2. Start the stack
 
@@ -83,6 +83,8 @@ services:
     depends_on:
       - server
 ```
+
+> **Internal vs external:** Agent↔Server communication within Compose uses the `server` service name (bare hostname), which is treated as internal — no TLS required. CLI access from outside the Compose network should go through the reverse proxy (HTTPS).
 
 ## Backup
 

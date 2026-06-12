@@ -14,6 +14,7 @@ description: All dbward CLI commands and options
 | `--database <NAME>` | | `DBWARD_DATABASE` | | Target database |
 | `-e, --environment <ENV>` | `-e` | `DBWARD_ENV` | | Target environment |
 | `--format <FMT>` | | | human | Output format: `human`, `json` |
+| `--allow-insecure` | | `DBWARD_ALLOW_INSECURE` | false | Allow HTTP connections to non-local servers. Suppresses transport security warnings. Does not bypass OIDC+HTTP rejection. |
 
 ---
 

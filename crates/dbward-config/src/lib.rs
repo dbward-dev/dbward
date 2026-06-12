@@ -4,6 +4,7 @@ mod error;
 pub mod expand;
 pub mod merged;
 pub mod server;
+pub mod transport;
 
 pub use agent::AgentConfig;
 pub use client::ClientConfig;

@@ -32,6 +32,7 @@ The agent uses **outbound-only** connections:
 
 - **No inbound ports required** — deploy in private subnets
 - Restrict outbound to only the server URL and target database hosts
+- The agent **refuses to start** if configured with an external HTTP URL (fail-closed). Set `[server] allow_insecure = true` only if TLS termination happens at a network layer not visible in the URL (e.g., service mesh).
 - Liveness/readiness: file-based (`/tmp/dbward-agent-alive`, `/tmp/dbward-agent-ready`)
 
 ### Network Separation

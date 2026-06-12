@@ -151,6 +151,8 @@ impl Default for SchemaSyncConfig {
 pub struct AgentServerConfig {
     pub url: String,
     pub agent_token: String,
+    #[serde(default)]
+    pub allow_insecure: Option<bool>,
 }
 
 impl fmt::Debug for AgentServerConfig {
@@ -158,6 +160,7 @@ impl fmt::Debug for AgentServerConfig {
         f.debug_struct("AgentServerConfig")
             .field("url", &self.url)
             .field("agent_token", &"[REDACTED]")
+            .field("allow_insecure", &self.allow_insecure)
             .finish()
     }
 }

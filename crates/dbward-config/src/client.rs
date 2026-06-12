@@ -24,6 +24,8 @@ pub struct ServerSection {
     pub url: String,
     pub token: Option<String>,
     pub oidc: Option<OidcSection>,
+    #[serde(default)]
+    pub allow_insecure: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

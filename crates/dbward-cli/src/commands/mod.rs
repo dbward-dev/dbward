@@ -47,6 +47,10 @@ pub struct Cli {
     #[arg(long, default_value = "human", value_parser = ["human", "json"], global = true)]
     pub format: String,
 
+    /// Allow insecure HTTP connections to non-local servers (suppresses TLS warning)
+    #[arg(long, global = true)]
+    pub allow_insecure: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -298,6 +302,21 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                     )));
                 }
             };
+            // TLS check before any server communication
+            let has_oidc = cfg.server.oidc.is_some();
+            let allow_insecure = cfg.server.allow_insecure.unwrap_or(false);
+            if let Err(e) = dbward_config::transport::check_transport_security(
+                &cfg.server.url,
+                allow_insecure,
+                has_oidc,
+            ) {
+                match &e {
+                    dbward_config::transport::TransportError::InsecureHttp { .. } => {
+                        eprintln!("warning: {e}");
+                    }
+                    _ => return Err(CliError::Config(e.to_string())),
+                }
+            }
             if let Some(ref token) = cfg.server.token {
                 let sc = ServerClient::new(&cfg.server.url, token);
                 match sc.get_json("/api/me").await {
@@ -391,7 +410,24 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
         return Ok(());
     }
 
+    // TLS transport security check (OIDC + external HTTP → hard error)
+    let has_oidc = cfg.server.oidc.is_some();
+    let allow_insecure = cfg.server.allow_insecure.unwrap_or(false);
+    if let Err(e) = dbward_config::transport::check_transport_security(
+        &cfg.server.url,
+        allow_insecure,
+        has_oidc,
+    ) {
+        match &e {
+            dbward_config::transport::TransportError::InsecureHttp { .. } => {
+                eprintln!("warning: {e}");
+            }
+            _ => return Err(CliError::Config(e.to_string())),
+        }
+    }
+
     let (server_url, api_token) = authenticate(&cfg).await?;
+
     let sc = ServerClient::new(&server_url, &api_token);
     let json_output = cli.format == "json";
 

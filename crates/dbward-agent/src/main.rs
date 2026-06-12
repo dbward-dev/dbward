@@ -22,6 +22,28 @@ async fn main() {
         }
     };
 
+    // TLS transport security check (env > config priority)
+    let allow_insecure = if let Ok(v) = std::env::var("DBWARD_ALLOW_INSECURE") {
+        v == "true" || v == "1"
+    } else {
+        config.server.allow_insecure.unwrap_or(false)
+    };
+
+    if let Err(e) = dbward_config::transport::check_transport_security(
+        &config.server.url,
+        allow_insecure,
+        false,
+    ) {
+        eprintln!("fatal: {e}");
+        std::process::exit(1);
+    }
+    if allow_insecure && !dbward_config::transport::is_local_or_internal(&config.server.url) {
+        tracing::warn!(
+            url = %config.server.url,
+            "insecure HTTP transport explicitly allowed"
+        );
+    }
+
     if let Err(e) = dbward_agent::run(config).await {
         eprintln!("Agent error: {e}");
         std::process::exit(1);
