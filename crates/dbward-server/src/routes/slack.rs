@@ -20,7 +20,10 @@ async fn resolve_slack_auth_user(
         .map_err(|e| format!("DB error: {e}"))?
         .ok_or_else(|| "not_linked".to_string())?;
 
-    if user_repo.is_suspended(&subject_id).unwrap_or(true) {
+    if user_repo
+        .is_suspended(&subject_id)
+        .map_err(|e| format!("DB error: {e}"))?
+    {
         return Err("suspended".to_string());
     }
 

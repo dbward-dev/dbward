@@ -265,7 +265,16 @@ pub async fn policy_resolution(
     let reloadable = state.reloadable.load();
     let auto_entry =
         workflow_matcher::find_auto_approve(&reloadable.auto_approve_entries, &db, &env);
-    let exec_policy = state.policy_evaluator().get_execution_policy(&db, &env);
+    let exec_policy = state
+        .policy_evaluator()
+        .get_execution_policy(&db, &env)
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to load execution policy");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal server error", "code": "internal"})),
+            )
+        })?;
 
     let exec_policy_json = {
         let matched_by = format!("({}, {})", exec_policy.database, exec_policy.environment);

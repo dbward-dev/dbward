@@ -975,8 +975,8 @@ mod tests {
             &self,
             _: &DatabaseName,
             _: &Environment,
-        ) -> dbward_domain::policies::ExecutionPolicy {
-            Default::default()
+        ) -> Result<dbward_domain::policies::ExecutionPolicy, AppError> {
+            Ok(Default::default())
         }
     }
 

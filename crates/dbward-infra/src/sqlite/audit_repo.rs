@@ -178,7 +178,7 @@ impl AuditRepo for SqliteAuditRepo {
                             rusqlite::params![prev],
                             |r| r.get(0),
                         )
-                        .unwrap_or(false);
+                        .map_err(db_err("audit: verify_chain"))?;
                     if exists {
                         // prev_hash target still in DB but not expected → chain broken
                         return Ok(AuditVerifyResult {

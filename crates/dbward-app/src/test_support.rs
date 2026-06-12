@@ -382,8 +382,8 @@ impl PolicyEvaluator for FakePolicyEvaluator {
         &self,
         _: &DatabaseName,
         _: &Environment,
-    ) -> dbward_domain::policies::ExecutionPolicy {
-        Default::default()
+    ) -> Result<dbward_domain::policies::ExecutionPolicy, crate::error::AppError> {
+        Ok(Default::default())
     }
 }
 

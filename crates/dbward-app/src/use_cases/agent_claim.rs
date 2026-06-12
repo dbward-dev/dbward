@@ -155,7 +155,7 @@ impl AgentClaim {
         // 8. Get execution policy for statement_timeout
         let exec_policy = self
             .policy
-            .get_execution_policy(&request.database, &request.environment);
+            .get_execution_policy(&request.database, &request.environment)?;
 
         // 9. Create execution record
         let lease_expires_at = now

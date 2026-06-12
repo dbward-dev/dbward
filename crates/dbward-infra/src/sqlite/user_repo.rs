@@ -102,14 +102,15 @@ impl UserRepo for SqliteUserRepo {
 
     fn is_suspended(&self, user_id: &str) -> Result<bool, AppError> {
         let conn = self.conn.lock();
-        let status: Option<String> = conn
-            .query_row(
-                "SELECT status FROM users WHERE id = ?1",
-                rusqlite::params![user_id],
-                |r| r.get(0),
-            )
-            .ok();
-        Ok(status.as_deref() == Some("suspended"))
+        match conn.query_row(
+            "SELECT status FROM users WHERE id = ?1",
+            rusqlite::params![user_id],
+            |r| r.get::<_, String>(0),
+        ) {
+            Ok(status) => Ok(status == "suspended"),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(db_err("user: is_suspended")(e)),
+        }
     }
 
     fn ensure_exists(&self, subject_id: &str) -> Result<(), AppError> {
