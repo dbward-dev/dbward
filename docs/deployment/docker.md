@@ -39,7 +39,7 @@ url = "${DATABASE_URL}"
 ### 2. Start the stack
 
 ```bash
-cp deploy/docker/compose.yml .
+cp deploy/docker/compose.yml deploy/docker/Caddyfile .
 docker compose up -d server
 ```
 
@@ -70,21 +70,56 @@ The agent is stateless — no persistent volume needed.
 
 ## TLS termination
 
-The Compose template exposes port 3000 without TLS. For production, place a reverse proxy (nginx, Caddy, Traefik) in front:
+The Compose template binds the server to `127.0.0.1:3000` (localhost only). For external HTTPS access, enable the built-in Caddy profile:
 
-```yaml
-services:
-  caddy:
-    image: caddy:2
-    ports:
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-    depends_on:
-      - server
+```bash
+DOMAIN=dbward.example.com docker compose --profile tls up -d
 ```
 
-> **Internal vs external:** Agent↔Server communication within Compose uses the `server` service name (bare hostname), which is treated as internal — no TLS required. CLI access from outside the Compose network should go through the reverse proxy (HTTPS).
+This starts a [Caddy](https://caddyserver.com/) reverse proxy that automatically obtains a Let's Encrypt certificate for your domain.
+
+| Environment variable | Default | Description |
+|---|---|---|
+| `DOMAIN` | `localhost` | Domain for TLS certificate. Set to your public domain for production. |
+
+**How it works:**
+- Caddy listens on ports 443 (HTTPS) and 80 (HTTP-01 challenge + redirect).
+- Traffic is proxied to `server:3000` over the internal Docker network.
+- Certificates are persisted in the `caddy-data` volume and auto-renewed.
+
+**Required: `trusted_proxies` configuration.** When running behind Caddy, add the Docker network subnet to `server.toml` so the server honors `X-Forwarded-For` headers for audit logging:
+
+```bash
+# Find the actual subnet assigned to the Compose default network:
+docker compose exec server cat /proc/net/fib_trie | grep -B1 '/16\|/24' | head -5
+# Or inspect the network directly (name depends on your project directory):
+docker network inspect $(docker compose config --format json | jq -r '.networks.default.name') --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
+```
+
+```toml
+[server]
+trusted_proxies = ["172.18.0.0/16"]  # use the subnet from the command above
+```
+
+Without this, audit logs will record the Caddy container IP instead of the real client IP.
+
+**Local development:** With `DOMAIN=localhost` (default), Caddy issues a certificate from its internal CA. The browser will show a certificate warning. To suppress it, extract and trust the Caddy root CA on your host:
+
+```bash
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt /tmp/caddy-root.crt
+# macOS:
+sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /tmp/caddy-root.crt
+# Linux:
+sudo cp /tmp/caddy-root.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates
+```
+
+**Operational notes:**
+- Port 80 and 443 must be free on the host. If another reverse proxy is already bound, disable it or use that proxy instead.
+- The `DOMAIN` must resolve to the host and port 80 must be internet-reachable for Let's Encrypt HTTP-01 issuance and renewal.
+- Back up the `caddy-data` volume. Losing it is recoverable but triggers certificate re-issuance, which may hit Let's Encrypt [rate limits](https://letsencrypt.org/docs/rate-limits/).
+- `127.0.0.1:3000` remains accessible from the host for debugging. This is intentional — the security boundary is remote network access, not host-local isolation.
+
+> **Internal vs external:** Agent↔Server communication within Compose uses the `server` service name (bare hostname), which is treated as internal — no TLS required. CLI access from outside the Compose network should go through the Caddy reverse proxy (HTTPS).
 
 ## Backup
 
