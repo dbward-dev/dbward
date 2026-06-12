@@ -101,8 +101,7 @@ impl CreateRequest {
         // Resolve dialect once (used for classify, parse, review, risk)
         let dialect_str = self
             .schema_repo
-            .get_dialect(input.database.as_str(), input.environment.as_str())
-            .unwrap_or(None);
+            .get_dialect(input.database.as_str(), input.environment.as_str())?;
         let dialect = match dialect_str.as_deref() {
             Some(d) if d == dbward_domain::services::status_constants::dialect::MYSQL => {
                 Dialect::MySql
@@ -155,7 +154,9 @@ impl CreateRequest {
                         "blocked_rules": reasons,
                     })
                     .to_string();
-                    let _ = self.audit_logger.record(&audit_event);
+                    if let Err(e) = self.audit_logger.record(&audit_event) {
+                        tracing::error!(error = %e, "failed to record request_blocked_by_review audit event");
+                    }
                     return Err(AppError::Validation(format!(
                         "SQL blocked by review: {}",
                         reasons.join("; ")

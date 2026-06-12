@@ -63,7 +63,9 @@ fn log_auth_failure(state: &AppState, e: &AuthError, req: &Request) {
         event_hash: String::new(),
         created_at: chrono::Utc::now(),
     };
-    let _ = state.audit_logger().record(&event);
+    if let Err(e) = state.audit_logger().record(&event) {
+        tracing::error!(error = %e, "failed to record auth.failure audit event");
+    }
 }
 
 pub async fn auth_middleware(
@@ -184,14 +186,17 @@ pub async fn auth_middleware(
                     state.clock().now(),
                     &ctx,
                 );
-                let _ = state.audit_logger().record(&event);
-                let mut cache = LOGIN_AUDIT_CACHE.lock().unwrap();
-                // Evict stale entries if cache is too large
-                if cache.len() > 10_000 {
-                    let cutoff = std::time::Duration::from_secs(3600);
-                    cache.retain(|_, t| t.elapsed() < cutoff);
+                if let Err(e) = state.audit_logger().record(&event) {
+                    tracing::error!(error = %e, "failed to record login_success audit event");
+                } else {
+                    let mut cache = LOGIN_AUDIT_CACHE.lock().unwrap();
+                    // Evict stale entries if cache is too large
+                    if cache.len() > 10_000 {
+                        let cutoff = std::time::Duration::from_secs(3600);
+                        cache.retain(|_, t| t.elapsed() < cutoff);
+                    }
+                    cache.insert(subject_id.clone(), std::time::Instant::now());
                 }
-                cache.insert(subject_id.clone(), std::time::Instant::now());
             }
         }
 

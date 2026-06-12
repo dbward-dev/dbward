@@ -195,16 +195,20 @@ impl Notifier for WebhookDispatcher {
                     match send_with_retry(&client, &url, &body, secret.as_deref()).await {
                         Ok(()) => {
                             let now = chrono::Utc::now().to_rfc3339();
-                            let _ = repo.mark_delivered(&delivery_id, &now);
+                            if let Err(e) = repo.mark_delivered(&delivery_id, &now) {
+                                tracing::error!(error = %e, delivery_id, "failed to mark webhook delivered");
+                            }
                         }
                         Err(()) => {
                             let next = chrono::Utc::now() + chrono::Duration::seconds(60);
-                            let _ = repo.mark_failed(
+                            if let Err(e) = repo.mark_failed(
                                 &delivery_id,
                                 "initial delivery failed after 3 attempts",
                                 &next.to_rfc3339(),
                                 3,
-                            );
+                            ) {
+                                tracing::error!(error = %e, delivery_id, "failed to mark webhook failed");
+                            }
                         }
                     }
                 });
@@ -456,7 +460,9 @@ impl EventDispatcher for CompositeEventDispatcher {
             _ => {}
         }
 
-        let _ = self.audit.record(&audit_event);
+        if let Err(e) = self.audit.record(&audit_event) {
+            tracing::error!(error = %e, event_type, "failed to record state change audit event");
+        }
 
         let webhook_event = WebhookEvent {
             event_type: event_type.to_string(),

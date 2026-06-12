@@ -452,7 +452,7 @@ pub async fn run_from_args(
     sync_all_config(&state, &cfg, sync_ssrf_validator, conn.clone())?;
 
     // A7: Record config sync in audit log
-    let _ = state
+    if let Err(e) = state
         .audit_logger()
         .record(&dbward_domain::entities::AuditEvent::simple(
             "config_synced",
@@ -461,7 +461,10 @@ pub async fn run_from_args(
             None,
             state.clock().now(),
             &dbward_domain::entities::AuditContext::System,
-        ));
+        ))
+    {
+        tracing::error!(error = %e, "failed to record config_synced audit event");
+    }
 
     // BUG-31: OIDC verifier initialized above (injected into ApiTokenVerifier)
 
