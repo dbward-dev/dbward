@@ -180,27 +180,29 @@ pub async fn run_stdio(
                 if method == "initialize" {
                     let caps = &request["params"]["capabilities"];
                     client_supports_elicitation = caps.get("elicitation").is_some();
-                    let _ = outgoing_tx.send(handle_initialize(id)).await;
+                    if outgoing_tx.send(handle_initialize(id)).await.is_err() {
+                        break;
+                    }
                     continue;
                 }
 
                 // Sync handlers (no spawn needed)
                 match method.as_str() {
                     "tools/list" => {
-                        let _ = outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {"tools": tools_definitions()}})).await;
+                        if outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {"tools": tools_definitions()}})).await.is_err() { break; }
                     }
                     "resources/list" => {
-                        let _ = outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {"resources": resources_definitions()}})).await;
+                        if outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {"resources": resources_definitions()}})).await.is_err() { break; }
                     }
                     "resources/templates/list" => {
-                        let _ = outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {"resourceTemplates": resource_templates_definitions()}})).await;
+                        if outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {"resourceTemplates": resource_templates_definitions()}})).await.is_err() { break; }
                     }
                     "prompts/list" => {
-                        let _ = outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {"prompts": prompts_definitions()}})).await;
+                        if outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {"prompts": prompts_definitions()}})).await.is_err() { break; }
                     }
                     "prompts/get" => {
                         let resp = handle_prompts_get(id.clone(), &request["params"], &migrations_dir);
-                        let _ = outgoing_tx.send(resp).await;
+                        if outgoing_tx.send(resp).await.is_err() { break; }
                     }
                     "resources/subscribe" => {
                         let _ = outgoing_tx.send(json!({"jsonrpc": "2.0", "id": id, "result": {}})).await;
