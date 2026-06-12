@@ -112,16 +112,20 @@ pub async fn run_request(
             )
             .await
         }
-        RequestAction::Show { id } => run_show(sc, json_output, &id).await,
+        RequestAction::Show { id } => {
+            let resolved = resolve_request_id(sc, &id).await?;
+            run_show(sc, json_output, &resolved).await
+        }
         RequestAction::Resume {
             id,
             output,
             result_format,
         } => {
+            let resolved = resolve_request_id(sc, &id).await?;
             run_resume(
                 sc,
                 json_output,
-                &id,
+                &resolved,
                 output.as_deref(),
                 config_results_dir,
                 result_format.unwrap_or(default_format),
@@ -136,13 +140,14 @@ pub async fn run_request(
             result_format,
             limit,
         } => {
+            let resolved = resolve_request_id(sc, &id).await?;
             if list {
-                run_executions(sc, json_output, &id, limit).await
+                run_executions(sc, json_output, &resolved, limit).await
             } else {
                 run_result(
                     sc,
                     json_output,
-                    &id,
+                    &resolved,
                     execution.as_deref(),
                     output.as_deref(),
                     config_results_dir,
