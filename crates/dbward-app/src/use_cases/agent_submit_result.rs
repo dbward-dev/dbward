@@ -267,6 +267,13 @@ impl AgentSubmitResult {
         };
         if effective_rows.is_some() || input.duration_ms.is_some() {
             let mut meta = serde_json::from_str::<serde_json::Value>(&audit_event.metadata_json)
+                .inspect_err(|e| {
+                    tracing::warn!(
+                        error = %e,
+                        execution_id = %input.execution_id,
+                        "corrupt metadata_json in audit event, resetting to empty"
+                    );
+                })
                 .ok()
                 .filter(|v| v.is_object())
                 .unwrap_or_else(|| serde_json::json!({}));

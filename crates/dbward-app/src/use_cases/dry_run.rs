@@ -126,7 +126,10 @@ impl DryRunSubmitResult {
                         }
                     })
                     .collect();
-                        let explain_json = serde_json::to_string(&results).unwrap_or_default();
+                        let explain_json = serde_json::to_string(&results).unwrap_or_else(|e| {
+                            tracing::warn!(error = %e, request_id, "explain results serialization failed");
+                            "[]".to_string()
+                        });
                         let ctx_status = if jobs.iter().all(|j| j.status == "completed") {
                             "ready"
                         } else {

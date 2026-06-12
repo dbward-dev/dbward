@@ -704,7 +704,8 @@ impl CreateRequest {
                 auto_approve_threshold: trace_threshold,
             },
         };
-        let decision_trace_json = serde_json::to_string(&decision_trace).unwrap_or_default();
+        let decision_trace_json = serde_json::to_string(&decision_trace)
+            .map_err(|e| AppError::Internal(format!("serialize decision_trace: {e}")))?;
 
         let request = Request {
             id: id.clone(),
