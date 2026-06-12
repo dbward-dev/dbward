@@ -85,7 +85,7 @@ Break-glass permission is granted via roles. By default, only `admin` has it:
 ```toml
 [[auth.roles]]
 name = "oncall"
-permissions = ["request.break_glass", "request.create", "request.view"]
+permissions = ["request.break_glass", "request.execute", "request.view"]
 ```
 
 To also allow DDL bypass in emergencies:
@@ -93,7 +93,7 @@ To also allow DDL bypass in emergencies:
 ```toml
 [[auth.roles]]
 name = "oncall-senior"
-permissions = ["request.break_glass", "request.break_glass_ddl", "request.create", "request.view"]
+permissions = ["request.break_glass", "request.break_glass_ddl", "request.execute", "request.view"]
 ```
 
 ## Limitations

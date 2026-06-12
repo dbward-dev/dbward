@@ -138,6 +138,11 @@ impl CreateRequest {
             return Err(BreakGlassDenial::McpNotAllowed.into_app_error());
         }
 
+        // Record metric for all DDL bypass attempts (both classifier and reviewer paths)
+        if input.emergency && input.allow_ddl {
+            self.break_glass_metrics.record_ddl_attempted();
+        }
+
         // Resolve dialect once (used for classify, parse, review, risk)
         let dialect_str = self
             .schema_repo
@@ -170,7 +175,6 @@ impl CreateRequest {
                     }
                     Err(ClassifyError::Rejected { reason }) => {
                         if input.emergency && input.allow_ddl {
-                            self.break_glass_metrics.record_ddl_attempted();
                             // Break-glass DDL bypass attempt
                             match result.parsed_statements {
                                 Some(ref stmts)
@@ -258,7 +262,11 @@ impl CreateRequest {
                                 "break_glass_attempted": true,
                             })
                             .to_string();
-                            let _ = self.audit_logger.record(&audit_event);
+                            if let Err(e) = self.audit_logger.record(&audit_event) {
+                                tracing::warn!(
+                                    "audit write failed for blocked break-glass attempt: {e}"
+                                );
+                            }
                             self.break_glass_metrics.record_ddl_denied();
                             return Err(BreakGlassDenial::NonBypassableReviewRule {
                                 reasons: reasons.iter().map(|s| s.to_string()).collect(),

@@ -2299,3 +2299,52 @@ fn break_glass_ddl_mcp_rejected() {
     let msg = format!("{err}");
     assert!(msg.contains("not allowed via MCP"), "got: {msg}");
 }
+
+#[test]
+fn break_glass_ddl_denied_without_permission() {
+    /// Allows everything except RequestBreakGlassDdl.
+    struct DenyDdlBypass;
+    impl Authorizer for DenyDdlBypass {
+        fn authorize_scoped(
+            &self,
+            _: &AuthUser,
+            p: Permission,
+            _: &DatabaseName,
+            _: &Environment,
+            _: &ResourceContext,
+        ) -> Result<(), dbward_app::error::AuthzError> {
+            if p == Permission::RequestBreakGlassDdl {
+                Err(dbward_app::error::AuthzError::Forbidden {
+                    permission: p,
+                    reason: "missing request.break_glass_ddl".into(),
+                })
+            } else {
+                Ok(())
+            }
+        }
+        fn authorize_global(
+            &self,
+            _: &AuthUser,
+            _: Permission,
+        ) -> Result<(), dbward_app::error::AuthzError> {
+            Ok(())
+        }
+    }
+
+    let mut h = TestHarness::new(Some(single_step_workflow()));
+    h.authorizer = Arc::new(DenyDdlBypass);
+
+    let requester = make_user("alice", &["developer"]);
+    let mut input = make_input();
+    input.detail = "DROP TABLE t".into();
+    input.emergency = true;
+    input.allow_ddl = true;
+    input.reason = Some("schema repair".into());
+
+    let result = h.create_uc().execute(
+        input,
+        &requester,
+        &dbward_domain::entities::AuditContext::System,
+    );
+    assert!(matches!(result, Err(AppError::Forbidden(_))));
+}
