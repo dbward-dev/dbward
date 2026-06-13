@@ -620,3 +620,50 @@ fn compute_queue_hint(
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_result_envelope_valid_json() {
+        let bytes = br#"{"rows":[{"id":1}],"truncated":false}"#;
+        let env = build_result_envelope("exec-1", true, bytes);
+        assert_eq!(env["success"], true);
+        assert!(env["result_data"].is_object());
+        assert_eq!(env["result_data"]["rows"][0]["id"], 1);
+        assert_eq!(env["truncated"], false);
+    }
+
+    #[test]
+    fn build_result_envelope_non_json_falls_back_to_string() {
+        let bytes = b"plain text result";
+        let env = build_result_envelope("exec-2", true, bytes);
+        assert_eq!(env["success"], true);
+        assert_eq!(env["result_data"].as_str().unwrap(), "plain text result");
+    }
+
+    #[test]
+    fn build_result_envelope_empty_bytes() {
+        let env = build_result_envelope("exec-3", true, b"");
+        assert_eq!(env["success"], true);
+        assert_eq!(env["result_data"].as_str().unwrap(), "");
+    }
+
+    #[test]
+    fn build_result_envelope_failure_extracts_error() {
+        let bytes = br#"{"error":"timeout"}"#;
+        let env = build_result_envelope("exec-4", false, bytes);
+        assert_eq!(env["success"], false);
+        assert!(env["result_data"].is_null());
+        assert_eq!(env["error_message"].as_str().unwrap(), "timeout");
+    }
+
+    #[test]
+    fn build_result_envelope_failure_non_json() {
+        let env = build_result_envelope("exec-5", false, b"crash");
+        assert_eq!(env["success"], false);
+        assert!(env["result_data"].is_null());
+        assert!(env["error_message"].is_null());
+    }
+}

@@ -424,4 +424,30 @@ mod tests {
         let arr = result["applied"].as_array().unwrap();
         assert!(arr.is_empty());
     }
+
+    #[test]
+    fn extract_rows_from_result_data_object() {
+        let resp = json!({
+            "success": true,
+            "result_data": {"rows": [{"id": 1}], "truncated": true, "truncation_reason": "limit"}
+        });
+        let (rows, truncated) = extract_rows_owned(&resp);
+        assert_eq!(rows.unwrap().len(), 1);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn extract_rows_from_result_data_string_value() {
+        // Server fallback: non-JSON stored as Value::String
+        let resp = json!({"success": true, "result_data": "plain text"});
+        let (rows, _) = extract_rows_owned(&resp);
+        assert!(rows.is_none());
+    }
+
+    #[test]
+    fn extract_rows_from_result_data_null() {
+        let resp = json!({"success": true, "result_data": null});
+        let (rows, _) = extract_rows_owned(&resp);
+        assert!(rows.is_none());
+    }
 }
