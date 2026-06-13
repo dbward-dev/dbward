@@ -132,6 +132,8 @@ Both scripts are designed to run alongside the server container.
 
 ## Upgrade
 
+> **Breaking change (v0.1.5):** The server port binding changed from `0.0.0.0:3000` to `127.0.0.1:3000`. Remote clients that previously accessed port 3000 directly will lose connectivity. Use the Caddy TLS profile (`--profile tls`) or update your existing reverse proxy to connect via `127.0.0.1:3000`. If you need the old behavior temporarily, change the port to `"3000:3000"` in your compose.yml.
+
 ```bash
 docker compose pull
 docker compose up -d

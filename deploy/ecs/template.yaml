@@ -11,7 +11,12 @@ Parameters:
   AllowedIngressCidr:
     Type: String
     Default: "10.0.0.0/8"
-    Description: CIDR allowed to access server port 3000
+    Description: CIDR allowed to access server task directly on port 3000 (Service Connect / internal). Keep restricted to VPC CIDR.
+
+  AllowedAlbIngressCidr:
+    Type: String
+    Default: "0.0.0.0/0"
+    Description: CIDR allowed to access ALB on ports 80/443 (internet-facing by default)
 
   ImageRepository:
     Type: String
@@ -445,11 +450,11 @@ Resources:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          CidrIp: !Ref AllowedIngressCidr
+          CidrIp: !Ref AllowedAlbIngressCidr
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
-          CidrIp: !Ref AllowedIngressCidr
+          CidrIp: !Ref AllowedAlbIngressCidr
 
   AlbToServerIngress:
     Type: AWS::EC2::SecurityGroupIngress
@@ -480,7 +485,7 @@ Resources:
       TargetType: ip
       HealthCheckPath: /ready
 
-  AlbHttpListener:
+  AlbListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Condition: CreateAlb
     Properties:

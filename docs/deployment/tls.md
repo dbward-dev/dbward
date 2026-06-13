@@ -49,7 +49,7 @@ Without `CertificateArn`, the ALB serves HTTP only (suitable for private/interna
 
 > **Note:** `CertificateArn` only takes effect when `EnableAlb=true` (the default). With `EnableAlb=false`, traffic uses Service Connect only.
 
-> **Security:** The `AllowedIngressCidr` parameter controls direct access to the server task on port 3000. For internet-facing deployments with HTTPS, restrict this to your VPC CIDR (default `10.0.0.0/8`) so that external traffic can only reach the server through the ALB.
+> **Security:** The template uses separate CIDR controls: `AllowedAlbIngressCidr` (default `0.0.0.0/0`) for ALB access, and `AllowedIngressCidr` (default `10.0.0.0/8`) for direct task access. This ensures that external traffic can only reach the server through the ALB while internal/Service Connect access remains restricted to the VPC.
 
 ## Helm / Kubernetes
 
