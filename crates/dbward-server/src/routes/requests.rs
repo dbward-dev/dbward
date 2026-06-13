@@ -410,7 +410,10 @@ pub async fn stream_result(
                     "rows_affected": summary.rows_affected,
                     "truncated": summary.truncated,
                     "error_message": summary.error_message,
-                    "result_data": summary.result_data,
+                    "result_data": summary.result_data
+                        .as_deref()
+                        .map(|s| serde_json::from_str::<serde_json::Value>(s)
+                            .unwrap_or_else(|_| serde_json::Value::String(s.to_owned()))),
                 })),
             )),
             stream_result::StreamResultData::TerminalPlaceholder { success: _ } => {
@@ -464,10 +467,11 @@ pub async fn get_result(
 }
 
 fn build_result_envelope(execution_id: &str, success: bool, raw_bytes: &[u8]) -> serde_json::Value {
-    let raw_text = String::from_utf8_lossy(raw_bytes);
+    let stored: serde_json::Value = serde_json::from_slice(raw_bytes).unwrap_or_else(|_| {
+        serde_json::Value::String(String::from_utf8_lossy(raw_bytes).into_owned())
+    });
 
     if !success {
-        let stored: serde_json::Value = serde_json::from_slice(raw_bytes).unwrap_or(json!(null));
         return json!({
             "_dbward_result": true,
             "execution_id": execution_id,
@@ -479,13 +483,11 @@ fn build_result_envelope(execution_id: &str, success: bool, raw_bytes: &[u8]) ->
         });
     }
 
-    let stored: serde_json::Value = serde_json::from_slice(raw_bytes).unwrap_or(json!(null));
-
     json!({
         "_dbward_result": true,
         "execution_id": execution_id,
         "success": true,
-        "result_data": raw_text.as_ref(),
+        "result_data": stored,
         "rows_affected": stored.get("rows_affected"),
         "truncated": stored.get("truncated").and_then(|v| v.as_bool()).unwrap_or(false),
         "error_message": null,

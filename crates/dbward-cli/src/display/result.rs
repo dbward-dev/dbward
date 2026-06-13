@@ -49,11 +49,10 @@ pub(crate) fn print_execution_result(resp: &serde_json::Value) {
         display_result_value(result);
         return;
     }
-    // Try "result_data" (stream format - JSON string)
-    if let Some(data) = resp["result_data"].as_str()
-        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
-    {
-        display_result_value(&parsed);
+    // Try "result_data" (stream/stored format - JSON value)
+    let rd = &resp["result_data"];
+    if !rd.is_null() {
+        display_result_value(rd);
         return;
     }
     // DML result
@@ -170,15 +169,14 @@ fn extract_rows_owned(resp: &serde_json::Value) -> (Option<Vec<serde_json::Value
         }
         return (None, false);
     }
-    // Stream format: {"result_data": "json string"}
-    if let Some(data) = resp["result_data"].as_str()
-        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(data)
-    {
-        if let Some(rows) = parsed.get("rows").and_then(|r| r.as_array()) {
-            let truncated = parsed["truncated"].as_bool().unwrap_or(false);
+    // Stream/stored format: {"result_data": {rows, truncated, ...}}
+    let rd = &resp["result_data"];
+    if !rd.is_null() {
+        if let Some(rows) = rd.get("rows").and_then(|r| r.as_array()) {
+            let truncated = rd["truncated"].as_bool().unwrap_or(false);
             return (Some(rows.clone()), truncated);
         }
-        if let Some(rows) = parsed.as_array() {
+        if let Some(rows) = rd.as_array() {
             return (Some(rows.clone()), false);
         }
     }

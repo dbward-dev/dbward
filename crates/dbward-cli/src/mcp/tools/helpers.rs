@@ -26,12 +26,13 @@ pub(super) fn format_result(resp: &Value) -> Result<String, String> {
         }
         return Ok(serde_json::to_string_pretty(result).unwrap_or_default());
     }
-    // Stream format: result_data is a JSON string
-    if let Some(data) = resp["result_data"].as_str() {
-        if let Ok(parsed) = serde_json::from_str::<Value>(data) {
-            return Ok(serde_json::to_string_pretty(&parsed).unwrap_or_default());
+    // Stream/stored format: result_data is a JSON value
+    let rd = &resp["result_data"];
+    if !rd.is_null() {
+        if let Some(text) = rd.as_str() {
+            return Ok(text.to_string());
         }
-        return Ok(data.to_string());
+        return Ok(serde_json::to_string_pretty(rd).unwrap_or_default());
     }
     if let Some(affected) = resp["rows_affected"].as_u64() {
         return Ok(format!("Rows affected: {affected}"));
