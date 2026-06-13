@@ -1,0 +1,34 @@
+# Example Ingress for dbward server.
+# This is a SAMPLE — for production use the Helm chart with ingress.enabled=true.
+# This file is intentionally NOT included in kustomization.yaml.
+#
+# Prerequisites:
+#   - An Ingress controller (e.g. ingress-nginx, Traefik)
+#   - cert-manager with a ClusterIssuer named "letsencrypt-prod"
+#
+# Usage:
+#   kubectl apply -f ingress-example.yaml -n dbward
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: dbward-server
+  namespace: dbward
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - secretName: dbward-tls
+      hosts:
+        - dbward.example.com
+  rules:
+    - host: dbward.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dbward-server
+                port:
+                  number: 3000
