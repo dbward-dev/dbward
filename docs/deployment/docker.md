@@ -97,7 +97,6 @@ docker network inspect $(docker compose config --format json | jq -r '.networks.
 ```
 
 ```toml
-[server]
 trusted_proxies = ["172.18.0.0/16"]  # use the subnet from the command above
 ```
 
