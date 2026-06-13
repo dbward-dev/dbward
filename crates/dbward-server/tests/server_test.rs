@@ -278,8 +278,8 @@ impl AgentRepo for StubAgentRepo {
     fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> {
         Ok(())
     }
-    fn extend_lease(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<(), AppError> {
-        Ok(())
+    fn extend_lease(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+        Ok(true)
     }
     fn find_dispatched_jobs(
         &self,

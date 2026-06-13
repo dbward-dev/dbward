@@ -158,14 +158,19 @@ impl AgentRepo for SqliteAgentRepo {
         Ok(())
     }
 
-    fn extend_lease(&self, execution_id: &str, new_expiry: DateTime<Utc>) -> Result<(), AppError> {
+    fn extend_lease(
+        &self,
+        execution_id: &str,
+        new_expiry: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
         let conn = self.conn.lock();
-        conn.execute(
-            "UPDATE executions SET lease_expires_at = ?1 WHERE id = ?2",
-            params![new_expiry.to_rfc3339(), execution_id],
-        )
-        .map_err(db_err("agent: extend_lease"))?;
-        Ok(())
+        let n = conn
+            .execute(
+                "UPDATE executions SET lease_expires_at = ?1 WHERE id = ?2 AND status = 'claimed'",
+                params![new_expiry.to_rfc3339(), execution_id],
+            )
+            .map_err(db_err("agent: extend_lease"))?;
+        Ok(n > 0)
     }
 
     fn find_dispatched_jobs(

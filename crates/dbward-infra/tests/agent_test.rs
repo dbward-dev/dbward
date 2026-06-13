@@ -203,10 +203,17 @@ fn agent_extend_lease_and_find_executions() {
     repo.create_execution(&exec).unwrap();
 
     let new_expiry = Utc::now() + chrono::Duration::minutes(10);
-    repo.extend_lease("exec-el", new_expiry).unwrap();
+    let extended = repo.extend_lease("exec-el", new_expiry).unwrap();
+    assert!(extended);
 
     let got = repo.get_execution("exec-el").unwrap().unwrap();
     assert!(got.lease_expires_at > Utc::now());
+
+    // extend_lease returns false for non-claimed execution
+    repo.update_execution_status("exec-el", ExecutionStatus::Failed)
+        .unwrap();
+    let not_extended = repo.extend_lease("exec-el", new_expiry).unwrap();
+    assert!(!not_extended);
 
     let execs = repo.find_executions_for_request("req-el").unwrap();
     assert_eq!(execs.len(), 1);

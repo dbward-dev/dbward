@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::ExecutionStatus;
-use dbward_domain::policies::ExecutionPolicy;
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -64,25 +63,37 @@ impl AgentHeartbeat {
 
         // 5. Extend lease using execution policy (migration-aware)
         let request = self.request_reader.get(&execution.request_id)?;
-        let req = request.as_ref();
-        let exec_policy = match req {
-            Some(r) => self
-                .policy
-                .get_execution_policy(&r.database, &r.environment)?,
-            None => ExecutionPolicy::default(),
-        };
-        let lease_secs = req
-            .map(|r| exec_policy.lease_duration_for_operation(r.operation))
-            .unwrap_or_else(|| exec_policy.lease_duration_secs());
-        let new_expiry = self.clock.now() + chrono::Duration::seconds(lease_secs);
-        self.agent_repo.extend_lease(&execution.id, new_expiry)?;
+        match request {
+            None => {
+                // WHY: request purged while execution still claimed → orphan detection
+                tracing::warn!(
+                    execution_id = %execution.id,
+                    request_id = %execution.request_id,
+                    "request not found, signaling cancellation (orphan detection)"
+                );
+                Ok(AgentHeartbeatOutput { cancelled: true })
+            }
+            Some(r) => {
+                let exec_policy = self
+                    .policy
+                    .get_execution_policy(&r.database, &r.environment)?;
+                let lease_secs = exec_policy.lease_duration_for_operation(r.operation);
+                let new_expiry = self.clock.now() + chrono::Duration::seconds(lease_secs);
+                let extended = self.agent_repo.extend_lease(&execution.id, new_expiry)?;
+                if !extended {
+                    // WHY: execution status changed between step 4 and here (lease_reclaim race)
+                    tracing::warn!(
+                        execution_id = %execution.id,
+                        "lease extension failed (execution no longer claimed), signaling cancellation"
+                    );
+                    return Ok(AgentHeartbeatOutput { cancelled: true });
+                }
 
-        // 6. Check if request was cancelled
-        let cancelled = req
-            .map(|r| r.status == dbward_domain::entities::RequestStatus::Cancelled)
-            .unwrap_or(false);
-
-        Ok(AgentHeartbeatOutput { cancelled })
+                // 6. Check if request was cancelled
+                let cancelled = r.status == dbward_domain::entities::RequestStatus::Cancelled;
+                Ok(AgentHeartbeatOutput { cancelled })
+            }
+        }
     }
 }
 
@@ -137,9 +148,9 @@ mod tests {
         fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> {
             Ok(())
         }
-        fn extend_lease(&self, id: &str, expiry: DateTime<Utc>) -> Result<(), AppError> {
+        fn extend_lease(&self, id: &str, expiry: DateTime<Utc>) -> Result<bool, AppError> {
             self.extended.lock().unwrap().push((id.to_string(), expiry));
-            Ok(())
+            Ok(true)
         }
         fn find_dispatched_jobs(
             &self,
@@ -405,12 +416,12 @@ mod tests {
     }
 
     #[test]
-    fn request_not_found_defaults_to_not_cancelled() {
+    fn request_not_found_returns_cancelled() {
         let repo = Arc::new(FakeAgentRepo::with_execution(Some(make_execution(
             ExecutionStatus::Claimed,
         ))));
         let reader = Arc::new(FakeRequestReader::new()); // returns None
-        let uc = build_uc(Arc::new(AllowAll), repo, reader);
+        let uc = build_uc(Arc::new(AllowAll), repo.clone(), reader);
         let output = uc
             .execute(
                 AgentHeartbeatInput {
@@ -419,6 +430,116 @@ mod tests {
                 &make_user(),
             )
             .unwrap();
-        assert!(!output.cancelled);
+        assert!(output.cancelled);
+        // Lease must NOT be extended when request is missing
+        assert!(repo.extended.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn extend_lease_false_returns_cancelled() {
+        // Simulate: execution was marked lost between step 4 and extend_lease
+        struct NonExtendableAgentRepo;
+        impl AgentRepo for NonExtendableAgentRepo {
+            fn upsert(&self, _: &Agent) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get(&self, _: &str) -> Result<Option<Agent>, AppError> {
+                Ok(None)
+            }
+            fn list(&self) -> Result<Vec<Agent>, AppError> {
+                Ok(vec![])
+            }
+            fn create_execution(&self, _: &Execution) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get_execution(&self, _: &str) -> Result<Option<Execution>, AppError> {
+                Ok(Some(make_execution(ExecutionStatus::Claimed)))
+            }
+            fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn extend_lease(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+                Ok(false) // Simulates race: execution no longer claimed
+            }
+            fn find_dispatched_jobs(
+                &self,
+                _: &[(DatabaseName, Environment)],
+            ) -> Result<Vec<Request>, AppError> {
+                Ok(vec![])
+            }
+            fn has_running_migration(
+                &self,
+                _: &DatabaseName,
+                _: &Environment,
+                _: &str,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> {
+                Ok(vec![])
+            }
+            fn claim_and_mark_running(
+                &self,
+                _: &Execution,
+                _: &str,
+                _: DateTime<Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn complete_execution(
+                &self,
+                _: &str,
+                _: &str,
+                _: bool,
+                _: DateTime<Utc>,
+                _: &AuditEvent,
+                _: Option<&ExecutionResult>,
+                _: &[ResultAccess],
+            ) -> Result<crate::ports::CompletionOutcome, AppError> {
+                Ok(crate::ports::CompletionOutcome::Normal)
+            }
+            fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+                Ok(vec![])
+            }
+            fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn mark_execution_lost_and_record(
+                &self,
+                _: &str,
+                _: &str,
+                _: &AuditEvent,
+                _: &str,
+            ) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+                Ok(vec![])
+            }
+            fn delete_result(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+        }
+
+        let reader = Arc::new(FakeRequestReader::with_request(make_request(
+            RequestStatus::Running,
+        )));
+        let uc = AgentHeartbeat {
+            authorizer: Arc::new(AllowAll),
+            agent_repo: Arc::new(NonExtendableAgentRepo),
+            request_reader: reader,
+            policy: Arc::new(FakePolicyEvaluator),
+            event_dispatcher: Arc::new(NoopDispatcher),
+            clock: Arc::new(FixedClock::now_utc()),
+        };
+        let output = uc
+            .execute(
+                AgentHeartbeatInput {
+                    execution_id: "exec-001".into(),
+                },
+                &make_user(),
+            )
+            .unwrap();
+        assert!(output.cancelled);
     }
 }

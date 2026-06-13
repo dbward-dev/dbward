@@ -323,3 +323,72 @@ fn token_list_revoke_all_purge() {
     let purged = repo.purge_revoked("2099-01-01T00:00:00Z").unwrap();
     assert_eq!(purged, 2);
 }
+
+#[test]
+fn unknown_user_status_is_treated_as_suspended() {
+    let conn = setup();
+    let repo = SqliteUserRepo::new(conn.clone());
+
+    // Insert user with unknown status via raw SQL
+    conn.lock().execute(
+        "INSERT INTO users (id, groups_json, status, created_at, updated_at) VALUES ('corrupted', '[]', 'garbage', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+        [],
+    ).unwrap();
+
+    // is_suspended must return true for unknown status (fail-closed)
+    assert!(repo.is_suspended("corrupted").unwrap());
+
+    // get() must return Suspended for unknown status
+    let user = repo.get("corrupted").unwrap().unwrap();
+    assert_eq!(user.status, UserStatus::Suspended);
+}
+
+#[test]
+fn user_status_is_case_sensitive() {
+    let conn = setup();
+    let repo = SqliteUserRepo::new(conn.clone());
+
+    // "ACTIVE" (uppercase) is NOT "active" — should be treated as suspended
+    conn.lock().execute(
+        "INSERT INTO users (id, groups_json, status, created_at, updated_at) VALUES ('upper', '[]', 'ACTIVE', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+        [],
+    ).unwrap();
+
+    assert!(repo.is_suspended("upper").unwrap());
+    let user = repo.get("upper").unwrap().unwrap();
+    assert_eq!(user.status, UserStatus::Suspended);
+}
+
+#[test]
+fn activate_from_unknown_status() {
+    let conn = setup();
+    let repo = SqliteUserRepo::new(conn.clone());
+
+    // Insert user with corrupted status
+    conn.lock().execute(
+        "INSERT INTO users (id, groups_json, status, created_at, updated_at) VALUES ('broken', '[]', 'garbage', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+        [],
+    ).unwrap();
+
+    // activate() should succeed from unknown status
+    assert!(repo.activate("broken", Utc::now()).unwrap());
+    assert!(!repo.is_suspended("broken").unwrap());
+}
+
+#[test]
+fn suspend_from_unknown_status() {
+    let conn = setup();
+    let repo = SqliteUserRepo::new(conn.clone());
+
+    // Insert user with corrupted status
+    conn.lock().execute(
+        "INSERT INTO users (id, groups_json, status, created_at, updated_at) VALUES ('broken2', '[]', 'garbage', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+        [],
+    ).unwrap();
+
+    // suspend() should succeed from unknown status
+    assert!(repo.suspend("broken2", Utc::now()).unwrap());
+    // After explicit suspend, status is now "suspended"
+    let user = repo.get("broken2").unwrap().unwrap();
+    assert_eq!(user.status, UserStatus::Suspended);
+}

@@ -90,13 +90,13 @@ impl UserRepo for SqliteUserRepo {
 
     fn suspend(&self, user_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let conn = self.conn.lock();
-        let n = conn.execute("UPDATE users SET status = 'suspended', updated_at = ?1 WHERE id = ?2 AND status = 'active'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(db_err("user: suspend"))?;
+        let n = conn.execute("UPDATE users SET status = 'suspended', updated_at = ?1 WHERE id = ?2 AND status != 'suspended'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(db_err("user: suspend"))?;
         Ok(n > 0)
     }
 
     fn activate(&self, user_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let conn = self.conn.lock();
-        let n = conn.execute("UPDATE users SET status = 'active', updated_at = ?1 WHERE id = ?2 AND status = 'suspended'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(db_err("user: activate"))?;
+        let n = conn.execute("UPDATE users SET status = 'active', updated_at = ?1 WHERE id = ?2 AND status != 'active'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(db_err("user: activate"))?;
         Ok(n > 0)
     }
 
@@ -107,7 +107,7 @@ impl UserRepo for SqliteUserRepo {
             rusqlite::params![user_id],
             |r| r.get::<_, String>(0),
         ) {
-            Ok(status) => Ok(status == "suspended"),
+            Ok(status) => Ok(status != "active"),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
             Err(e) => Err(db_err("user: is_suspended")(e)),
         }
@@ -231,8 +231,15 @@ impl UserRepo for SqliteUserRepo {
 
 fn parse_user_status(s: &str) -> UserStatus {
     match s {
+        "active" => UserStatus::Active,
         "suspended" => UserStatus::Suspended,
-        _ => UserStatus::Active,
+        other => {
+            tracing::warn!(
+                status = other,
+                "unknown user status in DB, treating as suspended (fail-closed)"
+            );
+            UserStatus::Suspended
+        }
     }
 }
 
