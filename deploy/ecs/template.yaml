@@ -11,7 +11,12 @@ Parameters:
   AllowedIngressCidr:
     Type: String
     Default: "10.0.0.0/8"
-    Description: CIDR allowed to access server port 3000
+    Description: CIDR allowed to access server task directly on port 3000 (Service Connect / internal). Keep restricted to VPC CIDR.
+
+  AllowedAlbIngressCidr:
+    Type: String
+    Default: "0.0.0.0/0"
+    Description: CIDR allowed to access ALB on ports 80/443 (internet-facing by default)
 
   ImageRepository:
     Type: String
@@ -52,6 +57,13 @@ Parameters:
     Default: "true"
     AllowedValues: ["true", "false"]
 
+  CertificateArn:
+    Type: String
+    Default: ""
+    Description: >-
+      ACM Certificate ARN for HTTPS. Required for internet-facing deployments.
+      If empty, ALB uses HTTP only (suitable for private/internal access).
+
   ResultStorageBackend:
     Type: String
     Default: "local"
@@ -82,6 +94,9 @@ Rules:
 
 Conditions:
   CreateAlb: !Equals [!Ref EnableAlb, "true"]
+  CreateHttps: !And
+    - !Equals [!Ref EnableAlb, "true"]
+    - !Not [!Equals [!Ref CertificateArn, ""]]
   UseEcr: !Not [!Equals [!Ref EcrRepositoryName, ""]]
   UseS3Storage: !Equals [!Ref ResultStorageBackend, "s3"]
   UseSsmConfig: !Equals [!Ref ConfigSource, "ssm"]
@@ -435,7 +450,11 @@ Resources:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          CidrIp: !Ref AllowedIngressCidr
+          CidrIp: !Ref AllowedAlbIngressCidr
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref AllowedAlbIngressCidr
 
   AlbToServerIngress:
     Type: AWS::EC2::SecurityGroupIngress
@@ -473,6 +492,26 @@ Resources:
       LoadBalancerArn: !Ref Alb
       Port: 80
       Protocol: HTTP
+      DefaultActions: !If
+        - CreateHttps
+        - - Type: redirect
+            RedirectConfig:
+              Protocol: HTTPS
+              Port: "443"
+              StatusCode: HTTP_301
+        - - Type: forward
+            TargetGroupArn: !Ref AlbTargetGroup
+
+  AlbHttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: CreateHttps
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
       DefaultActions:
         - Type: forward
           TargetGroupArn: !Ref AlbTargetGroup
@@ -491,8 +530,17 @@ Outputs:
   ServerEndpoint:
     Value: !If
       - CreateAlb
-      - !Sub "http://${Alb.DNSName}"
+      - !If
+        - CreateHttps
+        - !Sub "https://${Alb.DNSName}"
+        - !Sub "http://${Alb.DNSName}"
       - "http://server:3000 (Service Connect — accessible from tasks in this cluster)"
+
+  TransportSecurity:
+    Value: !If
+      - CreateHttps
+      - "HTTPS (TLS terminated at ALB)"
+      - "HTTP only — NOT suitable for internet-facing access"
 
   FileSystemId:
     Value: !Ref DataFileSystem

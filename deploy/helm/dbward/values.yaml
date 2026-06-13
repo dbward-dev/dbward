@@ -71,5 +71,20 @@ secrets:
 networkPolicy:
   enabled: true
 
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  #  cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: dbward.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: dbward-tls
+  #    hosts:
+  #      - dbward.example.com
+
 serviceAccount:
   create: true

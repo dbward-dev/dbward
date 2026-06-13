@@ -6,13 +6,16 @@
 #   2. docker compose up -d server
 #   3. Read bootstrap tokens: docker compose exec server cat /data/agent-token
 #   4. Set DBWARD_AGENT_TOKEN and DATABASE_URL env vars, then: docker compose up -d agent
+#
+# TLS (optional):
+#   DOMAIN=dbward.example.com docker compose --profile tls up -d
 
 services:
   server:
     image: ghcr.io/dbward-dev/dbward-server:latest
     command: ["dbward-server", "--config", "/etc/dbward/server.toml", "--listen", "0.0.0.0:3000"]
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./server.toml:/etc/dbward/server.toml:ro
       - server-data:/data
@@ -47,5 +50,23 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  caddy:
+    image: caddy:2.9
+    profiles: ["tls"]
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    depends_on:
+      - server
+    restart: unless-stopped
+
 volumes:
   server-data:
+  caddy-data:
+  caddy-config:
