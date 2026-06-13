@@ -1,5 +1,5 @@
 use dbward_domain::entities::AuditEvent;
-use rusqlite::{Transaction, params};
+use rusqlite::{Connection, Transaction, params};
 use sha2::{Digest, Sha256};
 
 use super::audit_repo::{actor_type_str, category_str, outcome_str};
@@ -22,8 +22,25 @@ pub(crate) fn insert_audit_event_in_tx(
         IdPolicy::UseExisting if !event.id.is_empty() => event.id.clone(),
         _ => uuid::Uuid::new_v4().to_string(),
     };
+    insert_audit_event_on_conn(tx, &id, event)
+}
 
-    let prev_hash: Option<String> = tx
+/// Insert an audit event using a bare Connection (participates in caller's transaction).
+pub(crate) fn insert_audit_event_raw(
+    conn: &Connection,
+    event: &AuditEvent,
+) -> rusqlite::Result<()> {
+    let id = uuid::Uuid::new_v4().to_string();
+    insert_audit_event_on_conn(conn, &id, event)
+}
+
+/// Shared implementation: compute hash chain and INSERT.
+fn insert_audit_event_on_conn(
+    conn: &Connection,
+    id: &str,
+    event: &AuditEvent,
+) -> rusqlite::Result<()> {
+    let prev_hash: Option<String> = conn
         .query_row(
             "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
             [],
@@ -50,7 +67,7 @@ pub(crate) fn insert_audit_event_in_tx(
     );
     let event_hash = hex::encode(Sha256::digest(hash_input.as_bytes()));
 
-    tx.execute(
+    conn.execute(
         "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
         params![
             id,

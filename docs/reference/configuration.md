@@ -147,6 +147,32 @@ members = ["alice", "bob", "carol"]
 | `name` | String | ✓ | — | Group identifier. Referenced in role_bindings and workflow approvers. |
 | `members` | String[] | ✓ | — | Token subject identifiers belonging to this group. |
 
+### [[users]]
+
+Pre-provision users and manage their lifecycle via config.
+
+```toml
+[[users]]
+id = "alice"
+status = "active"
+
+[[users]]
+id = "bob"
+status = "suspended"
+```
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `id` | String | ✓ | — | User identifier (must match the subject_id used in authentication). |
+| `status` | String | | `"active"` | User status: `"active"` or `"suspended"`. |
+
+**Behavior on sync (server start / reload):**
+
+- Setting `status = "suspended"` revokes all API tokens and cancels all pending requests for that user — equivalent to the API suspend endpoint.
+- Changing `status` back to `"active"` re-enables the user, but revoked tokens remain revoked. Issue new tokens after reactivation.
+- Removing a user from config revokes tokens, cancels requests, and deletes the user record.
+- If a user ID already exists with a different source (e.g., created via OIDC login), the config entry is skipped with a warning to prevent conflicts.
+
 ### [[workflows]]
 
 Defines approval requirements per database × environment × operation.

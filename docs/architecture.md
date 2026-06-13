@@ -462,7 +462,7 @@ CREATE TABLE notification_policies (
 | DB credential leak | Only agent has credentials |
 | Agent result spoofing | Only the claiming agent_id can submit result |
 | Auth token leak (OIDC) | Short-lived JWT + PKCE + revocation |
-| Auth token leak (API) | `dbward token revoke <ID>` + audit log |
+| Auth token leak (API) | `dbward token revoke <ID>` or suspend user via config/API + audit log |
 | Webhook secret leak | HMAC-SHA256 signature verification |
 
 ## CLI Commands
