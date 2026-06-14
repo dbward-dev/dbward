@@ -14,7 +14,7 @@ const PRO: PlanLimits = PlanLimits {
     max_workflows: u32::MAX,
     max_databases: 20,
     max_webhooks: u32::MAX,
-    max_tokens: 50,
+    max_users: 50,
     max_roles: u32::MAX,
 };
 
@@ -74,8 +74,8 @@ impl LicenseChecker for LicenseCheckerImpl {
     fn max_webhooks(&self) -> u32 {
         self.effective_limits().map_or(u32::MAX, |l| l.max_webhooks)
     }
-    fn max_tokens(&self) -> u32 {
-        self.effective_limits().map_or(u32::MAX, |l| l.max_tokens)
+    fn max_users(&self) -> u32 {
+        self.effective_limits().map_or(u32::MAX, |l| l.max_users)
     }
     fn max_roles(&self) -> u32 {
         self.effective_limits().map_or(u32::MAX, |l| l.max_roles)
@@ -125,7 +125,7 @@ mod tests {
         assert_eq!(checker.max_databases(), 20);
         assert_eq!(checker.max_workflows(), u32::MAX);
         assert_eq!(checker.max_webhooks(), u32::MAX);
-        assert_eq!(checker.max_tokens(), 50);
+        assert_eq!(checker.max_users(), 50);
         assert_eq!(checker.max_roles(), u32::MAX);
         assert!(!checker.is_enterprise());
     }

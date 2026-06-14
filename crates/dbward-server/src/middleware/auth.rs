@@ -21,6 +21,11 @@ fn auth_error_response(e: AuthError) -> (StatusCode, String) {
             serde_json::json!({"error": "internal server error", "code": "internal_error"})
                 .to_string(),
         ),
+        AuthError::UserLimitReached => (
+            StatusCode::PAYMENT_REQUIRED,
+            serde_json::json!({"error": "user limit reached", "code": "policy.limit_exceeded", "hint": "contact your administrator or upgrade to Pro"})
+                .to_string(),
+        ),
         _ => (
             StatusCode::UNAUTHORIZED,
             serde_json::json!({"error": "authentication failed", "code": "unauthorized"})
@@ -101,6 +106,33 @@ pub async fn auth_middleware(
                 log_auth_failure(&state, &e, &req);
                 auth_error_response(e)
             })?;
+
+        // User limit check: block new users when at limit
+        let user_exists = match state.user_repo().get(&subject_id) {
+            Ok(u) => u.is_some(),
+            Err(e) => {
+                tracing::error!("user_repo.get failed: {e}");
+                return Err(auth_error_response(AuthError::Internal(
+                    "user lookup failed".into(),
+                )));
+            }
+        };
+        if !user_exists {
+            let count = match state.user_repo().count_active() {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("user_repo.count_active failed: {e}");
+                    return Err(auth_error_response(AuthError::Internal(
+                        "user count failed".into(),
+                    )));
+                }
+            };
+            if count >= state.license_checker().max_users() {
+                let e = AuthError::UserLimitReached;
+                log_auth_failure(&state, &e, &req);
+                return Err(auth_error_response(e));
+            }
+        }
 
         // Upsert user
         let now = chrono::Utc::now();

@@ -65,6 +65,11 @@ impl SyncConfig {
         let mut toml_ids = Vec::new();
         let mut upserted = 0u64;
         let now = self.clock.now();
+
+        // Snapshot active users before sync for limit check
+        let before_ids: std::collections::HashSet<String> =
+            self.user_repo.list_active_ids()?.into_iter().collect();
+
         for u in &inputs {
             let status = match u.status.as_str() {
                 "active" => dbward_domain::entities::UserStatus::Active,
@@ -144,6 +149,22 @@ impl SyncConfig {
         }
 
         let deleted = self.user_repo.delete_stale_config(&toml_ids)?;
+
+        // User limit check: block if new active users were added while at/over limit
+        let count_after = self.user_repo.count_active()?;
+        let max = self.license_checker.max_users();
+        if before_ids.len() as u32 > max || count_after > max {
+            let after_ids: std::collections::HashSet<String> =
+                self.user_repo.list_active_ids()?.into_iter().collect();
+            let newly_active: Vec<_> = after_ids.difference(&before_ids).collect();
+            if !newly_active.is_empty() {
+                return Err(AppError::Validation(format!(
+                    "user limit exceeded (max {max}, have {count_after}). \
+                     Cannot add new active users while at or over limit."
+                )));
+            }
+        }
+
         Ok((deleted, upserted))
     }
 

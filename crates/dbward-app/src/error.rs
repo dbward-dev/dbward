@@ -86,6 +86,9 @@ pub enum AuthError {
 
     #[error("internal: {0}")]
     Internal(String),
+
+    #[error("user limit reached")]
+    UserLimitReached,
 }
 
 impl AuthError {
@@ -99,6 +102,7 @@ impl AuthError {
             AuthError::OidcNotConfigured => "auth.oidc_not_configured",
             AuthError::OidcVerificationFailed(_) => "auth.oidc_failed",
             AuthError::Internal(_) => "internal_error",
+            AuthError::UserLimitReached => "policy.limit_exceeded",
         }
     }
 }

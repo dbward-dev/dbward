@@ -116,19 +116,6 @@ impl TokenManage {
             }
         }
 
-        // Free tier limit (bootstrap tokens created by system are exempt)
-        let is_bootstrap = input
-            .name
-            .as_deref()
-            .is_some_and(|n| n.starts_with("bootstrap-"))
-            && user.subject_id == "system";
-        if !is_bootstrap {
-            let count = self.token_repo.count_active()?;
-            if count >= self.license.max_tokens() {
-                return Err(AppError::PlanLimit("token limit reached".into()));
-            }
-        }
-
         // Generate token
         let raw = self.token_gen.generate_token_value();
         let prefix = if raw.len() >= 12 {
@@ -473,7 +460,7 @@ mod tests {
     }
     struct FakeLicense;
     impl LicenseChecker for FakeLicense {
-        fn max_tokens(&self) -> u32 {
+        fn max_users(&self) -> u32 {
             10
         }
         fn max_databases(&self) -> u32 {
@@ -583,24 +570,6 @@ mod tests {
             &dbward_domain::entities::AuditContext::System,
         );
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn create_rejects_at_free_limit() {
-        let uc = make_uc(vec![], 10); // already at limit
-        let result = uc.create(
-            TokenCreateInput {
-                subject_id: "bob".into(),
-                subject_type: "user".into(),
-                name: None,
-                roles: vec![],
-                groups: vec![],
-                expires_at: None,
-            },
-            &make_user(),
-            &dbward_domain::entities::AuditContext::System,
-        );
-        assert!(matches!(result, Err(AppError::PlanLimit(_))));
     }
 
     #[test]

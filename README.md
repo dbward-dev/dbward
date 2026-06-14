@@ -499,7 +499,7 @@ output = "stderr"              # "stderr" (default) or "file"
 | | Free | Pro ($149/mo) |
 |---|---|---|
 | Database connections | 3 | 20 |
-| API tokens | 10 | 50 |
+| Active users | 10 | 50 |
 | Workflow rules | Unlimited | Unlimited |
 | Webhooks | Unlimited | Unlimited |
 | Agents | Unlimited | Unlimited |

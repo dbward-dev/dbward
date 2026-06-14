@@ -4,13 +4,16 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 use dbward_app::error::AuthError;
-use dbward_app::ports::{OidcTokenVerifier, PolicyRepo, TokenRepo, TokenVerifier, UserRepo};
+use dbward_app::ports::{
+    LicenseChecker, OidcTokenVerifier, PolicyRepo, TokenRepo, TokenVerifier, UserRepo,
+};
 use dbward_domain::auth::{AuthUser, ResolvedRole};
 
 pub struct ApiTokenVerifier {
     token_repo: Arc<dyn TokenRepo>,
     user_repo: Arc<dyn UserRepo>,
     policy_repo: Arc<dyn PolicyRepo>,
+    license_checker: Arc<dyn LicenseChecker>,
     oidc: Option<Arc<dyn OidcTokenVerifier>>,
 }
 
@@ -24,8 +27,14 @@ impl ApiTokenVerifier {
             token_repo,
             user_repo,
             policy_repo,
+            license_checker: Arc::new(crate::FreePlanChecker),
             oidc: None,
         }
+    }
+
+    pub fn with_license(mut self, license_checker: Arc<dyn LicenseChecker>) -> Self {
+        self.license_checker = license_checker;
+        self
     }
 
     pub fn with_oidc(mut self, oidc: Arc<dyn OidcTokenVerifier>) -> Self {
@@ -96,7 +105,22 @@ impl TokenVerifier for ApiTokenVerifier {
             )));
         }
 
-        // Auto-create user on first auth
+        // User limit check: only block if user does not yet exist
+        let user_exists = self
+            .user_repo
+            .get(&token.subject_id)
+            .map_err(|e| AuthError::Internal(e.to_string()))?
+            .is_some();
+        if !user_exists {
+            let count = self
+                .user_repo
+                .count_active()
+                .map_err(|e| AuthError::Internal(e.to_string()))?;
+            if count >= self.license_checker.max_users() {
+                return Err(AuthError::UserLimitReached);
+            }
+        }
+
         self.user_repo
             .ensure_exists(&token.subject_id)
             .map_err(|e| AuthError::Internal(e.to_string()))?;
