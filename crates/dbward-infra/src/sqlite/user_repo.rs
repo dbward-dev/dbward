@@ -227,6 +227,39 @@ impl UserRepo for SqliteUserRepo {
             .map_err(db_err("user: get_source"))?;
         Ok(result)
     }
+
+    fn list_stale_config_ids(&self, active_ids: &[String]) -> Result<Vec<String>, AppError> {
+        let conn = self.conn.lock();
+        if active_ids.is_empty() {
+            let mut stmt = conn
+                .prepare("SELECT id FROM users WHERE source = 'config'")
+                .map_err(db_err("user: list_stale_config_ids"))?;
+            let rows = stmt
+                .query_map([], |row| row.get(0))
+                .map_err(db_err("user: list_stale_config_ids"))?;
+            return rows
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(db_err("user: list_stale_config_ids"));
+        }
+        let placeholders: String = (1..=active_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql =
+            format!("SELECT id FROM users WHERE source = 'config' AND id NOT IN ({placeholders})");
+        let params: Vec<&dyn rusqlite::types::ToSql> = active_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let mut stmt = conn
+            .prepare(&sql)
+            .map_err(db_err("user: list_stale_config_ids"))?;
+        let rows = stmt
+            .query_map(params.as_slice(), |row| row.get(0))
+            .map_err(db_err("user: list_stale_config_ids"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(db_err("user: list_stale_config_ids"))
+    }
 }
 
 fn parse_user_status(s: &str) -> UserStatus {

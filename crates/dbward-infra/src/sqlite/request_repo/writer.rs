@@ -314,4 +314,66 @@ impl RequestWriter for SqliteRequestRepo {
         .map_err(db_err("request: mark_audit_incomplete"))?;
         Ok(())
     }
+
+    fn cancel_all_for_user_raw(
+        &self,
+        user_id: &str,
+        actor_id: &str,
+        reason: &str,
+        now: DateTime<Utc>,
+    ) -> Result<Vec<String>, AppError> {
+        let conn = self.conn.lock();
+        let now_str = now.to_rfc3339();
+
+        let ids: Vec<String> = {
+            let mut stmt = conn.prepare(
+                "SELECT id FROM requests WHERE requester = ?1 AND status IN ('pending','approved','auto_approved','break_glass','dispatched','running','execution_lost')"
+            ).map_err(db_err("request: cancel_all_for_user_raw"))?;
+            stmt.query_map(params![user_id], |r| r.get(0))
+                .map_err(db_err("request: cancel_all_for_user_raw"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(db_err("request: cancel_all_for_user_raw"))?
+        };
+
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        conn.execute(
+            "UPDATE requests SET status = 'cancelled', cancel_reason = ?2, cancelled_by = ?3, updated_at = ?4, resolved_at = ?4 WHERE requester = ?1 AND status IN ('pending','approved','auto_approved','break_glass','dispatched','running','execution_lost')",
+            params![user_id, reason, actor_id, now_str],
+        ).map_err(db_err("request: cancel_all_for_user_raw"))?;
+
+        for id in &ids {
+            let cancel_event = dbward_domain::entities::AuditEvent {
+                id: String::new(),
+                event_type: "request_cancelled".to_string(),
+                event_category: dbward_domain::entities::EventCategory::Approval,
+                event_version: 1,
+                outcome: dbward_domain::entities::EventOutcome::Success,
+                actor_id: actor_id.to_string(),
+                actor_type: dbward_domain::entities::ActorType::System,
+                resource_type: Some("request".to_string()),
+                resource_id: Some(id.clone()),
+                peer_ip: None,
+                client_ip: None,
+                client_ip_source: None,
+                request_id: Some(id.clone()),
+                operation: None,
+                database_name: None,
+                environment: None,
+                detail_fingerprint: None,
+                detail_raw: None,
+                reason: Some(reason.to_string()),
+                metadata_json: "{}".to_string(),
+                prev_hash: None,
+                event_hash: String::new(),
+                created_at: now,
+            };
+            crate::sqlite::audit_helper::insert_audit_event_raw(&conn, &cancel_event)
+                .map_err(db_err("request: cancel_all_for_user_raw"))?;
+        }
+
+        Ok(ids)
+    }
 }

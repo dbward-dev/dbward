@@ -181,6 +181,43 @@ role = "developer"
 
 ---
 
+## User management
+
+### Config-managed users
+
+Pre-provision users and control their status in `server.toml`:
+
+```toml
+[[users]]
+id = "alice"
+status = "active"
+```
+
+On server start or config reload, the server reconciles user status:
+- **Suspend:** Revokes all tokens + cancels all pending requests (same effect as the API suspend endpoint).
+- **Reactivate:** Sets status to active. Revoked tokens remain revoked — issue new ones.
+- **Remove from config:** Revokes tokens, cancels requests, and deletes the user record.
+
+This is the recommended way to offboard users in token-only deployments.
+
+### OIDC users
+
+OIDC users are created with `source = "token"` and cannot be managed via `[[users]]` config (the source guard skips them). To disable an OIDC user:
+
+1. **API suspend**: `POST /api/users/{id}/suspend` — immediately blocks all requests (the server checks `is_suspended` on every request, even with a valid JWT).
+2. **IdP-side disable**: Prevents new JWT issuance. Existing JWTs are still checked against `is_suspended` per-request, so API suspend is effective regardless of JWT lifetime.
+
+### API suspend vs config suspend
+
+| Method | Effect | Persistence |
+|--------|--------|-------------|
+| `POST /api/users/{id}/suspend` | Immediate suspend + revoke | Reverts to config value on restart |
+| `status = "suspended"` in config | Suspend + revoke on restart/reload | Permanent until config changes |
+
+For config-managed users, prefer config changes for permanent status changes.
+
+---
+
 ## Groups
 
 Groups enable team-based approval workflows. They come from the `groups` claim in the OIDC JWT.

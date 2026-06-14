@@ -129,6 +129,16 @@ To immediately revoke an agent's ability to execute:
 - Use encrypted swap or disable swap entirely
 - Do not include `signing.key` in backups unless encrypted
 
+### User Revocation
+
+To immediately disable a user's access:
+
+1. **Config suspend** (recommended): Set `status = "suspended"` in `server.toml` and restart/reload — revokes all tokens and cancels pending requests atomically.
+2. **API suspend**: `POST /api/users/{id}/suspend` — immediate but reverts to config value on restart.
+3. **Remove from config**: Remove the `[[users]]` entry — deletes the user record entirely.
+
+For OIDC users, use `POST /api/users/{id}/suspend` for immediate access revocation. The server checks `is_suspended` on every request regardless of JWT validity. Additionally, disable the account in your IdP to prevent new JWT issuance.
+
 ## Slack & Webhook Security
 
 ### Slack

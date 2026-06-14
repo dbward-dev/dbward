@@ -74,6 +74,20 @@ impl SyncConfig {
                     dbward_domain::entities::UserStatus::Suspended
                 }
             };
+
+            // Source guard + new-user detection
+            let is_new = match self.user_repo.get_source(&u.id)? {
+                None => true,
+                Some(ref s) if s != "config" => {
+                    tracing::warn!(
+                        user_id = %u.id, existing_source = %s,
+                        "config user conflicts with existing non-config user, skipping"
+                    );
+                    continue;
+                }
+                Some(_) => false,
+            };
+
             let user = dbward_domain::entities::User {
                 id: u.id.clone(),
                 display_name: None,
@@ -89,8 +103,46 @@ impl SyncConfig {
             self.user_repo.set_source(&u.id, "config")?;
             toml_ids.push(u.id.clone());
             upserted += 1;
+
+            // Status reconcile
+            match status {
+                dbward_domain::entities::UserStatus::Suspended => {
+                    let changed = self.user_repo.suspend(&u.id, now)?;
+                    if changed || is_new {
+                        self.token_repo.revoke_all_for_user(&u.id, now)?;
+                        self.request_writer.cancel_all_for_user_raw(
+                            &u.id,
+                            "system",
+                            "user suspended via config",
+                            now,
+                        )?;
+                        tracing::info!(user_id = %u.id,
+                            "user suspended from config: tokens revoked, requests cancelled");
+                    }
+                }
+                dbward_domain::entities::UserStatus::Active => {
+                    let changed = self.user_repo.activate(&u.id, now)?;
+                    if changed {
+                        tracing::info!(user_id = %u.id, "user activated from config");
+                    }
+                }
+            }
         }
-        // AllowDangling: unconditional delete of stale
+
+        // Stale reconciliation: revoke + cancel before DELETE
+        let stale_ids = self.user_repo.list_stale_config_ids(&toml_ids)?;
+        for id in &stale_ids {
+            self.token_repo.revoke_all_for_user(id, now)?;
+            self.request_writer.cancel_all_for_user_raw(
+                id,
+                "system",
+                "user removed from config",
+                now,
+            )?;
+            tracing::info!(user_id = %id,
+                "user removed from config: tokens revoked, requests cancelled");
+        }
+
         let deleted = self.user_repo.delete_stale_config(&toml_ids)?;
         Ok((deleted, upserted))
     }

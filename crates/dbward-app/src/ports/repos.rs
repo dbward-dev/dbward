@@ -110,6 +110,17 @@ pub trait RequestWriter: Send + Sync {
         now: &str,
     ) -> Result<bool, AppError>;
     fn mark_audit_incomplete(&self, id: &str) -> Result<(), AppError>;
+    /// Like cancel_all_for_user but without its own transaction (participates in caller's tx).
+    /// Uses actor_type=System, actor_id="system".
+    fn cancel_all_for_user_raw(
+        &self,
+        _user_id: &str,
+        _actor_id: &str,
+        _reason: &str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
+    }
 }
 
 // --- ApprovalRepo ---
@@ -273,6 +284,10 @@ pub trait UserRepo: Send + Sync {
     }
     fn get_source(&self, _user_id: &str) -> Result<Option<String>, AppError> {
         Ok(None)
+    }
+    /// Return IDs of config-managed users not in the active set (stale).
+    fn list_stale_config_ids(&self, _active_ids: &[String]) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
     }
 }
 

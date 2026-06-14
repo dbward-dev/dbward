@@ -6,7 +6,8 @@ use std::sync::Arc;
 use crate::error::AppError;
 use crate::ports::{
     Clock, ConfigGenerationRepo, DatabaseRegistry, GroupRepo, IdGenerator, LicenseChecker,
-    Notifier, PolicyRepo, RoleBindingRepo, SsrfValidator, UserRepo, WebhookRepo,
+    Notifier, PolicyRepo, RequestWriter, RoleBindingRepo, SsrfValidator, TokenRepo, UserRepo,
+    WebhookRepo,
 };
 
 /// Provides transaction semantics for config sync.
@@ -24,6 +25,8 @@ pub struct SyncConfig {
     pub user_repo: Arc<dyn UserRepo>,
     pub group_repo: Arc<dyn GroupRepo>,
     pub role_binding_repo: Arc<dyn RoleBindingRepo>,
+    pub token_repo: Arc<dyn TokenRepo>,
+    pub request_writer: Arc<dyn RequestWriter>,
     pub notifier: Arc<dyn Notifier>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
@@ -436,6 +439,126 @@ mod tests {
         }
     }
 
+    struct FakeTokenRepo;
+    impl TokenRepo for FakeTokenRepo {
+        fn create(&self, _: &dbward_domain::entities::Token) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn verify(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+            Ok(None)
+        }
+        fn list(&self) -> Result<Vec<dbward_domain::entities::Token>, AppError> {
+            Ok(vec![])
+        }
+        fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+            Ok(None)
+        }
+        fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn revoke_all_for_user(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn count_active(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+            Ok(0)
+        }
+    }
+
+    struct FakeRequestWriter;
+    impl crate::ports::RequestWriter for FakeRequestWriter {
+        fn insert(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn create_and_dispatch(
+            &self,
+            _: &dbward_domain::entities::Request,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn mark_approved(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_rejected(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_cancelled(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_dispatched(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_running(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_executed(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_failed(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn cancel_all_for_user(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+            _: &dbward_domain::entities::AuditContext,
+        ) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_approved_from_dispatched_and_record(
+            &self,
+            _: &str,
+            _: &dbward_domain::entities::AuditEvent,
+            _: &str,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn mark_audit_incomplete(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
     struct FakeGroupRepo;
     impl GroupRepo for FakeGroupRepo {
         fn delete_by_source(&self, _: &str) -> Result<u64, AppError> {
@@ -534,6 +657,8 @@ mod tests {
             user_repo: Arc::new(FakeUserRepo),
             group_repo: Arc::new(FakeGroupRepo),
             role_binding_repo: Arc::new(FakeRoleBindingRepo),
+            token_repo: Arc::new(FakeTokenRepo),
+            request_writer: Arc::new(FakeRequestWriter),
             notifier: Arc::new(FakeNotifier),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
@@ -856,5 +981,594 @@ mod tests {
         });
         assert_eq!(body["code"], "config_only");
         assert!(body["error"].as_str().unwrap().contains("config-managed"));
+    }
+
+    // --- ERR-3 tests ---
+
+    #[test]
+    fn sync_users_reconciles_status_to_suspended() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct TrackingUserRepo;
+        impl UserRepo for TrackingUserRepo {
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
+                Ok(None)
+            }
+            fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> {
+                Ok(vec![])
+            }
+            fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn activate(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get_source(&self, _: &str) -> Result<Option<String>, AppError> {
+                Ok(Some("config".into()))
+            }
+            fn set_source(&self, _: &str, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_config(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn list_stale_config_ids(&self, _: &[String]) -> Result<Vec<String>, AppError> {
+                Ok(vec![])
+            }
+        }
+
+        struct TrackingTokenRepo {
+            revoked: AtomicU32,
+        }
+        impl TokenRepo for TrackingTokenRepo {
+            fn create(&self, _: &dbward_domain::entities::Token) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn verify(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::Token>, AppError> {
+                Ok(vec![])
+            }
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn revoke_all_for_user(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<u32, AppError> {
+                self.revoked.fetch_add(1, Ordering::SeqCst);
+                Ok(1)
+            }
+            fn count_active(&self) -> Result<u32, AppError> {
+                Ok(0)
+            }
+            fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+                Ok(0)
+            }
+        }
+
+        let token_repo = Arc::new(TrackingTokenRepo {
+            revoked: AtomicU32::new(0),
+        });
+        let mut sync = make_sync();
+        sync.user_repo = Arc::new(TrackingUserRepo);
+        sync.token_repo = token_repo.clone();
+
+        let result = sync.sync_users(vec![UserInput {
+            id: "alice".into(),
+            status: "suspended".into(),
+        }]);
+        assert!(result.is_ok());
+        assert_eq!(
+            token_repo.revoked.load(Ordering::SeqCst),
+            1,
+            "should revoke on suspend"
+        );
+    }
+
+    #[test]
+    fn sync_users_reconciles_status_to_active() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct ActivatingUserRepo;
+        impl UserRepo for ActivatingUserRepo {
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
+                Ok(None)
+            }
+            fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> {
+                Ok(vec![])
+            }
+            fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn activate(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get_source(&self, _: &str) -> Result<Option<String>, AppError> {
+                Ok(Some("config".into()))
+            }
+            fn set_source(&self, _: &str, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_config(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn list_stale_config_ids(&self, _: &[String]) -> Result<Vec<String>, AppError> {
+                Ok(vec![])
+            }
+        }
+
+        struct TrackingTokenRepo {
+            revoked: AtomicU32,
+        }
+        impl TokenRepo for TrackingTokenRepo {
+            fn create(&self, _: &dbward_domain::entities::Token) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn verify(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::Token>, AppError> {
+                Ok(vec![])
+            }
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn revoke_all_for_user(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<u32, AppError> {
+                self.revoked.fetch_add(1, Ordering::SeqCst);
+                Ok(0)
+            }
+            fn count_active(&self) -> Result<u32, AppError> {
+                Ok(0)
+            }
+            fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+                Ok(0)
+            }
+        }
+
+        let token_repo = Arc::new(TrackingTokenRepo {
+            revoked: AtomicU32::new(0),
+        });
+        let mut sync = make_sync();
+        sync.user_repo = Arc::new(ActivatingUserRepo);
+        sync.token_repo = token_repo.clone();
+
+        let result = sync.sync_users(vec![UserInput {
+            id: "bob".into(),
+            status: "active".into(),
+        }]);
+        assert!(result.is_ok());
+        assert_eq!(
+            token_repo.revoked.load(Ordering::SeqCst),
+            0,
+            "should NOT revoke on activate"
+        );
+    }
+
+    #[test]
+    fn sync_users_noop_when_status_unchanged() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct AlreadySuspendedUserRepo;
+        impl UserRepo for AlreadySuspendedUserRepo {
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
+                Ok(None)
+            }
+            fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> {
+                Ok(vec![])
+            }
+            fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn activate(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get_source(&self, _: &str) -> Result<Option<String>, AppError> {
+                Ok(Some("config".into()))
+            }
+            fn set_source(&self, _: &str, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_config(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn list_stale_config_ids(&self, _: &[String]) -> Result<Vec<String>, AppError> {
+                Ok(vec![])
+            }
+        }
+
+        struct TrackingTokenRepo {
+            revoked: AtomicU32,
+        }
+        impl TokenRepo for TrackingTokenRepo {
+            fn create(&self, _: &dbward_domain::entities::Token) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn verify(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::Token>, AppError> {
+                Ok(vec![])
+            }
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn revoke_all_for_user(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<u32, AppError> {
+                self.revoked.fetch_add(1, Ordering::SeqCst);
+                Ok(0)
+            }
+            fn count_active(&self) -> Result<u32, AppError> {
+                Ok(0)
+            }
+            fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+                Ok(0)
+            }
+        }
+
+        let token_repo = Arc::new(TrackingTokenRepo {
+            revoked: AtomicU32::new(0),
+        });
+        let mut sync = make_sync();
+        sync.user_repo = Arc::new(AlreadySuspendedUserRepo);
+        sync.token_repo = token_repo.clone();
+
+        let result = sync.sync_users(vec![UserInput {
+            id: "carol".into(),
+            status: "suspended".into(),
+        }]);
+        assert!(result.is_ok());
+        assert_eq!(
+            token_repo.revoked.load(Ordering::SeqCst),
+            0,
+            "should NOT revoke when already suspended"
+        );
+    }
+
+    #[test]
+    fn sync_users_stale_delete_revokes_and_cancels() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct StaleUserRepo;
+        impl UserRepo for StaleUserRepo {
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
+                Ok(None)
+            }
+            fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> {
+                Ok(vec![])
+            }
+            fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn activate(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get_source(&self, _: &str) -> Result<Option<String>, AppError> {
+                Ok(Some("config".into()))
+            }
+            fn set_source(&self, _: &str, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_config(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(1)
+            }
+            fn list_stale_config_ids(&self, _: &[String]) -> Result<Vec<String>, AppError> {
+                Ok(vec!["stale-user".into()])
+            }
+        }
+
+        struct TrackingTokenRepo {
+            revoked: AtomicU32,
+        }
+        impl TokenRepo for TrackingTokenRepo {
+            fn create(&self, _: &dbward_domain::entities::Token) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn verify(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::Token>, AppError> {
+                Ok(vec![])
+            }
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn revoke_all_for_user(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<u32, AppError> {
+                self.revoked.fetch_add(1, Ordering::SeqCst);
+                Ok(1)
+            }
+            fn count_active(&self) -> Result<u32, AppError> {
+                Ok(0)
+            }
+            fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+                Ok(0)
+            }
+        }
+
+        let token_repo = Arc::new(TrackingTokenRepo {
+            revoked: AtomicU32::new(0),
+        });
+        let mut sync = make_sync();
+        sync.user_repo = Arc::new(StaleUserRepo);
+        sync.token_repo = token_repo.clone();
+
+        // Sync with "alice" active — "stale-user" not in toml_ids → stale
+        let result = sync.sync_users(vec![UserInput {
+            id: "alice".into(),
+            status: "active".into(),
+        }]);
+        assert!(result.is_ok());
+        let (deleted, _) = result.unwrap();
+        assert_eq!(deleted, 1);
+        // revoke_all_for_user called for stale-user
+        assert_eq!(
+            token_repo.revoked.load(Ordering::SeqCst),
+            1,
+            "should revoke stale user tokens"
+        );
+    }
+
+    #[test]
+    fn sync_users_new_suspended_user_revokes_existing_tokens() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        // get_source returns None = new user
+        struct NewUserRepo;
+        impl UserRepo for NewUserRepo {
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
+                Ok(None)
+            }
+            fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> {
+                Ok(vec![])
+            }
+            fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(false) // INSERT with suspended → suspend() returns false
+            }
+            fn activate(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get_source(&self, _: &str) -> Result<Option<String>, AppError> {
+                Ok(None)
+            }
+            fn set_source(&self, _: &str, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_config(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn list_stale_config_ids(&self, _: &[String]) -> Result<Vec<String>, AppError> {
+                Ok(vec![])
+            }
+        }
+
+        struct TrackingTokenRepo {
+            revoked: AtomicU32,
+        }
+        impl TokenRepo for TrackingTokenRepo {
+            fn create(&self, _: &dbward_domain::entities::Token) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn verify(
+                &self,
+                _: &str,
+                _: &str,
+            ) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::Token>, AppError> {
+                Ok(vec![])
+            }
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::Token>, AppError> {
+                Ok(None)
+            }
+            fn revoke(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn revoke_all_for_user(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<u32, AppError> {
+                self.revoked.fetch_add(1, Ordering::SeqCst);
+                Ok(1)
+            }
+            fn count_active(&self) -> Result<u32, AppError> {
+                Ok(0)
+            }
+            fn purge_revoked(&self, _: &str) -> Result<u32, AppError> {
+                Ok(0)
+            }
+        }
+
+        let token_repo = Arc::new(TrackingTokenRepo {
+            revoked: AtomicU32::new(0),
+        });
+        let mut sync = make_sync();
+        sync.user_repo = Arc::new(NewUserRepo);
+        sync.token_repo = token_repo.clone();
+
+        let result = sync.sync_users(vec![UserInput {
+            id: "new-user".into(),
+            status: "suspended".into(),
+        }]);
+        assert!(result.is_ok());
+        assert_eq!(
+            token_repo.revoked.load(Ordering::SeqCst),
+            1,
+            "new suspended user must revoke even when suspend() returns false"
+        );
+    }
+
+    #[test]
+    fn sync_users_skips_non_config_source_user() {
+        use std::sync::Mutex;
+
+        struct TokenSourceUserRepo {
+            upserted: Mutex<Vec<String>>,
+        }
+        impl UserRepo for TokenSourceUserRepo {
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
+                Ok(None)
+            }
+            fn upsert(&self, u: &dbward_domain::entities::User) -> Result<(), AppError> {
+                self.upserted.lock().unwrap().push(u.id.clone());
+                Ok(())
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> {
+                Ok(vec![])
+            }
+            fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn activate(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get_source(&self, _: &str) -> Result<Option<String>, AppError> {
+                Ok(Some("token".into())) // OIDC/token source
+            }
+            fn set_source(&self, _: &str, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_config(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn list_stale_config_ids(&self, _: &[String]) -> Result<Vec<String>, AppError> {
+                Ok(vec![])
+            }
+        }
+
+        let user_repo = Arc::new(TokenSourceUserRepo {
+            upserted: Mutex::new(vec![]),
+        });
+        let mut sync = make_sync();
+        sync.user_repo = user_repo.clone();
+
+        let result = sync.sync_users(vec![UserInput {
+            id: "oidc-user".into(),
+            status: "suspended".into(),
+        }]);
+        assert!(result.is_ok());
+        let (_, upserted) = result.unwrap();
+        assert_eq!(upserted, 0, "should skip non-config source user");
+        assert!(
+            user_repo.upserted.lock().unwrap().is_empty(),
+            "upsert should not be called"
+        );
     }
 }
