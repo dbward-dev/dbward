@@ -1571,4 +1571,206 @@ mod tests {
             "upsert should not be called"
         );
     }
+
+    #[test]
+    fn sync_users_blocks_new_active_when_over_limit() {
+        use std::sync::Mutex;
+
+        struct LimitedUserRepo {
+            upserted: Mutex<Vec<String>>,
+        }
+        impl UserRepo for LimitedUserRepo {
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
+                Ok(None)
+            }
+            fn upsert(&self, u: &dbward_domain::entities::User) -> Result<(), AppError> {
+                self.upserted.lock().unwrap().push(u.id.clone());
+                Ok(())
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> {
+                Ok(vec![])
+            }
+            fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn activate(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get_source(&self, _: &str) -> Result<Option<String>, AppError> {
+                Ok(None)
+            }
+            fn set_source(&self, _: &str, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_config(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn list_stale_config_ids(&self, _: &[String]) -> Result<Vec<String>, AppError> {
+                Ok(vec![])
+            }
+            fn count_active(&self) -> Result<u32, AppError> {
+                Ok(2)
+            }
+            fn list_active_ids(&self) -> Result<Vec<String>, AppError> {
+                // After upsert, new-user becomes active
+                let upserted = self.upserted.lock().unwrap();
+                Ok(upserted.clone())
+            }
+        }
+
+        struct TightLicense;
+        impl LicenseChecker for TightLicense {
+            fn max_users(&self) -> u32 {
+                1
+            }
+            fn max_databases(&self) -> u32 {
+                100
+            }
+            fn max_workflows(&self) -> u32 {
+                100
+            }
+            fn max_webhooks(&self) -> u32 {
+                100
+            }
+            fn max_roles(&self) -> u32 {
+                100
+            }
+            fn is_enterprise(&self) -> bool {
+                false
+            }
+            fn configured_plan(&self) -> &str {
+                "free"
+            }
+            fn effective_plan(&self) -> &str {
+                "free"
+            }
+            fn is_expired(&self) -> bool {
+                false
+            }
+            fn check_expiry(&self, _: chrono::DateTime<chrono::Utc>) {}
+        }
+
+        let user_repo = Arc::new(LimitedUserRepo {
+            upserted: Mutex::new(vec![]),
+        });
+        let mut sync = make_sync();
+        sync.user_repo = user_repo;
+        sync.license_checker = Arc::new(TightLicense);
+
+        let result = sync.sync_users(vec![UserInput {
+            id: "new-user".into(),
+            status: "active".into(),
+        }]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, AppError::Validation(ref msg) if msg.contains("user limit exceeded")),
+            "expected Validation with user limit, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn sync_users_allows_existing_overage_without_new_users() {
+        // Simulate: already over limit, but no new active users added
+        struct OverageUserRepo;
+        impl UserRepo for OverageUserRepo {
+            fn get(&self, _: &str) -> Result<Option<dbward_domain::entities::User>, AppError> {
+                Ok(None)
+            }
+            fn upsert(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn list(&self) -> Result<Vec<dbward_domain::entities::User>, AppError> {
+                Ok(vec![])
+            }
+            fn suspend(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn activate(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get_source(&self, _: &str) -> Result<Option<String>, AppError> {
+                Ok(Some("config".into()))
+            }
+            fn set_source(&self, _: &str, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_config(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn list_stale_config_ids(&self, _: &[String]) -> Result<Vec<String>, AppError> {
+                Ok(vec![])
+            }
+            fn count_active(&self) -> Result<u32, AppError> {
+                Ok(20)
+            }
+            fn list_active_ids(&self) -> Result<Vec<String>, AppError> {
+                // Same set before and after — "existing-user" was already active
+                Ok(vec!["existing-user".into()])
+            }
+        }
+
+        struct TightLicense2;
+        impl LicenseChecker for TightLicense2 {
+            fn max_users(&self) -> u32 {
+                5
+            }
+            fn max_databases(&self) -> u32 {
+                100
+            }
+            fn max_workflows(&self) -> u32 {
+                100
+            }
+            fn max_webhooks(&self) -> u32 {
+                100
+            }
+            fn max_roles(&self) -> u32 {
+                100
+            }
+            fn is_enterprise(&self) -> bool {
+                false
+            }
+            fn configured_plan(&self) -> &str {
+                "free"
+            }
+            fn effective_plan(&self) -> &str {
+                "free"
+            }
+            fn is_expired(&self) -> bool {
+                false
+            }
+            fn check_expiry(&self, _: chrono::DateTime<chrono::Utc>) {}
+        }
+
+        let mut sync = make_sync();
+        sync.user_repo = Arc::new(OverageUserRepo);
+        sync.license_checker = Arc::new(TightLicense2);
+
+        // existing-user is already in config, no new users
+        let result = sync.sync_users(vec![UserInput {
+            id: "existing-user".into(),
+            status: "active".into(),
+        }]);
+        assert!(result.is_ok(), "should allow existing overage: {result:?}");
+    }
 }
