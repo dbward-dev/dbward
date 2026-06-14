@@ -621,7 +621,7 @@ mod tests {
         fn max_webhooks(&self) -> u32 {
             100
         }
-        fn max_tokens(&self) -> u32 {
+        fn max_users(&self) -> u32 {
             100
         }
         fn max_roles(&self) -> u32 {
@@ -845,7 +845,7 @@ mod tests {
             fn max_webhooks(&self) -> u32 {
                 100
             }
-            fn max_tokens(&self) -> u32 {
+            fn max_users(&self) -> u32 {
                 100
             }
             fn max_roles(&self) -> u32 {

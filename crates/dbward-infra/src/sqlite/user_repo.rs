@@ -130,17 +130,12 @@ impl UserRepo for SqliteUserRepo {
     ) -> Result<(), AppError> {
         let conn = self.conn.lock();
         let now = chrono::Utc::now().to_rfc3339();
-        // Upsert user if not exists
-        conn.execute(
-            "INSERT OR IGNORE INTO users (id, groups_json, status, created_at, updated_at) VALUES (?1, '[]', 'active', ?2, ?2)",
-            rusqlite::params![subject_id, now],
-        ).map_err(db_err("user: update_slack_user_id"))?;
-        // Update slack_user_id
         let result = conn.execute(
             "UPDATE users SET slack_user_id = ?1, updated_at = ?2 WHERE id = ?3",
             rusqlite::params![slack_user_id, now, subject_id],
         );
         match result {
+            Ok(0) => Err(AppError::NotFound("user not found".into())),
             Ok(_) => Ok(()),
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation =>
@@ -259,6 +254,30 @@ impl UserRepo for SqliteUserRepo {
             .map_err(db_err("user: list_stale_config_ids"))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(db_err("user: list_stale_config_ids"))
+    }
+
+    fn count_active(&self) -> Result<u32, AppError> {
+        let conn = self.conn.lock();
+        let count: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE status = 'active'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(db_err("user: count_active"))?;
+        Ok(count)
+    }
+
+    fn list_active_ids(&self) -> Result<Vec<String>, AppError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT id FROM users WHERE status = 'active'")
+            .map_err(db_err("user: list_active_ids"))?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(db_err("user: list_active_ids"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(db_err("user: list_active_ids"))
     }
 }
 

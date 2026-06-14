@@ -568,7 +568,7 @@ impl BreakGlassMetrics for NoopBreakGlassMetrics {
 
 struct FakeLicenseChecker;
 impl LicenseChecker for FakeLicenseChecker {
-    fn max_tokens(&self) -> u32 {
+    fn max_users(&self) -> u32 {
         10
     }
     fn max_databases(&self) -> u32 {

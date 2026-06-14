@@ -2,6 +2,7 @@ mod common;
 use common::*;
 
 use chrono::Utc;
+use dbward_app::error::AppError;
 use dbward_app::ports::*;
 use dbward_domain::auth::*;
 use dbward_domain::entities::*;
@@ -391,4 +392,31 @@ fn suspend_from_unknown_status() {
     // After explicit suspend, status is now "suspended"
     let user = repo.get("broken2").unwrap().unwrap();
     assert_eq!(user.status, UserStatus::Suspended);
+}
+
+#[test]
+fn count_active_excludes_suspended() {
+    let conn = setup();
+    let repo = SqliteUserRepo::new(conn.clone());
+
+    repo.ensure_exists("alice").unwrap();
+    repo.ensure_exists("bob").unwrap();
+    repo.ensure_exists("carol").unwrap();
+    repo.suspend("bob", Utc::now()).unwrap();
+
+    assert_eq!(repo.count_active().unwrap(), 2);
+    let ids = repo.list_active_ids().unwrap();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&"alice".to_string()));
+    assert!(ids.contains(&"carol".to_string()));
+    assert!(!ids.contains(&"bob".to_string()));
+}
+
+#[test]
+fn update_slack_user_id_returns_not_found_for_missing_user() {
+    let conn = setup();
+    let repo = SqliteUserRepo::new(conn.clone());
+
+    let result = repo.update_slack_user_id("ghost", Some("U12345"));
+    assert!(matches!(result, Err(AppError::NotFound(_))));
 }

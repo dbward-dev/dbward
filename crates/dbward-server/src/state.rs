@@ -369,6 +369,7 @@ impl<'a> UserUseCases<'a> {
             request_writer: s.request_writer.clone(),
             audit: s.audit_logger.clone(),
             clock: s.clock.clone(),
+            license: s.license_checker.clone(),
         }
     }
 

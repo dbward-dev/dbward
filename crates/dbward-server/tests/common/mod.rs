@@ -122,7 +122,7 @@ impl WebhookSender for NoopWebhookSender {
 
 pub struct NoopLicenseChecker;
 impl LicenseChecker for NoopLicenseChecker {
-    fn max_tokens(&self) -> u32 {
+    fn max_users(&self) -> u32 {
         10
     }
     fn max_databases(&self) -> u32 {

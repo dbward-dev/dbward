@@ -384,6 +384,7 @@ pub async fn run_from_args(
             .map_err(|e| format!("config: {e}"))?
     };
 
+    let token_verifier_impl = token_verifier_impl.with_license(license_checker.clone());
     let token_verifier: Arc<dyn dbward_app::ports::TokenVerifier> = Arc::new(token_verifier_impl);
 
     let token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator> =

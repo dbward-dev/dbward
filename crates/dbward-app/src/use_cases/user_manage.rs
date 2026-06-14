@@ -13,6 +13,7 @@ pub struct UserManage {
     pub request_writer: Arc<dyn RequestWriter>,
     pub audit: Arc<dyn AuditLogger>,
     pub clock: Arc<dyn Clock>,
+    pub license: Arc<dyn LicenseChecker>,
 }
 
 pub struct UserListOutput {
@@ -98,9 +99,18 @@ impl UserManage {
             .authorize_global(user, Permission::UserWrite)
             .map_err(AppError::Forbidden)?;
 
-        self.user_repo
+        let existing = self
+            .user_repo
             .get(user_id)?
             .ok_or_else(|| AppError::NotFound("user not found".into()))?;
+
+        // Only check limit when transitioning from suspended to active
+        if existing.status == dbward_domain::entities::UserStatus::Suspended {
+            let count = self.user_repo.count_active()?;
+            if count >= self.license.max_users() {
+                return Err(AppError::PlanLimit("user limit reached".into()));
+            }
+        }
 
         let now = self.clock.now();
         self.user_repo.activate(user_id, now)?;
@@ -333,6 +343,38 @@ mod tests {
         }
     }
 
+    struct FakeLicense;
+    impl LicenseChecker for FakeLicense {
+        fn max_users(&self) -> u32 {
+            u32::MAX
+        }
+        fn max_databases(&self) -> u32 {
+            u32::MAX
+        }
+        fn max_workflows(&self) -> u32 {
+            u32::MAX
+        }
+        fn max_webhooks(&self) -> u32 {
+            u32::MAX
+        }
+        fn max_roles(&self) -> u32 {
+            u32::MAX
+        }
+        fn is_enterprise(&self) -> bool {
+            false
+        }
+        fn configured_plan(&self) -> &str {
+            "free"
+        }
+        fn effective_plan(&self) -> &str {
+            "free"
+        }
+        fn is_expired(&self) -> bool {
+            false
+        }
+        fn check_expiry(&self, _: chrono::DateTime<chrono::Utc>) {}
+    }
+
     fn admin_user() -> AuthUser {
         AuthUser {
             subject_id: "admin".into(),
@@ -356,6 +398,7 @@ mod tests {
             request_writer: Arc::new(FakeRequestRepo),
             audit: Arc::new(FakeAudit),
             clock: Arc::new(FakeClock),
+            license: Arc::new(FakeLicense),
         }
     }
 
@@ -406,5 +449,88 @@ mod tests {
             uc.activate("ghost", &admin_user(), &AuditContext::System),
             Err(AppError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn activate_blocked_at_user_limit() {
+        struct ZeroLicense;
+        impl LicenseChecker for ZeroLicense {
+            fn max_users(&self) -> u32 {
+                0
+            }
+            fn max_databases(&self) -> u32 {
+                u32::MAX
+            }
+            fn max_workflows(&self) -> u32 {
+                u32::MAX
+            }
+            fn max_webhooks(&self) -> u32 {
+                u32::MAX
+            }
+            fn max_roles(&self) -> u32 {
+                u32::MAX
+            }
+            fn is_enterprise(&self) -> bool {
+                false
+            }
+            fn configured_plan(&self) -> &str {
+                "free"
+            }
+            fn effective_plan(&self) -> &str {
+                "free"
+            }
+            fn is_expired(&self) -> bool {
+                false
+            }
+            fn check_expiry(&self, _: chrono::DateTime<chrono::Utc>) {}
+        }
+        struct SuspendedUserRepo;
+        impl UserRepo for SuspendedUserRepo {
+            fn get(&self, _: &str) -> Result<Option<User>, AppError> {
+                Ok(Some(User {
+                    id: "u1".into(),
+                    display_name: None,
+                    email: None,
+                    groups: vec![],
+                    roles: vec![],
+                    status: dbward_domain::entities::UserStatus::Suspended,
+                    last_seen_at: None,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                }))
+            }
+            fn upsert(&self, _: &User) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn list(&self) -> Result<Vec<User>, AppError> {
+                Ok(vec![])
+            }
+            fn suspend(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn activate(&self, _: &str, _: DateTime<Utc>) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
+                Ok(true)
+            }
+            fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn count_active(&self) -> Result<u32, AppError> {
+                Ok(5)
+            }
+        }
+        let uc = UserManage {
+            authorizer: Arc::new(AllowAll),
+            user_repo: Arc::new(SuspendedUserRepo),
+            token_repo: Arc::new(FakeTokenRepo),
+            request_writer: Arc::new(FakeRequestRepo),
+            audit: Arc::new(FakeAudit),
+            clock: Arc::new(FakeClock),
+            license: Arc::new(ZeroLicense),
+        };
+        let result = uc.activate("u1", &admin_user(), &AuditContext::System);
+        assert!(matches!(result, Err(AppError::PlanLimit(_))));
     }
 }
