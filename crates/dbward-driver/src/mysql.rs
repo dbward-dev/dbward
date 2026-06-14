@@ -29,20 +29,14 @@ pub struct MysqlDriver {
 impl MysqlDriver {
     pub async fn connect(
         url: &str,
-        statement_timeout_secs: Option<u64>,
+        _statement_timeout_secs: Option<u64>,
     ) -> Result<Self, DriverError> {
-        let mut opts = sqlx::mysql::MySqlPoolOptions::new().max_connections(5);
-        if let Some(secs) = statement_timeout_secs {
-            let ms = secs * 1000;
-            opts = opts.after_connect(move |conn, _meta| {
-                Box::pin(async move {
-                    sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
-                        .execute(&mut *conn)
-                        .await?;
-                    Ok(())
-                })
-            });
-        }
+        // MySQL max_execution_time only applies to SELECT statements (not DML).
+        // Each path sets it explicitly where needed:
+        // - query_cancellable: sets per-call max_execution_time for SELECT protection
+        // - execute_cancellable: relies solely on tokio::time::timeout + KILL
+        // - explain: sets on a dedicated connection
+        let opts = sqlx::mysql::MySqlPoolOptions::new().max_connections(5);
         let pool = opts
             .connect(url)
             .await
@@ -272,12 +266,6 @@ impl QueryDriver for MysqlDriver {
             return Err(DriverError::Cancelled);
         }
 
-        let ms = timeout_secs * 1000;
-        sqlx::query(&format!("SET SESSION max_execution_time = {ms}"))
-            .execute(&mut **guard.conn_mut())
-            .await
-            .map_err(query_err)?;
-
         let conn_id = id;
         let url = self.url.clone();
         let deadline = Duration::from_secs(timeout_secs + 5);
@@ -327,10 +315,6 @@ impl QueryDriver for MysqlDriver {
                     .await
                     .is_ok()
                     && sqlx::query("SET autocommit = 1")
-                        .execute(&mut **guard.conn_mut())
-                        .await
-                        .is_ok()
-                    && sqlx::query("SET SESSION max_execution_time = 0")
                         .execute(&mut **guard.conn_mut())
                         .await
                         .is_ok();
