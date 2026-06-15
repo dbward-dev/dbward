@@ -28,9 +28,14 @@ use crate::server_client::ServerClient;
 #[command(
     name = "dbward",
     about = "DB operations workflow + approval engine",
-    version
+    version,
+    disable_version_flag = true
 )]
 pub struct Cli {
+    /// Print version
+    #[arg(short = 'v', long = "version", action = clap::ArgAction::Version)]
+    pub version: (),
+
     /// Path to config file (standalone mode: disables global merge)
     #[arg(long, env = "DBWARD_CONFIG", global = true)]
     pub config: Option<PathBuf>,

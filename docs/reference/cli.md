@@ -9,7 +9,7 @@ description: All dbward CLI commands and options
 
 | Option | Short | Env | Default | Description |
 |--------|-------|-----|---------|-------------|
-| `--version` | `-V` | | | Show version and exit |
+| `--version` | `-v` | | | Show version and exit |
 | `--config <PATH>` | | `DBWARD_CONFIG` | | Config file path (standalone mode) |
 | `--merge-global` | | | false | Merge global config when --config is set |
 | `--database <NAME>` | | `DBWARD_DATABASE` | | Target database |

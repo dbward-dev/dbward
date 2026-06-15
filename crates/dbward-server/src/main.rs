@@ -1,8 +1,17 @@
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "dbward-server", about = "dbward HTTP server", version)]
+#[command(
+    name = "dbward-server",
+    about = "dbward HTTP server",
+    version,
+    disable_version_flag = true
+)]
 struct Cli {
+    /// Print version
+    #[arg(short = 'v', long = "version", action = clap::ArgAction::Version)]
+    version: (),
+
     /// Listen address
     #[arg(long, default_value = "127.0.0.1:3000")]
     listen: String,

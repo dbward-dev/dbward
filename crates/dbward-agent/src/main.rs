@@ -5,9 +5,14 @@ use std::path::PathBuf;
 #[command(
     name = "dbward-agent",
     about = "dbward database execution agent",
-    version
+    version,
+    disable_version_flag = true
 )]
 struct Args {
+    /// Print version
+    #[arg(short = 'v', long = "version", action = clap::ArgAction::Version)]
+    version: (),
+
     /// Path to agent config file
     #[arg(long, default_value = "dbward-agent.toml")]
     config: PathBuf,
