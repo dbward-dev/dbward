@@ -124,6 +124,36 @@ STATUS=$(api_status GET /health "$ADMIN_TOKEN")
 # --- 5. Restart mock ---
 docker compose start mock-license 2>/dev/null
 
+# --- 6. Offline mode: no online validation ---
+echo ""
+echo "--- Test 5: --license-offline skips online validation ---"
+
+# Restart server with offline env var
+docker compose exec -d -e DBWARD_LICENSE_OFFLINE=true dbward-server sh -c "kill 1" 2>/dev/null || true
+# Instead: stop and restart with env set
+docker compose stop dbward-server 2>/dev/null
+DBWARD_LICENSE_OFFLINE=true docker compose up -d dbward-server 2>/dev/null
+sleep 5
+wait_for_server
+
+ADMIN_TOKEN=$(create_token "e2e-lov-offline-$TS" admin)
+
+# Wait longer than online interval to confirm no validation happens
+sleep 15
+SUCCESS_AFTER=$(curl -sf "$SERVER_URL/metrics" -H "Authorization: Bearer $ADMIN_TOKEN" | grep "^dbward_license_online_success_total" | awk '{print $2}')
+FAILURE_AFTER=$(curl -sf "$SERVER_URL/metrics" -H "Authorization: Bearer $ADMIN_TOKEN" | grep "^dbward_license_online_failure_total" | awk '{print $2}')
+
+if [ "${SUCCESS_AFTER:-0}" = "0" ] && [ "${FAILURE_AFTER:-0}" = "0" ]; then
+  pass "Offline mode: no online validation attempted"
+else
+  fail "Offline mode" "success=$SUCCESS_AFTER failure=$FAILURE_AFTER (expected 0)"
+fi
+
+# Restore normal mode
+unset DBWARD_LICENSE_OFFLINE
+docker compose up -d dbward-server 2>/dev/null
+sleep 3
+
 # --- Summary ---
 echo ""
 summary

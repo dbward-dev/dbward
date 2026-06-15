@@ -23,8 +23,9 @@ struct Cli {
     #[arg(long, env = "DBWARD_LICENSE_FILE")]
     license_file: Option<String>,
 
-    /// Disable online license validation (offline mode)
-    #[arg(long, env = "DBWARD_LICENSE_OFFLINE")]
+    /// Disable online license validation (offline mode).
+    /// Also enabled by env DBWARD_LICENSE_OFFLINE=true.
+    #[arg(long)]
     license_offline: bool,
 
     /// License validation API URL
@@ -46,7 +47,8 @@ async fn main() {
         cli.force_bootstrap,
         cli.license_key.as_deref(),
         cli.license_file.as_deref(),
-        cli.license_offline,
+        cli.license_offline
+            || std::env::var("DBWARD_LICENSE_OFFLINE").unwrap_or_default() == "true",
         &cli.license_url,
     )
     .await;
