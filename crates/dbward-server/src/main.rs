@@ -1,7 +1,7 @@
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "dbward-server", about = "dbward HTTP server")]
+#[command(name = "dbward-server", about = "dbward HTTP server", version)]
 struct Cli {
     /// Listen address
     #[arg(long, default_value = "127.0.0.1:3000")]
