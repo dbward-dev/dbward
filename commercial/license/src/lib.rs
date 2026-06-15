@@ -59,14 +59,16 @@ impl LicenseCheckerImpl {
         license: License,
         now: DateTime<Utc>,
         validated_until: Option<DateTime<Utc>>,
+        grace_days: Option<u32>,
         offline: bool,
         validate_url: String,
     ) -> Self {
         let vt = validated_until.map(|t| t.timestamp()).unwrap_or(0);
+        let gd = grace_days.unwrap_or(DEFAULT_GRACE_DAYS);
 
         // Determine initial expired state:
         // If validated_until is within grace, ignore local expires_at
-        let grace_days_i64 = DEFAULT_GRACE_DAYS as i64;
+        let grace_days_i64 = gd as i64;
         let online_valid = vt != 0 && now.timestamp() <= vt + (grace_days_i64 * 86400);
 
         let expired = if online_valid {
@@ -104,7 +106,7 @@ impl LicenseCheckerImpl {
             license,
             expired: AtomicBool::new(expired),
             validated_until: AtomicI64::new(vt),
-            grace_days: AtomicU32::new(DEFAULT_GRACE_DAYS),
+            grace_days: AtomicU32::new(gd),
             grace_warned: AtomicBool::new(false),
             offline,
             http_client,
@@ -367,7 +369,14 @@ mod tests {
         license: License,
         validated_until: Option<DateTime<Utc>>,
     ) -> LicenseCheckerImpl {
-        LicenseCheckerImpl::new(license, Utc::now(), validated_until, true, String::new())
+        LicenseCheckerImpl::new(
+            license,
+            Utc::now(),
+            validated_until,
+            None,
+            true,
+            String::new(),
+        )
     }
 
     #[test]
@@ -526,7 +535,7 @@ mod tests {
             expires_at: Some(Utc::now() + Duration::days(30)),
         };
         // offline=false, validated_until=None
-        let checker = LicenseCheckerImpl::new(lic, Utc::now(), None, false, String::new());
+        let checker = LicenseCheckerImpl::new(lic, Utc::now(), None, None, false, String::new());
         assert!(checker.is_must_validate_expired(Utc::now()));
     }
 
@@ -541,7 +550,8 @@ mod tests {
             issued_at: Some(issued),
             expires_at: Some(Utc::now() + Duration::days(30)),
         };
-        let checker = LicenseCheckerImpl::new(lic, Utc::now(), Some(vt), false, String::new());
+        let checker =
+            LicenseCheckerImpl::new(lic, Utc::now(), Some(vt), None, false, String::new());
         assert!(!checker.is_must_validate_expired(Utc::now()));
     }
 

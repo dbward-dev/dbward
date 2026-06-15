@@ -8,6 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/../.."
 export COMPOSE_FILE="dev/compose.yml:dev/compose.override.yml"
 export COMPOSE_PROFILES="license-e2e"
+
+# Required env for online validation against mock server
+export DBWARD_LICENSE_URL="${DBWARD_LICENSE_URL:-http://mock-license:8443/v1/validate}"
+export DBWARD_LICENSE_INSECURE="${DBWARD_LICENSE_INSECURE:-1}"
+export DBWARD_LICENSE_JITTER_SECS="${DBWARD_LICENSE_JITTER_SECS:-0}"
+export DBWARD_LICENSE_ONLINE_INTERVAL_SECS="${DBWARD_LICENSE_ONLINE_INTERVAL_SECS:-10}"
+
 source "$SCRIPT_DIR/helpers.sh"
 
 MOCK_CONTROL="http://localhost:18444"

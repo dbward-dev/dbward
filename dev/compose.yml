@@ -116,6 +116,9 @@ services:
   mock-license:
     image: python:3.12-slim
     profiles: [license-e2e]
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
     networks: [backend, frontend]
     volumes:
       - ./fixtures/mock-license-server.py:/app/server.py:ro
@@ -132,6 +135,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 3
+    tmpfs:
+      - /tmp:size=16M
     deploy:
       resources:
         limits:

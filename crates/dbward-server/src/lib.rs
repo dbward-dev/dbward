@@ -339,14 +339,12 @@ pub async fn run_from_args(
             license,
             clock.now(),
             validated_until,
+            persisted_grace_days,
             license_offline,
             license_url.to_string(),
         ));
 
         // Startup checks
-        if let Some(gd) = persisted_grace_days {
-            impl_checker.set_grace_days(gd);
-        }
         let now = clock.now();
         if impl_checker.is_must_validate_expired(now) {
             impl_checker.force_expire_with_reason("must_validate_expired");

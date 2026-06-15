@@ -94,6 +94,7 @@ fn state_with_license(license: License) -> AppState {
             license,
             chrono::Utc::now(),
             None,
+            None,
             true,
             String::new(),
         )),

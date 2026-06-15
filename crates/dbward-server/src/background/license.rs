@@ -37,12 +37,22 @@ async fn legacy_license_loop(state: AppState, shutdown: CancellationToken) {
 
 #[cfg(feature = "commercial")]
 async fn commercial_license_loop(state: AppState, shutdown: CancellationToken) {
-    let jitter = rand::random::<u64>() % 3600;
+    // Allow tests to override jitter and online interval for faster E2E
+    let jitter: u64 = std::env::var("DBWARD_LICENSE_JITTER_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| rand::random::<u64>() % 3600);
+    let online_interval = std::env::var("DBWARD_LICENSE_ONLINE_INTERVAL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .map(TokioDuration::from_secs)
+        .unwrap_or(ONLINE_CHECK_INTERVAL);
+
     let online_start = Instant::now() + TokioDuration::from_secs(INITIAL_ONLINE_DELAY + jitter);
     let local_start = Instant::now() + LOCAL_CHECK_INTERVAL;
 
     let mut local_ticker = interval_at(local_start, LOCAL_CHECK_INTERVAL);
-    let mut online_ticker = interval_at(online_start, ONLINE_CHECK_INTERVAL);
+    let mut online_ticker = interval_at(online_start, online_interval);
 
     loop {
         tokio::select! {
