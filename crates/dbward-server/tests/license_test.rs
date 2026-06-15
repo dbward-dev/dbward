@@ -90,7 +90,16 @@ fn state_with_license(license: License) -> AppState {
         notifier: Arc::new(NoopNotifier),
         event_dispatcher: Arc::new(NoopEventDispatcher),
         ssrf_validator: Arc::new(NoopSsrfValidator),
-        license_checker: Arc::new(LicenseCheckerImpl::new(license, chrono::Utc::now())),
+        license_checker: Arc::new(LicenseCheckerImpl::new(
+            license,
+            chrono::Utc::now(),
+            None,
+            true,
+            String::new(),
+        )),
+        #[cfg(feature = "commercial")]
+        license_checker_impl: None,
+        server_meta_repo: None,
         clock: Arc::new(RealClock),
         id_generator: Arc::new(SeqIdGen::new()),
         token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
@@ -130,7 +139,9 @@ fn wf_request(db: &str, env: &str) -> Request<Body> {
 async fn free_database_limit_blocks_at_max() {
     let license = License {
         plan: Plan::Free,
+        key_id: None,
         issued_to: None,
+        issued_at: None,
         expires_at: None,
     };
     let state = state_with_license(license);
@@ -164,7 +175,9 @@ async fn free_database_limit_blocks_at_max() {
 async fn free_workflow_unlimited() {
     let license = License {
         plan: Plan::Free,
+        key_id: None,
         issued_to: None,
+        issued_at: None,
         expires_at: None,
     };
     let state = state_with_license(license);
@@ -185,7 +198,9 @@ async fn free_workflow_unlimited() {
 async fn pro_database_limit_allows_20() {
     let license = License {
         plan: Plan::Pro,
+        key_id: None,
         issued_to: None,
+        issued_at: None,
         expires_at: None,
     };
     let state = state_with_license(license);
@@ -207,7 +222,9 @@ async fn pro_database_limit_allows_20() {
 async fn pro_database_limit_blocks_at_21() {
     let license = License {
         plan: Plan::Pro,
+        key_id: None,
         issued_to: None,
+        issued_at: None,
         expires_at: None,
     };
     let state = state_with_license(license);
@@ -235,7 +252,9 @@ async fn pro_database_limit_blocks_at_21() {
 async fn enterprise_no_database_limit() {
     let license = License {
         plan: Plan::Enterprise,
+        key_id: None,
         issued_to: None,
+        issued_at: None,
         expires_at: None,
     };
     let state = state_with_license(license);
@@ -260,7 +279,9 @@ async fn expired_license_falls_back_to_free() {
     // expiry in the constructor and apply Free limits.
     let expired = License {
         plan: Plan::Pro,
+        key_id: None,
         issued_to: Some("org".into()),
+        issued_at: None,
         expires_at: Some(chrono::Utc::now() - chrono::Duration::hours(1)),
     };
 

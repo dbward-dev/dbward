@@ -41,7 +41,9 @@ pub struct LicensePayload {
 #[derive(Debug, Clone)]
 pub struct License {
     pub plan: Plan,
+    pub key_id: Option<String>,
     pub issued_to: Option<String>,
+    pub issued_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
 }
 
@@ -59,7 +61,9 @@ impl Default for License {
     fn default() -> Self {
         Self {
             plan: Plan::Free,
+            key_id: None,
             issued_to: None,
+            issued_at: None,
             expires_at: None,
         }
     }
@@ -69,7 +73,9 @@ impl From<LicensePayload> for License {
     fn from(payload: LicensePayload) -> Self {
         Self {
             plan: payload.plan,
+            key_id: Some(payload.key_id),
             issued_to: Some(payload.issued_to),
+            issued_at: Some(payload.issued_at),
             expires_at: Some(payload.expires_at),
         }
     }
@@ -85,13 +91,17 @@ mod tests {
         let future = Utc::now() + chrono::Duration::hours(1);
         let lic = License {
             plan: Plan::Pro,
+            key_id: None,
             issued_to: None,
+            issued_at: None,
             expires_at: Some(past),
         };
         assert!(lic.is_expired_at(Utc::now()));
         let lic2 = License {
             plan: Plan::Pro,
+            key_id: None,
             issued_to: None,
+            issued_at: None,
             expires_at: Some(future),
         };
         assert!(!lic2.is_expired_at(Utc::now()));

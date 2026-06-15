@@ -788,3 +788,10 @@ pub trait WebhookDeliveryRepo: Send + Sync {
 
 // --- Notifier ---
 // (in services.rs)
+
+// --- ServerMetaRepo (license online validation persistence) ---
+
+pub trait ServerMetaRepo: Send + Sync {
+    fn get(&self, key: &str) -> Result<Option<String>, AppError>;
+    fn set(&self, key: &str, value: &str) -> Result<(), AppError>;
+}

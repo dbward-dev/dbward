@@ -11,8 +11,8 @@ pub use repos::{
     DatabaseRegistry, DryRunJobRecord, DryRunRepo, ExecutionTokenClaims, GroupRepo, LicenseChecker,
     NoopConfigGenerationRepo, PolicyRepo, PutOptions, RequestContextRecord, RequestReader,
     RequestWriter, ResultChannel, ResultStore, ResultStream, RoleBindingEntry, RoleBindingRepo,
-    SchemaRepo, SchemaSnapshotRecord, SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner,
-    UserRepo, WebhookDeliveryRepo, WebhookRepo,
+    SchemaRepo, SchemaSnapshotRecord, ServerMetaRepo, SsrfValidator, StoredResultEntry, TokenRepo,
+    TokenSigner, UserRepo, WebhookDeliveryRepo, WebhookRepo,
 };
 pub use services::{Notifier, WebhookEvent, WebhookSender};
 

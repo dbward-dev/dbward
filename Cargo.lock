@@ -711,6 +711,9 @@ dependencies = [
  "chrono",
  "dbward-app",
  "dbward-domain",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tracing",
 ]
 
@@ -844,6 +847,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "ipnet",
+ "rand 0.8.6",
  "rusqlite",
  "serde",
  "serde_json",

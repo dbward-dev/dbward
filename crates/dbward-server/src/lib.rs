@@ -63,6 +63,8 @@ pub async fn run_from_args(
     force_bootstrap: bool,
     license_key: Option<&str>,
     license_file: Option<&str>,
+    license_offline: bool,
+    license_url: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Load config (logging depends on it, so errors go to stderr)
     let cfg = match config::ServerConfig::load(std::path::Path::new(config_path)) {
@@ -297,24 +299,68 @@ pub async fn run_from_args(
     } else {
         Arc::new(dbward_infra::webhook::SsrfGuard)
     };
+    // Server meta repo (for validated_until persistence)
+    let server_meta_repo: Option<Arc<dyn dbward_app::ports::ServerMetaRepo>> = Some(Arc::new(
+        dbward_infra::sqlite::SqliteServerMetaRepo::new(conn.clone()),
+    ));
+
+    // License checker
+    #[cfg(feature = "commercial")]
+    let (license_checker, license_checker_impl): (
+        Arc<dyn dbward_app::ports::LicenseChecker>,
+        Option<Arc<dbward_commercial_license::LicenseCheckerImpl>>,
+    ) = {
+        let validated_until = server_meta_repo
+            .as_ref()
+            .and_then(|repo| match repo.get("license_validated_until") {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to read license_validated_until from DB");
+                    None
+                }
+            })
+            .and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .map_err(|e| {
+                        tracing::warn!(value = %s, error = %e, "invalid license_validated_until in DB, treating as unset");
+                    })
+                    .ok()
+            })
+            .map(|dt| dt.with_timezone(&chrono::Utc));
+
+        let license = resolve_license(license_key, license_file)
+            .map_err(dbward_app::error::AppError::Internal)?;
+        let impl_checker = Arc::new(dbward_commercial_license::LicenseCheckerImpl::new(
+            license,
+            clock.now(),
+            validated_until,
+            license_offline,
+            license_url.to_string(),
+        ));
+
+        // Startup checks
+        let now = clock.now();
+        if impl_checker.is_must_validate_expired(now) {
+            impl_checker.force_expire_with_reason("must_validate_expired");
+        }
+        if impl_checker.is_grace_expired(now) {
+            impl_checker.force_expire_with_reason("grace_expired");
+        }
+
+        (
+            impl_checker.clone() as Arc<dyn dbward_app::ports::LicenseChecker>,
+            Some(impl_checker),
+        )
+    };
+
+    #[cfg(not(feature = "commercial"))]
     let license_checker: Arc<dyn dbward_app::ports::LicenseChecker> = {
-        #[cfg(feature = "commercial")]
-        {
-            Arc::new(dbward_commercial_license::LicenseCheckerImpl::new(
-                resolve_license(license_key, license_file)
-                    .map_err(dbward_app::error::AppError::Internal)?,
-                clock.now(),
-            ))
+        if license_key.is_some() || license_file.is_some() {
+            tracing::warn!(
+                "license_key/license_file configured but commercial feature not compiled. Ignored."
+            );
         }
-        #[cfg(not(feature = "commercial"))]
-        {
-            if license_key.is_some() || license_file.is_some() {
-                tracing::warn!(
-                    "license_key/license_file configured but commercial feature not compiled. Ignored."
-                );
-            }
-            Arc::new(dbward_infra::FreePlanChecker)
-        }
+        Arc::new(dbward_infra::FreePlanChecker)
     };
 
     // C-10: Inject OIDC verifier (requires commercial feature + Pro license)
@@ -424,6 +470,9 @@ pub async fn run_from_args(
         event_dispatcher,
         ssrf_validator,
         license_checker,
+        #[cfg(feature = "commercial")]
+        license_checker_impl,
+        server_meta_repo,
         clock,
         id_generator,
         token_value_generator,
