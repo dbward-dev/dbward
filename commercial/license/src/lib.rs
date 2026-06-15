@@ -230,7 +230,10 @@ impl LicenseCheckerImpl {
         if self.offline {
             return OnlineValidationResult::Offline;
         }
-        if !self.validate_url.starts_with("https://") {
+        // Allow HTTP only when explicitly opted in (testing only)
+        if !self.validate_url.starts_with("https://")
+            && std::env::var("DBWARD_LICENSE_INSECURE").unwrap_or_default() != "1"
+        {
             tracing::warn!("license validation URL must use HTTPS, skipping online validation");
             return OnlineValidationResult::Offline;
         }
