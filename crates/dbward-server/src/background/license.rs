@@ -85,6 +85,9 @@ async fn commercial_license_loop(state: AppState, shutdown: CancellationToken) {
                             if let Err(e) = state.background().persist_validated_until(*validated_until) {
                                 tracing::error!(error = %e, "failed to persist validated_until");
                             }
+                            if let Err(e) = state.background().persist_grace_days(checker.grace_days()) {
+                                tracing::error!(error = %e, "failed to persist grace_days");
+                            }
                             state.metrics.license_online_success.fetch_add(1, Ordering::Relaxed);
                         }
                         dbward_commercial_license::OnlineValidationResult::Revoked { reason } => {

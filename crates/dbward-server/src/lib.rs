@@ -328,6 +328,11 @@ pub async fn run_from_args(
             })
             .map(|dt| dt.with_timezone(&chrono::Utc));
 
+        let persisted_grace_days: Option<u32> = server_meta_repo
+            .as_ref()
+            .and_then(|repo| repo.get("license_grace_days").ok().flatten())
+            .and_then(|s| s.parse().ok());
+
         let license = resolve_license(license_key, license_file)
             .map_err(dbward_app::error::AppError::Internal)?;
         let impl_checker = Arc::new(dbward_commercial_license::LicenseCheckerImpl::new(
@@ -339,6 +344,9 @@ pub async fn run_from_args(
         ));
 
         // Startup checks
+        if let Some(gd) = persisted_grace_days {
+            impl_checker.set_grace_days(gd);
+        }
         let now = clock.now();
         if impl_checker.is_must_validate_expired(now) {
             impl_checker.force_expire_with_reason("must_validate_expired");

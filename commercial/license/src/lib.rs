@@ -85,12 +85,21 @@ impl LicenseCheckerImpl {
         let http_client = if offline {
             None
         } else {
-            reqwest::Client::builder()
+            match reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
-                .ok()
+            {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to build HTTP client for license validation, running offline");
+                    None
+                }
+            }
         };
 
+        // Relaxed ordering: each atomic field is independent. validated_until uses
+        // CAS loop for monotonic increase; expired/grace_days/grace_warned are simple
+        // flags/counters where eventual visibility is sufficient (checked every 1h).
         Self {
             license,
             expired: AtomicBool::new(expired),
@@ -101,6 +110,16 @@ impl LicenseCheckerImpl {
             http_client,
             validate_url,
         }
+    }
+
+    /// Set grace_days (used to restore persisted value on startup).
+    pub fn set_grace_days(&self, days: u32) {
+        self.grace_days.store(days, Ordering::Relaxed);
+    }
+
+    /// Get current grace_days value.
+    pub fn grace_days(&self) -> u32 {
+        self.grace_days.load(Ordering::Relaxed)
     }
 
     /// Force-expire with reason. Returns true on first transition (for webhook firing).

@@ -577,6 +577,12 @@ impl<'a> BackgroundAccess<'a> {
         }
         Ok(())
     }
+    pub fn persist_grace_days(&self, days: u32) -> Result<(), dbward_app::error::AppError> {
+        if let Some(repo) = &self.0.server_meta_repo {
+            repo.set("license_grace_days", &days.to_string())?;
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
