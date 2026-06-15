@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.5] — Unreleased
+## [0.1.5] — 2026-06-15
 
 Config as Authority: TOML config becomes the sole source of truth for all policy resources.
 
@@ -21,13 +21,34 @@ Config as Authority: TOML config becomes the sole source of truth for all policy
 - **User suspend/activate warning**: Suspending a config-managed user shows a warning that status will revert on restart.
 - **`config_synced` audit event**: Recorded after every successful config sync.
 - **`server.pid` file**: Written to state_dir at startup for reload discovery.
+- **TLS support**: Agent requires HTTPS for server_url by default. `allow_insecure = true` for dev environments. Transport security validated at startup.
+- **Break-glass DDL bypass**: `--allow-ddl` flag + `emergency = true` for controlled DDL execution outside migrations.
+- **SAFE-1: Read-only transaction**: SELECT queries execute in DB-level read-only transaction (defense-in-depth).
+- **SAFE-3: Execution plan signing**: Agent executes parser-derived SQL texts (not raw user input). Token signs the execution plan hash.
+- **SAFE-4: SQL review rules**: Default block for destructive patterns (DELETE without WHERE, DROP TABLE, etc.).
+- **License model change**: Token count limit replaced with active user count limit.
+- **Permission redesign**: Granular RBAC with agent token privilege escalation prevention.
+- **Migration improvements**: `migration_statement_timeout_secs`, DDL warning, partial state detection, `repair` command.
+
+### Bug Fixes
+
+- **MySQL DML timeout** (BUG-V15-3): Removed `max_execution_time` from `execute_cancellable`. MySQL's `max_execution_time` only applies to SELECT; when a reclassified SELECT was executed via the DML path, it was silently interrupted and reported as "executed" instead of "failed". Now relies solely on tokio timeout + KILL.
+- **Fail-open security**: Closed 3 critical paths where errors could bypass authorization.
+- **Orphan heartbeat detection**: Agent detects and cleans up leaked executions.
+- **Fail-closed user status**: Suspended users are immediately rejected (no stale cache).
+- **Config user sync**: Status changes in TOML reflected to existing users.
+- **Result data encoding**: `result_data` returned as JSON value (was double-encoded string).
+- **CLI resolve_request_id**: Applied to `show`, `resume`, and `result` commands.
 
 ### Internal
 
 - V14 schema migration: `groups`, `role_bindings` tables + `source` column on 8 tables
 - `policy_manage` and `webhook_manage` use cases removed
 - AppState split into immutable shell + ArcSwap ReloadableConfig
-- Shared helpers: `build_sync_uc`, `build_reloadable_config_with`, `build_sync_inputs_and_run`
+- SAFE-6: CancellationGuard prevents dirty connection pool reuse
+- DatabaseDriver split into sub-traits (QueryDriver, MigrationDriver, SchemaDriver)
+- dbward-api-client crate extracted for unified HTTP transport
+- RowCollector extracted for query result collection
 
 ## [0.1.4] — 2026-05-30
 
