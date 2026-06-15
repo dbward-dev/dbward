@@ -2,7 +2,11 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "dbward-agent", about = "dbward database execution agent")]
+#[command(
+    name = "dbward-agent",
+    about = "dbward database execution agent",
+    version
+)]
 struct Args {
     /// Path to agent config file
     #[arg(long, default_value = "dbward-agent.toml")]

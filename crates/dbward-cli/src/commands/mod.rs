@@ -25,7 +25,11 @@ use crate::self_update;
 use crate::server_client::ServerClient;
 
 #[derive(Parser)]
-#[command(name = "dbward", about = "DB operations workflow + approval engine")]
+#[command(
+    name = "dbward",
+    about = "DB operations workflow + approval engine",
+    version
+)]
 pub struct Cli {
     /// Path to config file (standalone mode: disables global merge)
     #[arg(long, env = "DBWARD_CONFIG", global = true)]
