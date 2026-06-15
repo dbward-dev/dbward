@@ -209,6 +209,7 @@ Commands:
   server        Server management (start, token create/revoke, reload)
   agent         Start the agent
   dev           Start local dev server + agent
+  self-update   Update dbward to the latest version
   request       Manage requests:
     list          List requests (--pending-for-me, --status)
     show          Show request detail
@@ -218,6 +219,7 @@ Commands:
     cancel        Cancel a pending request
 
 Global Options:
+  --version, -V            Show version and exit
   --config <PATH>          Config file (standalone mode; omit for auto-detect)
   --database <NAME>        Target database [env: DBWARD_DATABASE]
   --environment <ENV>      Environment [env: DBWARD_ENV]

@@ -53,11 +53,19 @@ systemctl restart dbward-agent
 
 ## Checking for updates
 
+Check installed versions:
+
+```bash
+dbward --version          # CLI
+dbward-server --version   # Server
+dbward-agent --version    # Agent
+```
+
 Check the running server version and minimum supported agent version:
 
 ```bash
 curl http://localhost:3000/health
-# {"status":"ok","version":"0.1.2","min_agent_version":"0.1.2"}
+# {"status":"ok","version":"0.1.5","min_agent_version":"0.1.5"}
 ```
 
 The CLI displays a warning when the server version differs from the CLI version.

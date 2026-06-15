@@ -9,6 +9,7 @@ description: All dbward CLI commands and options
 
 | Option | Short | Env | Default | Description |
 |--------|-------|-----|---------|-------------|
+| `--version` | `-V` | | | Show version and exit |
 | `--config <PATH>` | | `DBWARD_CONFIG` | | Config file path (standalone mode) |
 | `--merge-global` | | | false | Merge global config when --config is set |
 | `--database <NAME>` | | `DBWARD_DATABASE` | | Target database |
@@ -463,7 +464,8 @@ No additional options. See [MCP Reference](mcp.md).
 Update dbward to the latest version.
 
 ```bash
-dbward self-update
+dbward --version        # check current version
+dbward self-update      # download and install latest
 ```
 
 ---

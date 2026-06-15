@@ -169,8 +169,7 @@ Permission: `token.manage` or `token.revoke_own` (for own tokens)
 
 ## Webhooks
 
-> **v0.1.5 Breaking Change**: Webhooks are config-managed. Write endpoints return 405.
-> Define webhooks in `[[webhooks]]` in server.toml.
+> Webhooks are config-managed. Define webhooks in `[[webhooks]]` in server.toml.
 
 ### ~~POST /api/webhooks~~ → 405
 
@@ -206,8 +205,7 @@ Permission: `metrics.view`
 
 ## Roles
 
-> **v0.1.5 Breaking Change**: Custom roles are config-managed. Write endpoints return 405.
-> Define roles in `[[auth.roles]]` in server.toml.
+> Custom roles are config-managed. Define roles in `[[auth.roles]]` in server.toml.
 
 ### ~~POST /api/roles~~ → 405
 
@@ -231,8 +229,7 @@ Permission: `role.manage`
 
 ## Policies
 
-> **v0.1.5 Breaking Change**: All policies are config-managed. Write endpoints return 405.
-> Define policies in `[[workflows]]`, `[[execution_policies]]`, `[[result_policies]]`, `[[notification_policies]]` in server.toml.
+> Policies are config-managed. Define policies in `[[workflows]]`, `[[execution_policies]]`, `[[result_policies]]`, `[[notification_policies]]` in server.toml.
 
 ### ~~POST /api/workflows~~ → 405
 
