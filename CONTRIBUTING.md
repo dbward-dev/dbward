@@ -96,7 +96,7 @@ This adds a line like `Signed-off-by: Your Name <your@email.com>` to the commit 
 
 - **`crates/`** — contributions are licensed under [Apache-2.0](LICENSE-APACHE).
 - **`commercial/`** — external contributions are not accepted without a separate agreement.
-  If you'd like to contribute to commercial components, contact hello@dbward.dev.
+  If you'd like to contribute to commercial components, contact support@dbward.dev.
 
 ## Breaking Change Policy
 

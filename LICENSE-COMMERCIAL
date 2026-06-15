@@ -1,6 +1,6 @@
 The dbward Commercial License
 
-Copyright (c) 2026 Takumi Minami (d/b/a dbward-dev).
+Copyright (c) 2026 dbward-dev.
 
 1. DEFINITIONS
 
@@ -30,6 +30,8 @@ Copyright (c) 2026 Takumi Minami (d/b/a dbward-dev).
    - View and read the source code
    - Copy, modify, and build the Licensed Code for development, testing,
      and evaluation purposes
+   - Use the Licensed Code in Production Use within the Free plan resource
+     limits enforced by the software (commercial features remain unavailable)
    - Submit patches to the Licensor (no separate Contributor License
      Agreement is required; contributions are accepted under the terms of
      the Apache License 2.0 as stated in LICENSE-APACHE)
@@ -37,7 +39,8 @@ Copyright (c) 2026 Takumi Minami (d/b/a dbward-dev).
 4. RESTRICTIONS
 
    Without a valid Subscription, you may NOT:
-   - Use the Licensed Code in Production Use
+   - Use the Licensed Code in Production Use beyond the Free plan limits
+     enforced by the software
    - Redistribute the Licensed Code (in source or binary form) to third
      parties, except as part of unmodified official dbward releases
    - Offer the Licensed Code to third parties as part of a hosted or
@@ -78,4 +81,4 @@ Copyright (c) 2026 Takumi Minami (d/b/a dbward-dev).
    This License constitutes the entire agreement between you and Licensor
    regarding the Licensed Code and supersedes all prior agreements.
 
-For commercial licensing inquiries: hello@dbward.dev
+For commercial licensing inquiries: support@dbward.dev
