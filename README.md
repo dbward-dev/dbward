@@ -219,7 +219,7 @@ Commands:
     cancel        Cancel a pending request
 
 Global Options:
-  --version, -V            Show version and exit
+  --version, -v            Show version and exit
   --config <PATH>          Config file (standalone mode; omit for auto-detect)
   --database <NAME>        Target database [env: DBWARD_DATABASE]
   --environment <ENV>      Environment [env: DBWARD_ENV]
