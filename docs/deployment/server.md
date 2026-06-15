@@ -191,6 +191,19 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
+## Licensing
+
+Pro/Enterprise licenses are activated via environment variable or CLI flag:
+
+| Flag / Env | Description | Default |
+|---|---|---|
+| `--license-key` / `DBWARD_LICENSE_KEY` | License key string | — |
+| `--license-file` / `DBWARD_LICENSE_FILE` | Path to license key file | — |
+| `--license-offline` / `DBWARD_LICENSE_OFFLINE` | Disable online validation | `false` |
+| `--license-url` / `DBWARD_LICENSE_URL` | Validation API endpoint | `https://license.dbward.dev/v1/validate` |
+
+The server validates the license daily against the license API. If the network is unreachable, a 7-day grace period applies before downgrading to Free. Use `--license-offline` for air-gapped deployments (requires a license key with a fixed `expires_at`).
+
 ## Running with Docker
 
 ```bash

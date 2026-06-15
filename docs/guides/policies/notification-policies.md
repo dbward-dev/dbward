@@ -42,6 +42,8 @@ Changes take effect on server restart or `dbward server reload`.
 | `request_completed` | Execution completed successfully |
 | `request_failed` | Execution failed |
 | `break_glass` | Emergency bypass used |
+| `license_grace_warning` | License grace period has ≤3 days remaining |
+| `license_downgraded` | License downgraded to Free (grace expired, revoked, etc.) |
 
 ## Scoping
 
