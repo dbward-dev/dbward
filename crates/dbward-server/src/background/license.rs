@@ -1,27 +1,22 @@
 use super::*;
 
-#[cfg(feature = "commercial")]
-use dbward_app::ports::LicenseChecker as _;
-
-const LOCAL_CHECK_INTERVAL: TokioDuration = TokioDuration::from_secs(3600); // 1h
-
-#[cfg(feature = "commercial")]
-const ONLINE_CHECK_INTERVAL: TokioDuration = TokioDuration::from_secs(86400); // 24h
-#[cfg(feature = "commercial")]
-const INITIAL_ONLINE_DELAY: u64 = 60;
+const LOCAL_CHECK_INTERVAL: TokioDuration = TokioDuration::from_secs(3600);
 
 pub(super) async fn license_expiry_loop(state: AppState, shutdown: CancellationToken) {
     #[cfg(feature = "commercial")]
     {
-        commercial_license_loop(state, shutdown).await;
+        if let Some(checker) = state.background().license_checker_impl().cloned() {
+            let host = ServerLicenseHost {
+                state: state.clone(),
+            };
+            dbward_commercial_license::runtime::run(checker, host, shutdown).await;
+            return;
+        }
     }
-    #[cfg(not(feature = "commercial"))]
-    {
-        legacy_license_loop(state, shutdown).await;
-    }
+    // Non-commercial or no license_checker_impl: legacy local-only loop
+    legacy_license_loop(state, shutdown).await;
 }
 
-#[cfg(not(feature = "commercial"))]
 async fn legacy_license_loop(state: AppState, shutdown: CancellationToken) {
     let start = Instant::now() + LOCAL_CHECK_INTERVAL;
     let mut ticker = interval_at(start, LOCAL_CHECK_INTERVAL);
@@ -35,125 +30,90 @@ async fn legacy_license_loop(state: AppState, shutdown: CancellationToken) {
     }
 }
 
+// --- ServerLicenseHost: thin adapter (no judgment logic) ---
+
 #[cfg(feature = "commercial")]
-async fn commercial_license_loop(state: AppState, shutdown: CancellationToken) {
-    // Allow tests to override jitter and online interval for faster E2E
-    let jitter: u64 = std::env::var("DBWARD_LICENSE_JITTER_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| rand::random::<u64>() % 3600);
-    let online_interval = std::env::var("DBWARD_LICENSE_ONLINE_INTERVAL_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .map(TokioDuration::from_secs)
-        .unwrap_or(ONLINE_CHECK_INTERVAL);
-
-    let online_start = Instant::now() + TokioDuration::from_secs(INITIAL_ONLINE_DELAY + jitter);
-    let local_start = Instant::now() + LOCAL_CHECK_INTERVAL;
-
-    let mut local_ticker = interval_at(local_start, LOCAL_CHECK_INTERVAL);
-    let mut online_ticker = interval_at(online_start, online_interval);
-
-    loop {
-        tokio::select! {
-            _ = local_ticker.tick() => {
-                state.background().license_checker().check_expiry(state.background().clock().now());
-
-                if let Some(checker) = state.background().license_checker_impl() {
-                    let now = state.background().clock().now();
-
-                    if checker.is_grace_expired(now)
-                        && checker.force_expire_with_reason("grace_expired")
-                    {
-                        emit_license_event(&state, "license_downgraded", "grace_expired");
-                    }
-
-                    if checker.is_must_validate_expired(now) {
-                        warn!("license never validated online within grace period");
-                        if checker.force_expire_with_reason("must_validate_expired") {
-                            emit_license_event(&state, "license_downgraded", "must_validate_expired");
-                        }
-                    }
-
-                    if let Some(remaining) = checker.grace_remaining_secs(now)
-                        && remaining <= 3 * 86400
-                        && checker.try_mark_grace_warned()
-                    {
-                        let days = std::cmp::max(1, remaining / 86400);
-                        emit_license_event(&state, "license_grace_warning", &format!("{}d", days));
-                    }
-                }
-            }
-            _ = online_ticker.tick() => {
-                if let Some(checker) = state.background().license_checker_impl() {
-                    let now = state.background().clock().now();
-                    let was_expired = checker.is_expired();
-                    let result = checker.validate_online(now).await;
-                    match &result {
-                        dbward_commercial_license::OnlineValidationResult::Active { validated_until } => {
-                            tracing::debug!("license online validation: active");
-                            if let Err(e) = state.background().persist_validated_until(*validated_until) {
-                                tracing::error!(error = %e, "failed to persist validated_until");
-                            }
-                            if let Err(e) = state.background().persist_grace_days(checker.grace_days()) {
-                                tracing::error!(error = %e, "failed to persist grace_days");
-                            }
-                            state.metrics.license_online_success.fetch_add(1, Ordering::Relaxed);
-                        }
-                        dbward_commercial_license::OnlineValidationResult::Revoked { reason } => {
-                            warn!(%reason, "license revoked by server");
-                            if !was_expired {
-                                emit_license_event(&state, "license_downgraded", reason);
-                            }
-                            state.metrics.license_online_failure.fetch_add(1, Ordering::Relaxed);
-                        }
-                        dbward_commercial_license::OnlineValidationResult::Expired => {
-                            warn!("license expired (confirmed by server)");
-                            if !was_expired {
-                                emit_license_event(&state, "license_downgraded", "expired_online");
-                            }
-                            state.metrics.license_online_failure.fetch_add(1, Ordering::Relaxed);
-                        }
-                        dbward_commercial_license::OnlineValidationResult::Suspended => {
-                            warn!("license suspended (payment issue). Grace period active.");
-                            state.metrics.license_online_failure.fetch_add(1, Ordering::Relaxed);
-                        }
-                        dbward_commercial_license::OnlineValidationResult::NetworkError => {
-                            info!("license online validation: network error");
-                            state.metrics.license_online_network_error.fetch_add(1, Ordering::Relaxed);
-                        }
-                        dbward_commercial_license::OnlineValidationResult::Offline => {}
-                    }
-                }
-            }
-            _ = shutdown.cancelled() => break,
-        }
-    }
+struct ServerLicenseHost {
+    state: AppState,
 }
 
 #[cfg(feature = "commercial")]
-fn emit_license_event(state: &AppState, event_type: &str, detail: &str) {
-    let bg = state.background();
-    let event = dbward_app::ports::WebhookEvent {
-        event_type: event_type.to_string(),
-        request_id: None,
-        database: None,
-        environment: None,
-        actor: Some("system".to_string()),
-        detail: Some(detail.to_string()),
-        requester: None,
-        reason: Some(detail.to_string()),
-        redacted_detail: Some(detail.to_string()),
-        error_summary: None,
-        approval_hint: None,
-        operation: None,
-        step_index: None,
-        total_steps: None,
-        expires_at: None,
-        approvers: None,
-    };
-    bg.notifier().dispatch(event.clone());
-    if let Some(rn) = bg.request_notifier() {
-        rn.dispatch(event);
+impl dbward_commercial_license::runtime::LicenseHost for ServerLicenseHost {
+    fn now(&self) -> chrono::DateTime<chrono::Utc> {
+        self.state.background().clock().now()
+    }
+
+    fn persist_validated_until(&self, ts: chrono::DateTime<chrono::Utc>) -> bool {
+        self.state.background().persist_validated_until(ts).is_ok()
+    }
+
+    fn persist_grace_days(&self, days: u32) -> bool {
+        self.state.background().persist_grace_days(days).is_ok()
+    }
+
+    fn emit_event(&self, event: dbward_commercial_license::runtime::LicenseEvent) {
+        use dbward_commercial_license::runtime::LicenseEvent;
+        let (event_type, detail) = match &event {
+            LicenseEvent::GraceWarning {
+                remaining_days,
+                validated_until,
+            } => (
+                "license_grace_warning",
+                format!(
+                    "{{\"grace_remaining_days\":{},\"validated_until\":\"{}\"}}",
+                    remaining_days,
+                    validated_until.to_rfc3339()
+                ),
+            ),
+            LicenseEvent::Downgraded { reason } => (
+                "license_downgraded",
+                format!("{{\"reason\":\"{}\"}}", reason),
+            ),
+        };
+
+        let bg = self.state.background();
+        let webhook_event = dbward_app::ports::WebhookEvent {
+            event_type: event_type.to_string(),
+            request_id: None,
+            database: None,
+            environment: None,
+            actor: Some("system".to_string()),
+            detail: Some(detail.clone()),
+            requester: None,
+            reason: Some(detail.clone()),
+            redacted_detail: Some(detail),
+            error_summary: None,
+            approval_hint: None,
+            operation: None,
+            step_index: None,
+            total_steps: None,
+            expires_at: None,
+            approvers: None,
+        };
+        bg.notifier().dispatch(webhook_event.clone());
+        if let Some(rn) = bg.request_notifier() {
+            rn.dispatch(webhook_event);
+        }
+    }
+
+    fn metric_online_success(&self) {
+        self.state
+            .metrics
+            .license_online_success
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn metric_online_failure(&self) {
+        self.state
+            .metrics
+            .license_online_failure
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn metric_online_network_error(&self) {
+        self.state
+            .metrics
+            .license_online_network_error
+            .fetch_add(1, Ordering::Relaxed);
     }
 }

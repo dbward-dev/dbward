@@ -10,6 +10,8 @@ use serde::Deserialize;
 use dbward_app::ports::LicenseChecker;
 use dbward_domain::license::{License, Plan, PlanLimits};
 
+pub mod runtime;
+
 /// Pro plan limits (commercial-only constant).
 const PRO: PlanLimits = PlanLimits {
     max_workflows: u32::MAX,
@@ -207,6 +209,29 @@ impl LicenseCheckerImpl {
         }
         if self.license.is_expired_at(now) {
             self.force_expire();
+        }
+    }
+
+    /// Check if local expires_at should trigger downgrade (online grace not covering).
+    pub fn is_local_expiry_effective(&self, now: DateTime<Utc>) -> bool {
+        let vt = self.validated_until.load(Ordering::Relaxed);
+        if vt != 0 {
+            let gd = self.grace_days.load(Ordering::Relaxed) as i64;
+            let deadline = vt + (gd * 86400);
+            if now.timestamp() <= deadline {
+                return false; // Online valid — skip local check
+            }
+        }
+        self.license.is_expired_at(now)
+    }
+
+    /// Get validated_until as DateTime (for event payload).
+    pub fn validated_until_datetime(&self) -> Option<DateTime<Utc>> {
+        let vt = self.validated_until.load(Ordering::Relaxed);
+        if vt == 0 {
+            None
+        } else {
+            DateTime::from_timestamp(vt, 0)
         }
     }
 
