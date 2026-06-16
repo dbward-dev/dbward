@@ -38,7 +38,7 @@ pub(super) async fn submit_and_wait(
             metadata: None,
             idempotency_key: None,
             share_with: None,
-            no_store: false,
+            no_result_store: false,
         },
     )
     .await
@@ -77,7 +77,7 @@ pub(super) async fn submit_and_wait(
                                     metadata: None,
                                     idempotency_key: None,
                                     share_with: None,
-                                    no_store: false,
+                                    no_result_store: false,
                                 },
                             )
                             .await

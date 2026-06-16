@@ -44,8 +44,10 @@ impl GetResult {
             return Err(AppError::NotFound("result not available".into()));
         }
 
-        if request.no_store && request.status != RequestStatus::Failed {
-            return Err(AppError::Gone("result was not stored (no_store)".into()));
+        if request.no_result_store && request.status != RequestStatus::Failed {
+            return Err(AppError::Gone(
+                "result was not stored (no_result_store was set)".into(),
+            ));
         }
 
         // Check if delivery_mode=Stream means result was intentionally not stored
@@ -565,7 +567,7 @@ mod tests {
             idempotency_key: None,
             metadata_json: "{}".into(),
             share_with: vec![],
-            no_store: false,
+            no_result_store: false,
             workflow_snapshot_json: None,
             decision_trace_json: None,
             execution_plan_json: None,
@@ -732,10 +734,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_store_failed_request_returns_result() {
+    async fn no_result_store_failed_request_returns_result() {
         let now = Utc::now();
         let mut req = make_request();
-        req.no_store = true;
+        req.no_result_store = true;
         req.status = RequestStatus::Failed;
 
         let mut exec = make_execution();
@@ -774,10 +776,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn no_store_success_returns_gone() {
+    async fn no_result_store_success_returns_gone() {
         let now = Utc::now();
         let mut req = make_request();
-        req.no_store = true;
+        req.no_result_store = true;
         req.status = RequestStatus::Executed;
 
         let uc = GetResult {

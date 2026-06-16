@@ -124,9 +124,9 @@ pub enum Command {
         /// Share result with specified principals (e.g. group:backend-team, user:bob)
         #[arg(long = "share-with")]
         share_with: Vec<String>,
-        /// Do not persist result to server storage
-        #[arg(long = "no-persist")]
-        no_persist: bool,
+        /// Do not store query result on server. Request metadata and SQL text are always retained for audit.
+        #[arg(long = "no-result-store")]
+        no_result_store: bool,
         /// Result display format (default from config or table)
         #[arg(long, value_enum)]
         result_format: Option<crate::display::ResultFormat>,
@@ -454,7 +454,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
             ref repo,
             ref idempotency_key,
             ref share_with,
-            no_persist,
+            no_result_store,
             result_format,
             timeout,
         } => {
@@ -479,7 +479,7 @@ pub async fn run(cli: Cli) -> Result<(), CliError> {
                 repo.as_deref(),
                 idempotency_key.as_deref(),
                 share_with,
-                no_persist,
+                no_result_store,
                 resolve_result_format(result_format, &cfg),
                 timeout,
             )
@@ -687,19 +687,24 @@ mod tests {
     }
 
     #[test]
-    fn no_persist_flag_parses() {
-        let cli = Cli::try_parse_from(["dbward", "execute", "--no-persist", "SELECT 1"]).unwrap();
+    fn no_result_store_flag_parses() {
+        let cli =
+            Cli::try_parse_from(["dbward", "execute", "--no-result-store", "SELECT 1"]).unwrap();
         match cli.command {
-            Command::Execute { no_persist, .. } => assert!(no_persist),
+            Command::Execute {
+                no_result_store, ..
+            } => assert!(no_result_store),
             _ => panic!("unexpected command"),
         }
     }
 
     #[test]
-    fn no_persist_defaults_to_false() {
+    fn no_result_store_defaults_to_false() {
         let cli = Cli::try_parse_from(["dbward", "execute", "SELECT 1"]).unwrap();
         match cli.command {
-            Command::Execute { no_persist, .. } => assert!(!no_persist),
+            Command::Execute {
+                no_result_store, ..
+            } => assert!(!no_result_store),
             _ => panic!("unexpected command"),
         }
     }

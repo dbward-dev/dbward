@@ -109,7 +109,7 @@ pub struct CreateRequest<'a> {
     pub metadata: Option<&'a serde_json::Value>,
     pub idempotency_key: Option<&'a str>,
     pub share_with: Option<&'a [String]>,
-    pub no_store: bool,
+    pub no_result_store: bool,
 }
 
 impl ServerClient {
@@ -160,8 +160,8 @@ impl ServerClient {
         if let Some(sw) = req.share_with {
             body["share_with"] = serde_json::json!(sw);
         }
-        if req.no_store {
-            body["no_store"] = serde_json::json!(true);
+        if req.no_result_store {
+            body["no_result_store"] = serde_json::json!(true);
         }
 
         let (status, text) = self

@@ -23,16 +23,17 @@ pub async fn run_execute(
     repo: Option<&str>,
     idempotency_key: Option<&str>,
     share_with: &[String],
-    no_persist: bool,
+    no_result_store: bool,
     result_format: ResultFormat,
     timeout: Option<u64>,
 ) -> Result<(), CliError> {
     if emergency && reason.is_none() {
         return Err(CliError::Config("--emergency requires --reason".into()));
     }
-    if no_persist {
+    if no_result_store {
         eprintln!(
-            "⚠ --no-persist: result will not be persisted. If you disconnect, it cannot be recovered."
+            "⚠ --no-result-store: query result will not be stored. If you disconnect, it cannot be recovered.
+  Note: request metadata and SQL text are always retained for audit/approval."
         );
     }
 
@@ -54,7 +55,7 @@ pub async fn run_execute(
         metadata: metadata.as_ref(),
         idempotency_key,
         share_with: sw,
-        no_store: no_persist,
+        no_result_store,
     };
 
     let outcome = if let Some(secs) = timeout {

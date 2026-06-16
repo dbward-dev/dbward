@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6] — Unreleased
+
+### Breaking Changes
+
+- **CLI: `--no-persist` → `--no-result-store`**: Renamed to clarify that only query results are suppressed. Request metadata and SQL text are always retained for audit/approval.
+- **API: `no_store` → `no_result_store`**: JSON field renamed in both request body and response.
+
 ## [0.1.5] — 2026-06-15
 
 Config as Authority: TOML config becomes the sole source of truth for all policy resources.

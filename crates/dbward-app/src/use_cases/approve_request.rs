@@ -310,7 +310,7 @@ mod tests {
             idempotency_key: None,
             metadata_json: "{}".into(),
             share_with: vec![],
-            no_store: false,
+            no_result_store: false,
             workflow_snapshot_json: Some(serde_json::to_string(workflow).unwrap()),
             decision_trace_json: None,
             execution_plan_json: None,

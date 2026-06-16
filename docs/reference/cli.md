@@ -36,7 +36,7 @@ dbward execute --emergency --reason "outage fix" "UPDATE config SET v = 'x'"
 | `--allow-ddl` | false | Allow DDL in emergency mode (requires --emergency) |
 | `--reason <TEXT>` | | Reason for this request |
 | `--output <PATH>` | | Save result to file |
-| `--no-persist` | false | Do not persist result on server |
+| `--no-result-store` | false | Do not store query result on server. Request metadata and SQL text are always retained for audit. |
 | `--result-format <FMT>` | table | Display format: `table`, `json`, `csv`, `vertical` |
 | `--timeout <SECS>` | | Max wait time in seconds |
 | `--idempotency-key <KEY>` | | Deduplication key |

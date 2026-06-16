@@ -91,7 +91,7 @@ pub struct CreateRequestInput {
     pub allow_ddl: bool,
     pub idempotency_key: Option<String>,
     pub share_with: Vec<String>,
-    pub no_store: bool,
+    pub no_result_store: bool,
     pub metadata_json: String,
     pub channel: RequestChannel,
 }
@@ -720,7 +720,7 @@ impl CreateRequest {
             idempotency_key: input.idempotency_key,
             metadata_json: input.metadata_json,
             share_with: input.share_with,
-            no_store: input.no_store,
+            no_result_store: input.no_result_store,
             workflow_snapshot_json,
             decision_trace_json: Some(decision_trace_json),
             execution_plan_json: classification.as_ref().and_then(|c| {
@@ -852,7 +852,7 @@ impl CreateRequest {
         let should_explain = workflow.as_ref().map(|w| w.explain).unwrap_or(true);
         if should_explain
             && matches!(operation, Operation::ExecuteSelect | Operation::ExecuteDml)
-            && !request.no_store
+            && !request.no_result_store
         {
             let now_str = now.to_rfc3339();
             // Per-statement jobs (or single job if parse failed)
@@ -885,7 +885,7 @@ impl CreateRequest {
         }
 
         // 10. Create request_context record (best-effort)
-        if !request.no_store {
+        if !request.no_result_store {
             let now_str = now.to_rfc3339();
             let has_dry_run = should_explain
                 && matches!(operation, Operation::ExecuteSelect | Operation::ExecuteDml);
@@ -1054,7 +1054,7 @@ mod tests {
             allow_ddl: false,
             idempotency_key: None,
             share_with: vec![],
-            no_store: false,
+            no_result_store: false,
             metadata_json: "{}".into(),
             channel: RequestChannel::Cli,
         }

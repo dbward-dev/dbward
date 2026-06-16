@@ -237,7 +237,7 @@ pub async fn run_migrate(
                 metadata: metadata.as_ref(),
                 idempotency_key,
                 share_with: sw,
-                no_store: false,
+                no_result_store: false,
             },
             true,
         ) => result?,

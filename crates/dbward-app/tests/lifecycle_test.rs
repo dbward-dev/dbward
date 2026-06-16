@@ -513,7 +513,7 @@ fn make_input() -> CreateRequestInput {
         allow_ddl: false,
         idempotency_key: None,
         share_with: vec![],
-        no_store: false,
+        no_result_store: false,
         metadata_json: "{}".into(),
         channel: RequestChannel::Cli,
     }
