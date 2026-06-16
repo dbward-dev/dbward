@@ -462,6 +462,7 @@ impl AppState {
         &self.token_signer
     }
 
+    #[allow(dead_code)]
     pub(crate) fn result_store(&self) -> &Arc<dyn ResultStore> {
         &self.result_store
     }

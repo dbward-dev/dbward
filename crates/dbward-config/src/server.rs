@@ -661,7 +661,7 @@ pub struct ResultStorageConfig {
     pub secret_access_key: Option<String>,
     #[serde(default)]
     pub path_style: bool,
-    #[serde(default)]
+    #[serde(default = "default_result_prefix")]
     pub prefix: Option<String>,
     #[serde(default = "default_max_persist_bytes")]
     pub max_persist_bytes: usize,
@@ -669,6 +669,9 @@ pub struct ResultStorageConfig {
 
 fn default_backend() -> String {
     "local".into()
+}
+fn default_result_prefix() -> Option<String> {
+    Some("results".into())
 }
 fn default_max_persist_bytes() -> usize {
     10 * 1024 * 1024

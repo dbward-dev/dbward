@@ -42,10 +42,7 @@ impl S3ResultStore {
         let store = builder
             .build()
             .map_err(|e| AppError::Internal(e.to_string()))?;
-        let prefix = config
-            .prefix
-            .map(|p| if p.ends_with('/') { p } else { format!("{p}/") })
-            .unwrap_or_default();
+        let prefix = normalize_prefix(config.prefix.as_deref());
         Ok(Self {
             store: Arc::new(store),
             prefix,
@@ -115,5 +112,49 @@ impl ResultStore for S3ResultStore {
             .map_err(|e| AppError::Internal(format!("S3 health check failed: {e}")))?;
         let _ = self.store.delete(&probe).await;
         Ok(())
+    }
+}
+
+fn normalize_prefix(prefix: Option<&str>) -> String {
+    match prefix {
+        None | Some("") => String::new(),
+        Some(p) => {
+            let trimmed = p.trim_start_matches('/');
+            // Collapse consecutive slashes
+            let collapsed: String = trimmed.chars().fold(String::new(), |mut acc, c| {
+                if c == '/' && acc.ends_with('/') {
+                    acc
+                } else {
+                    acc.push(c);
+                    acc
+                }
+            });
+            if collapsed.is_empty() {
+                String::new()
+            } else if collapsed.ends_with('/') {
+                collapsed
+            } else {
+                format!("{collapsed}/")
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_prefix_cases() {
+        assert_eq!(normalize_prefix(None), "");
+        assert_eq!(normalize_prefix(Some("")), "");
+        assert_eq!(normalize_prefix(Some("results")), "results/");
+        assert_eq!(normalize_prefix(Some("results/")), "results/");
+        assert_eq!(normalize_prefix(Some("/results")), "results/");
+        assert_eq!(normalize_prefix(Some("/results/")), "results/");
+        assert_eq!(normalize_prefix(Some("///results///")), "results/");
+        assert_eq!(normalize_prefix(Some("a/b/c")), "a/b/c/");
+        assert_eq!(normalize_prefix(Some("/")), "");
+        assert_eq!(normalize_prefix(Some("///")), "");
     }
 }

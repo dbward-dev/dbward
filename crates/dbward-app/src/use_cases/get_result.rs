@@ -146,7 +146,10 @@ impl GetResult {
 
         let success = execution.status == dbward_domain::entities::ExecutionStatus::Completed;
         let exec_id = execution.id.clone();
-        let key = format!("results/{}/{}", input.request_id, execution.id);
+        let key = self
+            .agent_repo
+            .get_storage_key(&input.request_id, &execution.id)?
+            .ok_or_else(|| AppError::NotFound("result not found in storage".into()))?;
         let stream = self
             .result_store
             .get_stream(&key)
@@ -544,6 +547,13 @@ mod tests {
         }
         fn delete_result(&self, _: &str) -> Result<(), AppError> {
             Ok(())
+        }
+        fn get_storage_key(
+            &self,
+            request_id: &str,
+            execution_id: &str,
+        ) -> Result<Option<String>, AppError> {
+            Ok(Some(format!("{request_id}/{execution_id}")))
         }
     }
     impl Clock for FakeClock {

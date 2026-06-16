@@ -232,6 +232,14 @@ pub trait AgentRepo: Send + Sync {
     fn find_expired_results(&self, now: &str) -> Result<Vec<(String, String)>, AppError>;
     /// Delete a result record by id.
     fn delete_result(&self, result_id: &str) -> Result<(), AppError>;
+    /// Get storage_key for a specific result by request_id + execution_id.
+    fn get_storage_key(
+        &self,
+        _request_id: &str,
+        _execution_id: &str,
+    ) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Clone)]

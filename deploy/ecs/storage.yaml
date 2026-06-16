@@ -82,6 +82,7 @@ Outputs:
       backend = "s3"
       bucket = "${ResultBucket}"
       region = "${AWS::Region}"
+      prefix = "results"
 
   RequiredIAMPolicy:
     Description: Attach this policy to your server task role
