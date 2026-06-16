@@ -685,6 +685,9 @@ fn test_state() -> AppState {
         event_dispatcher: Arc::new(NoopEventDispatcher),
         ssrf_validator: Arc::new(NoopSsrfValidator),
         license_checker: Arc::new(NoopLicenseChecker),
+        #[cfg(feature = "commercial")]
+        license_checker_impl: None,
+        server_meta_repo: None,
         clock: Arc::new(RealClock),
         id_generator: Arc::new(SeqIdGen::new()),
         token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),

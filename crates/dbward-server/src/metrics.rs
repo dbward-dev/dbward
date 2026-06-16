@@ -18,6 +18,11 @@ pub struct Metrics {
     pub result_storage_total: CounterVec<1>,
     pub background_panics_total: AtomicU64,
 
+    // License online validation counters
+    pub license_online_success: AtomicU64,
+    pub license_online_failure: AtomicU64,
+    pub license_online_network_error: AtomicU64,
+
     // Break-glass DDL counters
     pub break_glass_ddl_attempted: AtomicU64,
     pub break_glass_ddl_allowed: AtomicU64,
@@ -50,6 +55,9 @@ impl Metrics {
             webhook_deliveries_total: CounterVec::new(),
             result_storage_total: CounterVec::new(),
             background_panics_total: AtomicU64::new(0),
+            license_online_success: AtomicU64::new(0),
+            license_online_failure: AtomicU64::new(0),
+            license_online_network_error: AtomicU64::new(0),
             break_glass_ddl_attempted: AtomicU64::new(0),
             break_glass_ddl_allowed: AtomicU64::new(0),
             break_glass_ddl_denied: AtomicU64::new(0),
@@ -178,6 +186,33 @@ pub fn render(
         out,
         "dbward_background_panics_total {}",
         metrics.background_panics_total.load(Ordering::Relaxed)
+    )
+    .ok();
+
+    // License online validation
+    writeln!(out, "# TYPE dbward_license_online_success_total counter").ok();
+    writeln!(
+        out,
+        "dbward_license_online_success_total {}",
+        metrics.license_online_success.load(Ordering::Relaxed)
+    )
+    .ok();
+    writeln!(out, "# TYPE dbward_license_online_failure_total counter").ok();
+    writeln!(
+        out,
+        "dbward_license_online_failure_total {}",
+        metrics.license_online_failure.load(Ordering::Relaxed)
+    )
+    .ok();
+    writeln!(
+        out,
+        "# TYPE dbward_license_online_network_error_total counter"
+    )
+    .ok();
+    writeln!(
+        out,
+        "dbward_license_online_network_error_total {}",
+        metrics.license_online_network_error.load(Ordering::Relaxed)
     )
     .ok();
 

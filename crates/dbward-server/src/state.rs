@@ -77,6 +77,9 @@ pub struct AppState {
     #[allow(dead_code)] // Used in sync_all_config (cloned before AppState build)
     ssrf_validator: Arc<dyn SsrfValidator>,
     license_checker: Arc<dyn LicenseChecker>,
+    #[cfg(feature = "commercial")]
+    license_checker_impl: Option<Arc<dbward_commercial_license::LicenseCheckerImpl>>,
+    server_meta_repo: Option<Arc<dyn dbward_app::ports::ServerMetaRepo>>,
     clock: Arc<dyn Clock>,
     id_generator: Arc<dyn IdGenerator>,
     token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator>,
@@ -559,6 +562,27 @@ impl<'a> BackgroundAccess<'a> {
     pub fn license_checker(&self) -> &Arc<dyn LicenseChecker> {
         &self.0.license_checker
     }
+    #[cfg(feature = "commercial")]
+    pub fn license_checker_impl(
+        &self,
+    ) -> Option<&Arc<dbward_commercial_license::LicenseCheckerImpl>> {
+        self.0.license_checker_impl.as_ref()
+    }
+    pub fn persist_validated_until(
+        &self,
+        ts: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), dbward_app::error::AppError> {
+        if let Some(repo) = &self.0.server_meta_repo {
+            repo.set("license_validated_until", &ts.to_rfc3339())?;
+        }
+        Ok(())
+    }
+    pub fn persist_grace_days(&self, days: u32) -> Result<(), dbward_app::error::AppError> {
+        if let Some(repo) = &self.0.server_meta_repo {
+            repo.set("license_grace_days", &days.to_string())?;
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -626,6 +650,9 @@ pub struct AppStateBuilder {
     pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub ssrf_validator: Arc<dyn SsrfValidator>,
     pub license_checker: Arc<dyn LicenseChecker>,
+    #[cfg(feature = "commercial")]
+    pub license_checker_impl: Option<Arc<dbward_commercial_license::LicenseCheckerImpl>>,
+    pub server_meta_repo: Option<Arc<dyn dbward_app::ports::ServerMetaRepo>>,
     pub clock: Arc<dyn Clock>,
     pub id_generator: Arc<dyn IdGenerator>,
     pub token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator>,
@@ -670,6 +697,9 @@ impl AppStateBuilder {
             event_dispatcher: self.event_dispatcher,
             ssrf_validator: self.ssrf_validator,
             license_checker: self.license_checker,
+            #[cfg(feature = "commercial")]
+            license_checker_impl: self.license_checker_impl,
+            server_meta_repo: self.server_meta_repo,
             clock: self.clock,
             id_generator: self.id_generator,
             token_value_generator: self.token_value_generator,

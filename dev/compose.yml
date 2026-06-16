@@ -113,6 +113,35 @@ services:
         limits:
           memory: 128M
 
+  mock-license:
+    image: python:3.12-slim
+    profiles: [license-e2e]
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    networks: [backend, frontend]
+    volumes:
+      - ./fixtures/mock-license-server.py:/app/server.py:ro
+    command: ["python3", "/app/server.py"]
+    ports:
+      - "127.0.0.1:18443:8443"
+      - "127.0.0.1:18444:8444"
+    environment:
+      MOCK_LICENSE_STATUS: active
+      MOCK_GRACE_DAYS: "7"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8444/get-status')\""]
+      start_period: 3s
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    tmpfs:
+      - /tmp:size=16M
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
   mysql:
     image: mysql:8.0
     profiles: [mysql]

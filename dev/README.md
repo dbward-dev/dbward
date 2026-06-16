@@ -67,6 +67,11 @@ cargo test --workspace
 ./dev/e2e/lifecycle.sh
 ./dev/e2e/agent.sh
 ./dev/e2e/security.sh
+
+# License online validation E2E (uses mock server, self-contained)
+export DBWARD_LICENSE_PUBLIC_KEY=$(cat dev/testdata/licenses/test.pub.hex)
+bash dev/e2e/license-online.sh
+
 # ... or all at once:
 for f in dev/e2e/*.sh; do [ "$f" != "dev/e2e/helpers.sh" ] && bash "$f"; done
 ```
