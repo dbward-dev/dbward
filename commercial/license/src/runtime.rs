@@ -31,8 +31,8 @@ pub enum LicenseEvent {
 /// Contains no judgment logic — only data plumbing.
 pub trait LicenseHost: Send + Sync + 'static {
     fn now(&self) -> DateTime<Utc>;
-    fn persist_validated_until(&self, ts: DateTime<Utc>) -> bool;
-    fn persist_grace_days(&self, days: u32) -> bool;
+    fn persist_validated_until(&self, ts: DateTime<Utc>) -> Result<(), String>;
+    fn persist_grace_days(&self, days: u32) -> Result<(), String>;
     fn emit_event(&self, event: LicenseEvent);
     fn metric_online_success(&self);
     fn metric_online_failure(&self);
@@ -111,11 +111,11 @@ pub async fn run(
                 let result = checker.validate_online(now).await;
                 match &result {
                     OnlineValidationResult::Active { validated_until } => {
-                        if !host.persist_validated_until(*validated_until) {
-                            tracing::error!("failed to persist validated_until");
+                        if let Err(e) = host.persist_validated_until(*validated_until) {
+                            tracing::error!(error = %e, "failed to persist validated_until");
                         }
-                        if !host.persist_grace_days(checker.grace_days()) {
-                            tracing::error!("failed to persist grace_days");
+                        if let Err(e) = host.persist_grace_days(checker.grace_days()) {
+                            tracing::error!(error = %e, "failed to persist grace_days");
                         }
                         host.metric_online_success();
                     }

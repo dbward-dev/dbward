@@ -43,12 +43,18 @@ impl dbward_commercial_license::runtime::LicenseHost for ServerLicenseHost {
         self.state.background().clock().now()
     }
 
-    fn persist_validated_until(&self, ts: chrono::DateTime<chrono::Utc>) -> bool {
-        self.state.background().persist_validated_until(ts).is_ok()
+    fn persist_validated_until(&self, ts: chrono::DateTime<chrono::Utc>) -> Result<(), String> {
+        self.state
+            .background()
+            .persist_validated_until(ts)
+            .map_err(|e| e.to_string())
     }
 
-    fn persist_grace_days(&self, days: u32) -> bool {
-        self.state.background().persist_grace_days(days).is_ok()
+    fn persist_grace_days(&self, days: u32) -> Result<(), String> {
+        self.state
+            .background()
+            .persist_grace_days(days)
+            .map_err(|e| e.to_string())
     }
 
     fn emit_event(&self, event: dbward_commercial_license::runtime::LicenseEvent) {

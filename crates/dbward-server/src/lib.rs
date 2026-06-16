@@ -330,8 +330,18 @@ pub async fn run_from_args(
 
         let persisted_grace_days: Option<u32> = server_meta_repo
             .as_ref()
-            .and_then(|repo| repo.get("license_grace_days").ok().flatten())
-            .and_then(|s| s.parse().ok());
+            .and_then(|repo| match repo.get("license_grace_days") {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to read license_grace_days from DB");
+                    None
+                }
+            })
+            .and_then(|s| {
+                s.parse().map_err(|e| {
+                    tracing::warn!(value = %s, error = %e, "invalid license_grace_days in DB, using default");
+                }).ok()
+            });
 
         let license = resolve_license(license_key, license_file)
             .map_err(dbward_app::error::AppError::Internal)?;

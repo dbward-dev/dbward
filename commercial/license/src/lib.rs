@@ -264,6 +264,12 @@ impl LicenseCheckerImpl {
             tracing::warn!("license validation URL must use HTTPS, skipping online validation");
             return OnlineValidationResult::Offline;
         }
+        if !self.validate_url.starts_with("https://") {
+            tracing::warn!(
+                url = %self.validate_url,
+                "DBWARD_LICENSE_INSECURE=1: sending license validation over insecure HTTP"
+            );
+        }
         let client = match &self.http_client {
             Some(c) => c,
             None => return OnlineValidationResult::Offline,
