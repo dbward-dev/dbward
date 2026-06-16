@@ -39,17 +39,6 @@ pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<serde_jso
         }
     }
 
-    match state.result_store().health_check().await {
-        Ok(()) => {
-            checks.insert("result_store".into(), serde_json::json!("ok"));
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "readiness: result_store check failed");
-            checks.insert("result_store".into(), serde_json::json!("unavailable"));
-            all_ok = false;
-        }
-    }
-
     let status = if all_ok {
         StatusCode::OK
     } else {

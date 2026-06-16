@@ -151,7 +151,7 @@ impl AgentSubmitResult {
                         self.max_persist_bytes
                     )));
                 }
-                let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
+                let storage_key = format!("{}/{}", execution.request_id, execution.id);
                 if should_store {
                     let stored_at = self.clock.now();
                     let expires_at = stored_at + chrono::Duration::days(retention_days as i64);
@@ -198,14 +198,36 @@ impl AgentSubmitResult {
                 "success": false,
                 "error": truncated_err,
             });
-            let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
+            let storage_key = format!("{}/{}", execution.request_id, execution.id);
+            let err_bytes = err_json.to_string().into_bytes();
+            let stored_at = self.clock.now();
+            let expires_at = stored_at + chrono::Duration::days(retention_days as i64);
             self.result_store
                 .put(
                     &storage_key,
-                    err_json.to_string().as_bytes(),
-                    crate::ports::PutOptions::default(),
+                    &err_bytes,
+                    crate::ports::PutOptions {
+                        expires_at: Some(expires_at),
+                    },
                 )
                 .await?;
+            data_len = err_bytes.len() as u64;
+            let checksum = hex::encode(sha2::Sha256::digest(&err_bytes));
+            result_manifest = Some(ExecutionResult {
+                id: format!("res-{}", execution.id),
+                request_id: execution.request_id.clone(),
+                execution_id: execution.id.clone(),
+                storage_backend: self.storage_backend.clone(),
+                storage_key,
+                content_length: data_len,
+                checksum_sha256: checksum,
+                retention_days,
+                status: dbward_domain::entities::ResultStatus::Stored,
+                truncated: false,
+                truncation_reason: None,
+                stored_at,
+                expires_at: stored_at + chrono::Duration::days(retention_days as i64),
+            });
         }
 
         // Build share_with ResultAccess records (UNION of request.share_with + policy.access)
@@ -302,7 +324,7 @@ impl AgentSubmitResult {
                         tracing::error!(key = %rm.storage_key, error = %del_err, "compensation delete failed for stored result");
                     }
                 } else if !input.success {
-                    let storage_key = format!("results/{}/{}", execution.request_id, execution.id);
+                    let storage_key = format!("{}/{}", execution.request_id, execution.id);
                     if let Err(del_err) = self.result_store.delete(&storage_key).await {
                         tracing::error!(key = %storage_key, error = %del_err, "compensation delete failed for error result");
                     }

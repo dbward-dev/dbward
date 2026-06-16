@@ -541,6 +541,24 @@ impl AgentRepo for SqliteAgentRepo {
         .map_err(db_err("agent: delete_result"))?;
         Ok(())
     }
+
+    fn get_storage_key(
+        &self,
+        request_id: &str,
+        execution_id: &str,
+    ) -> Result<Option<String>, AppError> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT storage_key FROM results WHERE request_id = ?1 AND execution_id = ?2")
+            .map_err(db_err("agent: get_storage_key"))?;
+        let key = stmt
+            .query_row(rusqlite::params![request_id, execution_id], |row| {
+                row.get(0)
+            })
+            .optional()
+            .map_err(db_err("agent: get_storage_key"))?;
+        Ok(key)
+    }
 }
 
 // --- helpers ---

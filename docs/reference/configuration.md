@@ -352,7 +352,9 @@ backend = "local"
 | `access_key_id` | String | | — | S3 access key. Prefer IAM roles. |
 | `secret_access_key` | String | | — | S3 secret key. |
 | `path_style` | bool | | `false` | Path-style S3 URLs (set `true` for MinIO). |
-| `prefix` | String | | — | Key prefix for S3 objects. |
+| `prefix` | String | | `"results"` | Key prefix for S3 objects. |
+
+> **Note:** `[result_storage]` is not hot-reloaded on SIGHUP. Changes require a process restart (task redeployment in ECS/Kubernetes).
 
 ### [result_channel]
 
