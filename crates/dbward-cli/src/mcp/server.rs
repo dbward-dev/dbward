@@ -180,7 +180,7 @@ pub async fn run_stdio(
                 if method == "initialize" {
                     let caps = &request["params"]["capabilities"];
                     client_supports_elicitation = caps.get("elicitation").is_some();
-                    if outgoing_tx.send(handle_initialize(id)).await.is_err() {
+                    if outgoing_tx.send(handle_initialize(&request["params"], id)).await.is_err() {
                         break;
                     }
                     continue;
@@ -299,12 +299,20 @@ pub async fn run_stdio(
     Ok(())
 }
 
-pub(crate) fn handle_initialize(id: Option<Value>) -> Value {
+const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+
+pub(crate) fn handle_initialize(params: &Value, id: Option<Value>) -> Value {
+    let client_version = params["protocolVersion"].as_str().unwrap_or("2024-11-05");
+    let negotiated = SUPPORTED_PROTOCOL_VERSIONS
+        .iter()
+        .find(|&&v| v == client_version)
+        .unwrap_or(&SUPPORTED_PROTOCOL_VERSIONS[0]);
+
     json!({
         "jsonrpc": "2.0",
         "id": id,
         "result": {
-            "protocolVersion": "2025-11-05",
+            "protocolVersion": negotiated,
             "serverInfo": {"name": "dbward", "version": env!("CARGO_PKG_VERSION")},
             "capabilities": {
                 "tools": {},

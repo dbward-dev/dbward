@@ -658,11 +658,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn initialize_response_has_protocol_version() {
-        let resp = crate::mcp::server::handle_initialize(Some(json!(1)));
-        assert_eq!(resp["result"]["protocolVersion"], "2025-11-05");
+    fn initialize_response_negotiates_client_version() {
+        let params = json!({"protocolVersion": "2024-11-05", "capabilities": {}});
+        let resp = crate::mcp::server::handle_initialize(&params, Some(json!(1)));
+        assert_eq!(resp["result"]["protocolVersion"], "2024-11-05");
         assert_eq!(resp["result"]["serverInfo"]["name"], "dbward");
         assert_eq!(resp["result"]["capabilities"]["resources"], json!({}));
+    }
+
+    #[test]
+    fn initialize_response_returns_latest_for_unknown_version() {
+        let params = json!({"protocolVersion": "9999-01-01", "capabilities": {}});
+        let resp = crate::mcp::server::handle_initialize(&params, Some(json!(1)));
+        assert_eq!(resp["result"]["protocolVersion"], "2025-06-18");
+    }
+
+    #[test]
+    fn initialize_response_supports_2025_03_26() {
+        let params = json!({"protocolVersion": "2025-03-26", "capabilities": {}});
+        let resp = crate::mcp::server::handle_initialize(&params, Some(json!(1)));
+        assert_eq!(resp["result"]["protocolVersion"], "2025-03-26");
     }
 
     #[test]
