@@ -65,15 +65,15 @@ impl dbward_commercial_license::runtime::LicenseHost for ServerLicenseHost {
                 validated_until,
             } => (
                 "license_grace_warning",
-                format!(
-                    "{{\"grace_remaining_days\":{},\"validated_until\":\"{}\"}}",
-                    remaining_days,
-                    validated_until.to_rfc3339()
-                ),
+                serde_json::json!({
+                    "grace_remaining_days": remaining_days,
+                    "validated_until": validated_until.to_rfc3339()
+                })
+                .to_string(),
             ),
             LicenseEvent::Downgraded { reason } => (
                 "license_downgraded",
-                format!("{{\"reason\":\"{}\"}}", reason),
+                serde_json::json!({ "reason": reason }).to_string(),
             ),
         };
 
