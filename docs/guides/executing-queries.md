@@ -89,7 +89,7 @@ dbward request approve <request-id> --comment "Verified the query is safe"
 | `--reason <text>` | Reason for the request (required for emergency) |
 | `--output <path>` | Save result to a file |
 | `--no-save` | Do not save result locally |
-| `--no-persist` | Do not persist result to server storage |
+| `--no-result-store` | Do not store query result on server (metadata and SQL always retained for audit) |
 | `--result-format <fmt>` | Output format: `table`, `json`, `csv` (default: table) |
 | `--timeout <secs>` | Maximum wait time in seconds |
 | `--ticket <id>` | Attach ticket metadata (e.g., JIRA-123) |

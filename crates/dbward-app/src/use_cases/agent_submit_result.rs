@@ -141,8 +141,8 @@ impl AgentSubmitResult {
         // 7. Store result to external storage (success results, or failure with partial data)
         let mut result_manifest: Option<ExecutionResult> = None;
         let data_len: u64;
-        let has_result_data = !request.no_store && input.result_data.is_some();
-        if (input.success || has_result_data) && !request.no_store {
+        let has_result_data = !request.no_result_store && input.result_data.is_some();
+        if (input.success || has_result_data) && !request.no_result_store {
             if let Some(data) = &input.result_data {
                 if data.len() > self.max_persist_bytes {
                     return Err(AppError::PayloadTooLarge(format!(
@@ -798,7 +798,7 @@ mod tests {
             idempotency_key: None,
             metadata_json: "{}".into(),
             share_with: vec![],
-            no_store: false,
+            no_result_store: false,
             workflow_snapshot_json: None,
             decision_trace_json: None,
             execution_plan_json: None,

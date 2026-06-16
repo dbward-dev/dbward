@@ -74,7 +74,7 @@ pub struct CreateRequestBody {
     #[serde(default)]
     pub allow_ddl: bool,
     #[serde(default)]
-    pub no_store: bool,
+    pub no_result_store: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub share_with: Vec<String>,
 }

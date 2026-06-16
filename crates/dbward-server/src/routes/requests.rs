@@ -59,7 +59,7 @@ pub async fn create(
         allow_ddl: body.allow_ddl,
         idempotency_key: body.idempotency_key,
         share_with: body.share_with,
-        no_store: body.no_store,
+        no_result_store: body.no_result_store,
         metadata_json: body
             .metadata
             .as_ref()
@@ -240,7 +240,7 @@ pub async fn get(
             "emergency": output.request.emergency,
             "reason": output.request.reason,
             "share_with": output.request.share_with,
-            "no_store": output.request.no_store,
+            "no_result_store": output.request.no_result_store,
             "created_at": output.request.created_at,
             "updated_at": output.request.updated_at,
             "expires_at": output.request.expires_at,

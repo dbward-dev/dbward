@@ -151,7 +151,7 @@ mod tests {
                     decision_trace_json: None,
                     execution_plan_json: None,
                     metadata_json: "{}".into(),
-                    no_store: false,
+                    no_result_store: false,
                     cancel_reason: None,
                     cancelled_by: None,
                     expires_at: None,

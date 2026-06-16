@@ -82,7 +82,7 @@ pub struct Request {
     pub idempotency_key: Option<String>,
     pub metadata_json: String,
     pub share_with: Vec<String>,
-    pub no_store: bool,
+    pub no_result_store: bool,
     pub workflow_snapshot_json: Option<String>,
     pub decision_trace_json: Option<String>,
     /// Parser-derived statement texts for execution (SAFE-3).

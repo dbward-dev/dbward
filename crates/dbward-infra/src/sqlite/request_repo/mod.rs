@@ -175,7 +175,8 @@ fn row_to_request(row: &rusqlite::Row<'_>) -> Result<Request, rusqlite::Error> {
         idempotency_key: row.get("idempotency_key")?,
         metadata_json: row.get("metadata_json")?,
         share_with,
-        no_store: row.get::<_, i64>("no_store")? != 0,
+        // SQLite column kept as "no_store" to avoid ALTER TABLE migration risk.
+        no_result_store: row.get::<_, i64>("no_store")? != 0,
         workflow_snapshot_json: row.get("workflow_snapshot_json")?,
         decision_trace_json: row.get("decision_trace_json")?,
         execution_plan_json: row.get("execution_plan_json")?,
@@ -211,7 +212,7 @@ mod tests {
             idempotency_key: Some("idem-1".to_string()),
             metadata_json: "{}".to_string(),
             share_with: vec!["user-2".to_string()],
-            no_store: false,
+            no_result_store: false,
             workflow_snapshot_json: None,
             decision_trace_json: None,
             execution_plan_json: None,

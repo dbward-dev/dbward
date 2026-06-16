@@ -495,7 +495,8 @@ pub fn build_message_from_state(
     }
 
     // DX-13: View Result button for terminal states
-    if matches!(req.status, RequestStatus::Executed | RequestStatus::Failed) && !req.no_store {
+    if matches!(req.status, RequestStatus::Executed | RequestStatus::Failed) && !req.no_result_store
+    {
         blocks.push(json!({
             "type": "actions",
             "elements": [{
