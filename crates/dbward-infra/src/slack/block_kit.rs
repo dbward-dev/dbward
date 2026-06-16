@@ -14,11 +14,7 @@ pub fn build_request_created(
     let req_id = event.request_id.as_deref().unwrap_or("—");
     let short_id = &req_id[..req_id.len().min(12)];
 
-    let (emoji, title) = match event.event_type.as_str() {
-        "break_glass" => ("🚨", "Break-Glass Request"),
-        "request_auto_approved" => ("⚡", "Auto-Approved"),
-        _ => ("📋", "New Approval Request"),
-    };
+    let (emoji, title) = crate::notification_display::event_display(&event.event_type);
 
     let mut fields = vec![
         json!({"type": "mrkdwn", "text": format!("*Requester:*\n{requester}")}),
@@ -276,6 +272,7 @@ pub fn build_review_modal(
 /// Build blocks for a thread reply.
 pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Value> {
     let actor = event.actor.as_deref().unwrap_or("system");
+    let (default_emoji, _) = crate::notification_display::event_display(&event.event_type);
 
     let (emoji, text) = match event.event_type.as_str() {
         "step_approved" => {
@@ -283,33 +280,36 @@ pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Val
                 (Some(s), Some(t)) => format!(" (step {}/{})", s + 1, t),
                 _ => String::new(),
             };
-            ("✅", format!("Approved by {actor}{step_info}"))
+            (
+                default_emoji,
+                format!("Step approved by {actor}{step_info}"),
+            )
         }
-        "request_approved" => ("✅", format!("Approved by {actor}")),
+        "request_approved" => (default_emoji, format!("Request approved by {actor}")),
         "request_rejected" => {
             let reason = event
                 .reason
                 .as_deref()
                 .map(|r| format!(": {r}"))
                 .unwrap_or_default();
-            ("❌", format!("Rejected by {actor}{reason}"))
+            (default_emoji, format!("Rejected by {actor}{reason}"))
         }
-        "request_completed" => ("🎉", "Execution completed successfully".into()),
+        "request_completed" => (default_emoji, "Execution completed successfully".into()),
         "request_failed" => {
             let err = event.error_summary.as_deref().unwrap_or("unknown error");
-            ("⚠️", format!("Execution failed: {err}"))
+            (default_emoji, format!("Execution failed: {err}"))
         }
-        "request_expired" => ("⏰", "Request expired".into()),
-        "execution_lost" => ("💀", "Execution lost (agent disconnected)".into()),
+        "request_expired" => (default_emoji, "Request expired".into()),
+        "execution_lost" => (default_emoji, "Execution lost (agent disconnected)".into()),
         "request_cancelled" => {
             let reason = event
                 .reason
                 .as_deref()
                 .map(|r| format!(": {r}"))
                 .unwrap_or_default();
-            ("🚫", format!("Cancelled{reason}"))
+            (default_emoji, format!("Cancelled{reason}"))
         }
-        _ => ("🔔", format!("{}: {actor}", event.event_type)),
+        _ => (default_emoji, format!("{}: {actor}", event.event_type)),
     };
 
     let display_text = if mention_suffix.is_empty() {
@@ -324,6 +324,13 @@ pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Val
     })];
 
     blocks
+}
+
+/// Whether the "View Result" button should be shown for a request.
+/// Failed results are always stored (even with no_result_store=true).
+fn should_show_view_result(req: &Request) -> bool {
+    matches!(req.status, RequestStatus::Executed | RequestStatus::Failed)
+        && (!req.no_result_store || req.status == RequestStatus::Failed)
 }
 
 /// Build updated blocks for the original message after resolution.
@@ -495,8 +502,7 @@ pub fn build_message_from_state(
     }
 
     // DX-13: View Result button for terminal states
-    if matches!(req.status, RequestStatus::Executed | RequestStatus::Failed) && !req.no_result_store
-    {
+    if should_show_view_result(req) {
         blocks.push(json!({
             "type": "actions",
             "elements": [{
@@ -610,20 +616,21 @@ pub fn build_result_modal_unavailable(request_id: &str, reason: &str) -> Value {
 
 /// Fallback text.
 pub fn fallback_text(event: &WebhookEvent) -> String {
+    let (emoji, _) = crate::notification_display::event_display(&event.event_type);
     let req_id = event.request_id.as_deref().unwrap_or("—");
     match event.event_type.as_str() {
-        "request_created" => format!("📋 New approval request {req_id}"),
-        "break_glass" => format!("🚨 Break-glass request {req_id}"),
-        "request_auto_approved" => format!("⚡ Auto-approved {req_id}"),
-        "step_approved" => format!("✅ Step approved for {req_id}"),
-        "request_approved" => format!("✅ Request {req_id} approved"),
-        "request_rejected" => format!("❌ Request {req_id} rejected"),
-        "request_cancelled" => format!("🚫 Request {req_id} cancelled"),
-        "request_completed" => format!("🎉 Request {req_id} completed"),
-        "request_failed" => format!("⚠️ Request {req_id} failed"),
-        "request_expired" => format!("⏰ Request {req_id} expired"),
-        "execution_lost" => format!("💀 Execution lost for {req_id}"),
-        _ => format!("🔔 {}: {req_id}", event.event_type),
+        "request_created" => format!("{emoji} New approval request {req_id}"),
+        "break_glass" => format!("{emoji} Break-glass request {req_id}"),
+        "request_auto_approved" => format!("{emoji} Auto-approved {req_id}"),
+        "step_approved" => format!("{emoji} Step approved for {req_id}"),
+        "request_approved" => format!("{emoji} Request {req_id} approved"),
+        "request_rejected" => format!("{emoji} Request {req_id} rejected"),
+        "request_cancelled" => format!("{emoji} Request {req_id} cancelled"),
+        "request_completed" => format!("{emoji} Request {req_id} completed"),
+        "request_failed" => format!("{emoji} Request {req_id} failed"),
+        "request_expired" => format!("{emoji} Request {req_id} expired"),
+        "execution_lost" => format!("{emoji} Execution lost for {req_id}"),
+        _ => format!("{emoji} {}: {req_id}", event.event_type),
     }
 }
 
@@ -732,7 +739,7 @@ mod tests {
         event.event_type = "request_approved".into();
         let blocks = build_thread_reply(&event, "");
         let text = blocks[0]["text"]["text"].as_str().unwrap();
-        assert!(text.contains("Approved by alice"));
+        assert!(text.contains("Request approved by alice"));
     }
 
     #[test]
@@ -838,5 +845,87 @@ mod tests {
         let modal = build_review_modal("req-4", Some("SELECT 1"), Some(&ctx));
         let blocks_str = serde_json::to_string(&modal["blocks"]).unwrap();
         assert!(blocks_str.contains("Execution Plan"));
+    }
+}
+
+#[cfg(test)]
+mod view_result_tests {
+    use super::*;
+    use dbward_domain::entities::RequestStatus;
+    use dbward_domain::values::{DatabaseName, Environment, Operation};
+
+    fn make_request(status: RequestStatus, no_result_store: bool) -> Request {
+        Request {
+            id: "req-1".into(),
+            requester: "alice".into(),
+            database: DatabaseName::new("app").unwrap(),
+            environment: Environment::new("production").unwrap(),
+            operation: Operation::ExecuteSelect,
+            detail: "SELECT 1".into(),
+            status,
+            emergency: false,
+            reason: None,
+            idempotency_key: None,
+            metadata_json: "{}".into(),
+            share_with: vec![],
+            no_result_store,
+            workflow_snapshot_json: None,
+            decision_trace_json: None,
+            execution_plan_json: None,
+            cancel_reason: None,
+            cancelled_by: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            resolved_at: None,
+            expires_at: None,
+        }
+    }
+
+    #[test]
+    fn view_result_button_shown_for_failed_no_result_store() {
+        let req = make_request(RequestStatus::Failed, true);
+        assert!(should_show_view_result(&req));
+    }
+
+    #[test]
+    fn view_result_button_hidden_for_executed_no_result_store() {
+        let req = make_request(RequestStatus::Executed, true);
+        assert!(!should_show_view_result(&req));
+    }
+
+    #[test]
+    fn view_result_button_shown_for_executed_normal() {
+        let req = make_request(RequestStatus::Executed, false);
+        assert!(should_show_view_result(&req));
+    }
+
+    #[test]
+    fn view_result_button_hidden_for_execution_lost() {
+        let req = make_request(RequestStatus::ExecutionLost, false);
+        assert!(!should_show_view_result(&req));
+    }
+
+    #[test]
+    fn fallback_text_step_approved_uses_ballot_box_emoji() {
+        let event = WebhookEvent {
+            event_type: "step_approved".into(),
+            request_id: Some("req-1".into()),
+            database: None,
+            environment: None,
+            actor: None,
+            detail: None,
+            requester: None,
+            reason: None,
+            redacted_detail: None,
+            error_summary: None,
+            approval_hint: None,
+            operation: None,
+            step_index: None,
+            total_steps: None,
+            expires_at: None,
+            approvers: None,
+        };
+        let text = fallback_text(&event);
+        assert!(text.contains("☑️"), "expected ☑️ in: {text}");
     }
 }

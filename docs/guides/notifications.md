@@ -167,6 +167,41 @@ Users without linked accounts can still approve via CLI/API.
 | Button click error | Check Interactivity URL is correct and publicly accessible |
 | "Account not linked" | Run `dbward user update --slack-user-id YOUR_ID` |
 
+---
+
+## Webhook vs Interactive: Choosing the Right Integration
+
+dbward offers two independent Slack notification paths. They can be used alone or together.
+
+| | Webhook (`format = "slack"`) | Interactive (`[slack]`) |
+|---|---|---|
+| **Setup** | `[[webhooks]]` + Incoming Webhook URL | `[slack]` + Bot Token + Signing Secret |
+| **Delivery** | Incoming Webhook (passive) | Bot Token API (chat.postMessage) |
+| **Approve/Reject** | ❌ CLI only | ✅ Buttons + Modal |
+| **SQL in message** | ✅ Shown directly (redacted) | ❌ Only in Review Modal |
+| **Thread replies** | ❌ Single message per event | ✅ Thread + message updates |
+| **Mentions** | ❌ | ✅ @user notifications |
+
+**Both enabled?** Both fire simultaneously. This is safe — webhook delivers a passive summary while interactive provides full button support.
+
+### SQL visibility
+
+The `format = "slack"` webhook displays redacted SQL directly in the channel message. This is by design — since Incoming Webhooks don't support buttons, the approver needs to see what they're approving from the notification alone.
+
+If you don't want SQL visible in the Slack channel:
+
+1. **Use Interactive only** — SQL is shown only inside the Review Modal (after authorization check)
+2. **Use `format = "generic"`** — receive the raw JSON and format it yourself, omitting `detail`
+3. **Set `redaction = "full"`** — replaces SQL with a hash (applies to both formats)
+
+```toml
+# Option 3: Hash-only redaction
+[audit]
+redaction = "full"
+```
+
+---
+
 ## See also
 
 - [Notification Policies](policies/notification-policies.md) — control which events fire per database

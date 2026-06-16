@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod notification_display;
 pub mod slack;
 pub mod sqlite;
 pub mod storage;
