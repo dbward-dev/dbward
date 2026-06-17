@@ -1,6 +1,6 @@
 // Copyright (c) 2026 dbward-dev.
 // Licensed under the dbward Commercial License.
-// Production use requires a valid Pro or Enterprise subscription.
+// Production use requires a valid Team or Enterprise subscription.
 
 use std::sync::Arc;
 

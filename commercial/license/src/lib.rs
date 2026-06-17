@@ -1,6 +1,6 @@
 // Copyright (c) 2026 dbward-dev.
 // Licensed under the dbward Commercial License.
-// Production use requires a valid Pro or Enterprise subscription.
+// Production use requires a valid Team or Enterprise subscription.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 
@@ -12,8 +12,8 @@ use dbward_domain::license::{License, Plan, PlanLimits};
 
 pub mod runtime;
 
-/// Pro plan limits (commercial-only constant).
-const PRO: PlanLimits = PlanLimits {
+/// Team plan limits (commercial-only constant).
+const TEAM: PlanLimits = PlanLimits {
     max_workflows: u32::MAX,
     max_databases: 20,
     max_webhooks: u32::MAX,
@@ -341,7 +341,7 @@ impl LicenseCheckerImpl {
         } else {
             match self.license.plan {
                 Plan::Free => Some(&PlanLimits::FREE),
-                Plan::Pro => Some(&PRO),
+                Plan::Team => Some(&TEAM),
                 Plan::Enterprise => None,
             }
         }
@@ -372,7 +372,7 @@ impl LicenseChecker for LicenseCheckerImpl {
     fn configured_plan(&self) -> &str {
         match self.license.plan {
             Plan::Free => "free",
-            Plan::Pro => "pro",
+            Plan::Team => "team",
             Plan::Enterprise => "enterprise",
         }
     }
@@ -414,7 +414,7 @@ mod tests {
     fn valid_pro_license() {
         let future = Utc::now() + Duration::days(30);
         let lic = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: None,
             issued_to: Some("test".into()),
             issued_at: None,
@@ -422,8 +422,8 @@ mod tests {
         };
         let checker = make_checker(lic, None);
         assert!(!checker.is_expired());
-        assert_eq!(checker.configured_plan(), "pro");
-        assert_eq!(checker.effective_plan(), "pro");
+        assert_eq!(checker.configured_plan(), "team");
+        assert_eq!(checker.effective_plan(), "team");
         assert_eq!(checker.max_databases(), 20);
         assert_eq!(checker.max_workflows(), u32::MAX);
         assert_eq!(checker.max_webhooks(), u32::MAX);
@@ -436,7 +436,7 @@ mod tests {
     fn expired_pro_downgrades_to_free() {
         let past = Utc::now() - Duration::hours(1);
         let lic = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: None,
             issued_to: Some("test".into()),
             issued_at: None,
@@ -444,7 +444,7 @@ mod tests {
         };
         let checker = make_checker(lic, None);
         assert!(checker.is_expired());
-        assert_eq!(checker.configured_plan(), "pro");
+        assert_eq!(checker.configured_plan(), "team");
         assert_eq!(checker.effective_plan(), "free");
         assert_eq!(checker.max_databases(), 3);
         assert!(!checker.is_enterprise());
@@ -477,7 +477,7 @@ mod tests {
     fn check_expiry_logs_only_once() {
         let future = Utc::now() + Duration::hours(1);
         let lic = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: None,
             issued_to: None,
             issued_at: None,
@@ -505,7 +505,7 @@ mod tests {
     fn check_expiry_concurrent_only_flips_once() {
         let future = Utc::now() + Duration::hours(1);
         let lic = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: None,
             issued_to: None,
             issued_at: None,
@@ -531,7 +531,7 @@ mod tests {
     fn grace_expired_when_validated_until_plus_7d_passed() {
         let vt = Utc::now() - Duration::days(8);
         let lic = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: None,
             issued_to: None,
             issued_at: None,
@@ -545,7 +545,7 @@ mod tests {
     fn grace_not_expired_within_7d() {
         let vt = Utc::now() - Duration::days(5);
         let lic = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: None,
             issued_to: None,
             issued_at: None,
@@ -559,7 +559,7 @@ mod tests {
     fn must_validate_expired_after_issued_at_plus_7d() {
         let issued = Utc::now() - Duration::days(8);
         let lic = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: Some("k".into()),
             issued_to: None,
             issued_at: Some(issued),
@@ -575,7 +575,7 @@ mod tests {
         let issued = Utc::now() - Duration::days(8);
         let vt = Utc::now() - Duration::days(1);
         let lic = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: Some("k".into()),
             issued_to: None,
             issued_at: Some(issued),
@@ -593,7 +593,7 @@ mod tests {
         let future = Utc::now() + Duration::hours(1);
         let vt = Utc::now();
         let lic = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: None,
             issued_to: None,
             issued_at: None,
@@ -630,7 +630,7 @@ mod tests {
     fn force_expire_with_reason_returns_true_only_once() {
         let future = Utc::now() + Duration::days(30);
         let lic = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: None,
             issued_to: None,
             issued_at: None,
@@ -645,7 +645,7 @@ mod tests {
     fn restore_active_resets_expired() {
         let future = Utc::now() + Duration::days(30);
         let lic = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: None,
             issued_to: None,
             issued_at: None,
@@ -656,6 +656,6 @@ mod tests {
         assert!(checker.is_expired());
         checker.restore_active();
         assert!(!checker.is_expired());
-        assert_eq!(checker.effective_plan(), "pro");
+        assert_eq!(checker.effective_plan(), "team");
     }
 }

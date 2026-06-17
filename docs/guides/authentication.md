@@ -100,7 +100,7 @@ token = "${DBWARD_TOKEN}"
 
 ---
 
-## OIDC (SSO) (Pro)
+## OIDC (SSO) (Team)
 
 ### Server configuration
 

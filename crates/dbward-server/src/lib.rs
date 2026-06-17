@@ -379,7 +379,7 @@ pub async fn run_from_args(
         Arc::new(dbward_infra::FreePlanChecker)
     };
 
-    // C-10: Inject OIDC verifier (requires commercial feature + Pro license)
+    // C-10: Inject OIDC verifier (requires commercial feature + Team license)
     let mut effective_auth_mode = cfg.effective_auth_mode().to_string();
 
     #[cfg(feature = "commercial")]
@@ -389,14 +389,14 @@ pub async fn run_from_args(
         if license_checker.effective_plan() == "free" {
             if cfg.auth.mode.is_some() {
                 return Err(format!(
-                    "auth.mode = \"{}\" requires a Pro license. \
+                    "auth.mode = \"{}\" requires a Team license. \
                      Either provide a valid license or change auth.mode to \"token\".",
                     effective_auth_mode
                 )
                 .into());
             } else {
                 tracing::warn!(
-                    "OIDC configured but Pro license not available. \
+                    "OIDC configured but Team license not available. \
                      Effective auth mode: token-only."
                 );
                 effective_auth_mode = "token".to_string();
@@ -421,7 +421,7 @@ pub async fn run_from_args(
     if effective_auth_mode == "oidc" || effective_auth_mode == "both" {
         if cfg.auth.mode.is_some() {
             return Err(format!(
-                "auth.mode = \"{}\" requires the commercial feature (Pro license). \
+                "auth.mode = \"{}\" requires the commercial feature (Team license). \
                  Change auth.mode to \"token\" or use a commercial build.",
                 effective_auth_mode
             )

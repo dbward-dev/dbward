@@ -1,8 +1,8 @@
 // Copyright (c) 2026 dbward-dev.
 // Licensed under the dbward Commercial License.
-// Production use requires a valid Pro or Enterprise subscription.
+// Production use requires a valid Team or Enterprise subscription.
 
-//! Group-based authorization layer for dbward Pro/Enterprise.
+//! Group-based authorization layer for dbward Team/Enterprise.
 //!
 //! Maps identity provider groups (OIDC, SAML, SCIM) to dbward roles.
 //! This enables automatic role assignment based on organizational group membership.

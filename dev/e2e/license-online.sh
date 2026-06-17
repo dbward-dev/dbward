@@ -44,20 +44,20 @@ wait_for_server
 TS=$(date +%s)
 ADMIN_TOKEN=$(create_token "e2e-lov-$TS" admin)
 
-# --- 1. Initial state: Pro plan (mock returns active) ---
+# --- 1. Initial state: Team plan (mock returns active) ---
 echo ""
-echo "--- Test 1: Online validation → active (Pro maintained) ---"
+echo "--- Test 1: Online validation → active (Team maintained) ---"
 
 # Wait for first online validation (60s + jitter, but we can check metrics)
-# For now just confirm server started as Pro
+# For now just confirm server started as Team
 PLAN=$(curl -sf "$SERVER_URL/api/license" -H "Authorization: Bearer $ADMIN_TOKEN" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('effective_plan','unknown'))" 2>/dev/null || echo "no-endpoint")
 
 if [ "$PLAN" = "no-endpoint" ]; then
   # /api/license doesn't exist yet, check via health
   STATUS=$(api_status GET /health "$ADMIN_TOKEN")
-  [ "$STATUS" = "200" ] && pass "Server healthy (Pro plan, online validation configured)" || fail "Health" "got $STATUS"
+  [ "$STATUS" = "200" ] && pass "Server healthy (Team plan, online validation configured)" || fail "Health" "got $STATUS"
 else
-  [ "$PLAN" = "pro" ] && pass "Effective plan: pro" || fail "Plan" "got $PLAN"
+  [ "$PLAN" = "team" ] && pass "Effective plan: team" || fail "Plan" "got $PLAN"
 fi
 
 # --- 2. Change mock to revoked → server should downgrade ---
@@ -87,9 +87,9 @@ if [ "${FAILURE:-0}" = "0" ]; then
   ADMIN_TOKEN=$(create_token "e2e-lov-restart-$TS" admin)
 fi
 
-# --- 3. Change mock back to active → server should restore Pro ---
+# --- 3. Change mock back to active → server should restore Team ---
 echo ""
-echo "--- Test 3: Mock → active (expect Pro restoration) ---"
+echo "--- Test 3: Mock → active (expect Team restoration) ---"
 
 curl -sf -X POST "$MOCK_CONTROL/set-status" -d '{"status":"active"}' >/dev/null
 

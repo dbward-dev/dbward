@@ -54,7 +54,7 @@ class LicenseHandler(BaseHTTPRequestHandler):
             validated_until = (now + timedelta(hours=24)).isoformat()
             body = {
                 "status": "active",
-                "plan": "pro",
+                "plan": "team",
                 "validated_until": validated_until,
                 "grace_days": GRACE_DAYS,
                 "expires_at": (now + timedelta(days=365)).isoformat(),

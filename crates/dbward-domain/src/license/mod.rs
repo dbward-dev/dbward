@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum Plan {
     Free,
-    Pro,
+    Team,
     Enterprise,
 }
 
@@ -90,7 +90,7 @@ mod tests {
         let past = Utc::now() - chrono::Duration::hours(1);
         let future = Utc::now() + chrono::Duration::hours(1);
         let lic = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: None,
             issued_to: None,
             issued_at: None,
@@ -98,7 +98,7 @@ mod tests {
         };
         assert!(lic.is_expired_at(Utc::now()));
         let lic2 = License {
-            plan: Plan::Pro,
+            plan: Plan::Team,
             key_id: None,
             issued_to: None,
             issued_at: None,
@@ -117,7 +117,7 @@ mod tests {
     fn payload_serde_roundtrip() {
         let payload = LicensePayload {
             key_id: "key-roundtrip-99".into(),
-            plan: Plan::Pro,
+            plan: Plan::Team,
             issued_to: "acme-corp".into(),
             issued_at: Utc::now(),
             expires_at: Utc::now() + chrono::Duration::days(90),
@@ -125,7 +125,7 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         let deserialized: LicensePayload = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.key_id, "key-roundtrip-99");
-        assert_eq!(deserialized.plan, Plan::Pro);
+        assert_eq!(deserialized.plan, Plan::Team);
         assert_eq!(deserialized.issued_to, "acme-corp");
         assert_eq!(deserialized.expires_at, payload.expires_at);
     }

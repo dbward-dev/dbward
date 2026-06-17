@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "LicenseRef-dbward-commercial"
 publish = false
-description = "dbward commercial OIDC/SSO authentication (Pro feature)"
+description = "dbward commercial OIDC/SSO authentication (Team feature)"
 
 [dependencies]
 dbward-app = { path = "../../crates/dbward-app" }

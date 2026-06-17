@@ -24,7 +24,7 @@ struct Cli {
     #[arg(long)]
     force_bootstrap: bool,
 
-    /// License key (Pro/Enterprise)
+    /// License key (Team/Enterprise)
     #[arg(long, env = "DBWARD_LICENSE_KEY")]
     license_key: Option<String>,
 

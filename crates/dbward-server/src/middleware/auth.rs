@@ -23,7 +23,7 @@ fn auth_error_response(e: AuthError) -> (StatusCode, String) {
         ),
         AuthError::UserLimitReached => (
             StatusCode::PAYMENT_REQUIRED,
-            serde_json::json!({"error": "user limit reached", "code": "policy.limit_exceeded", "hint": "contact your administrator or upgrade to Pro"})
+            serde_json::json!({"error": "user limit reached", "code": "policy.limit_exceeded", "hint": "contact your administrator or upgrade to Team"})
                 .to_string(),
         ),
         _ => (
