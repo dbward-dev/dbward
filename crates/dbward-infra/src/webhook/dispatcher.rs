@@ -257,81 +257,105 @@ fn build_generic_body(event: &WebhookEvent) -> String {
 }
 
 fn build_slack_body(event: &WebhookEvent) -> String {
+    use crate::notification_display::event_display;
+    use serde_json::json;
+
     let db = event.database.as_deref().unwrap_or("—");
     let env = event.environment.as_deref().unwrap_or("—");
     let actor = event.actor.as_deref().unwrap_or("system");
     let requester = event.requester.as_deref().unwrap_or(actor);
     let req_id = event.request_id.as_deref().unwrap_or("—");
-    let short_id = &req_id[..req_id.len().min(8)];
+    let operation = event.operation.as_deref().unwrap_or("—");
 
-    let (emoji, title) = match event.event_type.as_str() {
-        "request_created" => ("📋", "New Request"),
-        "request_approved" | "step_approved" => ("✅", "Approved"),
-        "request_rejected" => ("❌", "Rejected"),
-        "request_completed" => ("🎉", "Completed"),
-        "request_failed" => ("⚠️", "Request Failed"),
-        "break_glass" => ("🚨", "Break-Glass Request"),
-        "request_auto_approved" => ("⚡", "Auto-Approved"),
-        "execution_lost" => ("💀", "Execution Lost"),
-        _ => ("🔔", event.event_type.as_str()),
-    };
+    let (emoji, title) = event_display(&event.event_type);
 
-    let sep = "━━━━━━━━━━━━━━━━━━━━━━";
-    let header = format!("{emoji} [dbward] {title}");
+    // Section fields (2-column layout)
+    let mut fields = vec![
+        json!({"type": "mrkdwn", "text": format!("*Requester:*\n{}", escape_mrkdwn(requester))}),
+        json!({"type": "mrkdwn", "text": format!("*Database:*\n{db} / {env}")}),
+        json!({"type": "mrkdwn", "text": format!("*Operation:*\n{operation}")}),
+        json!({"type": "mrkdwn", "text": format!("*Request ID:*\n`{req_id}`")}),
+    ];
+    if let Some(ref approvers) = event.approvers
+        && !approvers.is_empty()
+    {
+        fields.push(
+            json!({"type": "mrkdwn", "text": format!("*Approvers:*\n{}", approvers.join(", "))}),
+        );
+    }
 
-    let mut sections = vec![format!(
-        "{sep}\nRequester: {requester}\nOperation: {}\nEnvironment: {env}\nDatabase: {db}\n{sep}",
-        event.operation.as_deref().unwrap_or("—")
-    )];
+    let mut blocks: Vec<serde_json::Value> = vec![
+        json!({"type": "header", "text": {"type": "plain_text", "text": format!("{emoji} {title}")}}),
+        json!({"type": "section", "fields": fields}),
+    ];
 
-    // Show actor (approver/rejector) when different from requester
+    // SQL preview (only for Created events with redacted_detail)
+    if let Some(ref sql) = event.redacted_detail
+        && !sql.trim().is_empty()
+    {
+        let truncated: String = sql.chars().take(200).collect::<String>().replace('`', "'");
+        blocks.push(json!({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": format!("```{truncated}```")}
+        }));
+    }
+
+    // Context line (actor, step, reason, error, hint)
+    let mut ctx_parts: Vec<String> = Vec::new();
     if actor != requester {
-        sections.push(format!("Actor: {actor}"));
+        ctx_parts.push(format!("Actor: {}", escape_mrkdwn(actor)));
     }
-
-    if let Some(ref sql) = event.redacted_detail {
-        let truncated: String = sql.chars().take(200).collect();
-        sections.push(truncated);
+    if let (Some(step), Some(total)) = (event.step_index, event.total_steps) {
+        ctx_parts.push(format!("Step {}/{total}", step + 1));
     }
-
     if let Some(ref reason) = event.reason {
-        sections.push(format!("Reason: {reason}"));
+        let truncated: String = reason.chars().take(100).collect();
+        ctx_parts.push(format!("Reason: {}", escape_mrkdwn(&truncated)));
     }
-
     if let Some(ref err) = event.error_summary {
         let first_line = err.lines().next().unwrap_or(err);
-        sections.push(format!("Error: {first_line}"));
+        ctx_parts.push(format!("Error: {}", escape_mrkdwn(first_line)));
     }
-
     if let Some(ref hint) = event.approval_hint {
-        sections.push(format!("Next: {hint}"));
+        ctx_parts.push(format!("Next: {}", escape_mrkdwn(hint)));
+    }
+    if !ctx_parts.is_empty() {
+        blocks.push(json!({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": ctx_parts.join(" • ")}]
+        }));
     }
 
-    sections.push(sep.to_string());
-
+    // CLI command hint
     let action = match event.event_type.as_str() {
-        "request_created" => Some(format!("dbward request approve {short_id}")),
+        "request_created" => Some(format!("`dbward request approve {req_id}`")),
         "break_glass" | "request_auto_approved" => {
-            Some(format!("dbward request resume {short_id}"))
+            Some(format!("`dbward request resume {req_id}`"))
         }
         _ => None,
     };
     if let Some(cmd) = action {
-        sections.push(cmd);
+        blocks.push(json!({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": cmd}
+        }));
     }
 
-    let text = format!("{header}\n{}", sections.join("\n"));
+    // Fallback text for push notifications
+    let text = format!("{emoji} {title} — {db}/{env} — {req_id}");
 
-    serde_json::to_string(&serde_json::json!({
+    serde_json::to_string(&json!({
         "text": text,
-        "blocks": [
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": text}
-            }
-        ]
+        "blocks": blocks
     }))
     .unwrap_or_default()
+}
+
+/// Escape user-controlled strings for Slack mrkdwn.
+fn escape_mrkdwn(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 async fn send_with_retry(
@@ -630,5 +654,99 @@ mod signature_tests {
         let sig = compute_webhook_signature("secret", "");
         assert!(sig.starts_with("sha256="));
         assert_eq!(sig.len(), "sha256=".len() + 64);
+    }
+}
+
+#[cfg(test)]
+mod slack_body_tests {
+    use super::*;
+    use dbward_app::ports::WebhookEvent;
+
+    fn sample_event() -> WebhookEvent {
+        WebhookEvent {
+            event_type: "request_created".into(),
+            request_id: Some("96cead2e-86f4-4a1b-b3c7-abcdef123456".into()),
+            database: Some("app".into()),
+            environment: Some("production".into()),
+            actor: Some("alice".into()),
+            detail: None,
+            requester: Some("alice".into()),
+            reason: None,
+            redacted_detail: Some("DELETE FROM orders WHERE created_at < ?".into()),
+            error_summary: None,
+            approval_hint: None,
+            operation: Some("execute_dml".into()),
+            step_index: None,
+            total_steps: None,
+            expires_at: None,
+            approvers: None,
+        }
+    }
+
+    #[test]
+    fn slack_body_has_block_kit_structure() {
+        let body = build_slack_body(&sample_event());
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(parsed["text"].is_string());
+        let blocks = parsed["blocks"].as_array().unwrap();
+        assert_eq!(blocks[0]["type"], "header");
+        assert_eq!(blocks[1]["type"], "section");
+        assert!(blocks[1]["fields"].is_array());
+    }
+
+    #[test]
+    fn slack_body_includes_sql_preview() {
+        let body = build_slack_body(&sample_event());
+        assert!(body.contains("DELETE FROM orders"));
+    }
+
+    #[test]
+    fn slack_body_has_full_request_id() {
+        let body = build_slack_body(&sample_event());
+        assert!(body.contains("96cead2e-86f4-4a1b-b3c7-abcdef123456"));
+    }
+
+    #[test]
+    fn slack_body_step_approved_uses_ballot_box_emoji() {
+        let mut event = sample_event();
+        event.event_type = "step_approved".into();
+        event.redacted_detail = None;
+        let body = build_slack_body(&event);
+        assert!(body.contains("☑️"));
+        assert!(body.contains("Step Approved"));
+    }
+
+    #[test]
+    fn slack_body_expired_and_cancelled_handled() {
+        for event_type in ["request_expired", "request_cancelled"] {
+            let mut event = sample_event();
+            event.event_type = event_type.into();
+            event.redacted_detail = None;
+            let body = build_slack_body(&event);
+            let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(parsed["blocks"][0]["type"], "header");
+        }
+    }
+
+    #[test]
+    fn slack_body_cli_command_uses_full_id() {
+        let body = build_slack_body(&sample_event());
+        assert!(body.contains("dbward request approve 96cead2e-86f4-4a1b-b3c7-abcdef123456"));
+    }
+
+    #[test]
+    fn slack_body_no_sql_when_redacted_detail_none() {
+        let mut event = sample_event();
+        event.redacted_detail = None;
+        let body = build_slack_body(&event);
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let blocks = parsed["blocks"].as_array().unwrap();
+        let has_sql_block = blocks.iter().any(|b| {
+            b["text"]["text"]
+                .as_str()
+                .map(|t| t.contains("```"))
+                .unwrap_or(false)
+        });
+        assert!(!has_sql_block);
     }
 }
