@@ -4,9 +4,9 @@ use std::sync::atomic::AtomicBool;
 use arc_swap::ArcSwap;
 use dbward_app::ports::{
     AgentRepo, ApprovalRepo, AuditLogger, AuditRepo, Authorizer, BackgroundTaskRepo, Clock,
-    ContextRepo, DatabaseRegistry, DryRunRepo, EventDispatcher, IdGenerator, LicenseChecker,
-    Notifier, PolicyEvaluator, PolicyRepo, RequestReader, RequestWriter, ResultChannel,
-    ResultStore, RoleResolver, SchemaRepo, SsrfValidator, TokenRepo, TokenSigner, TokenVerifier,
+    ContextRepo, DatabaseRegistry, DryRunRepo, IdGenerator, LicenseChecker, Notifier,
+    PolicyEvaluator, PolicyRepo, RequestReader, RequestWriter, ResultChannel, ResultStore,
+    RoleResolver, SchemaRepo, SsrfValidator, TokenRepo, TokenSigner, TokenVerifier, UnitOfWork,
     UserRepo, WebhookRepo,
 };
 use dbward_app::use_cases::{
@@ -73,7 +73,6 @@ pub struct AppState {
     token_signer: Arc<dyn TokenSigner>,
     notifier: Arc<dyn Notifier>,
     webhook_sender: Arc<dyn dbward_app::ports::WebhookSender>,
-    event_dispatcher: Arc<dyn EventDispatcher>,
     #[allow(dead_code)] // Used in sync_all_config (cloned before AppState build)
     ssrf_validator: Arc<dyn SsrfValidator>,
     license_checker: Arc<dyn LicenseChecker>,
@@ -84,6 +83,9 @@ pub struct AppState {
     id_generator: Arc<dyn IdGenerator>,
     token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator>,
     webhook_delivery_repo: Option<Arc<dyn dbward_app::ports::WebhookDeliveryRepo>>,
+    uow: Arc<dyn dbward_app::ports::UnitOfWork>,
+    pub(crate) audit_signer: Arc<dyn dbward_app::ports::crypto::AuditSigner>,
+    pub(crate) audit_verifier: Arc<dyn dbward_app::ports::crypto::AuditVerifier>,
 
     // Metrics — pub(crate)
     pub(crate) metrics: Arc<Metrics>,
@@ -122,7 +124,8 @@ impl<'a> RequestUseCases<'a> {
             schema_repo: s.schema_repo.clone(),
             dry_run_repo: s.dry_run_repo.clone(),
             context_repo: s.context_repo.clone(),
-            event_dispatcher: s.event_dispatcher.clone(),
+            uow: s.uow.clone(),
+            notifier: s.notifier.clone(),
             audit_logger: s.audit_logger.clone(),
             break_glass_metrics: s.metrics.clone(),
             clock: s.clock.clone(),
@@ -157,7 +160,8 @@ impl<'a> RequestUseCases<'a> {
             authorizer: s.authorizer.clone(),
             request_reader: s.request_reader.clone(),
             approval_repo: s.approval_repo.clone(),
-            event_dispatcher: s.event_dispatcher.clone(),
+            uow: s.uow.clone(),
+            notifier: s.notifier.clone(),
             clock: s.clock.clone(),
             id_gen: s.id_generator.clone(),
         }
@@ -169,7 +173,8 @@ impl<'a> RequestUseCases<'a> {
             authorizer: s.authorizer.clone(),
             request_reader: s.request_reader.clone(),
             approval_repo: s.approval_repo.clone(),
-            event_dispatcher: s.event_dispatcher.clone(),
+            uow: s.uow.clone(),
+            notifier: s.notifier.clone(),
             clock: s.clock.clone(),
             id_gen: s.id_generator.clone(),
         }
@@ -180,9 +185,10 @@ impl<'a> RequestUseCases<'a> {
         CancelRequest {
             authorizer: s.authorizer.clone(),
             request_reader: s.request_reader.clone(),
-            request_writer: s.request_writer.clone(),
-            event_dispatcher: s.event_dispatcher.clone(),
+            uow: s.uow.clone(),
+            notifier: s.notifier.clone(),
             clock: s.clock.clone(),
+            redaction_mode: dbward_app::services::audit_event_builder::RedactionMode::default(),
         }
     }
 
@@ -192,9 +198,9 @@ impl<'a> RequestUseCases<'a> {
             authorizer: s.authorizer.clone(),
             policy: s.policy_evaluator.clone(),
             request_reader: s.request_reader.clone(),
-            request_writer: s.request_writer.clone(),
+            uow: s.uow.clone(),
             result_channel: s.result_channel.clone(),
-            event_dispatcher: s.event_dispatcher.clone(),
+            notifier: s.notifier.clone(),
             policy_repo: s.policy_repo.clone(),
             clock: s.clock.clone(),
         }
@@ -245,7 +251,8 @@ impl<'a> AgentUseCases<'a> {
             agent_repo: s.agent_repo.clone(),
             policy: s.policy_evaluator.clone(),
             token_signer: s.token_signer.clone(),
-            event_dispatcher: s.event_dispatcher.clone(),
+            uow: s.uow.clone(),
+            notifier: s.notifier.clone(),
             clock: s.clock.clone(),
             id_gen: s.id_generator.clone(),
             user_repo: s.user_repo.clone(),
@@ -260,7 +267,6 @@ impl<'a> AgentUseCases<'a> {
             agent_repo: s.agent_repo.clone(),
             request_reader: s.request_reader.clone(),
             policy: s.policy_evaluator.clone(),
-            event_dispatcher: s.event_dispatcher.clone(),
             clock: s.clock.clone(),
         }
     }
@@ -273,7 +279,8 @@ impl<'a> AgentUseCases<'a> {
             request_reader: s.request_reader.clone(),
             result_store: s.result_store.clone(),
             result_channel: s.result_channel.clone(),
-            event_dispatcher: s.event_dispatcher.clone(),
+            notifier: s.notifier.clone(),
+            uow: s.uow.clone(),
             clock: s.clock.clone(),
             max_persist_bytes: s.max_persist_bytes,
             policy_repo: s.policy_repo.clone(),
@@ -329,6 +336,7 @@ impl<'a> AdminUseCases<'a> {
         AuditQuery {
             authorizer: s.authorizer.clone(),
             audit_repo: s.audit_repo.clone(),
+            audit_verifier: Some(s.audit_verifier.clone()),
         }
     }
 
@@ -351,7 +359,7 @@ impl<'a> TokenUseCases<'a> {
             user_repo: s.user_repo.clone(),
             policy_repo: s.policy_repo.clone(),
             license: s.license_checker.clone(),
-            audit: s.audit_logger.clone(),
+            uow: s.uow.clone(),
             clock: s.clock.clone(),
             id_gen: s.id_generator.clone(),
             token_gen: s.token_value_generator.clone(),
@@ -369,8 +377,7 @@ impl<'a> UserUseCases<'a> {
             authorizer: s.authorizer.clone(),
             user_repo: s.user_repo.clone(),
             token_repo: s.token_repo.clone(),
-            request_writer: s.request_writer.clone(),
-            audit: s.audit_logger.clone(),
+            uow: s.uow.clone(),
             clock: s.clock.clone(),
             license: s.license_checker.clone(),
         }
@@ -491,6 +498,10 @@ impl AppState {
         &self.schema_repo
     }
 
+    pub(crate) fn uow(&self) -> &Arc<dyn UnitOfWork> {
+        &self.uow
+    }
+
     // --- Background access ---
 
     pub(crate) fn background(&self) -> BackgroundAccess<'_> {
@@ -516,17 +527,17 @@ impl<'a> BackgroundAccess<'a> {
     pub(crate) fn request_reader(&self) -> &Arc<dyn RequestReader> {
         &self.0.request_reader
     }
-    pub(crate) fn request_writer(&self) -> &Arc<dyn RequestWriter> {
-        &self.0.request_writer
-    }
     pub(crate) fn agent_repo(&self) -> &Arc<dyn AgentRepo> {
         &self.0.agent_repo
     }
     pub(crate) fn background_task_repo(&self) -> &Arc<dyn BackgroundTaskRepo> {
         &self.0.background_task_repo
     }
-    pub(crate) fn audit_logger(&self) -> &Arc<dyn AuditLogger> {
-        &self.0.audit_logger
+    pub(crate) fn uow(&self) -> &Arc<dyn UnitOfWork> {
+        &self.0.uow
+    }
+    pub(crate) fn audit_signer(&self) -> &Arc<dyn dbward_app::ports::crypto::AuditSigner> {
+        &self.0.audit_signer
     }
     pub(crate) fn audit_repo(&self) -> &Arc<dyn AuditRepo> {
         &self.0.audit_repo
@@ -648,7 +659,6 @@ pub struct AppStateBuilder {
     pub token_signer: Arc<dyn TokenSigner>,
     pub notifier: Arc<dyn Notifier>,
     pub webhook_sender: Arc<dyn dbward_app::ports::WebhookSender>,
-    pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub ssrf_validator: Arc<dyn SsrfValidator>,
     pub license_checker: Arc<dyn LicenseChecker>,
     #[cfg(feature = "commercial")]
@@ -658,6 +668,9 @@ pub struct AppStateBuilder {
     pub id_generator: Arc<dyn IdGenerator>,
     pub token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator>,
     pub webhook_delivery_repo: Option<Arc<dyn dbward_app::ports::WebhookDeliveryRepo>>,
+    pub uow: Arc<dyn dbward_app::ports::UnitOfWork>,
+    pub audit_signer: Arc<dyn dbward_app::ports::crypto::AuditSigner>,
+    pub audit_verifier: Arc<dyn dbward_app::ports::crypto::AuditVerifier>,
     pub metrics: Arc<Metrics>,
     pub max_persist_bytes: usize,
     pub auth_mode: String,
@@ -695,7 +708,6 @@ impl AppStateBuilder {
             token_signer: self.token_signer,
             notifier: self.notifier,
             webhook_sender: self.webhook_sender,
-            event_dispatcher: self.event_dispatcher,
             ssrf_validator: self.ssrf_validator,
             license_checker: self.license_checker,
             #[cfg(feature = "commercial")]
@@ -705,6 +717,9 @@ impl AppStateBuilder {
             id_generator: self.id_generator,
             token_value_generator: self.token_value_generator,
             webhook_delivery_repo: self.webhook_delivery_repo,
+            uow: self.uow,
+            audit_signer: self.audit_signer,
+            audit_verifier: self.audit_verifier,
             metrics: self.metrics,
             max_persist_bytes: self.max_persist_bytes,
             auth_mode: self.auth_mode,

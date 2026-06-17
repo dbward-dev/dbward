@@ -94,26 +94,21 @@ pub struct TransitionEvent {
 }
 
 /// Result of a state transition. Must be committed via .commit().
-#[must_use = "TransitionResult must be committed via .commit(dispatcher)"]
+#[must_use = "TransitionResult must be consumed via .into_event()"]
 pub struct TransitionResult {
     pub new_status: RequestStatus,
     event: TransitionEvent,
 }
 
 impl TransitionResult {
-    /// Consume self and dispatch the event. This is the only way to access the event.
-    pub fn commit(self, dispatcher: &dyn EventDispatcher) {
-        dispatcher.dispatch(self.event);
+    /// Consume self and return the event for manual handling (e.g., UoW pattern).
+    pub fn into_event(self) -> TransitionEvent {
+        self.event
     }
 
     pub fn status(&self) -> RequestStatus {
         self.new_status
     }
-}
-
-/// Port for dispatching transition events to subscribers.
-pub trait EventDispatcher: Send + Sync {
-    fn dispatch(&self, event: TransitionEvent);
 }
 
 #[derive(Debug, thiserror::Error)]

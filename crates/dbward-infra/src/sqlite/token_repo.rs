@@ -27,8 +27,8 @@ impl TokenRepo for SqliteTokenRepo {
                 token.subject_id,
                 token.token_hash,
                 token.token_prefix,
-                serde_json::to_string(&token.roles).unwrap(),
-                serde_json::to_string(&token.groups).unwrap(),
+                serde_json::to_string(&token.roles).map_err(|e| AppError::Internal(format!("json: {e}")))?,
+                serde_json::to_string(&token.groups).map_err(|e| AppError::Internal(format!("json: {e}")))?,
                 token.name,
                 token_status_str(token.status),
                 token.expires_at.map(|t| t.to_rfc3339()),
@@ -125,7 +125,7 @@ impl TokenRepo for SqliteTokenRepo {
     }
 }
 
-fn subject_type_str(s: SubjectType) -> &'static str {
+pub(crate) fn subject_type_str(s: SubjectType) -> &'static str {
     match s {
         SubjectType::User => "user",
         SubjectType::Agent => "agent",
@@ -139,7 +139,7 @@ fn parse_subject_type(s: &str) -> SubjectType {
     }
 }
 
-fn token_status_str(s: TokenStatus) -> &'static str {
+pub(crate) fn token_status_str(s: TokenStatus) -> &'static str {
     match s {
         TokenStatus::Active => "active",
         TokenStatus::Revoked => "revoked",

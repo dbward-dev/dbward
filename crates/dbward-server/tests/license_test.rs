@@ -88,7 +88,6 @@ fn state_with_license(license: License) -> AppState {
         result_channel: Arc::new(NoopResultChannel),
         token_signer: Arc::new(NoopTokenSigner),
         notifier: Arc::new(NoopNotifier),
-        event_dispatcher: Arc::new(NoopEventDispatcher),
         ssrf_validator: Arc::new(NoopSsrfValidator),
         license_checker: Arc::new(LicenseCheckerImpl::new(
             license,
@@ -106,6 +105,9 @@ fn state_with_license(license: License) -> AppState {
         token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
         webhook_delivery_repo: None,
+        uow: Arc::new(dbward_infra::sqlite::SqliteUnitOfWork::new(conn.clone())),
+        audit_signer: Arc::new(common::NoopAuditSigner),
+        audit_verifier: Arc::new(common::NoopAuditSigner),
         webhook_sender: Arc::new(NoopWebhookSender),
         draining: Arc::new(AtomicBool::new(false)),
         slack_config: None,

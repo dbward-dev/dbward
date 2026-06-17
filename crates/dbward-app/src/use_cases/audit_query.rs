@@ -9,6 +9,7 @@ use crate::ports::*;
 pub struct AuditQuery {
     pub authorizer: Arc<dyn Authorizer>,
     pub audit_repo: Arc<dyn AuditRepo>,
+    pub audit_verifier: Option<Arc<dyn crate::ports::crypto::AuditVerifier>>,
 }
 
 pub struct AuditListInput {
@@ -44,7 +45,9 @@ impl AuditQuery {
         self.authorizer
             .authorize_global(user, Permission::AuditRead)
             .map_err(AppError::Forbidden)?;
-        let result = self.audit_repo.verify_chain()?;
+        let result = self
+            .audit_repo
+            .verify_chain(self.audit_verifier.as_deref())?;
         Ok(AuditVerifyOutput {
             total_events: result.total_events,
             first_broken_id: result.first_broken_id,
@@ -140,14 +143,25 @@ mod tests {
             }
             Ok(vec![ev])
         }
-        fn verify_chain(&self) -> Result<AuditVerifyResult, AppError> {
+        fn verify_chain(
+            &self,
+            _: Option<&dyn crate::ports::crypto::AuditVerifier>,
+        ) -> Result<AuditVerifyResult, AppError> {
             Ok(AuditVerifyResult {
                 total_events: 42,
                 first_broken_id: None,
+                failure: None,
             })
         }
         fn purge_old(&self, _: &str) -> Result<u32, AppError> {
             Ok(0)
+        }
+        fn purge_authenticated(
+            &self,
+            _: &str,
+            _: &dyn crate::ports::crypto::AuditSigner,
+        ) -> Result<(u32, String), AppError> {
+            Ok((0, String::new()))
         }
     }
 
@@ -180,6 +194,7 @@ mod tests {
         let uc = AuditQuery {
             authorizer: Arc::new(AllowAll),
             audit_repo: Arc::new(FakeAuditRepo),
+            audit_verifier: None,
         };
         let out = uc
             .list(
@@ -209,6 +224,7 @@ mod tests {
         let uc = AuditQuery {
             authorizer: Arc::new(AllowViewOnly),
             audit_repo: Arc::new(FakeAuditRepo),
+            audit_verifier: None,
         };
         let out = uc
             .list(
@@ -238,6 +254,7 @@ mod tests {
         let uc = AuditQuery {
             authorizer: Arc::new(DenyAll),
             audit_repo: Arc::new(FakeAuditRepo),
+            audit_verifier: None,
         };
         assert!(matches!(
             uc.list(
@@ -266,6 +283,7 @@ mod tests {
         let uc = AuditQuery {
             authorizer: Arc::new(AllowAll),
             audit_repo: Arc::new(FakeAuditRepo),
+            audit_verifier: None,
         };
         let out = uc.verify(&admin_user()).unwrap();
         assert_eq!(out.total_events, 42);

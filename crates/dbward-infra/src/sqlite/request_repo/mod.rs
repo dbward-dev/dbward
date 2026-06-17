@@ -33,7 +33,7 @@ fn build_selectors(user_id: &str, groups: &[String], roles: &[String]) -> Vec<St
     selectors
 }
 
-fn database_id(db: &DatabaseName, env: &Environment) -> String {
+pub(crate) fn database_id(db: &DatabaseName, env: &Environment) -> String {
     format!("{}:{}", db.as_str(), env.as_str())
 }
 
@@ -102,7 +102,7 @@ fn parse_approval_action(s: &str) -> Result<ApprovalAction, AppError> {
     }
 }
 
-fn approval_action_str(a: &ApprovalAction) -> &'static str {
+pub(crate) fn approval_action_str(a: &ApprovalAction) -> &'static str {
     match a {
         ApprovalAction::Approve => "approve",
         ApprovalAction::Reject => "reject",

@@ -1,9 +1,5 @@
-use dbward_app::ports::{
-    AuditLogger, EventDispatcher, IdGenerator, Notifier, WebhookDeliveryRepo, WebhookEvent,
-    WebhookRepo,
-};
-use dbward_domain::entities::{AuditEvent, DeliveryStatus, WebhookDelivery, WebhookStatus};
-use dbward_domain::services::status_machine::TransitionEvent;
+use dbward_app::ports::{IdGenerator, Notifier, WebhookDeliveryRepo, WebhookEvent, WebhookRepo};
+use dbward_domain::entities::{DeliveryStatus, WebhookDelivery, WebhookStatus};
 use sqlparser::ast::{Value, VisitMut, VisitorMut};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -328,8 +324,8 @@ fn build_slack_body(event: &WebhookEvent) -> String {
 
     // CLI command hint
     let action = match event.event_type.as_str() {
-        "request_created" => Some(format!("`dbward request approve {req_id}`")),
-        "break_glass" | "request_auto_approved" => {
+        "request.created" => Some(format!("`dbward request approve {req_id}`")),
+        "request.break_glass" | "request.auto_approved" => {
             Some(format!("`dbward request resume {req_id}`"))
         }
         _ => None,
@@ -387,167 +383,6 @@ async fn send_with_retry(
         }
     }
     Err(())
-}
-
-/// Parse metadata_json into a guaranteed JSON object.
-fn parse_metadata_object(json_str: &str) -> serde_json::Value {
-    serde_json::from_str::<serde_json::Value>(json_str)
-        .ok()
-        .filter(|v| v.is_object())
-        .unwrap_or_else(|| serde_json::json!({}))
-}
-
-/// ADR-004: Composite event dispatcher that fans out to subscribers.
-pub struct CompositeEventDispatcher {
-    pub audit: Arc<dyn AuditLogger>,
-    pub notifier: Arc<dyn Notifier>,
-    pub result_channel: Option<Arc<dyn dbward_app::ports::ResultChannel>>,
-    pub request_notifier: Option<Arc<dyn Notifier>>,
-    pub redaction_mode: RedactionMode,
-    pub clock: Arc<dyn dbward_app::ports::Clock>,
-}
-
-impl EventDispatcher for CompositeEventDispatcher {
-    fn dispatch(&self, event: TransitionEvent) {
-        use dbward_domain::services::status_machine::EventMetadata;
-
-        let (event_type, category) = match &event.metadata {
-            EventMetadata::Created {
-                emergency: true, ..
-            } => ("break_glass", "approval"),
-            EventMetadata::Created { .. }
-                if event.new_status == dbward_domain::entities::RequestStatus::AutoApproved =>
-            {
-                ("request_auto_approved", "approval")
-            }
-            EventMetadata::Created { .. } => ("request_created", "approval"),
-            EventMetadata::StepApproved { .. } => ("step_approved", "approval"),
-            EventMetadata::Approved { .. } => ("request_approved", "approval"),
-            EventMetadata::Rejected { .. } => ("request_rejected", "approval"),
-            EventMetadata::Cancelled { .. } => ("request_cancelled", "approval"),
-            EventMetadata::Dispatched => ("request_dispatched", "approval"),
-            EventMetadata::Claimed { .. } => ("execution_started", "execution"),
-            EventMetadata::Completed { success: true, .. } => ("request_completed", "execution"),
-            EventMetadata::Completed { success: false, .. } => ("request_failed", "execution"),
-            EventMetadata::ExecutionLost { .. } => ("execution_lost", "agent"),
-            EventMetadata::Expired => ("request_expired", "approval"),
-        };
-
-        let mut audit_event = AuditEvent::simple(
-            event_type,
-            category,
-            &event.actor_id,
-            Some(&event.request_id),
-            self.clock.now(),
-            &event.audit_context,
-        );
-        audit_event.database_name = Some(event.database.as_str().to_string());
-        audit_event.environment = Some(event.environment.as_str().to_string());
-        audit_event.operation = Some(event.operation.as_str().to_string());
-
-        if let EventMetadata::Created { ref detail, .. } = event.metadata {
-            audit_event.detail_fingerprint = Some(redact_sql_literals(detail));
-            match self.redaction_mode {
-                RedactionMode::None => audit_event.detail_raw = Some(detail.clone()),
-                RedactionMode::Literals => {
-                    audit_event.detail_raw = Some(redact_sql_literals(detail))
-                }
-                RedactionMode::Full => {}
-            }
-        }
-
-        // A-1: Record reject reason in audit event
-        if let EventMetadata::Rejected { ref comment, .. } = event.metadata {
-            audit_event.reason = comment.clone();
-        }
-
-        // A-2: Record approval comment and step info in metadata_json
-        match &event.metadata {
-            EventMetadata::Approved {
-                comment: Some(c), ..
-            } => {
-                let mut meta = parse_metadata_object(&audit_event.metadata_json);
-                meta["approval_comment"] = serde_json::Value::String(c.clone());
-                audit_event.metadata_json = meta.to_string();
-            }
-            EventMetadata::StepApproved {
-                comment,
-                step_index,
-                total_steps,
-            } => {
-                let mut meta = parse_metadata_object(&audit_event.metadata_json);
-                if let Some(c) = comment {
-                    meta["approval_comment"] = serde_json::Value::String(c.clone());
-                }
-                meta["step_number"] = (*step_index + 1).into();
-                meta["total_steps"] = (*total_steps).into();
-                audit_event.metadata_json = meta.to_string();
-            }
-            _ => {}
-        }
-
-        if let Err(e) = self.audit.record(&audit_event) {
-            tracing::error!(error = %e, event_type, "failed to record state change audit event");
-        }
-
-        let webhook_event = WebhookEvent {
-            event_type: event_type.to_string(),
-            request_id: Some(event.request_id.clone()),
-            database: Some(event.database.as_str().to_string()),
-            environment: Some(event.environment.as_str().to_string()),
-            actor: Some(event.actor_id.clone()),
-            detail: None,
-            requester: Some(event.requester_id.clone()),
-            operation: Some(event.operation.as_str().to_string()),
-            reason: match &event.metadata {
-                EventMetadata::Created { .. } => None,
-                EventMetadata::Rejected { comment, .. } => comment.clone(),
-                EventMetadata::Cancelled { reason, .. } => reason.clone(),
-                _ => None,
-            },
-            redacted_detail: match &event.metadata {
-                EventMetadata::Created { detail, .. } => Some(detail.clone()),
-                _ => None,
-            },
-            error_summary: match &event.metadata {
-                EventMetadata::Completed {
-                    success: false,
-                    execution_id,
-                } => Some(format!("execution {} failed", execution_id)),
-                EventMetadata::ExecutionLost { execution_id } => {
-                    Some(format!("execution {} lost", execution_id))
-                }
-                _ => None,
-            },
-            approval_hint: None,
-            step_index: match &event.metadata {
-                EventMetadata::StepApproved { step_index, .. } => Some(*step_index),
-                _ => None,
-            },
-            total_steps: match &event.metadata {
-                EventMetadata::StepApproved { total_steps, .. } => Some(*total_steps),
-                _ => None,
-            },
-            expires_at: None,
-            approvers: None,
-        };
-        // Dispatched events do not trigger webhooks
-        if event_type != "request_dispatched" {
-            self.notifier.dispatch(webhook_event.clone());
-        }
-
-        // Create result channel slot when request is dispatched
-        if let Some(ref rc) = self.result_channel
-            && matches!(&event.metadata, EventMetadata::Dispatched)
-        {
-            rc.create_slot(&event.request_id);
-        }
-
-        // Fan out to additional subscribers (ADR-004)
-        if let Some(ref rn) = self.request_notifier {
-            rn.dispatch(webhook_event.clone());
-        }
-    }
 }
 
 #[cfg(test)]
@@ -664,7 +499,7 @@ mod slack_body_tests {
 
     fn sample_event() -> WebhookEvent {
         WebhookEvent {
-            event_type: "request_created".into(),
+            event_type: "request.created".into(),
             request_id: Some("96cead2e-86f4-4a1b-b3c7-abcdef123456".into()),
             database: Some("app".into()),
             environment: Some("production".into()),
@@ -709,7 +544,7 @@ mod slack_body_tests {
     #[test]
     fn slack_body_step_approved_uses_ballot_box_emoji() {
         let mut event = sample_event();
-        event.event_type = "step_approved".into();
+        event.event_type = "step.approved".into();
         event.redacted_detail = None;
         let body = build_slack_body(&event);
         assert!(body.contains("☑️"));

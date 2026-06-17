@@ -10,12 +10,15 @@ use dbward_domain::services::status_machine::{
 #[allow(unused_imports)]
 use crate::error::{AppError, AuthzError};
 use crate::ports::*;
+use crate::services::audit_event_builder;
+use crate::services::audit_event_builder::build_webhook_event;
 
 pub struct RejectRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub request_reader: Arc<dyn RequestReader>,
     pub approval_repo: Arc<dyn ApprovalRepo>,
-    pub event_dispatcher: Arc<dyn EventDispatcher>,
+    pub uow: Arc<dyn UnitOfWork>,
+    pub notifier: Arc<dyn Notifier>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
 }
@@ -121,7 +124,9 @@ impl RejectRequest {
         let matched_selector = if is_requester {
             "requester".to_string()
         } else {
-            let wf = workflow.as_ref().unwrap();
+            let wf = workflow
+                .as_ref()
+                .expect("workflow validated in !is_requester branch");
             if current_step_index < wf.steps.len() as u32 {
                 let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
                 wf.steps[current_step_index as usize]
@@ -180,14 +185,28 @@ impl RejectRequest {
             created_at: now,
         };
 
-        let ok = self
-            .approval_repo
-            .reject_and_record(&request.id, &approval, now)?;
-        if !ok {
-            return Err(AppError::Conflict("concurrent status change".into()));
-        }
+        let event = result.into_event();
+        let audit_event = audit_event_builder::build_audit_event(
+            &event,
+            now,
+            audit_event_builder::RedactionMode::default(),
+            audit_event_builder::noop_redact,
+        );
 
-        result.commit(&*self.event_dispatcher);
+        // Atomic: approval + status change + audit
+        let request_id = request.id.clone();
+        self.uow.execute(Box::new(move |tx| {
+            tx.insert_approval(&approval)?;
+            let ok = tx.mark_rejected(&request_id, now)?;
+            if !ok {
+                return Err(AppError::Conflict("concurrent status change".into()));
+            }
+            tx.record(&audit_event)?;
+            Ok(())
+        }))?;
+
+        // Post-commit: best-effort notification
+        self.notifier.dispatch(build_webhook_event(&event));
 
         Ok(RejectRequestOutput {
             id: request.id,
@@ -263,7 +282,8 @@ mod tests {
             authorizer: Arc::new(AllowAll),
             request_reader: reader,
             approval_repo: approval.clone(),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            uow: Arc::new(NoopUnitOfWork),
+            notifier: Arc::new(NoopNotifier),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
         };
@@ -298,7 +318,8 @@ mod tests {
             authorizer: Arc::new(AllowAll),
             request_reader: reader,
             approval_repo: approval,
-            event_dispatcher: Arc::new(NoopDispatcher),
+            uow: Arc::new(NoopUnitOfWork),
+            notifier: Arc::new(NoopNotifier),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
         };

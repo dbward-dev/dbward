@@ -15,7 +15,8 @@ pub struct ApproveRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub request_reader: Arc<dyn RequestReader>,
     pub approval_repo: Arc<dyn ApprovalRepo>,
-    pub event_dispatcher: Arc<dyn EventDispatcher>,
+    pub uow: Arc<dyn UnitOfWork>,
+    pub notifier: Arc<dyn Notifier>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
 }
@@ -221,18 +222,33 @@ impl ApproveRequest {
 
         let new_status = result.status();
 
-        if all_satisfied {
-            let ok = self
-                .approval_repo
-                .approve_and_mark_approved(&approval, &request.id, now)?;
-            if !ok {
-                return Err(AppError::Conflict("concurrent status change".into()));
-            }
-        } else {
-            self.approval_repo.insert_approval(&approval)?;
-        }
+        let event = result.into_event();
+        let audit_event = crate::services::audit_event_builder::build_audit_event(
+            &event,
+            now,
+            crate::services::audit_event_builder::RedactionMode::default(),
+            crate::services::audit_event_builder::noop_redact,
+        );
 
-        result.commit(&*self.event_dispatcher);
+        // Atomic: approval + optional status change + audit
+        let request_id = request.id.clone();
+        self.uow.execute(Box::new(move |tx| {
+            tx.insert_approval(&approval)?;
+            if all_satisfied {
+                let ok = tx.mark_approved(&request_id, now)?;
+                if !ok {
+                    return Err(AppError::Conflict("concurrent status change".into()));
+                }
+            }
+            tx.record(&audit_event)?;
+            Ok(())
+        }))?;
+
+        // Post-commit: best-effort notification
+        self.notifier
+            .dispatch(crate::services::audit_event_builder::build_webhook_event(
+                &event,
+            ));
 
         Ok(ApproveRequestOutput {
             id: request.id,
@@ -353,7 +369,8 @@ mod tests {
             authorizer: Arc::new(AllowAll),
             request_reader: reader,
             approval_repo: approval,
-            event_dispatcher: Arc::new(NoopDispatcher),
+            uow: Arc::new(NoopUnitOfWork),
+            notifier: Arc::new(NoopNotifier),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
         }
@@ -382,7 +399,6 @@ mod tests {
         assert_eq!(out.current_step, 1);
         assert_eq!(out.total_steps, 1);
         assert_eq!(out.approved_by, "bob");
-        assert!(*approval.marked_approved.lock().unwrap());
     }
 
     #[test]

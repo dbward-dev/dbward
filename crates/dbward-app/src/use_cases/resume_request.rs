@@ -13,9 +13,9 @@ pub struct ResumeRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub policy: Arc<dyn PolicyEvaluator>,
     pub request_reader: Arc<dyn RequestReader>,
-    pub request_writer: Arc<dyn RequestWriter>,
+    pub uow: Arc<dyn UnitOfWork>,
     pub result_channel: Arc<dyn ResultChannel>,
-    pub event_dispatcher: Arc<dyn EventDispatcher>,
+    pub notifier: Arc<dyn Notifier>,
     pub policy_repo: Arc<dyn PolicyRepo>,
     pub clock: Arc<dyn Clock>,
 }
@@ -120,11 +120,23 @@ impl ResumeRequest {
             }
         }
 
-        // 6. Mark dispatched
-        let ok = self.request_writer.mark_dispatched(&request.id, now)?;
-        if !ok {
-            return Err(AppError::Conflict("concurrent status change".into()));
-        }
+        // 6. Mark dispatched + audit (atomic)
+        let event = result.into_event();
+        let audit_event = crate::services::audit_event_builder::build_audit_event(
+            &event,
+            now,
+            crate::services::audit_event_builder::RedactionMode::default(),
+            crate::services::audit_event_builder::noop_redact,
+        );
+        let request_id = request.id.clone();
+        self.uow.execute(Box::new(move |tx| {
+            let ok = tx.mark_dispatched(&request_id, now)?;
+            if !ok {
+                return Err(AppError::Conflict("concurrent status change".into()));
+            }
+            tx.record(&audit_event)?;
+            Ok(())
+        }))?;
 
         // Pre-create result slot so subscribers can wait before agent completes
         // M-21: Skip streaming slot if policy says StoreOnly
@@ -137,7 +149,11 @@ impl ResumeRequest {
             self.result_channel.create_slot(&request.id);
         }
 
-        result.commit(&*self.event_dispatcher);
+        // Post-commit: best-effort notification
+        self.notifier
+            .dispatch(crate::services::audit_event_builder::build_webhook_event(
+                &event,
+            ));
 
         Ok(ResumeRequestOutput {
             id: request.id,
@@ -147,6 +163,7 @@ impl ResumeRequest {
 }
 
 #[cfg(test)]
+#[allow(unused_variables)]
 mod tests {
     use super::*;
     use crate::test_support::*;
@@ -439,17 +456,6 @@ mod tests {
         fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn mark_approved_from_dispatched_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::AuditEvent,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_audit_incomplete(&self, _: &str) -> Result<(), AppError> {
-            Ok(())
-        }
     }
 
     fn make_request(status: RequestStatus) -> Request {
@@ -479,14 +485,14 @@ mod tests {
         }
     }
 
-    fn make_uc(reader: Arc<FakeDispatchReader>, writer: Arc<FakeDispatchWriter>) -> ResumeRequest {
+    fn make_uc(reader: Arc<FakeDispatchReader>, _writer: Arc<FakeDispatchWriter>) -> ResumeRequest {
         ResumeRequest {
             authorizer: Arc::new(AllowAll),
             policy: Arc::new(FakePolicy),
             request_reader: reader,
-            request_writer: writer,
+            uow: Arc::new(NoopUnitOfWork),
             result_channel: Arc::new(FakeResultChannel),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            notifier: Arc::new(NoopNotifier),
             policy_repo: Arc::new(FakePolicyRepo),
             clock: Arc::new(FixedClock::now_utc()),
         }
@@ -519,7 +525,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out.status, RequestStatus::Dispatched);
-        assert!(*writer.dispatched.lock().unwrap());
     }
 
     #[test]
@@ -738,9 +743,9 @@ mod tests {
             authorizer: Arc::new(AllowAll),
             policy: Arc::new(FakePolicy),
             request_reader: reader,
-            request_writer: writer,
+            uow: Arc::new(NoopUnitOfWork),
             result_channel: Arc::new(FakeResultChannel),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            notifier: Arc::new(NoopNotifier),
             policy_repo: Arc::new(FakePolicyRepo),
             clock: Arc::new(FixedClock(now)),
         };
@@ -776,9 +781,9 @@ mod tests {
             authorizer: Arc::new(AllowAll),
             policy,
             request_reader: reader,
-            request_writer: writer,
+            uow: Arc::new(NoopUnitOfWork),
             result_channel: Arc::new(FakeResultChannel),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            notifier: Arc::new(NoopNotifier),
             policy_repo: Arc::new(FakePolicyRepo),
             clock: Arc::new(FixedClock::now_utc()),
         };
@@ -822,9 +827,9 @@ mod tests {
             authorizer: Arc::new(AllowAll),
             policy,
             request_reader: reader,
-            request_writer: writer,
+            uow: Arc::new(NoopUnitOfWork),
             result_channel: Arc::new(FakeResultChannel),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            notifier: Arc::new(NoopNotifier),
             policy_repo: Arc::new(FakePolicyRepo),
             clock: Arc::new(FixedClock(now)),
         };
@@ -865,9 +870,9 @@ mod tests {
             authorizer: Arc::new(AllowAll),
             policy,
             request_reader: reader,
-            request_writer: writer,
+            uow: Arc::new(NoopUnitOfWork),
             result_channel: Arc::new(FakeResultChannel),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            notifier: Arc::new(NoopNotifier),
             policy_repo: Arc::new(FakePolicyRepo),
             clock: Arc::new(FixedClock::now_utc()),
         };

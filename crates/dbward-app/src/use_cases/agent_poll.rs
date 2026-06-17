@@ -77,7 +77,7 @@ impl AgentPoll {
         // 3b. Emit audit event for new agent registration
         if is_new
             && let Err(e) = self.audit_logger.record(&AuditEvent::simple(
-                "agent_registered",
+                "agent.registered",
                 "agent",
                 &user.subject_id,
                 Some(&user.subject_id),

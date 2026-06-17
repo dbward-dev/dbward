@@ -85,9 +85,9 @@ impl SchemaSync {
 
         // 7. Audit event
         let event_type = if record.status == "ready" {
-            "schema_snapshot_updated"
+            "schema.snapshot_updated"
         } else {
-            "schema_snapshot_failed"
+            "schema.snapshot_failed"
         };
         let audit_ctx = dbward_domain::entities::AuditContext::Agent {
             agent_id: input.agent_id.clone(),

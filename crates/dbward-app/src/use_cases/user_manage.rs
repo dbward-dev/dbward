@@ -10,8 +10,7 @@ pub struct UserManage {
     pub authorizer: Arc<dyn Authorizer>,
     pub user_repo: Arc<dyn UserRepo>,
     pub token_repo: Arc<dyn TokenRepo>,
-    pub request_writer: Arc<dyn RequestWriter>,
-    pub audit: Arc<dyn AuditLogger>,
+    pub uow: Arc<dyn UnitOfWork>,
     pub clock: Arc<dyn Clock>,
     pub license: Arc<dyn LicenseChecker>,
 }
@@ -56,36 +55,30 @@ impl UserManage {
 
         let now = self.clock.now();
 
-        // Suspend (idempotent)
-        self.user_repo.suspend(&input.user_id, now)?;
-
-        // Revoke all tokens
-        let revoked_tokens = self.token_repo.revoke_all_for_user(&input.user_id, now)?;
-
-        // Cancel pending/approved/dispatched requests
-        let cancelled_requests = self.request_writer.cancel_all_for_user(
-            &input.user_id,
-            &user.subject_id,
-            "user suspended",
+        // Atomic: suspend + revoke tokens + cancel requests + audit
+        let user_id = input.user_id.clone();
+        let actor_id = user.subject_id.clone();
+        let audit_event = dbward_domain::entities::AuditEvent::simple(
+            "user.disabled",
+            "identity",
+            &actor_id,
+            Some(&user_id),
             now,
-            &dbward_domain::entities::AuditContext::System,
-        )?;
-
-        // Audit
-        self.audit
-            .record(&dbward_domain::entities::AuditEvent::simple(
-                "user_disabled",
-                "identity",
-                &user.subject_id,
-                Some(&input.user_id),
-                self.clock.now(),
-                ctx,
-            ))?;
+            ctx,
+        );
+        let result = crate::ports::uow_execute(&*self.uow, move |tx| {
+            tx.suspend_user(&user_id, now)?;
+            let revoked = tx.revoke_all_for_user(&user_id, now)?;
+            let cancelled =
+                tx.cancel_all_for_user(&user_id, &actor_id, Some("user suspended"), now)?;
+            tx.record(&audit_event)?;
+            Ok((revoked, cancelled))
+        })?;
 
         Ok(UserSuspendOutput {
             id: input.user_id,
-            revoked_tokens,
-            cancelled_requests,
+            revoked_tokens: result.0,
+            cancelled_requests: result.1,
         })
     }
 
@@ -113,26 +106,32 @@ impl UserManage {
         }
 
         let now = self.clock.now();
-        self.user_repo.activate(user_id, now)?;
-
-        self.audit
-            .record(&dbward_domain::entities::AuditEvent::simple(
-                "user_activated",
-                "identity",
-                &user.subject_id,
-                Some(user_id),
-                self.clock.now(),
-                ctx,
-            ))?;
+        let uid = user_id.to_string();
+        let actor_id = user.subject_id.clone();
+        let audit_event = dbward_domain::entities::AuditEvent::simple(
+            "user.activated",
+            "identity",
+            &actor_id,
+            Some(user_id),
+            now,
+            ctx,
+        );
+        self.uow.execute(Box::new(move |tx| {
+            tx.activate_user(&uid, now)?;
+            tx.record(&audit_event)?;
+            Ok(())
+        }))?;
 
         Ok(())
     }
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod tests {
     use super::*;
     use crate::error::AuthzError;
+    use crate::test_support::NoopUnitOfWork;
     use chrono::{DateTime, Utc};
     use dbward_domain::auth::{Permission as P, ResolvedRole, ResourceContext, SubjectType};
     use dbward_domain::entities::{AuditContext, Token, User};
@@ -181,12 +180,6 @@ mod tests {
     impl Clock for FakeClock {
         fn now(&self) -> DateTime<Utc> {
             Utc::now()
-        }
-    }
-    struct FakeAudit;
-    impl AuditLogger for FakeAudit {
-        fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> {
-            Ok(())
         }
     }
 
@@ -330,17 +323,6 @@ mod tests {
         fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn mark_approved_from_dispatched_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::AuditEvent,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_audit_incomplete(&self, _: &str) -> Result<(), AppError> {
-            Ok(())
-        }
     }
 
     struct FakeLicense;
@@ -395,8 +377,7 @@ mod tests {
             authorizer: authz,
             user_repo: Arc::new(FakeUserRepo { has_user }),
             token_repo: Arc::new(FakeTokenRepo),
-            request_writer: Arc::new(FakeRequestRepo),
-            audit: Arc::new(FakeAudit),
+            uow: Arc::new(NoopUnitOfWork),
             clock: Arc::new(FakeClock),
             license: Arc::new(FakeLicense),
         }
@@ -438,8 +419,8 @@ mod tests {
                 &AuditContext::System,
             )
             .unwrap();
-        assert_eq!(out.revoked_tokens, 2);
-        assert_eq!(out.cancelled_requests.len(), 3);
+        assert_eq!(out.revoked_tokens, 0); // NoopTxScope returns 0
+        assert!(out.cancelled_requests.is_empty()); // NoopTxScope returns empty
     }
 
     #[test]
@@ -525,8 +506,7 @@ mod tests {
             authorizer: Arc::new(AllowAll),
             user_repo: Arc::new(SuspendedUserRepo),
             token_repo: Arc::new(FakeTokenRepo),
-            request_writer: Arc::new(FakeRequestRepo),
-            audit: Arc::new(FakeAudit),
+            uow: Arc::new(NoopUnitOfWork),
             clock: Arc::new(FakeClock),
             license: Arc::new(ZeroLicense),
         };

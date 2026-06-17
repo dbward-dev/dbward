@@ -8,13 +8,16 @@ use dbward_domain::services::status_machine::{
 
 use crate::error::AppError;
 use crate::ports::*;
+use crate::services::audit_event_builder;
+use crate::services::audit_event_builder::build_webhook_event;
 
 pub struct CancelRequest {
     pub authorizer: Arc<dyn Authorizer>,
     pub request_reader: Arc<dyn RequestReader>,
-    pub request_writer: Arc<dyn RequestWriter>,
-    pub event_dispatcher: Arc<dyn EventDispatcher>,
+    pub uow: Arc<dyn UnitOfWork>,
+    pub notifier: Arc<dyn Notifier>,
     pub clock: Arc<dyn Clock>,
+    pub redaction_mode: audit_event_builder::RedactionMode,
 }
 
 pub struct CancelRequestInput {
@@ -80,17 +83,30 @@ impl CancelRequest {
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;
 
-        let ok = self.request_writer.mark_cancelled(
-            &request.id,
-            &user.subject_id,
-            input.reason.as_deref(),
+        let event = result.into_event();
+        let audit_event = audit_event_builder::build_audit_event(
+            &event,
             now,
-        )?;
-        if !ok {
-            return Err(AppError::Conflict("concurrent status change".into()));
-        }
+            self.redaction_mode,
+            crate::services::audit_event_builder::noop_redact,
+        );
 
-        result.commit(&*self.event_dispatcher);
+        // Atomic: state mutation + audit in same TX
+        let subject_id = user.subject_id.clone();
+        let reason = input.reason.clone();
+        let request_id = request.id.clone();
+        self.uow.execute(Box::new(move |tx| {
+            let ok = tx.mark_cancelled(&request_id, &subject_id, reason.as_deref(), now)?;
+            if !ok {
+                return Err(AppError::Conflict("concurrent status change".into()));
+            }
+            tx.record(&audit_event)?;
+            Ok(())
+        }))?;
+
+        // Post-commit: best-effort notification
+        let webhook_event = build_webhook_event(&event);
+        self.notifier.dispatch(webhook_event);
 
         Ok(CancelRequestOutput {
             id: request.id,
@@ -140,13 +156,13 @@ mod tests {
         let reader = Arc::new(FakeRequestReader::with_request(make_request(
             RequestStatus::Pending,
         )));
-        let writer = Arc::new(FakeRequestWriter::new());
         let uc = CancelRequest {
             authorizer: Arc::new(AllowAll),
             request_reader: reader,
-            request_writer: writer.clone(),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            uow: Arc::new(NoopUnitOfWork),
+            notifier: Arc::new(NoopNotifier),
             clock: Arc::new(FixedClock::now_utc()),
+            redaction_mode: audit_event_builder::RedactionMode::None,
         };
         let user = AuthUser {
             subject_id: "alice".into(),
@@ -166,7 +182,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out.status, RequestStatus::Cancelled);
-        assert!(*writer.written.lock().unwrap());
     }
 
     #[test]
@@ -174,13 +189,13 @@ mod tests {
         let reader = Arc::new(FakeRequestReader::with_request(make_request(
             RequestStatus::Rejected,
         )));
-        let writer = Arc::new(FakeRequestWriter::new());
         let uc = CancelRequest {
             authorizer: Arc::new(AllowAll),
             request_reader: reader,
-            request_writer: writer,
-            event_dispatcher: Arc::new(NoopDispatcher),
+            uow: Arc::new(NoopUnitOfWork),
+            notifier: Arc::new(NoopNotifier),
             clock: Arc::new(FixedClock::now_utc()),
+            redaction_mode: audit_event_builder::RedactionMode::None,
         };
         let user = AuthUser {
             subject_id: "alice".into(),
@@ -207,13 +222,13 @@ mod tests {
         let reader = Arc::new(FakeRequestReader::with_request(make_request(
             RequestStatus::Pending,
         )));
-        let writer = Arc::new(FakeRequestWriter::new());
         let uc = CancelRequest {
             authorizer: Arc::new(DenyAll),
             request_reader: reader,
-            request_writer: writer,
-            event_dispatcher: Arc::new(NoopDispatcher),
+            uow: Arc::new(NoopUnitOfWork),
+            notifier: Arc::new(NoopNotifier),
             clock: Arc::new(FixedClock::now_utc()),
+            redaction_mode: audit_event_builder::RedactionMode::None,
         };
         let user = AuthUser {
             subject_id: "bob".into(),

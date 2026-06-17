@@ -17,16 +17,25 @@ pub enum EventCategory {
 }
 
 impl EventCategory {
+    /// Tolerant parse: unknown values fall back to Policy.
+    /// Used by read/verify paths (never 500 on stored data).
     pub fn parse(s: &str) -> Self {
+        Self::parse_strict(s).unwrap_or(Self::Policy)
+    }
+
+    /// Strict parse: returns error on unknown category.
+    /// Used by write paths (catches programming errors early).
+    pub fn parse_strict(s: &str) -> Result<Self, String> {
         match s {
-            "approval" => Self::Approval,
-            "execution" => Self::Execution,
-            "agent" => Self::Agent,
-            "auth" => Self::Auth,
-            "token" => Self::Token,
-            "identity" => Self::Identity,
-            "request" => Self::Request,
-            _ => Self::Policy,
+            "approval" => Ok(Self::Approval),
+            "execution" => Ok(Self::Execution),
+            "agent" => Ok(Self::Agent),
+            "auth" => Ok(Self::Auth),
+            "token" => Ok(Self::Token),
+            "identity" => Ok(Self::Identity),
+            "policy" => Ok(Self::Policy),
+            "request" => Ok(Self::Request),
+            other => Err(format!("unknown event category: {other}")),
         }
     }
 }

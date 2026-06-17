@@ -211,7 +211,7 @@ pub async fn auth_middleware(
                     None => AuditContext::System,
                 };
                 let event = dbward_domain::entities::AuditEvent::simple(
-                    "login_success",
+                    "auth.login_success",
                     "auth",
                     &subject_id,
                     None,

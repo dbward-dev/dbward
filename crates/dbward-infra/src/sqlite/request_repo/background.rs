@@ -2,7 +2,6 @@ use rusqlite::params;
 
 use dbward_app::error::AppError;
 use dbward_app::ports::BackgroundTaskRepo;
-use dbward_domain::entities::AuditEvent;
 
 use super::SqliteRequestRepo;
 use crate::sqlite::error::db_err;
@@ -54,36 +53,6 @@ impl BackgroundTaskRepo for SqliteRequestRepo {
             params![id, now],
         ).map_err(db_err("request: mark_expired"))?;
         Ok(n > 0)
-    }
-    fn mark_expired_and_record(
-        &self,
-        id: &str,
-        audit_event: &AuditEvent,
-        now: &str,
-    ) -> Result<bool, AppError> {
-        let mut conn = self.conn.lock();
-        let tx = conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(db_err("request: mark_expired_and_record"))?;
-
-        let n = tx.execute(
-            "UPDATE requests SET status = 'expired', updated_at = ?2 WHERE id = ?1 AND status IN ('approved', 'pending')",
-            params![id, now],
-        ).map_err(db_err("request: mark_expired_and_record"))?;
-        if n == 0 {
-            return Ok(false);
-        }
-
-        crate::sqlite::audit_helper::insert_audit_event_in_tx(
-            &tx,
-            audit_event,
-            crate::sqlite::audit_helper::IdPolicy::AlwaysGenerate,
-        )
-        .map_err(db_err("request: mark_expired_and_record"))?;
-
-        tx.commit()
-            .map_err(db_err("request: mark_expired_and_record"))?;
-        Ok(true)
     }
     fn purge_old_requests(&self, before: &str) -> Result<u32, AppError> {
         let mut conn = self.conn.lock();

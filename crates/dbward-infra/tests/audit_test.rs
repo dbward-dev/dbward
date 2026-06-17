@@ -45,7 +45,7 @@ fn audit_hash_chain_integrity() {
         prev_hash = Some(hash);
     }
 
-    let result = audit_repo.verify_chain().unwrap();
+    let result = audit_repo.verify_chain(None).unwrap();
     assert_eq!(result.total_events, 3);
     assert!(result.first_broken_id.is_none());
 }
@@ -86,7 +86,7 @@ fn audit_chain_detects_broken_link() {
     logger.record(&e1).unwrap();
 
     // Chain should be valid
-    let result = repo.verify_chain().unwrap();
+    let result = repo.verify_chain(None).unwrap();
     assert!(result.first_broken_id.is_none());
 
     // Tamper with the DB directly (simulate attacker modifying actor_id)
@@ -100,7 +100,7 @@ fn audit_chain_detects_broken_link() {
     }
 
     // verify_chain should now detect the tampering
-    let result = repo.verify_chain().unwrap();
+    let result = repo.verify_chain(None).unwrap();
     assert!(result.first_broken_id.is_some());
 }
 

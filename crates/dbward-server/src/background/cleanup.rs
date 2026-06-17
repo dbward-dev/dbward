@@ -1,4 +1,5 @@
 use super::*;
+use dbward_app::error::AppError;
 
 pub(super) async fn record_purge_loop(
     state: AppState,
@@ -46,32 +47,30 @@ pub(crate) async fn run_record_purge_once(
         }
     }
 
-    // Old audit events
-    match state.background().audit_repo().purge_old(&audit_cutoff) {
-        Ok(n) => {
+    // Old audit events (authenticated purge at checkpoint boundary)
+    match state
+        .background()
+        .audit_repo()
+        .purge_authenticated(&audit_cutoff, &**state.background().audit_signer())
+    {
+        Ok((n, _last_hash)) => {
             if n > 0 {
                 result.processed += n;
-                info!(task = "record_purge", count = n, "purged old audit events");
-                // A8: Record the purge action itself
-                if let Err(e) = state
-                    .background()
-                    .audit_logger()
-                    .record(&AuditEvent::simple(
-                        "audit_purged",
-                        "policy",
-                        "system",
-                        None,
-                        state.background().clock().now(),
-                        &AuditContext::System,
-                    ))
-                {
-                    tracing::error!(error = %e, "failed to record audit_purged event");
-                }
+                info!(
+                    task = "record_purge",
+                    count = n,
+                    "purged old audit events (authenticated)"
+                );
             }
         }
         Err(e) => {
-            result.failed += 1;
-            error!(task = "record_purge", error = %e, "purge_old audit failed");
+            // Validation error (no checkpoint before cutoff) is not a failure
+            if matches!(&e, AppError::Validation(_)) {
+                tracing::debug!(error = %e, "purge_authenticated skipped (no checkpoint before cutoff)");
+            } else {
+                result.failed += 1;
+                error!(task = "record_purge", error = %e, "purge_authenticated audit failed");
+            }
         }
     }
 

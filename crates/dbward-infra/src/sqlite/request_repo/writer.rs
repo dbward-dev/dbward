@@ -3,7 +3,6 @@ use rusqlite::params;
 
 use dbward_app::error::AppError;
 use dbward_app::ports::RequestWriter;
-use dbward_domain::entities::AuditEvent;
 use dbward_domain::entities::{Request, RequestStatus};
 
 use super::{SqliteRequestRepo, database_id, populate_pending_approvers};
@@ -273,107 +272,5 @@ impl RequestWriter for SqliteRequestRepo {
             params![id, now],
         ).map_err(db_err("request: mark_approved_from_dispatched"))?;
         Ok(n > 0)
-    }
-    fn mark_approved_from_dispatched_and_record(
-        &self,
-        id: &str,
-        audit_event: &AuditEvent,
-        now: &str,
-    ) -> Result<bool, AppError> {
-        let mut conn = self.conn.lock();
-        let tx = conn
-            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-            .map_err(db_err("request: mark_approved_from_dispatched_and_record"))?;
-
-        let n = tx.execute(
-            "UPDATE requests SET status = 'approved', updated_at = ?2 WHERE id = ?1 AND status = 'dispatched'",
-            params![id, now],
-        ).map_err(db_err("request: mark_approved_from_dispatched_and_record"))?;
-        if n == 0 {
-            return Ok(false);
-        }
-
-        crate::sqlite::audit_helper::insert_audit_event_in_tx(
-            &tx,
-            audit_event,
-            crate::sqlite::audit_helper::IdPolicy::AlwaysGenerate,
-        )
-        .map_err(db_err("request: mark_approved_from_dispatched_and_record"))?;
-
-        tx.commit()
-            .map_err(db_err("request: mark_approved_from_dispatched_and_record"))?;
-        Ok(true)
-    }
-
-    fn mark_audit_incomplete(&self, id: &str) -> Result<(), AppError> {
-        let conn = self.conn.lock();
-        conn.execute(
-            "UPDATE requests SET audit_incomplete = 1 WHERE id = ?1",
-            params![id],
-        )
-        .map_err(db_err("request: mark_audit_incomplete"))?;
-        Ok(())
-    }
-
-    fn cancel_all_for_user_raw(
-        &self,
-        user_id: &str,
-        actor_id: &str,
-        reason: &str,
-        now: DateTime<Utc>,
-    ) -> Result<Vec<String>, AppError> {
-        let conn = self.conn.lock();
-        let now_str = now.to_rfc3339();
-
-        let ids: Vec<String> = {
-            let mut stmt = conn.prepare(
-                "SELECT id FROM requests WHERE requester = ?1 AND status IN ('pending','approved','auto_approved','break_glass','dispatched','running','execution_lost')"
-            ).map_err(db_err("request: cancel_all_for_user_raw"))?;
-            stmt.query_map(params![user_id], |r| r.get(0))
-                .map_err(db_err("request: cancel_all_for_user_raw"))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(db_err("request: cancel_all_for_user_raw"))?
-        };
-
-        if ids.is_empty() {
-            return Ok(vec![]);
-        }
-
-        conn.execute(
-            "UPDATE requests SET status = 'cancelled', cancel_reason = ?2, cancelled_by = ?3, updated_at = ?4, resolved_at = ?4 WHERE requester = ?1 AND status IN ('pending','approved','auto_approved','break_glass','dispatched','running','execution_lost')",
-            params![user_id, reason, actor_id, now_str],
-        ).map_err(db_err("request: cancel_all_for_user_raw"))?;
-
-        for id in &ids {
-            let cancel_event = dbward_domain::entities::AuditEvent {
-                id: String::new(),
-                event_type: "request_cancelled".to_string(),
-                event_category: dbward_domain::entities::EventCategory::Approval,
-                event_version: 1,
-                outcome: dbward_domain::entities::EventOutcome::Success,
-                actor_id: actor_id.to_string(),
-                actor_type: dbward_domain::entities::ActorType::System,
-                resource_type: Some("request".to_string()),
-                resource_id: Some(id.clone()),
-                peer_ip: None,
-                client_ip: None,
-                client_ip_source: None,
-                request_id: Some(id.clone()),
-                operation: None,
-                database_name: None,
-                environment: None,
-                detail_fingerprint: None,
-                detail_raw: None,
-                reason: Some(reason.to_string()),
-                metadata_json: "{}".to_string(),
-                prev_hash: None,
-                event_hash: String::new(),
-                created_at: now,
-            };
-            crate::sqlite::audit_helper::insert_audit_event_raw(&conn, &cancel_event)
-                .map_err(db_err("request: cancel_all_for_user_raw"))?;
-        }
-
-        Ok(ids)
     }
 }

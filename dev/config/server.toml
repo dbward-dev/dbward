@@ -72,7 +72,7 @@ min = 1
 id = "dev-receiver"
 url = "http://webhook-receiver:9999"
 format = "generic"
-events = ["request_created", "request_approved", "request_auto_approved", "request_rejected", "request_completed", "request_failed", "break_glass", "step_approved"]
+events = ["request.created", "request.approved", "request.auto_approved", "request.rejected", "execution.completed", "execution.failed", "request.break_glass", "step.approved"]
 
 # Execution policies (synced to SQLite on startup)
 
@@ -156,7 +156,7 @@ access = ["requester"]
 database = "app"
 environment = "production"
 webhooks = ["dev-receiver"]
-events = ["request_completed"]
+events = ["execution.completed"]
 
 [[users]]
 id = "config-alice"

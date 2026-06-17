@@ -199,17 +199,6 @@ impl RequestWriter for StubRequestRepo {
     fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
         Ok(true)
     }
-    fn mark_approved_from_dispatched_and_record(
-        &self,
-        _: &str,
-        _: &dbward_domain::entities::AuditEvent,
-        _: &str,
-    ) -> Result<bool, AppError> {
-        Ok(true)
-    }
-    fn mark_audit_incomplete(&self, _: &str) -> Result<(), AppError> {
-        Ok(())
-    }
 }
 
 impl ApprovalRepo for StubRequestRepo {
@@ -248,9 +237,6 @@ impl BackgroundTaskRepo for StubRequestRepo {
         Ok(vec![])
     }
     fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
-        Ok(true)
-    }
-    fn mark_expired_and_record(&self, _: &str, _: &AuditEvent, _: &str) -> Result<bool, AppError> {
         Ok(true)
     }
     fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
@@ -620,14 +606,25 @@ impl AuditRepo for StubAuditRepo {
     fn list(&self, _: &AuditFilter) -> Result<Vec<AuditEvent>, AppError> {
         Ok(vec![])
     }
-    fn verify_chain(&self) -> Result<AuditVerifyResult, AppError> {
+    fn verify_chain(
+        &self,
+        _: Option<&dyn dbward_app::ports::crypto::AuditVerifier>,
+    ) -> Result<AuditVerifyResult, AppError> {
         Ok(AuditVerifyResult {
             total_events: 0,
             first_broken_id: None,
+            failure: None,
         })
     }
     fn purge_old(&self, _: &str) -> Result<u32, AppError> {
         Ok(0)
+    }
+    fn purge_authenticated(
+        &self,
+        _: &str,
+        _: &dyn dbward_app::ports::crypto::AuditSigner,
+    ) -> Result<(u32, String), AppError> {
+        Ok((0, "fake-checkpoint-id".into()))
     }
 }
 
@@ -682,7 +679,6 @@ fn test_state() -> AppState {
         result_channel: Arc::new(NoopResultChannel),
         token_signer: Arc::new(NoopTokenSigner),
         notifier: Arc::new(NoopNotifier),
-        event_dispatcher: Arc::new(NoopEventDispatcher),
         ssrf_validator: Arc::new(NoopSsrfValidator),
         license_checker: Arc::new(NoopLicenseChecker),
         #[cfg(feature = "commercial")]
@@ -693,6 +689,9 @@ fn test_state() -> AppState {
         token_value_generator: Arc::new(dbward_infra::SecureTokenGenerator),
         metrics: Arc::new(dbward_server::metrics::Metrics::new()),
         webhook_delivery_repo: None,
+        uow: Arc::new(common::NoopUnitOfWork),
+        audit_signer: Arc::new(common::NoopAuditSigner),
+        audit_verifier: Arc::new(common::NoopAuditSigner),
         webhook_sender: Arc::new(NoopWebhookSender),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         slack_config: None,

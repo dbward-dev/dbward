@@ -103,24 +103,6 @@ pub trait RequestWriter: Send + Sync {
         audit_context: &AuditContext,
     ) -> Result<Vec<String>, AppError>;
     fn mark_approved_from_dispatched(&self, id: &str, now: &str) -> Result<bool, AppError>;
-    fn mark_approved_from_dispatched_and_record(
-        &self,
-        id: &str,
-        audit_event: &AuditEvent,
-        now: &str,
-    ) -> Result<bool, AppError>;
-    fn mark_audit_incomplete(&self, id: &str) -> Result<(), AppError>;
-    /// Like cancel_all_for_user but without its own transaction (participates in caller's tx).
-    /// Uses actor_type=System, actor_id="system".
-    fn cancel_all_for_user_raw(
-        &self,
-        _user_id: &str,
-        _actor_id: &str,
-        _reason: &str,
-        _now: chrono::DateTime<chrono::Utc>,
-    ) -> Result<Vec<String>, AppError> {
-        Ok(vec![])
-    }
 }
 
 // --- ApprovalRepo ---
@@ -149,12 +131,6 @@ pub trait BackgroundTaskRepo: Send + Sync {
     fn find_expired_pending(&self, now: &str) -> Result<Vec<String>, AppError>;
     fn find_dispatched_older_than(&self, cutoff: &str) -> Result<Vec<String>, AppError>;
     fn mark_expired(&self, id: &str, now: &str) -> Result<bool, AppError>;
-    fn mark_expired_and_record(
-        &self,
-        id: &str,
-        audit_event: &AuditEvent,
-        now: &str,
-    ) -> Result<bool, AppError>;
     fn purge_old_requests(&self, before: &str) -> Result<u32, AppError>;
 }
 
@@ -522,8 +498,19 @@ pub trait BreakGlassMetrics: Send + Sync {
 
 pub trait AuditRepo: Send + Sync {
     fn list(&self, filter: &AuditFilter) -> Result<Vec<AuditEvent>, AppError>;
-    fn verify_chain(&self) -> Result<AuditVerifyResult, AppError>;
+    fn verify_chain(
+        &self,
+        verifier: Option<&dyn crate::ports::crypto::AuditVerifier>,
+    ) -> Result<AuditVerifyResult, AppError>;
+    /// DEPRECATED: Use purge_authenticated() for signed purge at checkpoint boundaries.
     fn purge_old(&self, before: &str) -> Result<u32, AppError>;
+    /// Authenticated purge: only at signed checkpoint boundaries.
+    /// Returns (deleted_count, checkpoint_id).
+    fn purge_authenticated(
+        &self,
+        before: &str,
+        signer: &dyn crate::ports::crypto::AuditSigner,
+    ) -> Result<(u32, String), AppError>;
 }
 
 pub struct AuditFilter {
@@ -542,6 +529,25 @@ pub struct AuditFilter {
 pub struct AuditVerifyResult {
     pub total_events: u64,
     pub first_broken_id: Option<String>,
+    pub failure: Option<AuditVerifyFailure>,
+}
+
+pub struct AuditVerifyFailure {
+    pub event_id: String,
+    pub event_type: String,
+    pub rowid: Option<i64>,
+    pub reason: VerifyFailureReason,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifyFailureReason {
+    HashMismatch,
+    PrevHashMismatch,
+    UnknownChainVersion(i64),
+    CheckpointSignatureInvalid,
+    CheckpointCountMismatch,
+    PurgeBoundaryUnauthenticated,
+    LegacyBoundaryMigrationNeeded,
 }
 
 // --- PolicyRepo ---
@@ -791,6 +797,7 @@ pub trait WebhookDeliveryRepo: Send + Sync {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<WebhookDelivery>, u32), AppError>;
+    /// DEPRECATED: Use purge_authenticated() for signed purge at checkpoint boundaries.
     fn purge_old(&self, before: &str) -> Result<u32, AppError>;
 }
 
