@@ -23,7 +23,7 @@ $ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
 - 🤖 **MCP-native** — 12 tools, 6 prompts, elicitation support. AI agents operate safely
 - ⚡ **Standalone binaries** — CLI, server, and agent ship as self-contained Rust binaries with embedded SQLite. No external control-plane DB
 - 🔒 **Agent isolation** — DB credentials never leave the agent. CLI/AI never touch your database directly
-- 🆓 **Core features free** — approval, audit, MCP, break-glass all included under [Apache-2.0](LICENSE-APACHE). Pro features (OIDC, group auth) require a [commercial license](LICENSE-COMMERCIAL)
+- 🆓 **Core features free** — approval, audit, MCP, break-glass all included under [Apache-2.0](LICENSE-APACHE). Team features (OIDC, group auth) require a [commercial license](LICENSE-COMMERCIAL)
 
 ## Architecture
 
@@ -324,7 +324,7 @@ Global Options:
 - **RBAC** — admin (all), developer (migrate + execute), readonly (SELECT only)
 - **Network isolation** — server has no DB credentials; agent connects outbound only
 - **API token auth** — SHA-256 hashed, prefix+hash composite lookup
-- **OIDC auth** — JWT verification with JWKS caching, RS256/ES256, PKCE for CLI (Pro)
+- **OIDC auth** — JWT verification with JWKS caching, RS256/ES256, PKCE for CLI (Team)
 - **Audit hash chain** — SHA-256 chain linking all events, tamper-evident
 
 ## Platform Support
@@ -365,7 +365,7 @@ cat ./data/agent-token     # agent token
 dbward token create --subject alice --role admin
 ```
 
-### OIDC (Pro)
+### OIDC (Team)
 
 ```bash
 dbward login              # Browser-based (PKCE)
@@ -390,7 +390,7 @@ secret = "whsec_xxxx"  # HMAC-SHA256 in X-Dbward-Signature header
 
 Events: `request_created`, `request_approved`, `request_rejected`, `request_completed`, `break_glass`.
 
-Free: unlimited webhook destinations. Pro: adds OIDC/SSO, group authorization, and audit export.
+Free: unlimited webhook destinations. Team: adds OIDC/SSO, group authorization, and audit export.
 
 ## Break-Glass (Emergency Bypass)
 
@@ -496,9 +496,9 @@ output = "stderr"              # "stderr" (default) or "file"
 #   RUST_LOG=info              → log level filter (default: info)
 ```
 
-## Free / Pro
+## Free / Team
 
-| | Free | Pro ($149/mo) |
+| | Free | Team ($149/mo) |
 |---|---|---|
 | Database connections | 3 | 20 |
 | Active users | 10 | 50 |
@@ -514,6 +514,8 @@ output = "stderr"              # "stderr" (default) or "file"
 | Audit export (CSV/JSON) | — | ✅ |
 
 Safety features are always free. You pay for scale and organizational complexity.
+
+> **Team plan is not yet available.** [Join the waitlist](https://dbward.dev/pricing/#waitlist) to get notified.
 
 ## Migration File Format
 
@@ -540,7 +542,7 @@ dbward uses an open-core licensing model.
 - **Core** (`crates/`): [Apache-2.0](LICENSE-APACHE) — approval workflows, audit logs, MCP,
   SQL review, agent execution, break-glass. Use, modify, and redistribute freely.
 - **Commercial** (`commercial/`): [dbward Commercial License](LICENSE-COMMERCIAL) — OIDC/SSO,
-  group authorization, Pro/Enterprise plan enforcement. Requires a paid subscription for
+  group authorization, Team/Enterprise plan enforcement. Requires a paid subscription for
   production use.
 
 No license key = Free plan. All core features work without restriction.

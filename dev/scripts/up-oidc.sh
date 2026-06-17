@@ -1,5 +1,5 @@
 #!/bin/sh
-# Start dbward with OIDC (Pro mode + Keycloak)
+# Start dbward with OIDC (Team mode + Keycloak)
 # Usage: ./dev/scripts/up-oidc.sh [-d]
 # Requires: DBWARD_LICENSE_KEY env var (or set in dev/.env)
 set -eu

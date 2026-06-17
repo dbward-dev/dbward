@@ -1,5 +1,5 @@
 //! License limit integration tests.
-//! Verifies that Free/Pro/Enterprise plan limits are enforced correctly.
+//! Verifies that Free/Team/Enterprise plan limits are enforced correctly.
 //! These tests require the `commercial` feature (LicenseCheckerImpl).
 
 #![cfg(feature = "commercial")]
@@ -193,12 +193,12 @@ async fn free_workflow_unlimited() {
     );
 }
 
-// === Test 3: Pro plan — DB up to 20 OK ===
+// === Test 3: Team plan — DB up to 20 OK ===
 
 #[tokio::test]
 async fn pro_database_limit_allows_20() {
     let license = License {
-        plan: Plan::Pro,
+        plan: Plan::Team,
         key_id: None,
         issued_to: None,
         issued_at: None,
@@ -217,12 +217,12 @@ async fn pro_database_limit_allows_20() {
     assert_eq!(state.license_checker().max_databases(), 20);
 }
 
-// === Test 4: Pro plan — DB 21 blocked ===
+// === Test 4: Team plan — DB 21 blocked ===
 
 #[tokio::test]
 async fn pro_database_limit_blocks_at_21() {
     let license = License {
-        plan: Plan::Pro,
+        plan: Plan::Team,
         key_id: None,
         issued_to: None,
         issued_at: None,
@@ -279,7 +279,7 @@ async fn expired_license_falls_back_to_free() {
     // Pass expired license directly to LicenseCheckerImpl — it should detect
     // expiry in the constructor and apply Free limits.
     let expired = License {
-        plan: Plan::Pro,
+        plan: Plan::Team,
         key_id: None,
         issued_to: Some("org".into()),
         issued_at: None,
@@ -291,7 +291,7 @@ async fn expired_license_falls_back_to_free() {
     // LicenseCheckerImpl should have detected expiry
     assert!(state.license_checker().is_expired());
     assert_eq!(state.license_checker().effective_plan(), "free");
-    assert_eq!(state.license_checker().configured_plan(), "pro");
+    assert_eq!(state.license_checker().configured_plan(), "team");
     assert_eq!(state.license_checker().max_workflows(), u32::MAX);
 
     let mut app = build_app(state, vec![]);

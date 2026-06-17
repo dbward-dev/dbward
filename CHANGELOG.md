@@ -13,7 +13,7 @@ Config as Authority: TOML config becomes the sole source of truth for all policy
 
 ### Breaking Changes
 
-- **`auth.mode` default changed**: Previously defaulted to `"both"`. Now defaults to `"token"` when `[auth.oidc]` is absent, and `"both"` when `[auth.oidc]` is present. Explicitly setting `auth.mode = "oidc"` or `"both"` now requires a Pro license (startup fails without one).
+- **`auth.mode` default changed**: Previously defaulted to `"both"`. Now defaults to `"token"` when `[auth.oidc]` is absent, and `"both"` when `[auth.oidc]` is present. Explicitly setting `auth.mode = "oidc"` or `"both"` now requires a Team license (startup fails without one).
 - **All Tier 1 write API endpoints return 405 Method Not Allowed.** Affected: POST/PUT/DELETE on `/api/workflows`, `/api/execution-policies`, `/api/result-policies`, `/api/notification-policies`, `/api/webhooks`, `/api/roles`. Define these in `server.toml` instead.
 - **Webhook `id` field is now mandatory** in `[[webhooks]]`. Missing id triggers startup failure with a suggested value from the URL.
 - **`[[auth.roles]]` custom roles are config-managed.** API write is no longer available.
@@ -151,7 +151,7 @@ Intelligent approval: risk-based auto-approve, context enrichment, Slack integra
 
 ## [0.1.2] — 2026-05-18
 
-Production readiness: Kubernetes/ECS deployment, agent resilience, Pro plan enforcement, and operational hardening.
+Production readiness: Kubernetes/ECS deployment, agent resilience, Team plan enforcement, and operational hardening.
 
 ### Bug Fixes
 
@@ -165,7 +165,7 @@ Production readiness: Kubernetes/ECS deployment, agent resilience, Pro plan enfo
 
 ### Features
 
-- **Pro plan enforcement**: License key verification (Ed25519), Free tier limits on workflows/databases/agents/tokens
+- **Team plan enforcement**: License key verification (Ed25519), Free tier limits on workflows/databases/agents/tokens
 - **Kubernetes deployment**: Manifests, Helm chart, liveness/readiness probes, ConfigMap/Secret management
 - **ECS deployment**: CloudFormation template with Fargate + EBS, Service Connect, EFS support
 - **Docker image**: Published to `ghcr.io/dbward-dev/dbward-server` and `ghcr.io/dbward-dev/dbward-agent` (amd64 + arm64)

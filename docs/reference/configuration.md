@@ -63,12 +63,12 @@ default_role = "readonly"
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `mode` | String | | `"token"` if `[auth.oidc]` absent; `"both"` if `[auth.oidc]` present | Authentication mode: `"token"`, `"oidc"`, `"both"`. Requires Pro license for `"oidc"`/`"both"`. |
+| `mode` | String | | `"token"` if `[auth.oidc]` absent; `"both"` if `[auth.oidc]` present | Authentication mode: `"token"`, `"oidc"`, `"both"`. Requires Team license for `"oidc"`/`"both"`. |
 | `default_role` | String | | — | Role assigned when no binding matches. Unset = reject unmatched users. |
 
 ### [auth.oidc]
 
-Requires `auth.mode = "oidc"` or `"both"` (explicit or implicit). Requires Pro license.
+Requires `auth.mode = "oidc"` or `"both"` (explicit or implicit). Requires Team license.
 
 ```toml
 [auth.oidc]

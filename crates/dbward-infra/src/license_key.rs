@@ -91,7 +91,7 @@ mod tests {
     fn test_payload() -> LicensePayload {
         LicensePayload {
             key_id: "key-test-001".into(),
-            plan: Plan::Pro,
+            plan: Plan::Team,
             issued_to: "test-org".into(),
             issued_at: Utc::now(),
             expires_at: Utc::now() + chrono::Duration::days(365),
@@ -106,7 +106,7 @@ mod tests {
         let key = generate_test_key(&payload, &signing_key);
 
         let license = verify_with_key(&key, &pub_key).unwrap();
-        assert_eq!(license.plan, Plan::Pro);
+        assert_eq!(license.plan, Plan::Team);
         assert_eq!(license.issued_to.as_deref(), Some("test-org"));
         assert!(license.expires_at.is_some());
     }

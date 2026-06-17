@@ -98,7 +98,7 @@ The background job deletes expired results, but a lifecycle rule provides defens
 }
 ```
 
-Set `Expiration.Days` to `retention_days + 1` (default retention is 30 days for Free, configurable via result policies for Pro).
+Set `Expiration.Days` to `retention_days + 1` (default retention is 30 days for Free, configurable via result policies for Team).
 
 ### Webhooks
 

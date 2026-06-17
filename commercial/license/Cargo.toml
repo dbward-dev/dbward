@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "LicenseRef-dbward-commercial"
 publish = false
-description = "dbward commercial license checker (Pro/Enterprise plan enforcement)"
+description = "dbward commercial license checker (Team/Enterprise plan enforcement)"
 
 [dependencies]
 dbward-app = { path = "../../crates/dbward-app" }

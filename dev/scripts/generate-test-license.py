@@ -6,8 +6,8 @@ Usage:
 
 Output:
   - dev/testdata/licenses/test.pub.hex   (public key hex, for DBWARD_LICENSE_PUBLIC_KEY)
-  - dev/testdata/licenses/pro.key        (valid Pro license key)
-  - dev/testdata/licenses/expired.key    (expired Pro license key)
+  - dev/testdata/licenses/team.key       (valid Team license key)
+  - dev/testdata/licenses/expired.key    (expired Team license key)
 """
 import base64
 import json
@@ -64,19 +64,19 @@ def make_license(plan: str, expires_at: datetime) -> str:
     return f"dbward_lic_v1.{payload_b64}.{sig_b64}"
 
 
-# Pro license (valid for 1 year)
-pro_key = make_license("pro", datetime.now(timezone.utc) + timedelta(days=365))
-(OUT_DIR / "pro.key").write_text(pro_key + "\n")
+# Team license (valid for 1 year)
+pro_key = make_license("team", datetime.now(timezone.utc) + timedelta(days=365))
+(OUT_DIR / "team.key").write_text(pro_key + "\n")
 
 # Expired license
-expired_key = make_license("pro", datetime.now(timezone.utc) - timedelta(days=1))
+expired_key = make_license("team", datetime.now(timezone.utc) - timedelta(days=1))
 (OUT_DIR / "expired.key").write_text(expired_key + "\n")
 
 print(f"Generated test licenses in {OUT_DIR}")
 print(f"  Public key (hex): {pub_hex}")
-print(f"  Pro key:     {OUT_DIR / 'pro.key'}")
+print(f"  Team key:    {OUT_DIR / 'team.key'}")
 print(f"  Expired key: {OUT_DIR / 'expired.key'}")
 print()
 print("To use in docker-compose:")
 print(f"  DBWARD_LICENSE_PUBLIC_KEY={pub_hex}")
-print(f"  DBWARD_LICENSE_KEY=$(cat {OUT_DIR / 'pro.key'})")
+print(f"  DBWARD_LICENSE_KEY=$(cat {OUT_DIR / 'team.key'})")

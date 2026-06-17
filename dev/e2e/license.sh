@@ -1,5 +1,5 @@
 #!/bin/bash
-# E2E: License / Pro Plan Limits (CFG-24)
+# E2E: License / Team Plan Limits (CFG-24)
 # Tests that config sync respects license limits.
 # POST /api/workflows is now 405. Limits are enforced at startup (config sync).
 # Requires: docker compose services running + test license keys generated
@@ -10,7 +10,7 @@ cd "$SCRIPT_DIR/../.."
 export COMPOSE_FILE="dev/compose.yml:dev/compose.override.yml"
 source "$SCRIPT_DIR/helpers.sh"
 
-echo "=== License / Pro Plan E2E (CFG-24) ==="
+echo "=== License / Team Plan E2E (CFG-24) ==="
 echo ""
 
 # --- 1. Free plan: server starts with config within limits ---
