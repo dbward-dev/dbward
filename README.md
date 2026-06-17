@@ -6,15 +6,9 @@
 
 Stop accidents before they hit production. Add approval gates, audit trails, and AI agent guardrails to every database operation — with standalone binaries and embedded SQLite. No external control-plane DB required.
 
-```bash
-$ dbward execute "UPDATE users SET active = false WHERE last_login < '2025-01-01'"
-⚠ Request 7f3a2b01 created (production × execute_query)
-  Requires 1 approval.
-
-$ dbward request approve 7f3a2b01 --comment "Confirmed with product team"
-✓ Approved. Executing on agent-prod-01...
-✓ 3 rows affected (12ms)
-```
+<p align="center">
+  <img src="demo/combined.gif" alt="dbward approval flow demo" width="100%">
+</p>
 
 ## Highlights
 
