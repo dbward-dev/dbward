@@ -18,28 +18,14 @@ pub(super) async fn ttl_expiry_loop(state: AppState, shutdown: CancellationToken
 pub(crate) async fn run_ttl_expiry_once(state: &AppState) -> TickResult {
     let mut result = TickResult::default();
     let bg = state.background();
-    let now_str = bg.clock().now().to_rfc3339();
+    let now = bg.clock().now();
+    let now_str = now.to_rfc3339();
 
     // Approval TTL
     match bg.background_task_repo().find_expired_approved(&now_str) {
         Ok(ids) => {
             for id in ids {
-                let audit =
-                    make_audit_event("request_expired", EventCategory::Approval, &id, state);
-                match bg
-                    .background_task_repo()
-                    .mark_expired_and_record(&id, &audit, &now_str)
-                {
-                    Ok(true) => {
-                        result.processed += 1;
-                        emit_webhook(state, "request_expired", &id);
-                    }
-                    Ok(false) => {}
-                    Err(e) => {
-                        result.failed += 1;
-                        error!(task = "ttl_expiry", request_id = %id, error = %e, "failed to expire approved request");
-                    }
-                }
+                expire_one(&bg, &id, now, state, &mut result);
             }
         }
         Err(e) => {
@@ -52,22 +38,7 @@ pub(crate) async fn run_ttl_expiry_once(state: &AppState) -> TickResult {
     match bg.background_task_repo().find_expired_pending(&now_str) {
         Ok(ids) => {
             for id in ids {
-                let audit =
-                    make_audit_event("request_expired", EventCategory::Approval, &id, state);
-                match bg
-                    .background_task_repo()
-                    .mark_expired_and_record(&id, &audit, &now_str)
-                {
-                    Ok(true) => {
-                        result.processed += 1;
-                        emit_webhook(state, "request_expired", &id);
-                    }
-                    Ok(false) => {}
-                    Err(e) => {
-                        result.failed += 1;
-                        error!(task = "ttl_expiry", request_id = %id, error = %e, "failed to expire pending request");
-                    }
-                }
+                expire_one(&bg, &id, now, state, &mut result);
             }
         }
         Err(e) => {
@@ -77,4 +48,32 @@ pub(crate) async fn run_ttl_expiry_once(state: &AppState) -> TickResult {
     }
 
     result
+}
+
+fn expire_one(
+    bg: &crate::state::BackgroundAccess<'_>,
+    id: &str,
+    now: chrono::DateTime<chrono::Utc>,
+    state: &AppState,
+    result: &mut TickResult,
+) {
+    let audit = make_audit_event("request.expired", EventCategory::Approval, id, state);
+    let id_owned = id.to_string();
+    match bg.uow().execute(Box::new(move |tx| {
+        let updated = tx.mark_expired(&id_owned, now)?;
+        if !updated {
+            return Ok(()); // already transitioned, skip audit
+        }
+        tx.record(&audit)?;
+        Ok(())
+    })) {
+        Ok(()) => {
+            result.processed += 1;
+            emit_webhook(state, "request.expired", id);
+        }
+        Err(e) => {
+            result.failed += 1;
+            error!(task = "ttl_expiry", request_id = %id, error = %e, "failed to expire request");
+        }
+    }
 }

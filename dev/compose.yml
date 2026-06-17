@@ -62,6 +62,8 @@ services:
         max-size: "10m"
         max-file: "3"
     networks: [backend, frontend]
+    environment:
+      DBWARD_LICENSE_PUBLIC_KEY: ${DBWARD_LICENSE_PUBLIC_KEY:-}
     volumes:
       - server-data:/data
       - ./config/${DBWARD_SERVER_CONFIG:-server.toml}:/config/dbward-server.toml:ro

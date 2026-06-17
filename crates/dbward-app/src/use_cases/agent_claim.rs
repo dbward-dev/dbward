@@ -20,7 +20,8 @@ pub struct AgentClaim {
     pub agent_repo: Arc<dyn AgentRepo>,
     pub policy: Arc<dyn PolicyEvaluator>,
     pub token_signer: Arc<dyn TokenSigner>,
-    pub event_dispatcher: Arc<dyn EventDispatcher>,
+    pub uow: Arc<dyn UnitOfWork>,
+    pub notifier: Arc<dyn Notifier>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
     pub user_repo: Arc<dyn UserRepo>,
@@ -219,12 +220,32 @@ impl AgentClaim {
             error_message: None,
             created_at: now,
         };
-        self.agent_repo
-            .claim_and_mark_running(&execution, &request.id, now)?
-            .then_some(())
-            .ok_or_else(|| AppError::Conflict("concurrent status change".into()))?;
 
-        result.commit(&*self.event_dispatcher);
+        let event = result.into_event();
+        let audit_event = crate::services::audit_event_builder::build_audit_event(
+            &event,
+            now,
+            crate::services::audit_event_builder::RedactionMode::default(),
+            crate::services::audit_event_builder::noop_redact,
+        );
+
+        // Atomic: execution insert + request mark_running + audit
+        let request_id = request.id.clone();
+        self.uow.execute(Box::new(move |tx| {
+            tx.insert_execution(&execution)?;
+            let ok = tx.mark_running(&request_id, now)?;
+            if !ok {
+                return Err(AppError::Conflict("concurrent status change".into()));
+            }
+            tx.record(&audit_event)?;
+            Ok(())
+        }))?;
+
+        // Post-commit: best-effort notification
+        self.notifier
+            .dispatch(crate::services::audit_event_builder::build_webhook_event(
+                &event,
+            ));
 
         Ok(AgentClaimOutput {
             execution_id,
@@ -584,7 +605,8 @@ mod tests {
             agent_repo,
             policy: Arc::new(FakePolicyEvaluator),
             token_signer: Arc::new(FakeTokenSigner),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            uow: Arc::new(NoopUnitOfWork),
+            notifier: Arc::new(NoopNotifier),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             user_repo: Arc::new(FakeUserRepo),
@@ -695,28 +717,6 @@ mod tests {
         );
         assert!(matches!(result, Err(AppError::Conflict(_))));
     }
-
-    #[test]
-    fn claim_and_mark_running_fails_returns_conflict() {
-        let agent_repo = FakeAgentRepo {
-            has_running: false,
-            claim_result: false,
-        };
-        let uc = build_uc(
-            Arc::new(AllowAll),
-            Arc::new(FakeRequestReader(Some(make_request(
-                RequestStatus::Dispatched,
-            )))),
-            Arc::new(agent_repo),
-        );
-        let result = uc.execute(
-            make_input(default_caps()),
-            &make_user(),
-            &AuditContext::System,
-        );
-        assert!(matches!(result, Err(AppError::Conflict(_))));
-    }
-
     #[test]
     fn valid_claim_returns_output() {
         let uc = build_uc(

@@ -79,7 +79,7 @@ pub fn build_request_created(
     }
 
     // Single "Review Request" button
-    if event.event_type == "request_created" {
+    if event.event_type == "request.created" {
         blocks.push(json!({
             "type": "actions",
             "elements": [
@@ -275,7 +275,7 @@ pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Val
     let (default_emoji, _) = crate::notification_display::event_display(&event.event_type);
 
     let (emoji, text) = match event.event_type.as_str() {
-        "step_approved" => {
+        "step.approved" => {
             let step_info = match (event.step_index, event.total_steps) {
                 (Some(s), Some(t)) => format!(" (step {}/{})", s + 1, t),
                 _ => String::new(),
@@ -285,8 +285,8 @@ pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Val
                 format!("Step approved by {actor}{step_info}"),
             )
         }
-        "request_approved" => (default_emoji, format!("Request approved by {actor}")),
-        "request_rejected" => {
+        "request.approved" => (default_emoji, format!("Request approved by {actor}")),
+        "request.rejected" => {
             let reason = event
                 .reason
                 .as_deref()
@@ -300,7 +300,7 @@ pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Val
             (default_emoji, format!("Execution failed: {err}"))
         }
         "request_expired" => (default_emoji, "Request expired".into()),
-        "execution_lost" => (default_emoji, "Execution lost (agent disconnected)".into()),
+        "execution.lost" => (default_emoji, "Execution lost (agent disconnected)".into()),
         "request_cancelled" => {
             let reason = event
                 .reason
@@ -619,17 +619,17 @@ pub fn fallback_text(event: &WebhookEvent) -> String {
     let (emoji, _) = crate::notification_display::event_display(&event.event_type);
     let req_id = event.request_id.as_deref().unwrap_or("—");
     match event.event_type.as_str() {
-        "request_created" => format!("{emoji} New approval request {req_id}"),
-        "break_glass" => format!("{emoji} Break-glass request {req_id}"),
-        "request_auto_approved" => format!("{emoji} Auto-approved {req_id}"),
-        "step_approved" => format!("{emoji} Step approved for {req_id}"),
-        "request_approved" => format!("{emoji} Request {req_id} approved"),
-        "request_rejected" => format!("{emoji} Request {req_id} rejected"),
+        "request.created" => format!("{emoji} New approval request {req_id}"),
+        "request.break_glass" => format!("{emoji} Break-glass request {req_id}"),
+        "request.auto_approved" => format!("{emoji} Auto-approved {req_id}"),
+        "step.approved" => format!("{emoji} Step approved for {req_id}"),
+        "request.approved" => format!("{emoji} Request {req_id} approved"),
+        "request.rejected" => format!("{emoji} Request {req_id} rejected"),
         "request_cancelled" => format!("{emoji} Request {req_id} cancelled"),
         "request_completed" => format!("{emoji} Request {req_id} completed"),
         "request_failed" => format!("{emoji} Request {req_id} failed"),
         "request_expired" => format!("{emoji} Request {req_id} expired"),
-        "execution_lost" => format!("{emoji} Execution lost for {req_id}"),
+        "execution.lost" => format!("{emoji} Execution lost for {req_id}"),
         _ => format!("{emoji} {}: {req_id}", event.event_type),
     }
 }
@@ -689,7 +689,7 @@ mod tests {
 
     fn sample_event() -> WebhookEvent {
         WebhookEvent {
-            event_type: "request_created".into(),
+            event_type: "request.created".into(),
             request_id: Some("req-abc12345".into()),
             database: Some("app".into()),
             environment: Some("production".into()),
@@ -736,7 +736,7 @@ mod tests {
     #[test]
     fn thread_reply_formats_correctly() {
         let mut event = sample_event();
-        event.event_type = "request_approved".into();
+        event.event_type = "request.approved".into();
         let blocks = build_thread_reply(&event, "");
         let text = blocks[0]["text"]["text"].as_str().unwrap();
         assert!(text.contains("Request approved by alice"));
@@ -745,7 +745,7 @@ mod tests {
     #[test]
     fn thread_reply_approved_has_no_button() {
         let mut event = sample_event();
-        event.event_type = "request_approved".into();
+        event.event_type = "request.approved".into();
         let blocks = build_thread_reply(&event, "");
         let actions = blocks.iter().find(|b| b["type"] == "actions");
         assert!(
@@ -757,7 +757,7 @@ mod tests {
     #[test]
     fn thread_reply_non_approved_has_no_button() {
         let mut event = sample_event();
-        event.event_type = "request_rejected".into();
+        event.event_type = "request.rejected".into();
         let blocks = build_thread_reply(&event, "");
         let actions = blocks.iter().find(|b| b["type"] == "actions");
         assert!(actions.is_none(), "rejected reply should not have actions");
@@ -908,7 +908,7 @@ mod view_result_tests {
     #[test]
     fn fallback_text_step_approved_uses_ballot_box_emoji() {
         let event = WebhookEvent {
-            event_type: "step_approved".into(),
+            event_type: "step.approved".into(),
             request_id: Some("req-1".into()),
             database: None,
             environment: None,

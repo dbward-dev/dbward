@@ -26,6 +26,7 @@ pub(crate) fn insert_audit_event_in_tx(
 }
 
 /// Insert an audit event using a bare Connection (participates in caller's transaction).
+/// Always generates a new UUID — used by UoW path where event.id is unset.
 pub(crate) fn insert_audit_event_raw(
     conn: &Connection,
     event: &AuditEvent,
@@ -40,35 +41,21 @@ fn insert_audit_event_on_conn(
     id: &str,
     event: &AuditEvent,
 ) -> rusqlite::Result<()> {
-    let prev_hash: Option<String> = conn
-        .query_row(
-            "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
+    let prev_hash: Option<String> = match conn.query_row(
+        "SELECT event_hash FROM audit_events ORDER BY rowid DESC LIMIT 1",
+        [],
+        |row| row.get(0),
+    ) {
+        Ok(h) => Some(h),
+        Err(rusqlite::Error::QueryReturnedNoRows) => None,
+        Err(e) => return Err(e),
+    };
 
     let outcome = outcome_str(event.outcome);
-    let hash_input = format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
-        id,
-        event.event_type,
-        event.actor_id,
-        event.created_at.to_rfc3339(),
-        prev_hash.as_deref().unwrap_or(""),
-        outcome,
-        event.request_id.as_deref().unwrap_or(""),
-        event.operation.as_deref().unwrap_or(""),
-        event.database_name.as_deref().unwrap_or(""),
-        event.environment.as_deref().unwrap_or(""),
-        event.reason.as_deref().unwrap_or(""),
-        event.detail_raw.as_deref().unwrap_or(""),
-        event.metadata_json,
-    );
-    let event_hash = hex::encode(Sha256::digest(hash_input.as_bytes()));
+    let event_hash = compute_v2_hash(id, event, prev_hash.as_deref(), outcome);
 
     conn.execute(
-        "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
+        "INSERT INTO audit_events (id, event_type, event_category, event_version, outcome, actor_id, actor_type, resource_type, resource_id, peer_ip, client_ip, client_ip_source, request_id, operation, database_name, environment, detail_fingerprint, detail_raw, reason, metadata_json, prev_hash, event_hash, chain_version, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)",
         params![
             id,
             event.event_type,
@@ -92,8 +79,48 @@ fn insert_audit_event_on_conn(
             event.metadata_json,
             prev_hash,
             event_hash,
+            2i64, // chain_version = 2 for all new events
             event.created_at.to_rfc3339(),
         ],
     )?;
     Ok(())
+}
+
+/// V2 hash: length-prefixed fields for unambiguous serialization.
+pub(crate) fn compute_v2_hash(
+    id: &str,
+    event: &AuditEvent,
+    prev_hash: Option<&str>,
+    outcome: &str,
+) -> String {
+    let fields: &[&str] = &[
+        id,
+        &event.event_type,
+        category_str(event.event_category),
+        &event.event_version.to_string(),
+        outcome,
+        &event.actor_id,
+        actor_type_str(event.actor_type),
+        event.resource_type.as_deref().unwrap_or(""),
+        event.resource_id.as_deref().unwrap_or(""),
+        event.peer_ip.as_deref().unwrap_or(""),
+        event.client_ip.as_deref().unwrap_or(""),
+        event.client_ip_source.as_deref().unwrap_or(""),
+        event.request_id.as_deref().unwrap_or(""),
+        event.operation.as_deref().unwrap_or(""),
+        event.database_name.as_deref().unwrap_or(""),
+        event.environment.as_deref().unwrap_or(""),
+        event.detail_fingerprint.as_deref().unwrap_or(""),
+        event.detail_raw.as_deref().unwrap_or(""),
+        event.reason.as_deref().unwrap_or(""),
+        &event.metadata_json,
+        prev_hash.unwrap_or(""),
+        &event.created_at.to_rfc3339(),
+    ];
+    let hash_input: String = fields
+        .iter()
+        .map(|f| format!("{}:{}", f.len(), f))
+        .collect::<Vec<_>>()
+        .join("\n");
+    hex::encode(Sha256::digest(hash_input.as_bytes()))
 }

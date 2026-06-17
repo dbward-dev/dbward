@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 18;
+const SCHEMA_VERSION: u32 = 19;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -259,6 +259,20 @@ CREATE TABLE IF NOT EXISTS server_meta (
 );
 ";
 
+const MIGRATION_V19: &str = "
+ALTER TABLE audit_events ADD COLUMN chain_version INTEGER NOT NULL DEFAULT 1;
+
+CREATE TABLE IF NOT EXISTS audit_purge_checkpoints (
+    id TEXT PRIMARY KEY,
+    purged_before TEXT NOT NULL,
+    last_purged_hash TEXT NOT NULL,
+    retained_count INTEGER NOT NULL,
+    key_id TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+";
+
 /// Apply V14 source-column additions idempotently.
 fn apply_migration_v14(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(MIGRATION_V14)?;
@@ -338,6 +352,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         apply_migration_v16(conn)?;
         conn.execute_batch(MIGRATION_V17)?;
         conn.execute_batch(MIGRATION_V18)?;
+        // V19 not needed for fresh DB (schema already includes chain_version + purge_checkpoints)
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -400,6 +415,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 18 {
             conn.execute_batch(MIGRATION_V18)?;
+        }
+        if current < 19 {
+            conn.execute_batch(MIGRATION_V19)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -639,11 +657,22 @@ CREATE TABLE IF NOT EXISTS audit_events (
     metadata_json TEXT NOT NULL DEFAULT '{}',
     prev_hash TEXT,
     event_hash TEXT NOT NULL,
+    chain_version INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_events_actor_id ON audit_events(actor_id);
 CREATE INDEX IF NOT EXISTS idx_audit_events_event_type ON audit_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_audit_events_created_at ON audit_events(created_at);
+
+CREATE TABLE IF NOT EXISTS audit_purge_checkpoints (
+    id TEXT PRIMARY KEY,
+    purged_before TEXT NOT NULL,
+    last_purged_hash TEXT NOT NULL,
+    retained_count INTEGER NOT NULL,
+    key_id TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_version (

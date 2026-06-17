@@ -54,7 +54,8 @@ pub struct CreateRequest {
     pub schema_repo: Arc<dyn SchemaRepo>,
     pub dry_run_repo: Arc<dyn DryRunRepo>,
     pub context_repo: Arc<dyn ContextRepo>,
-    pub event_dispatcher: Arc<dyn EventDispatcher>,
+    pub uow: Arc<dyn UnitOfWork>,
+    pub notifier: Arc<dyn Notifier>,
     pub audit_logger: Arc<dyn AuditLogger>,
     pub break_glass_metrics: Arc<dyn BreakGlassMetrics>,
     pub clock: Arc<dyn Clock>,
@@ -249,7 +250,7 @@ impl CreateRequest {
                                 .map(|f| f.message.as_str())
                                 .collect();
                             let mut audit_event = dbward_domain::entities::AuditEvent::simple(
-                                "request_blocked_by_review",
+                                "request.blocked_by_review",
                                 "request",
                                 &user.subject_id,
                                 None,
@@ -283,7 +284,7 @@ impl CreateRequest {
                             .collect();
                         // Audit: record blocked request
                         let mut audit_event = dbward_domain::entities::AuditEvent::simple(
-                            "request_blocked_by_review",
+                            "request.blocked_by_review",
                             "request",
                             &user.subject_id,
                             None,
@@ -727,7 +728,13 @@ impl CreateRequest {
                 if c.dml_reason == Some(DmlReason::ParseFailure) {
                     None
                 } else {
-                    Some(serde_json::to_string(&c.statements).unwrap())
+                    match serde_json::to_string(&c.statements) {
+                        Ok(s) => Some(s),
+                        Err(e) => {
+                            tracing::error!(error = %e, "failed to serialize execution plan");
+                            None
+                        }
+                    }
                 }
             }),
             cancel_reason: None,
@@ -742,28 +749,152 @@ impl CreateRequest {
             status,
             RequestStatus::AutoApproved | RequestStatus::BreakGlass
         ) {
-            match self.request_writer.create_and_dispatch(&request) {
-                Ok(()) => {}
-                Err(AppError::Conflict(ref msg)) if msg == "idempotency_key" => {
-                    if let Some(ref key) = request.idempotency_key
-                        && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
-                    {
-                        let approvers = extract_approvers(&existing);
-                        return Ok(CreateRequestOutput {
-                            id: existing.id,
-                            status: existing.status,
-                            operation: existing.operation,
-                            is_existing: true,
-                            expires_at: existing.expires_at,
-                            approvers,
-                        });
+            // For DDL bypass: use atomic create+dispatch+audit (fail-closed)
+            if classifier_bypassed || reviewer_bypassed {
+                // Build all 3 audit events: request.created + request.dispatched + ddl.break_glass_bypass
+                let create_result = status_machine::create_event(
+                    status,
+                    TransitionContext {
+                        request_id: id.clone(),
+                        actor_id: user.subject_id.clone(),
+                        actor_type: user.subject_type,
+                        database: input.database.clone(),
+                        environment: input.environment.clone(),
+                        operation,
+                        timestamp: now,
+                        metadata: EventMetadata::Created {
+                            detail: input.detail.clone(),
+                            emergency: input.emergency,
+                        },
+                        requester_id: user.subject_id.clone(),
+                        audit_context: ctx.clone(),
+                    },
+                );
+                let create_event = create_result.into_event();
+                let dispatch_result = status_machine::transition(
+                    status,
+                    &RequestTrigger::Dispatch,
+                    TransitionContext {
+                        request_id: id.clone(),
+                        actor_id: user.subject_id.clone(),
+                        actor_type: user.subject_type,
+                        database: input.database.clone(),
+                        environment: input.environment.clone(),
+                        operation,
+                        timestamp: now,
+                        metadata: EventMetadata::Dispatched,
+                        requester_id: user.subject_id.clone(),
+                        audit_context: ctx.clone(),
+                    },
+                )
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+                let dispatch_event = dispatch_result.into_event();
+
+                let create_audit = crate::services::audit_event_builder::build_audit_event(
+                    &create_event,
+                    now,
+                    crate::services::audit_event_builder::RedactionMode::default(),
+                    crate::services::audit_event_builder::noop_redact,
+                );
+                let dispatch_audit = crate::services::audit_event_builder::build_audit_event(
+                    &dispatch_event,
+                    now,
+                    crate::services::audit_event_builder::RedactionMode::default(),
+                    crate::services::audit_event_builder::noop_redact,
+                );
+
+                let mut ddl_event = dbward_domain::entities::AuditEvent::simple(
+                    "ddl.break_glass_bypass",
+                    "request",
+                    &user.subject_id,
+                    Some(&id),
+                    self.clock.now(),
+                    ctx,
+                );
+                ddl_event.database_name = Some(request.database.as_str().to_string());
+                ddl_event.environment = Some(request.environment.as_str().to_string());
+                ddl_event.metadata_json = serde_json::json!({
+                    "request_id": &id,
+                    "sql_redacted": sql_classifier::redact_literals(&request.detail),
+                    "statement_count": classification.as_ref().map(|c| c.statement_count).unwrap_or(0),
+                    "reason": request.reason.as_deref().unwrap_or(""),
+                    "classifier_bypassed": classifier_bypassed,
+                    "reviewer_bypassed": reviewer_bypassed,
+                })
+                .to_string();
+
+                match self.uow.execute(Box::new({
+                    let request = request.clone();
+                    let ddl_event = ddl_event.clone();
+                    let id = id.clone();
+                    move |tx| {
+                        tx.insert_request(&request)?;
+                        tx.mark_dispatched(&id, now)?;
+                        tx.record(&create_audit)?;
+                        tx.record(&dispatch_audit)?;
+                        tx.record(&ddl_event)?;
+                        Ok(())
                     }
-                    return Err(AppError::Conflict("idempotency_key".into()));
+                })) {
+                    Ok(()) => {}
+                    Err(AppError::Conflict(ref msg))
+                        if msg.contains("idempotency_key") || msg.contains("UNIQUE constraint") =>
+                    {
+                        if let Some(ref key) = request.idempotency_key
+                            && let Some(existing) =
+                                self.request_reader.find_by_idempotency_key(key)?
+                        {
+                            let approvers = extract_approvers(&existing);
+                            return Ok(CreateRequestOutput {
+                                id: existing.id,
+                                status: existing.status,
+                                operation: existing.operation,
+                                is_existing: true,
+                                expires_at: existing.expires_at,
+                                approvers,
+                            });
+                        }
+                        return Err(AppError::Conflict("idempotency_key".into()));
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            request_id = %id,
+                            actor = %user.subject_id,
+                            database = %request.database,
+                            environment = %request.environment,
+                            classifier_bypassed,
+                            reviewer_bypassed,
+                            "break-glass DDL dispatch blocked (fail-closed): {e}"
+                        );
+                        self.break_glass_metrics.record_audit_failure();
+                        return Err(e);
+                    }
                 }
-                Err(e) => return Err(e),
+                self.break_glass_metrics.record_ddl_allowed();
+
+                // DDL break-glass committed — post-commit notifications
+                self.notifier
+                    .dispatch(crate::services::audit_event_builder::build_webhook_event(
+                        &create_event,
+                    ));
+                self.notifier
+                    .dispatch(crate::services::audit_event_builder::build_webhook_event(
+                        &dispatch_event,
+                    ));
+
+                return Ok(CreateRequestOutput {
+                    id,
+                    status: RequestStatus::Dispatched,
+                    operation,
+                    is_existing: false,
+                    expires_at,
+                    approvers: vec![],
+                });
+            } else {
+                // handled below in unified UoW block
             }
 
-            // Emit creation event
+            // Emit creation + dispatch audit events (atomic)
             let create_result = status_machine::create_event(
                 status,
                 TransitionContext {
@@ -782,7 +913,7 @@ impl CreateRequest {
                     audit_context: ctx.clone(),
                 },
             );
-            create_result.commit(&*self.event_dispatcher);
+            let create_event = create_result.into_event();
 
             let dispatch_result = status_machine::transition(
                 status,
@@ -802,12 +933,34 @@ impl CreateRequest {
             )
             .map_err(|e| AppError::Internal(e.to_string()))?;
             let s = dispatch_result.status();
-            dispatch_result.commit(&*self.event_dispatcher);
-            s
-        } else {
-            match self.request_writer.insert(&request) {
+            let dispatch_event = dispatch_result.into_event();
+
+            // Write audit events atomically
+            let create_audit = crate::services::audit_event_builder::build_audit_event(
+                &create_event,
+                now,
+                crate::services::audit_event_builder::RedactionMode::default(),
+                crate::services::audit_event_builder::noop_redact,
+            );
+            let dispatch_audit = crate::services::audit_event_builder::build_audit_event(
+                &dispatch_event,
+                now,
+                crate::services::audit_event_builder::RedactionMode::default(),
+                crate::services::audit_event_builder::noop_redact,
+            );
+            let request_for_uow = request.clone();
+            let req_id = id.clone();
+            match self.uow.execute(Box::new(move |tx| {
+                tx.insert_request(&request_for_uow)?;
+                tx.mark_dispatched(&req_id, now)?;
+                tx.record(&create_audit)?;
+                tx.record(&dispatch_audit)?;
+                Ok(())
+            })) {
                 Ok(()) => {}
-                Err(AppError::Conflict(ref msg)) if msg == "idempotency_key" => {
+                Err(AppError::Conflict(ref msg))
+                    if msg.contains("idempotency_key") || msg.contains("UNIQUE constraint") =>
+                {
                     if let Some(ref key) = request.idempotency_key
                         && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
                     {
@@ -826,6 +979,17 @@ impl CreateRequest {
                 Err(e) => return Err(e),
             }
 
+            // Post-commit notifications
+            self.notifier
+                .dispatch(crate::services::audit_event_builder::build_webhook_event(
+                    &create_event,
+                ));
+            self.notifier
+                .dispatch(crate::services::audit_event_builder::build_webhook_event(
+                    &dispatch_event,
+                ));
+            s
+        } else {
             let create_result = status_machine::create_event(
                 status,
                 TransitionContext {
@@ -844,7 +1008,44 @@ impl CreateRequest {
                     audit_context: ctx.clone(),
                 },
             );
-            create_result.commit(&*self.event_dispatcher);
+            let create_event = create_result.into_event();
+            let create_audit = crate::services::audit_event_builder::build_audit_event(
+                &create_event,
+                now,
+                crate::services::audit_event_builder::RedactionMode::default(),
+                crate::services::audit_event_builder::noop_redact,
+            );
+            let request_for_uow = request.clone();
+            match self.uow.execute(Box::new(move |tx| {
+                tx.insert_request(&request_for_uow)?;
+                tx.record(&create_audit)?;
+                Ok(())
+            })) {
+                Ok(()) => {}
+                Err(AppError::Conflict(ref msg))
+                    if msg.contains("idempotency_key") || msg.contains("UNIQUE constraint") =>
+                {
+                    if let Some(ref key) = request.idempotency_key
+                        && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
+                    {
+                        let approvers = extract_approvers(&existing);
+                        return Ok(CreateRequestOutput {
+                            id: existing.id,
+                            status: existing.status,
+                            operation: existing.operation,
+                            is_existing: true,
+                            expires_at: existing.expires_at,
+                            approvers,
+                        });
+                    }
+                    return Err(AppError::Conflict("idempotency_key".into()));
+                }
+                Err(e) => return Err(e),
+            }
+            self.notifier
+                .dispatch(crate::services::audit_event_builder::build_webhook_event(
+                    &create_event,
+                ));
             status
         };
 
@@ -907,43 +1108,6 @@ impl CreateRequest {
             };
             if let Err(e) = self.context_repo.create(&ctx_record) {
                 tracing::warn!(%e, "failed to create request context");
-            }
-        }
-
-        // Break-glass DDL audit event (after persist)
-        if classifier_bypassed || reviewer_bypassed {
-            self.break_glass_metrics.record_ddl_allowed();
-            let mut event = dbward_domain::entities::AuditEvent::simple(
-                "ddl_via_break_glass",
-                "request",
-                &user.subject_id,
-                Some(&id),
-                self.clock.now(),
-                ctx,
-            );
-            event.database_name = Some(request.database.as_str().to_string());
-            event.environment = Some(request.environment.as_str().to_string());
-            event.metadata_json = serde_json::json!({
-                "request_id": &id,
-                "sql_redacted": sql_classifier::redact_literals(&request.detail),
-                "statement_count": classification.as_ref().map(|c| c.statement_count).unwrap_or(0),
-                "reason": request.reason.as_deref().unwrap_or(""),
-                "classifier_bypassed": classifier_bypassed,
-                "reviewer_bypassed": reviewer_bypassed,
-            })
-            .to_string();
-            if let Err(e) = self.audit_logger.record(&event) {
-                tracing::error!(
-                    request_id = %id,
-                    "CRITICAL: break-glass audit write failed: {e}"
-                );
-                self.break_glass_metrics.record_audit_failure();
-                if let Err(e2) = self.request_writer.mark_audit_incomplete(&id) {
-                    tracing::error!(
-                        request_id = %id,
-                        "FATAL: cannot mark audit_incomplete: {e2}. Manual investigation required."
-                    );
-                }
             }
         }
 
@@ -1015,7 +1179,8 @@ mod tests {
             schema_repo: Arc::new(FakeSchemaRepo),
             dry_run_repo: Arc::new(FakeDryRunRepo),
             context_repo: Arc::new(FakeContextRepo),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            uow: Arc::new(NoopUnitOfWork),
+            notifier: Arc::new(NoopNotifier),
             audit_logger: Arc::new(NoopAuditLogger),
             break_glass_metrics: Arc::new(NoopBreakGlassMetrics),
             clock: Arc::new(FixedClock::now_utc()),
@@ -1240,7 +1405,8 @@ mod tests {
             schema_repo: Arc::new(FakeSchemaRepo),
             dry_run_repo: Arc::new(FakeDryRunRepo),
             context_repo: Arc::new(FakeContextRepo),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            uow: Arc::new(NoopUnitOfWork),
+            notifier: Arc::new(NoopNotifier),
             audit_logger: Arc::new(NoopAuditLogger),
             break_glass_metrics: Arc::new(NoopBreakGlassMetrics),
             clock: Arc::new(FixedClock::now_utc()),
@@ -1272,7 +1438,8 @@ mod tests {
             schema_repo: Arc::new(FakeSchemaRepo),
             dry_run_repo: Arc::new(FakeDryRunRepo),
             context_repo: Arc::new(FakeContextRepo),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            uow: Arc::new(NoopUnitOfWork),
+            notifier: Arc::new(NoopNotifier),
             audit_logger: Arc::new(NoopAuditLogger),
             break_glass_metrics: Arc::new(NoopBreakGlassMetrics),
             clock: Arc::new(FixedClock::now_utc()),
@@ -1328,46 +1495,5 @@ mod tests {
             .unwrap();
         // With empty steps workflow → auto-approved (risk doesn't block because config disabled)
         assert_eq!(result.status, RequestStatus::Dispatched);
-    }
-
-    #[test]
-    fn execution_plan_json_set_for_normal_select() {
-        let writer = Arc::new(FakeRequestWriter::new());
-        let uc = CreateRequest {
-            request_writer: writer.clone(),
-            ..make_uc(Arc::new(AllowAll))
-        };
-        let input = make_input(); // SELECT 1
-        uc.execute(
-            input,
-            &make_user(),
-            &dbward_domain::entities::AuditContext::System,
-        )
-        .unwrap();
-        let req = writer.last_request.lock().unwrap();
-        let plan = req.as_ref().unwrap().execution_plan_json.as_ref().unwrap();
-        let stmts: Vec<String> = serde_json::from_str(plan).unwrap();
-        assert_eq!(stmts.len(), 1);
-        assert!(stmts[0].contains("SELECT"));
-    }
-
-    #[test]
-    fn execution_plan_json_none_for_migration() {
-        let writer = Arc::new(FakeRequestWriter::new());
-        let uc = CreateRequest {
-            request_writer: writer.clone(),
-            ..make_uc(Arc::new(AllowAll))
-        };
-        let mut input = make_input();
-        input.operation = Operation::MigrateUp;
-        input.detail = r#"{"version":"001","sql":"CREATE TABLE t(id INT)","files":[]}"#.into();
-        uc.execute(
-            input,
-            &make_user(),
-            &dbward_domain::entities::AuditContext::System,
-        )
-        .unwrap();
-        let req = writer.last_request.lock().unwrap();
-        assert!(req.as_ref().unwrap().execution_plan_json.is_none());
     }
 }

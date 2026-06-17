@@ -281,19 +281,6 @@ pub async fn run_from_args(
         });
 
     let slack_notifier_for_bg = slack_notifier.clone();
-    let event_dispatcher: Arc<dyn dbward_app::ports::EventDispatcher> =
-        Arc::new(dbward_infra::webhook::CompositeEventDispatcher {
-            audit: audit_logger.clone(),
-            notifier: notifier.clone(),
-            result_channel: Some(result_channel.clone()),
-            request_notifier: slack_notifier,
-            redaction_mode: match cfg.audit.redaction.as_str() {
-                "none" => dbward_infra::webhook::RedactionMode::None,
-                "full" => dbward_infra::webhook::RedactionMode::Full,
-                _ => dbward_infra::webhook::RedactionMode::Literals,
-            },
-            clock: clock.clone(),
-        });
     let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> = if cfg.allow_private_networks {
         Arc::new(dbward_infra::webhook::PermissiveSsrfGuard)
     } else {
@@ -458,6 +445,11 @@ pub async fn run_from_args(
     let sync_ssrf_validator = ssrf_validator.clone();
     let reload_ssrf = ssrf_validator.clone();
 
+    let audit_crypto = Arc::new(
+        dbward_infra::Ed25519AuditCrypto::load_or_generate(&state_dir)
+            .map_err(|e| format!("audit crypto init: {e}"))?,
+    );
+
     let state = state::AppStateBuilder {
         token_verifier,
         reloadable: Arc::new(ArcSwap::from_pointee(initial_reloadable)),
@@ -483,7 +475,6 @@ pub async fn run_from_args(
         token_signer,
         notifier,
         webhook_sender,
-        event_dispatcher,
         ssrf_validator,
         license_checker,
         #[cfg(feature = "commercial")]
@@ -493,6 +484,13 @@ pub async fn run_from_args(
         id_generator,
         token_value_generator,
         webhook_delivery_repo: Some(webhook_delivery_repo),
+        audit_signer: audit_crypto.clone(),
+        audit_verifier: audit_crypto.clone(),
+        uow: Arc::new(dbward_infra::sqlite::SqliteUnitOfWork::with_signer(
+            conn.clone(),
+            audit_crypto,
+            100, // checkpoint every 100 events
+        )),
         metrics: Arc::new(metrics::Metrics::new()),
         max_persist_bytes: cfg.result_storage.max_persist_bytes,
         auth_mode: effective_auth_mode.clone(),
@@ -504,6 +502,9 @@ pub async fn run_from_args(
     }
     .build();
 
+    // A2: Legacy purge boundary migration (one-time, on first v0.1.6 startup)
+    dbward_infra::sqlite::migrate_legacy_purge_boundary(&conn, &*state.audit_signer);
+
     // Auto-bootstrap: create tokens on first startup
     bootstrap::auto_bootstrap(&state, &state_dir, force_bootstrap)?;
 
@@ -512,21 +513,6 @@ pub async fn run_from_args(
 
     // Register databases and sync all config-managed resources
     sync_all_config(&state, &cfg, sync_ssrf_validator, conn.clone())?;
-
-    // A7: Record config sync in audit log
-    if let Err(e) = state
-        .audit_logger()
-        .record(&dbward_domain::entities::AuditEvent::simple(
-            "config_synced",
-            "policy",
-            "system",
-            None,
-            state.clock().now(),
-            &dbward_domain::entities::AuditContext::System,
-        ))
-    {
-        tracing::error!(error = %e, "failed to record config_synced audit event");
-    }
 
     // BUG-31: OIDC verifier initialized above (injected into ApiTokenVerifier)
 
@@ -783,9 +769,6 @@ fn build_sync_uc(
     conn: dbward_infra::sqlite::DbConn,
     ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator>,
 ) -> SyncConfig {
-    let transaction = Arc::new(dbward_infra::sqlite::SqliteSyncTransaction::new(
-        conn.clone(),
-    ));
     SyncConfig {
         policy_repo: state.policy_repo().clone(),
         webhook_repo: state.webhook_repo().clone(),
@@ -797,15 +780,12 @@ fn build_sync_uc(
         )),
         token_repo: Arc::new(dbward_infra::sqlite::SqliteTokenRepo::new(conn.clone())),
         request_writer: Arc::new(dbward_infra::sqlite::SqliteRequestRepo::new(conn.clone())),
+        uow: state.uow().clone(),
         notifier: state.notifier().clone(),
         clock: state.clock().clone(),
         id_gen: state.id_generator().clone(),
-        transaction,
         license_checker: state.license_checker().clone(),
         ssrf_validator,
-        config_generation_repo: Arc::new(dbward_infra::sqlite::SqliteConfigGenerationRepo::new(
-            conn,
-        )),
         config_digest: String::new(),
     }
 }

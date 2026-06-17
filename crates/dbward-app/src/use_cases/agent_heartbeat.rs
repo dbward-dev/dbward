@@ -11,7 +11,6 @@ pub struct AgentHeartbeat {
     pub agent_repo: Arc<dyn AgentRepo>,
     pub request_reader: Arc<dyn RequestReader>,
     pub policy: Arc<dyn PolicyEvaluator>,
-    pub event_dispatcher: Arc<dyn EventDispatcher>,
     pub clock: Arc<dyn Clock>,
 }
 
@@ -297,7 +296,6 @@ mod tests {
             agent_repo,
             request_reader,
             policy: Arc::new(FakePolicyEvaluator),
-            event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FixedClock::now_utc()),
         }
     }
@@ -529,7 +527,6 @@ mod tests {
             agent_repo: Arc::new(NonExtendableAgentRepo),
             request_reader: reader,
             policy: Arc::new(FakePolicyEvaluator),
-            event_dispatcher: Arc::new(NoopDispatcher),
             clock: Arc::new(FixedClock::now_utc()),
         };
         let output = uc

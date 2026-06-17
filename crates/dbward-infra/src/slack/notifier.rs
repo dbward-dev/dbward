@@ -47,13 +47,13 @@ impl SlackNotifier {
     fn should_notify(event: &WebhookEvent) -> bool {
         !matches!(
             event.event_type.as_str(),
-            "request_dispatched" | "execution_started"
+            "request.dispatched" | "execution.started"
         )
     }
 
     async fn handle_event(&self, event: WebhookEvent) {
         match event.event_type.as_str() {
-            "request_created" | "break_glass" | "request_auto_approved" => {
+            "request.created" | "request.break_glass" | "request.auto_approved" => {
                 self.send_initial_message(&event).await;
             }
             _ => {
@@ -250,7 +250,7 @@ impl SlackNotifier {
             lines.push(format!("📋 Requester: {r}"));
         }
 
-        if event.event_type == "request_auto_approved" {
+        if event.event_type == "request.auto_approved" {
             return lines.join("\n");
         }
 
@@ -269,7 +269,7 @@ impl SlackNotifier {
         let actor = event.actor.as_deref().unwrap_or("");
 
         match event.event_type.as_str() {
-            "step_approved" => {
+            "step.approved" => {
                 let subjects = self.resolve_next_step_subjects(event);
                 if subjects.is_empty() {
                     return String::new();
@@ -277,8 +277,11 @@ impl SlackNotifier {
                 let mentions = self.user_resolver.mentions_for(&subjects).await;
                 format!("👉 Next Approver: {}", mentions.join(" "))
             }
-            "request_approved" | "request_rejected" | "request_completed" | "request_failed"
-            | "execution_lost" => {
+            "request.approved"
+            | "request.rejected"
+            | "execution.completed"
+            | "execution.failed"
+            | "execution.lost" => {
                 if let Some(ref r) = event.requester {
                     let mention = self.user_resolver.mention_for(r).await;
                     format!("📋 Requester: {mention}")
@@ -286,7 +289,7 @@ impl SlackNotifier {
                     String::new()
                 }
             }
-            "request_expired" => {
+            "request.expired" => {
                 let mut lines = Vec::new();
                 if let Some(ref r) = event.requester {
                     let mention = self.user_resolver.mention_for(r).await;
@@ -299,7 +302,7 @@ impl SlackNotifier {
                 }
                 lines.join("\n")
             }
-            "request_cancelled" => {
+            "request.cancelled" => {
                 let mut lines = Vec::new();
                 if let Some(ref r) = event.requester
                     && r != actor

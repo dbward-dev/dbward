@@ -5,17 +5,9 @@ use std::sync::Arc;
 
 use crate::error::AppError;
 use crate::ports::{
-    Clock, ConfigGenerationRepo, DatabaseRegistry, GroupRepo, IdGenerator, LicenseChecker,
-    Notifier, PolicyRepo, RequestWriter, RoleBindingRepo, SsrfValidator, TokenRepo, UserRepo,
-    WebhookRepo,
+    Clock, DatabaseRegistry, GroupRepo, IdGenerator, LicenseChecker, Notifier, PolicyRepo,
+    RequestWriter, RoleBindingRepo, SsrfValidator, TokenRepo, UnitOfWork, UserRepo, WebhookRepo,
 };
-
-/// Provides transaction semantics for config sync.
-pub trait SyncTransaction: Send + Sync {
-    fn begin(&self) -> Result<(), AppError>;
-    fn commit(&self) -> Result<(), AppError>;
-    fn rollback(&self) -> Result<(), AppError>;
-}
 
 /// All dependencies needed for config sync.
 pub struct SyncConfig {
@@ -27,13 +19,12 @@ pub struct SyncConfig {
     pub role_binding_repo: Arc<dyn RoleBindingRepo>,
     pub token_repo: Arc<dyn TokenRepo>,
     pub request_writer: Arc<dyn RequestWriter>,
+    pub uow: Arc<dyn UnitOfWork>,
     pub notifier: Arc<dyn Notifier>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
-    pub transaction: Arc<dyn SyncTransaction>,
     pub license_checker: Arc<dyn LicenseChecker>,
     pub ssrf_validator: Arc<dyn SsrfValidator>,
-    pub config_generation_repo: Arc<dyn ConfigGenerationRepo>,
     pub config_digest: String,
 }
 
@@ -159,42 +150,31 @@ impl SyncConfig {
         result_policies: Vec<ResultPolicyInput>,
         notification_policies: Vec<NotificationPolicyInput>,
     ) -> Result<SyncSummary, AppError> {
-        self.transaction.begin()?;
+        let clock = &*self.clock;
+        let license_checker = &*self.license_checker;
+        let ssrf_validator = &*self.ssrf_validator;
+        let config_digest = &self.config_digest;
 
-        let result = self.sync_all_inner(
-            databases,
-            users,
-            groups,
-            roles,
-            role_bindings,
-            webhooks,
-            workflows,
-            execution_policies,
-            result_policies,
-            notification_policies,
-        );
+        let summary = crate::ports::uow_execute_sync(&*self.uow, |scope| {
+            let summary = Self::sync_all_inner(
+                scope,
+                clock,
+                license_checker,
+                ssrf_validator,
+                databases,
+                users,
+                groups,
+                roles,
+                role_bindings,
+                webhooks,
+                workflows,
+                execution_policies,
+                result_policies,
+                notification_policies,
+            )?;
 
-        match &result {
-            Ok(_) => self.transaction.commit()?,
-            Err(_) => {
-                let _ = self.transaction.rollback();
-            }
-        }
-
-        // Reload webhook dispatcher AFTER commit (outside transaction)
-        if result.is_ok()
-            && let Err(e) = self.notifier.reload()
-        {
-            tracing::error!(
-                "notifier reload failed after config sync (DB committed, restart required): {e}"
-            );
-            return Err(AppError::Internal(format!(
-                "notifier reload failed (DB committed, restart required): {e}"
-            )));
-        }
-
-        // Record config generation + summary log
-        if let Ok(ref summary) = result {
+            // Atomic: config_generation + config.synced audit inside TX
+            let now = clock.now();
             let summary_json = serde_json::json!({
                 "databases": {"upserted": summary.databases.1, "stale": summary.databases.0},
                 "users": {"upserted": summary.users.1, "stale": summary.users.0},
@@ -207,8 +187,16 @@ impl SyncConfig {
                 "result_policies": {"upserted": summary.result_policies.1, "stale": summary.result_policies.0},
                 "notification_policies": {"upserted": summary.notification_policies.1, "stale": summary.notification_policies.0},
             });
-            self.config_generation_repo
-                .record_generation(&self.config_digest, &summary_json.to_string());
+            scope.record_generation(config_digest, now, &summary_json.to_string())?;
+            scope.record(&dbward_domain::entities::AuditEvent::simple(
+                "config.synced",
+                "policy",
+                "system",
+                None,
+                now,
+                &dbward_domain::entities::AuditContext::System,
+            ))?;
+
             tracing::info!(
                 "config synced: databases(+{}/-{}) webhooks(+{}/-{}) workflows(+{}/-{})",
                 summary.databases.1,
@@ -218,14 +206,57 @@ impl SyncConfig {
                 summary.workflows.1,
                 summary.workflows.0,
             );
+
+            Ok(summary)
+        })?;
+
+        // Notifier reload AFTER commit (side effect)
+        if let Err(e) = self.notifier.reload() {
+            tracing::error!(
+                "notifier reload failed after config sync (DB committed, restart required): {e}"
+            );
+            return Err(AppError::Internal(format!(
+                "notifier reload failed (DB committed, restart required): {e}"
+            )));
         }
 
-        result
+        Ok(summary)
+    }
+
+    // --- Test helpers: delegate to apply:: free functions using a NoopSyncScope ---
+    #[cfg(test)]
+    pub(crate) fn sync_workflows(
+        &self,
+        workflows: Vec<WorkflowInput>,
+    ) -> Result<(u64, u64), AppError> {
+        let scope = &crate::test_support::NoopSyncScope;
+        apply::sync_workflows(scope, workflows)
+    }
+    #[cfg(test)]
+    pub(crate) fn sync_webhooks(
+        &self,
+        webhooks: Vec<WebhookInput>,
+    ) -> Result<(u64, u64), AppError> {
+        let scope = &crate::test_support::NoopSyncScope;
+        apply::sync_webhooks(scope, &*self.clock, &*self.ssrf_validator, webhooks)
+    }
+    #[cfg(test)]
+    pub(crate) fn sync_users(&self, inputs: Vec<UserInput>) -> Result<(u64, u64), AppError> {
+        // Tests use individual fake repos. Create an adapter that delegates to them.
+        let adapter = crate::use_cases::sync_config::tests::RepoSyncScope {
+            user_repo: self.user_repo.clone(),
+            token_repo: self.token_repo.clone(),
+            request_writer: self.request_writer.clone(),
+        };
+        apply::sync_users(&adapter, &*self.clock, &*self.license_checker, inputs)
     }
 
     #[allow(clippy::too_many_arguments)]
     fn sync_all_inner(
-        &self,
+        scope: &dyn crate::ports::sync_scope::SyncScope,
+        clock: &dyn crate::ports::Clock,
+        license_checker: &dyn crate::ports::LicenseChecker,
+        ssrf_validator: &dyn crate::ports::SsrfValidator,
         databases: Vec<DatabaseInput>,
         users: Vec<UserInput>,
         groups: Vec<GroupInput>,
@@ -237,49 +268,47 @@ impl SyncConfig {
         result_policies: Vec<ResultPolicyInput>,
         notification_policies: Vec<NotificationPolicyInput>,
     ) -> Result<SyncSummary, AppError> {
-        // Order: databases → users → groups → roles → role_bindings → webhooks → workflows → ep → rp → np
         Ok(SyncSummary {
-            databases: self.sync_databases(databases)?,
-            users: self.sync_users(users)?,
-            groups: self.sync_groups(groups)?,
+            databases: apply::sync_databases(scope, license_checker, databases)?,
+            users: apply::sync_users(scope, clock, license_checker, users)?,
+            groups: apply::sync_groups(scope, groups)?,
             roles: {
-                let r = self.sync_roles(roles)?;
-                // License: check role count after sync
-                let total = self.policy_repo.count_roles()?;
-                if total > self.license_checker.max_roles() {
+                let r = apply::sync_roles(scope, roles)?;
+                let total = scope.count_roles()?;
+                if total > license_checker.max_roles() {
                     return Err(AppError::Validation(format!(
                         "role limit exceeded (max {}, have {total})",
-                        self.license_checker.max_roles()
+                        license_checker.max_roles()
                     )));
                 }
                 r
             },
-            role_bindings: self.sync_role_bindings(role_bindings)?,
+            role_bindings: apply::sync_role_bindings(scope, role_bindings)?,
             webhooks: {
-                let w = self.sync_webhooks(webhooks)?;
-                let total = self.webhook_repo.list_active()?.len() as u32;
-                if total > self.license_checker.max_webhooks() {
+                let w = apply::sync_webhooks(scope, clock, ssrf_validator, webhooks)?;
+                let total = scope.list_active_webhooks()?.len() as u32;
+                if total > license_checker.max_webhooks() {
                     return Err(AppError::Validation(format!(
                         "webhook limit exceeded (max {}, have {total})",
-                        self.license_checker.max_webhooks()
+                        license_checker.max_webhooks()
                     )));
                 }
                 w
             },
             workflows: {
-                let w = self.sync_workflows(workflows)?;
-                let total = self.policy_repo.count_workflows()?;
-                if total > self.license_checker.max_workflows() {
+                let w = apply::sync_workflows(scope, workflows)?;
+                let total = scope.count_workflows()?;
+                if total > license_checker.max_workflows() {
                     return Err(AppError::Validation(format!(
                         "workflow limit exceeded (max {}, have {total})",
-                        self.license_checker.max_workflows()
+                        license_checker.max_workflows()
                     )));
                 }
                 w
             },
-            execution_policies: self.sync_execution_policies(execution_policies)?,
-            result_policies: self.sync_result_policies(result_policies)?,
-            notification_policies: self.sync_notification_policies(notification_policies)?,
+            execution_policies: apply::sync_execution_policies(scope, execution_policies)?,
+            result_policies: apply::sync_result_policies(scope, result_policies)?,
+            notification_policies: apply::sync_notification_policies(scope, notification_policies)?,
         })
     }
 }
@@ -290,6 +319,259 @@ mod tests {
     use crate::error::AppError;
     use crate::ports::{DatabaseRegistry, GroupRepo, PolicyRepo, RoleBindingRepo, WebhookRepo};
     use crate::test_support::{FixedClock, FixedIdGen};
+
+    /// Adapter: delegates SyncScope calls to standalone repo trait objects (for legacy tests).
+    pub(crate) struct RepoSyncScope {
+        pub user_repo: Arc<dyn crate::ports::UserRepo>,
+        pub token_repo: Arc<dyn crate::ports::TokenRepo>,
+        pub request_writer: Arc<dyn crate::ports::RequestWriter>,
+    }
+    // Delegate SyncUserOps to UserRepo
+    impl crate::ports::sync_scope::SyncUserOps for RepoSyncScope {
+        fn upsert_user(&self, user: &dbward_domain::entities::User) -> Result<(), AppError> {
+            self.user_repo.upsert(user)
+        }
+        fn suspend_user(
+            &self,
+            uid: &str,
+            now: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            self.user_repo.suspend(uid, now)
+        }
+        fn activate_user(
+            &self,
+            uid: &str,
+            now: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            self.user_repo.activate(uid, now)
+        }
+        fn set_user_source(&self, uid: &str, src: &str) -> Result<(), AppError> {
+            self.user_repo.set_source(uid, src)
+        }
+        fn get_user_source(&self, uid: &str) -> Result<Option<String>, AppError> {
+            self.user_repo.get_source(uid)
+        }
+        fn list_stale_config_user_ids(&self, active: &[String]) -> Result<Vec<String>, AppError> {
+            self.user_repo.list_stale_config_ids(active)
+        }
+        fn list_active_user_ids(&self) -> Result<Vec<String>, AppError> {
+            self.user_repo.list_active_ids()
+        }
+        fn count_active_users(&self) -> Result<u32, AppError> {
+            self.user_repo.count_active()
+        }
+        fn delete_stale_config_users(&self, active: &[String]) -> Result<u64, AppError> {
+            self.user_repo.delete_stale_config(active)
+        }
+    }
+    impl crate::ports::sync_scope::SyncTokenOps for RepoSyncScope {
+        fn revoke_all_tokens_for_user(
+            &self,
+            uid: &str,
+            now: chrono::DateTime<chrono::Utc>,
+        ) -> Result<u32, AppError> {
+            self.token_repo.revoke_all_for_user(uid, now)
+        }
+    }
+    impl crate::ports::transaction::RequestWriterOps for RepoSyncScope {
+        fn insert_request(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn mark_dispatched(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn mark_approved(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn mark_rejected(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn mark_running(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn mark_cancelled(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn mark_executed(
+            &self,
+            _: &str,
+            _: bool,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn mark_expired(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn mark_execution_lost(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn cancel_all_for_user(
+            &self,
+            uid: &str,
+            actor: &str,
+            reason: Option<&str>,
+            now: chrono::DateTime<chrono::Utc>,
+        ) -> Result<Vec<String>, AppError> {
+            self.request_writer.cancel_all_for_user(
+                uid,
+                actor,
+                reason.unwrap_or(""),
+                now,
+                &dbward_domain::entities::AuditContext::System,
+            )
+        }
+    }
+    impl crate::ports::transaction::AuditWriterOps for RepoSyncScope {
+        fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+    // No-op for remaining Sync*Ops (not used by sync_users)
+    impl crate::ports::sync_scope::SyncDatabaseOps for RepoSyncScope {
+        fn register(
+            &self,
+            _: &dbward_domain::values::DatabaseName,
+            _: &dbward_domain::values::Environment,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn list_active_databases(
+            &self,
+        ) -> Result<
+            Vec<(
+                dbward_domain::values::DatabaseName,
+                dbward_domain::values::Environment,
+            )>,
+            AppError,
+        > {
+            Ok(vec![])
+        }
+        fn reconcile_stale_databases(&self, _: &[String]) -> Result<(u64, u64), AppError> {
+            Ok((0, 0))
+        }
+    }
+    impl crate::ports::sync_scope::SyncGroupOps for RepoSyncScope {
+        fn create_group(&self, _: &str, _: &[String], _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn delete_stale_config_groups(&self, _: &[String]) -> Result<u64, AppError> {
+            Ok(0)
+        }
+    }
+    impl crate::ports::sync_scope::SyncRoleBindingOps for RepoSyncScope {
+        fn create_role_binding(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[String],
+            _: &[String],
+            _: &str,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn delete_stale_config_role_bindings(&self, _: &[String]) -> Result<u64, AppError> {
+            Ok(0)
+        }
+    }
+    impl crate::ports::sync_scope::SyncPolicyOps for RepoSyncScope {
+        fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn delete_stale_workflows(&self, _: &[String]) -> Result<u64, AppError> {
+            Ok(0)
+        }
+        fn count_workflows(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn create_execution_policy(
+            &self,
+            _: &dbward_domain::policies::ExecutionPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn delete_stale_execution_policies(&self, _: &[String]) -> Result<u64, AppError> {
+            Ok(0)
+        }
+        fn create_notification_policy(
+            &self,
+            _: &dbward_domain::policies::NotificationPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn delete_stale_notification_policies(&self, _: &[String]) -> Result<u64, AppError> {
+            Ok(0)
+        }
+        fn create_result_policy(
+            &self,
+            _: &dbward_domain::policies::ResultPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn delete_stale_result_policies(&self, _: &[String]) -> Result<u64, AppError> {
+            Ok(0)
+        }
+        fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn delete_stale_config_roles(&self, _: &[String]) -> Result<u64, AppError> {
+            Ok(0)
+        }
+        fn count_roles(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
+    }
+    impl crate::ports::sync_scope::SyncWebhookOps for RepoSyncScope {
+        fn create_webhook(&self, _: &dbward_domain::entities::Webhook) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn delete_stale_config_webhooks(&self, _: &[String]) -> Result<u64, AppError> {
+            Ok(0)
+        }
+        fn list_active_webhooks(&self) -> Result<Vec<dbward_domain::entities::Webhook>, AppError> {
+            Ok(vec![])
+        }
+    }
+    impl crate::ports::sync_scope::SyncConfigGenerationOps for RepoSyncScope {
+        fn record_generation(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+            _: &str,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
     use dbward_domain::entities::Webhook;
     use dbward_domain::policies::{ExecutionPolicy, NotificationPolicy, ResultPolicy, Workflow};
     use dbward_domain::values::{DatabaseName, Environment};
@@ -546,17 +828,6 @@ mod tests {
         fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
             Ok(true)
         }
-        fn mark_approved_from_dispatched_and_record(
-            &self,
-            _: &str,
-            _: &dbward_domain::entities::AuditEvent,
-            _: &str,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn mark_audit_incomplete(&self, _: &str) -> Result<(), AppError> {
-            Ok(())
-        }
     }
 
     struct FakeGroupRepo;
@@ -595,19 +866,6 @@ mod tests {
     struct FakeNotifier;
     impl crate::ports::Notifier for FakeNotifier {
         fn dispatch(&self, _: crate::ports::WebhookEvent) {}
-    }
-
-    struct FakeSyncTransaction;
-    impl super::SyncTransaction for FakeSyncTransaction {
-        fn begin(&self) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn commit(&self) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn rollback(&self) -> Result<(), AppError> {
-            Ok(())
-        }
     }
 
     struct FakeLicenseChecker;
@@ -659,13 +917,12 @@ mod tests {
             role_binding_repo: Arc::new(FakeRoleBindingRepo),
             token_repo: Arc::new(FakeTokenRepo),
             request_writer: Arc::new(FakeRequestWriter),
+            uow: Arc::new(crate::test_support::NoopUnitOfWork),
             notifier: Arc::new(FakeNotifier),
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
-            transaction: Arc::new(FakeSyncTransaction),
             license_checker: Arc::new(FakeLicenseChecker),
             ssrf_validator: Arc::new(FakeSsrfValidator),
-            config_generation_repo: Arc::new(crate::ports::NoopConfigGenerationRepo),
             config_digest: String::new(),
         }
     }
@@ -729,7 +986,7 @@ mod tests {
         let wh = WebhookInput {
             id: "test-hook".into(),
             url: "https://example.com".into(),
-            events: vec!["request_created".into()],
+            events: vec!["request.created".into()],
             format: "invalid".into(),
             secret: None,
         };
@@ -832,7 +1089,6 @@ mod tests {
     #[test]
     fn sync_rollback_on_license_failure() {
         use std::sync::Mutex;
-        use std::sync::atomic::{AtomicBool, Ordering};
 
         struct FailLicenseChecker;
         impl crate::ports::LicenseChecker for FailLicenseChecker {
@@ -866,78 +1122,257 @@ mod tests {
             fn check_expiry(&self, _: chrono::DateTime<chrono::Utc>) {}
         }
 
-        struct TrackingDbRegistry {
+        // Scope that tracks database registrations and returns them on list_active
+        struct TrackingScope {
             entries: Mutex<Vec<(DatabaseName, Environment)>>,
         }
-        impl DatabaseRegistry for TrackingDbRegistry {
+        impl crate::ports::sync_scope::SyncDatabaseOps for TrackingScope {
             fn register(&self, db: &DatabaseName, env: &Environment) -> Result<(), AppError> {
                 self.entries.lock().unwrap().push((db.clone(), env.clone()));
                 Ok(())
             }
-            fn list_active(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
+            fn list_active_databases(&self) -> Result<Vec<(DatabaseName, Environment)>, AppError> {
                 Ok(self.entries.lock().unwrap().clone())
             }
-            fn delete_by_source(&self, _: &str) -> Result<u64, AppError> {
+            fn reconcile_stale_databases(&self, _: &[String]) -> Result<(u64, u64), AppError> {
+                Ok((0, 0))
+            }
+        }
+        // Dummy impls for SyncScope (not used by sync_databases)
+        impl crate::ports::sync_scope::SyncUserOps for TrackingScope {
+            fn upsert_user(&self, _: &dbward_domain::entities::User) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn suspend_user(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn activate_user(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn set_user_source(&self, _: &str, _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn get_user_source(&self, _: &str) -> Result<Option<String>, AppError> {
+                Ok(None)
+            }
+            fn list_stale_config_user_ids(&self, _: &[String]) -> Result<Vec<String>, AppError> {
+                Ok(vec![])
+            }
+            fn list_active_user_ids(&self) -> Result<Vec<String>, AppError> {
+                Ok(vec![])
+            }
+            fn count_active_users(&self) -> Result<u32, AppError> {
                 Ok(0)
             }
-            fn exists_active(&self, _: &DatabaseName, _: &Environment) -> Result<bool, AppError> {
-                Ok(true)
+            fn delete_stale_config_users(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+        }
+        impl crate::ports::sync_scope::SyncGroupOps for TrackingScope {
+            fn create_group(&self, _: &str, _: &[String], _: &str) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_config_groups(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+        }
+        impl crate::ports::sync_scope::SyncRoleBindingOps for TrackingScope {
+            fn create_role_binding(
+                &self,
+                _: &str,
+                _: &str,
+                _: &[String],
+                _: &[String],
+                _: &str,
+            ) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_config_role_bindings(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+        }
+        impl crate::ports::sync_scope::SyncTokenOps for TrackingScope {
+            fn revoke_all_tokens_for_user(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<u32, AppError> {
+                Ok(0)
+            }
+        }
+        impl crate::ports::sync_scope::SyncPolicyOps for TrackingScope {
+            fn create_workflow(
+                &self,
+                _: &dbward_domain::policies::Workflow,
+            ) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_workflows(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn count_workflows(&self) -> Result<u32, AppError> {
+                Ok(0)
+            }
+            fn create_execution_policy(
+                &self,
+                _: &dbward_domain::policies::ExecutionPolicy,
+            ) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_execution_policies(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn create_notification_policy(
+                &self,
+                _: &dbward_domain::policies::NotificationPolicy,
+            ) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_notification_policies(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn create_result_policy(
+                &self,
+                _: &dbward_domain::policies::ResultPolicy,
+            ) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_result_policies(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_config_roles(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn count_roles(&self) -> Result<u32, AppError> {
+                Ok(0)
+            }
+        }
+        impl crate::ports::sync_scope::SyncWebhookOps for TrackingScope {
+            fn create_webhook(&self, _: &dbward_domain::entities::Webhook) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_config_webhooks(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn list_active_webhooks(
+                &self,
+            ) -> Result<Vec<dbward_domain::entities::Webhook>, AppError> {
+                Ok(vec![])
+            }
+        }
+        impl crate::ports::sync_scope::SyncConfigGenerationOps for TrackingScope {
+            fn record_generation(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+                _: &str,
+            ) -> Result<(), AppError> {
+                Ok(())
+            }
+        }
+        impl crate::ports::transaction::AuditWriterOps for TrackingScope {
+            fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> {
+                Ok(())
+            }
+        }
+        impl crate::ports::transaction::RequestWriterOps for TrackingScope {
+            fn insert_request(&self, _: &dbward_domain::entities::Request) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn mark_dispatched(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn mark_approved(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn mark_rejected(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn mark_running(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn mark_cancelled(
+                &self,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn mark_executed(
+                &self,
+                _: &str,
+                _: bool,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn mark_expired(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn mark_execution_lost(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn cancel_all_for_user(
+                &self,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<Vec<String>, AppError> {
+                Ok(vec![])
             }
         }
 
-        struct TrackingTransaction {
-            committed: AtomicBool,
-            rolled_back: AtomicBool,
-        }
-        impl super::SyncTransaction for TrackingTransaction {
-            fn begin(&self) -> Result<(), AppError> {
-                Ok(())
-            }
-            fn commit(&self) -> Result<(), AppError> {
-                self.committed.store(true, Ordering::SeqCst);
-                Ok(())
-            }
-            fn rollback(&self) -> Result<(), AppError> {
-                self.rolled_back.store(true, Ordering::SeqCst);
-                Ok(())
-            }
-        }
-
-        let txn = Arc::new(TrackingTransaction {
-            committed: AtomicBool::new(false),
-            rolled_back: AtomicBool::new(false),
-        });
-        let mut sync = make_sync();
-        sync.license_checker = Arc::new(FailLicenseChecker);
-        sync.database_registry = Arc::new(TrackingDbRegistry {
+        let scope = TrackingScope {
             entries: Mutex::new(vec![]),
-        });
-        sync.transaction = txn.clone();
-
-        let result = sync.sync_all(
+        };
+        let license = FailLicenseChecker;
+        let result = apply::sync_databases(
+            &scope,
+            &license,
             vec![DatabaseInput {
                 name: "db1".into(),
                 environments: vec!["prod".into()],
             }],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
-            vec![],
         );
         assert!(result.is_err(), "should fail on license check");
-        assert!(
-            txn.rolled_back.load(Ordering::SeqCst),
-            "transaction must be rolled back"
-        );
-        assert!(
-            !txn.committed.load(Ordering::SeqCst),
-            "transaction must NOT be committed"
-        );
     }
 
     #[test]

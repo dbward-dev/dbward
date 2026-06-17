@@ -14,7 +14,7 @@ pub struct TokenManage {
     pub user_repo: Arc<dyn UserRepo>,
     pub policy_repo: Arc<dyn PolicyRepo>,
     pub license: Arc<dyn LicenseChecker>,
-    pub audit: Arc<dyn AuditLogger>,
+    pub uow: Arc<dyn UnitOfWork>,
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
     pub token_gen: Arc<dyn TokenValueGenerator>,
@@ -145,23 +145,27 @@ impl TokenManage {
             revoked_at: None,
             created_at: now,
         };
-        self.token_repo.create(&token)?;
 
-        // Audit
-        self.audit
-            .record(&dbward_domain::entities::AuditEvent::simple(
-                "token_created",
-                "token",
-                &user.subject_id,
-                Some(&id),
-                self.clock.now(),
-                ctx,
-            ))?;
+        // Audit (atomic with token creation via UoW)
+        let token_roles = token.roles.clone();
+        let audit_event = dbward_domain::entities::AuditEvent::simple(
+            "token.created",
+            "token",
+            &user.subject_id,
+            Some(&id),
+            self.clock.now(),
+            ctx,
+        );
+        self.uow.execute(Box::new(move |tx| {
+            tx.create_token(&token)?;
+            tx.record(&audit_event)?;
+            Ok(())
+        }))?;
 
         // Resolve permissions from assigned roles
-        let permissions: Vec<String> = if !token.roles.is_empty() {
+        let permissions: Vec<String> = if !token_roles.is_empty() {
             self.policy_repo
-                .get_roles_by_names(&token.roles)?
+                .get_roles_by_names(&token_roles)?
                 .iter()
                 .flat_map(|r| r.permissions.iter())
                 .map(|p| p.as_str().to_string())
@@ -213,18 +217,21 @@ impl TokenManage {
         }
 
         let now = self.clock.now();
-        self.token_repo.revoke(&input.token_id, now)?;
-
-        // Audit
-        self.audit
-            .record(&dbward_domain::entities::AuditEvent::simple(
-                "token_revoked",
-                "token",
-                &user.subject_id,
-                Some(&input.token_id),
-                self.clock.now(),
-                ctx,
-            ))?;
+        let token_id = input.token_id.clone();
+        let actor_id = user.subject_id.clone();
+        let audit_event = dbward_domain::entities::AuditEvent::simple(
+            "token.revoked",
+            "token",
+            &actor_id,
+            Some(&token_id),
+            now,
+            ctx,
+        );
+        self.uow.execute(Box::new(move |tx| {
+            tx.revoke_token(&token_id, now)?;
+            tx.record(&audit_event)?;
+            Ok(())
+        }))?;
 
         Ok(TokenRevokeOutput {
             id: input.token_id,
@@ -237,6 +244,7 @@ impl TokenManage {
 mod tests {
     use super::*;
     use crate::error::AuthzError;
+    use crate::test_support::NoopUnitOfWork;
     use dbward_domain::auth::{Permission, RoleDefinition, SubjectType};
     use dbward_domain::entities::Token;
 
@@ -489,13 +497,6 @@ mod tests {
         }
         fn check_expiry(&self, _now: chrono::DateTime<chrono::Utc>) {}
     }
-    struct FakeAudit;
-    impl AuditLogger for FakeAudit {
-        fn record(&self, _: &dbward_domain::entities::AuditEvent) -> Result<(), AppError> {
-            Ok(())
-        }
-    }
-
     fn make_user() -> dbward_domain::auth::AuthUser {
         dbward_domain::auth::AuthUser {
             subject_id: "alice".into(),
@@ -513,7 +514,7 @@ mod tests {
             user_repo: Arc::new(FakeUserRepo),
             policy_repo: Arc::new(FakePolicyRepo { roles }),
             license: Arc::new(FakeLicense),
-            audit: Arc::new(FakeAudit),
+            uow: Arc::new(NoopUnitOfWork),
             clock: Arc::new(FakeClock),
             id_gen: Arc::new(FakeIdGen),
             token_gen: Arc::new(FakeTokenGen),

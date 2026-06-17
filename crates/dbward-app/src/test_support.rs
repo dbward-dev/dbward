@@ -8,7 +8,6 @@ use chrono::{DateTime, Utc};
 use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
 use dbward_domain::entities::*;
 use dbward_domain::policies::Workflow;
-use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::error::{AppError, AuthzError};
@@ -82,13 +81,6 @@ impl IdGenerator for FixedIdGen {
         *n += 1;
         format!("test-id-{n:03}")
     }
-}
-
-// --- EventDispatcher ---
-
-pub struct NoopDispatcher;
-impl EventDispatcher for NoopDispatcher {
-    fn dispatch(&self, _: TransitionEvent) {}
 }
 
 // --- AuditLogger ---
@@ -218,6 +210,7 @@ impl RequestReader for FakeRequestReader {
 pub struct FakeRequestWriter {
     pub written: Mutex<bool>,
     pub last_request: Mutex<Option<Request>>,
+    pub last_audit_events: Mutex<Vec<AuditEvent>>,
 }
 
 impl FakeRequestWriter {
@@ -225,6 +218,7 @@ impl FakeRequestWriter {
         Self {
             written: Mutex::new(false),
             last_request: Mutex::new(None),
+            last_audit_events: Mutex::new(vec![]),
         }
     }
 }
@@ -282,17 +276,6 @@ impl RequestWriter for FakeRequestWriter {
     fn mark_approved_from_dispatched(&self, _: &str, _: &str) -> Result<bool, AppError> {
         Ok(true)
     }
-    fn mark_approved_from_dispatched_and_record(
-        &self,
-        _: &str,
-        _: &dbward_domain::entities::AuditEvent,
-        _: &str,
-    ) -> Result<bool, AppError> {
-        Ok(true)
-    }
-    fn mark_audit_incomplete(&self, _: &str) -> Result<(), AppError> {
-        Ok(())
-    }
 }
 
 // --- ApprovalRepo ---
@@ -349,14 +332,6 @@ impl BackgroundTaskRepo for FakeBackgroundTaskRepo {
         Ok(vec![])
     }
     fn mark_expired(&self, _: &str, _: &str) -> Result<bool, AppError> {
-        Ok(true)
-    }
-    fn mark_expired_and_record(
-        &self,
-        _: &str,
-        _: &dbward_domain::entities::AuditEvent,
-        _: &str,
-    ) -> Result<bool, AppError> {
         Ok(true)
     }
     fn purge_old_requests(&self, _: &str) -> Result<u32, AppError> {
@@ -516,5 +491,497 @@ impl crate::ports::ContextRepo for FakeContextRepo {
     }
     fn timeout_collecting(&self, _: &str, _: &str) -> Result<u32, crate::error::AppError> {
         Ok(0)
+    }
+}
+
+// --- NoopUnitOfWork ---
+
+pub struct NoopUnitOfWork;
+
+impl crate::ports::UnitOfWork for NoopUnitOfWork {
+    fn execute(
+        &self,
+        f: Box<
+            dyn FnOnce(
+                    &dyn crate::ports::transaction::TxScope,
+                ) -> Result<(), crate::error::AppError>
+                + '_,
+        >,
+    ) -> Result<(), crate::error::AppError> {
+        f(&NoopTxScope)
+    }
+
+    fn execute_with_result(
+        &self,
+        f: Box<
+            dyn FnOnce(
+                    &dyn crate::ports::transaction::TxScope,
+                ) -> Result<Box<dyn std::any::Any>, crate::error::AppError>
+                + '_,
+        >,
+    ) -> Result<Box<dyn std::any::Any>, crate::error::AppError> {
+        f(&NoopTxScope)
+    }
+
+    fn execute_sync(
+        &self,
+        f: Box<
+            dyn FnOnce(
+                    &dyn crate::ports::sync_scope::SyncScope,
+                ) -> Result<Box<dyn std::any::Any>, crate::error::AppError>
+                + '_,
+        >,
+    ) -> Result<Box<dyn std::any::Any>, crate::error::AppError> {
+        f(&NoopSyncScope)
+    }
+}
+
+struct NoopTxScope;
+
+impl crate::ports::transaction::RequestWriterOps for NoopTxScope {
+    fn insert_request(
+        &self,
+        _: &dbward_domain::entities::Request,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn mark_dispatched(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+    fn mark_approved(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+    fn mark_rejected(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+    fn mark_running(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+    fn mark_cancelled(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<&str>,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+    fn mark_executed(
+        &self,
+        _: &str,
+        _: bool,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+    fn mark_expired(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+    fn mark_execution_lost(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+    fn cancel_all_for_user(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<&str>,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<String>, crate::error::AppError> {
+        Ok(vec![])
+    }
+}
+
+impl crate::ports::transaction::ApprovalWriterOps for NoopTxScope {
+    fn insert_approval(
+        &self,
+        _: &dbward_domain::entities::Approval,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+}
+
+impl crate::ports::transaction::AuditWriterOps for NoopTxScope {
+    fn record(
+        &self,
+        _: &dbward_domain::entities::AuditEvent,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+}
+
+impl crate::ports::transaction::ExecutionWriterOps for NoopTxScope {
+    fn insert_execution(
+        &self,
+        _: &dbward_domain::entities::Execution,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn mark_completed(
+        &self,
+        _: &str,
+        _: bool,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+}
+
+impl crate::ports::transaction::TokenWriterOps for NoopTxScope {
+    fn create_token(
+        &self,
+        _: &dbward_domain::entities::Token,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn revoke_token(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+    fn revoke_all_for_user(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u32, crate::error::AppError> {
+        Ok(0)
+    }
+}
+
+impl crate::ports::transaction::UserWriterOps for NoopTxScope {
+    fn suspend_user(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+    fn activate_user(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
+}
+
+impl crate::ports::transaction::ResultWriterOps for NoopTxScope {
+    fn insert_result(
+        &self,
+        _result: &dbward_domain::entities::ExecutionResult,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn insert_result_access(
+        &self,
+        _access: &[dbward_domain::entities::ResultAccess],
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+}
+
+impl crate::ports::transaction::TxScope for NoopTxScope {}
+
+// --- NoopNotifier ---
+
+pub struct NoopNotifier;
+
+impl crate::ports::Notifier for NoopNotifier {
+    fn dispatch(&self, _: crate::ports::WebhookEvent) {}
+}
+
+// --- NoopSyncScope for tests ---
+pub struct NoopSyncScope;
+
+impl crate::ports::sync_scope::SyncDatabaseOps for NoopSyncScope {
+    fn register(
+        &self,
+        _: &dbward_domain::values::DatabaseName,
+        _: &dbward_domain::values::Environment,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn list_active_databases(
+        &self,
+    ) -> Result<
+        Vec<(
+            dbward_domain::values::DatabaseName,
+            dbward_domain::values::Environment,
+        )>,
+        crate::error::AppError,
+    > {
+        Ok(vec![])
+    }
+    fn reconcile_stale_databases(
+        &self,
+        _: &[String],
+    ) -> Result<(u64, u64), crate::error::AppError> {
+        Ok((0, 0))
+    }
+}
+impl crate::ports::sync_scope::SyncUserOps for NoopSyncScope {
+    fn upsert_user(&self, _: &dbward_domain::entities::User) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn suspend_user(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn activate_user(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn set_user_source(&self, _: &str, _: &str) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn get_user_source(&self, _: &str) -> Result<Option<String>, crate::error::AppError> {
+        Ok(None)
+    }
+    fn list_stale_config_user_ids(
+        &self,
+        _: &[String],
+    ) -> Result<Vec<String>, crate::error::AppError> {
+        Ok(vec![])
+    }
+    fn list_active_user_ids(&self) -> Result<Vec<String>, crate::error::AppError> {
+        Ok(vec![])
+    }
+    fn count_active_users(&self) -> Result<u32, crate::error::AppError> {
+        Ok(0)
+    }
+    fn delete_stale_config_users(&self, _: &[String]) -> Result<u64, crate::error::AppError> {
+        Ok(0)
+    }
+}
+impl crate::ports::sync_scope::SyncGroupOps for NoopSyncScope {
+    fn create_group(&self, _: &str, _: &[String], _: &str) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn delete_stale_config_groups(&self, _: &[String]) -> Result<u64, crate::error::AppError> {
+        Ok(0)
+    }
+}
+impl crate::ports::sync_scope::SyncRoleBindingOps for NoopSyncScope {
+    fn create_role_binding(
+        &self,
+        _: &str,
+        _: &str,
+        _: &[String],
+        _: &[String],
+        _: &str,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn delete_stale_config_role_bindings(
+        &self,
+        _: &[String],
+    ) -> Result<u64, crate::error::AppError> {
+        Ok(0)
+    }
+}
+impl crate::ports::sync_scope::SyncTokenOps for NoopSyncScope {
+    fn revoke_all_tokens_for_user(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u32, crate::error::AppError> {
+        Ok(0)
+    }
+}
+impl crate::ports::sync_scope::SyncPolicyOps for NoopSyncScope {
+    fn create_workflow(
+        &self,
+        _: &dbward_domain::policies::Workflow,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn delete_stale_workflows(&self, _: &[String]) -> Result<u64, crate::error::AppError> {
+        Ok(0)
+    }
+    fn count_workflows(&self) -> Result<u32, crate::error::AppError> {
+        Ok(0)
+    }
+    fn create_execution_policy(
+        &self,
+        _: &dbward_domain::policies::ExecutionPolicy,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn delete_stale_execution_policies(&self, _: &[String]) -> Result<u64, crate::error::AppError> {
+        Ok(0)
+    }
+    fn create_notification_policy(
+        &self,
+        _: &dbward_domain::policies::NotificationPolicy,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn delete_stale_notification_policies(
+        &self,
+        _: &[String],
+    ) -> Result<u64, crate::error::AppError> {
+        Ok(0)
+    }
+    fn create_result_policy(
+        &self,
+        _: &dbward_domain::policies::ResultPolicy,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn delete_stale_result_policies(&self, _: &[String]) -> Result<u64, crate::error::AppError> {
+        Ok(0)
+    }
+    fn create_role(
+        &self,
+        _: &dbward_domain::auth::RoleDefinition,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn delete_stale_config_roles(&self, _: &[String]) -> Result<u64, crate::error::AppError> {
+        Ok(0)
+    }
+    fn count_roles(&self) -> Result<u32, crate::error::AppError> {
+        Ok(0)
+    }
+}
+impl crate::ports::sync_scope::SyncWebhookOps for NoopSyncScope {
+    fn create_webhook(
+        &self,
+        _: &dbward_domain::entities::Webhook,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn delete_stale_config_webhooks(&self, _: &[String]) -> Result<u64, crate::error::AppError> {
+        Ok(0)
+    }
+    fn list_active_webhooks(
+        &self,
+    ) -> Result<Vec<dbward_domain::entities::Webhook>, crate::error::AppError> {
+        Ok(vec![])
+    }
+}
+impl crate::ports::sync_scope::SyncConfigGenerationOps for NoopSyncScope {
+    fn record_generation(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+        _: &str,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+}
+impl crate::ports::transaction::AuditWriterOps for NoopSyncScope {
+    fn record(
+        &self,
+        _: &dbward_domain::entities::AuditEvent,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+}
+impl crate::ports::transaction::RequestWriterOps for NoopSyncScope {
+    fn insert_request(
+        &self,
+        _: &dbward_domain::entities::Request,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn mark_dispatched(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn mark_approved(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn mark_rejected(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn mark_running(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn mark_cancelled(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<&str>,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn mark_executed(
+        &self,
+        _: &str,
+        _: bool,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn mark_expired(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn mark_execution_lost(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn cancel_all_for_user(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<&str>,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<String>, crate::error::AppError> {
+        Ok(vec![])
     }
 }

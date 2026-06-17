@@ -10,7 +10,6 @@ use async_trait::async_trait;
 use dbward_app::error::{AppError, AuthError};
 use dbward_app::ports::*;
 use dbward_domain::auth::*;
-use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
 use dbward_domain::values::ResultSummary;
 
 // --- RoleResolver ---
@@ -92,13 +91,6 @@ impl Notifier for NoopNotifier {
     fn dispatch(&self, _: WebhookEvent) {}
 }
 
-// --- EventDispatcher ---
-
-pub struct NoopEventDispatcher;
-impl EventDispatcher for NoopEventDispatcher {
-    fn dispatch(&self, _: TransitionEvent) {}
-}
-
 // --- SsrfValidator ---
 
 pub struct NoopSsrfValidator;
@@ -173,5 +165,230 @@ impl IdGenerator for SeqIdGen {
     fn generate(&self) -> String {
         let n = self.0.fetch_add(1, Ordering::SeqCst);
         format!("id-{n:04}")
+    }
+}
+
+// --- NoopUnitOfWork ---
+
+pub struct NoopUnitOfWork;
+
+impl dbward_app::ports::UnitOfWork for NoopUnitOfWork {
+    fn execute(
+        &self,
+        f: Box<
+            dyn FnOnce(
+                    &dyn dbward_app::ports::transaction::TxScope,
+                ) -> Result<(), dbward_app::error::AppError>
+                + '_,
+        >,
+    ) -> Result<(), dbward_app::error::AppError> {
+        f(&NoopTxScope)
+    }
+    fn execute_with_result(
+        &self,
+        f: Box<
+            dyn FnOnce(
+                    &dyn dbward_app::ports::transaction::TxScope,
+                )
+                    -> Result<Box<dyn std::any::Any>, dbward_app::error::AppError>
+                + '_,
+        >,
+    ) -> Result<Box<dyn std::any::Any>, dbward_app::error::AppError> {
+        f(&NoopTxScope)
+    }
+
+    fn execute_sync(
+        &self,
+        _f: Box<
+            dyn FnOnce(
+                    &dyn dbward_app::ports::sync_scope::SyncScope,
+                )
+                    -> Result<Box<dyn std::any::Any>, dbward_app::error::AppError>
+                + '_,
+        >,
+    ) -> Result<Box<dyn std::any::Any>, dbward_app::error::AppError> {
+        Ok(Box::new(()) as Box<dyn std::any::Any>)
+    }
+}
+
+struct NoopTxScope;
+impl dbward_app::ports::transaction::RequestWriterOps for NoopTxScope {
+    fn insert_request(
+        &self,
+        _: &dbward_domain::entities::Request,
+    ) -> Result<(), dbward_app::error::AppError> {
+        Ok(())
+    }
+    fn mark_dispatched(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+    fn mark_approved(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+    fn mark_rejected(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+    fn mark_running(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+    fn mark_cancelled(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<&str>,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+    fn mark_executed(
+        &self,
+        _: &str,
+        _: bool,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+    fn mark_expired(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+    fn mark_execution_lost(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+    fn cancel_all_for_user(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<&str>,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<String>, dbward_app::error::AppError> {
+        Ok(vec![])
+    }
+}
+impl dbward_app::ports::transaction::ApprovalWriterOps for NoopTxScope {
+    fn insert_approval(
+        &self,
+        _: &dbward_domain::entities::Approval,
+    ) -> Result<(), dbward_app::error::AppError> {
+        Ok(())
+    }
+}
+impl dbward_app::ports::transaction::AuditWriterOps for NoopTxScope {
+    fn record(
+        &self,
+        _: &dbward_domain::entities::AuditEvent,
+    ) -> Result<(), dbward_app::error::AppError> {
+        Ok(())
+    }
+}
+impl dbward_app::ports::transaction::ExecutionWriterOps for NoopTxScope {
+    fn insert_execution(
+        &self,
+        _: &dbward_domain::entities::Execution,
+    ) -> Result<(), dbward_app::error::AppError> {
+        Ok(())
+    }
+    fn mark_completed(
+        &self,
+        _: &str,
+        _: bool,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+}
+impl dbward_app::ports::transaction::TokenWriterOps for NoopTxScope {
+    fn create_token(
+        &self,
+        _: &dbward_domain::entities::Token,
+    ) -> Result<(), dbward_app::error::AppError> {
+        Ok(())
+    }
+    fn revoke_token(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+    fn revoke_all_for_user(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u32, dbward_app::error::AppError> {
+        Ok(0)
+    }
+}
+impl dbward_app::ports::transaction::UserWriterOps for NoopTxScope {
+    fn suspend_user(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+    fn activate_user(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
+}
+impl dbward_app::ports::transaction::ResultWriterOps for NoopTxScope {
+    fn insert_result(
+        &self,
+        _result: &dbward_domain::entities::ExecutionResult,
+    ) -> Result<(), dbward_app::error::AppError> {
+        Ok(())
+    }
+    fn insert_result_access(
+        &self,
+        _access: &[dbward_domain::entities::ResultAccess],
+    ) -> Result<(), dbward_app::error::AppError> {
+        Ok(())
+    }
+}
+impl dbward_app::ports::transaction::TxScope for NoopTxScope {}
+
+// --- AuditSigner ---
+pub struct NoopAuditSigner;
+impl dbward_app::ports::crypto::AuditSigner for NoopAuditSigner {
+    fn sign(&self, _payload: &[u8]) -> Vec<u8> {
+        vec![0u8; 64]
+    }
+    fn current_key_id(&self) -> &str {
+        "noop"
+    }
+}
+impl dbward_app::ports::crypto::AuditVerifier for NoopAuditSigner {
+    fn verify(&self, _payload: &[u8], _signature: &[u8]) -> bool {
+        true
+    }
+    fn verify_with_key(&self, _key_id: &str, _payload: &[u8], _signature: &[u8]) -> bool {
+        true
     }
 }

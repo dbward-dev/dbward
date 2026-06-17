@@ -20,7 +20,8 @@ pub struct AgentSubmitResult {
     pub request_reader: Arc<dyn RequestReader>,
     pub result_store: Arc<dyn ResultStore>,
     pub result_channel: Arc<dyn ResultChannel>,
-    pub event_dispatcher: Arc<dyn EventDispatcher>,
+    pub notifier: Arc<dyn Notifier>,
+    pub uow: Arc<dyn UnitOfWork>,
     pub clock: Arc<dyn Clock>,
     pub max_persist_bytes: usize,
     pub policy_repo: Arc<dyn PolicyRepo>,
@@ -274,7 +275,7 @@ impl AgentSubmitResult {
             &user.subject_id,
             Some(&execution.id),
             now,
-            &dbward_domain::entities::AuditContext::System,
+            ctx,
         );
         audit_event.database_name = Some(request.database.to_string());
         audit_event.environment = Some(request.environment.to_string());
@@ -307,16 +308,44 @@ impl AgentSubmitResult {
             }
             audit_event.metadata_json = meta.to_string();
         }
-        let outcome = match self.agent_repo.complete_execution(
-            &execution.id,
-            &execution.request_id,
-            input.success,
-            now,
-            &audit_event,
-            result_manifest.as_ref(),
-            &share_with_records,
+
+        // Atomic: execution update + request update + result manifest + audit (fail-closed)
+        let exec_id = execution.id.clone();
+        let req_id = execution.request_id.clone();
+        let success = input.success;
+        let rm_clone = result_manifest.clone();
+        let sw_clone = share_with_records.clone();
+        let outcome = match crate::ports::uow_execute::<crate::ports::CompletionOutcome>(
+            &*self.uow,
+            move |tx| {
+                use crate::ports::CompletionOutcome;
+                let exec_updated = tx.mark_completed(&exec_id, success, now)?;
+                if !exec_updated {
+                    // Execution already completed/cancelled by concurrent request.
+                    // Return Conflict to prevent compensation delete of winner's storage.
+                    return Err(AppError::Conflict("execution already completed".into()));
+                }
+                let updated = tx.mark_executed(&req_id, success, now)?;
+                if !updated {
+                    // Request was cancelled/already completed — still store result
+                }
+                if let Some(ref rm) = rm_clone {
+                    tx.insert_result(rm)?;
+                    tx.insert_result_access(&sw_clone)?;
+                }
+                tx.record(&audit_event)?;
+                Ok(if updated {
+                    CompletionOutcome::Normal
+                } else {
+                    CompletionOutcome::RequestCancelled
+                })
+            },
         ) {
             Ok(v) => v,
+            Err(AppError::Conflict(_)) => {
+                // Concurrent completion won — do NOT delete their stored result
+                return Err(AppError::Conflict("execution already completed".into()));
+            }
             Err(e) => {
                 // Compensate: delete orphaned storage object
                 if let Some(ref rm) = result_manifest {
@@ -361,7 +390,12 @@ impl AgentSubmitResult {
                         .publish(&execution.request_id, summary)
                         .await;
                 }
-                result.commit(&*self.event_dispatcher);
+                // Post-commit notification (audit already written by complete_execution)
+                let event = result.into_event();
+                self.notifier
+                    .dispatch(crate::services::audit_event_builder::build_webhook_event(
+                        &event,
+                    ));
                 Ok(AgentSubmitResultOutput {
                     request_id: execution.request_id,
                     status: new_request_status,
@@ -411,7 +445,6 @@ mod tests {
     use dbward_domain::entities::{
         Agent, AuditEvent, Execution, ExecutionStatus, Request as DomainRequest, RequestStatus,
     };
-    use dbward_domain::services::status_machine::{EventDispatcher, TransitionEvent};
     use dbward_domain::values::{DatabaseName, Environment, Operation, ResultSummary};
     use std::sync::Mutex;
 
@@ -439,9 +472,9 @@ mod tests {
         }
     }
 
-    struct NoopDispatcher;
-    impl EventDispatcher for NoopDispatcher {
-        fn dispatch(&self, _: TransitionEvent) {}
+    struct NoopNotifier;
+    impl crate::ports::Notifier for NoopNotifier {
+        fn dispatch(&self, _: crate::ports::WebhookEvent) {}
     }
 
     struct FakeAgentRepo {
@@ -846,7 +879,8 @@ mod tests {
                 stored: Mutex::new(vec![]),
             }),
             result_channel: Arc::new(FakeResultChannel),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            notifier: Arc::new(NoopNotifier),
+            uow: Arc::new(crate::test_support::NoopUnitOfWork),
             clock: Arc::new(FakeClock),
             max_persist_bytes: 10 * 1024 * 1024,
             policy_repo: Arc::new(FakePolicyRepo),
@@ -868,7 +902,8 @@ mod tests {
                 stored: Mutex::new(vec![]),
             }),
             result_channel: Arc::new(FakeResultChannel),
-            event_dispatcher: Arc::new(NoopDispatcher),
+            notifier: Arc::new(NoopNotifier),
+            uow: Arc::new(crate::test_support::NoopUnitOfWork),
             clock: Arc::new(FakeClock),
             max_persist_bytes: 10 * 1024 * 1024,
             policy_repo: Arc::new(FakePolicyRepo),
