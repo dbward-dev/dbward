@@ -117,10 +117,10 @@ dbward uses **on-demand execution**: the agent does not execute on approval. Ins
 3. Client resumes (`dbward request resume <id>`) → server marks as "dispatched"
 4. Agent polls, claims, executes on DB → returns result to server
 5. Server relays result in-memory to waiting client (long poll)
-6. Client receives result and saves locally (~/.dbward/results/<id>.json)
+6. Client displays result (server persists to local FS or S3)
 ```
 
-Results are persisted locally by default (configurable to S3 or stream-only) — it relays them in-memory with a 10-minute TTL.
+Results are persisted on the server by default (local filesystem or S3, configurable via `[result_storage]`). The in-memory relay has a 10-minute TTL for streaming delivery. Use `--no-result-store` to skip persistence for a single request.
 
 ## Policy Engine
 
