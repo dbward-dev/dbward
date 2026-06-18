@@ -602,7 +602,7 @@ dependencies = [
 
 [[package]]
 name = "dbward"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -632,7 +632,7 @@ dependencies = [
 
 [[package]]
 name = "dbward-agent"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "chrono",
@@ -660,7 +660,7 @@ dependencies = [
 
 [[package]]
 name = "dbward-api-client"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "reqwest",
  "serde",
@@ -737,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "dbward-config"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "dbward-domain",
  "dirs",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "dbward-driver"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "futures",
@@ -781,7 +781,7 @@ dependencies = [
 
 [[package]]
 name = "dbward-infra"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -812,7 +812,7 @@ dependencies = [
 
 [[package]]
 name = "dbward-migrate"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "chrono",
@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "dbward-server"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "arc-swap",
  "async-trait",
