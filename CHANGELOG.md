@@ -1,11 +1,40 @@
 # Changelog
 
-## [0.1.6] — Unreleased
+## [0.1.6] — 2026-06-18
 
 ### Breaking Changes
 
 - **CLI: `--no-persist` → `--no-result-store`**: Renamed to clarify that only query results are suppressed. Request metadata and SQL text are always retained for audit/approval.
 - **API: `no_store` → `no_result_store`**: JSON field renamed in both request body and response.
+
+### Features
+
+- **Slack Slash Command (`/dbward execute`)**: Submit SQL for approval directly from Slack without CLI. Opens a modal with database/environment selector, SQL input, and required reason field. Emergency and DDL bypass are blocked from Slack.
+- **Resume confirmation modal**: The Resume button now opens a confirmation modal showing the SQL and target database before execution. Prevents accidental one-click execution.
+- **`/dbward help`**: Shows available slash command usage.
+
+### Fixed
+
+- **Slack notification regression**: Fixed event type names (`request_completed` → `execution.completed`, `request_failed` → `execution.failed`, `request_expired` → `request.expired`, `request_cancelled` → `request.cancelled`).
+- **Double notification dispatch**: Removed `request_notifier` field; unified into `CompositeNotifier` that dispatches to both webhook and Slack in a single path.
+- **Resume updates Slack message**: `request.dispatched` event now triggers root message update (removes Resume button, shows "Executing" state).
+- **"Step 1/0" display**: Fixed guard for `total_steps > 0` in notification messages.
+- **Review modal authorization**: Now delegates to `GetRequest` UC instead of independent `RequestApprove` check. Ensures only authorized users (requester, admin, or pending approver) can view SQL.
+- **S3 result storage health probe path** (PR #164): Default prefix changed to avoid IAM policy conflicts.
+- **MCP protocolVersion negotiation** (PR #163): Returns client-requested version instead of hardcoded `2025-11-05`.
+- **Break-glass audit fail-closed** (PR #168): Audit insert failure now prevents dispatch (same transaction).
+
+### Security
+
+- **Slack permission check unification**: All Slack operations (Review, Resume, Approve, Reject, ViewResult, Create) now delegate authorization to use cases. No independent `authorize_scoped` calls for access control decisions.
+- **Resume modal pre-check**: Requires both `RequestView` (via GetRequest UC) and `RequestResume` permission before showing SQL content.
+- **Restricted channels**: Slack and MCP channels cannot use `--emergency` or `--allow-ddl`.
+
+### Improved
+
+- **License online verification** (PR #161): Daily check with 7-day grace period and webhook notification.
+- **Slack Block Kit improvements** (PR #165): Better step_approved vs request_approved distinction, full SQL in Review modal, proper request ID display.
+- **`--version` / `-v` flag** (PR #159): Shows version from workspace Cargo.toml.
 
 ## [0.1.5] — 2026-06-15
 
