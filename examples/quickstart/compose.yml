@@ -17,7 +17,7 @@ services:
 
   server:
     image: ghcr.io/dbward-dev/dbward-server:latest
-    command: ["--listen", "0.0.0.0:3000", "--config", "/config/server.toml"]
+    command: ["dbward-server", "--listen", "0.0.0.0:3000", "--config", "/config/server.toml"]
     ports: ["13000:3000"]
     volumes:
       - ./server.toml:/config/server.toml:ro
