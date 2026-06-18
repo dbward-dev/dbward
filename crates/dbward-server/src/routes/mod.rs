@@ -292,6 +292,7 @@ pub fn build_router(state: AppState) -> Router {
             "/api/slack/interactions",
             axum::routing::post(slack::interactions),
         )
+        .route("/api/slack/commands", axum::routing::post(slack::commands))
         .with_state(state);
 
     public

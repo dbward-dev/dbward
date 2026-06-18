@@ -334,11 +334,7 @@ pub(super) fn emit_webhook(state: &AppState, event_type: &str, request_id: &str)
         approvers: None,
     };
 
-    bg.notifier().dispatch(event.clone());
-
-    if let Some(rn) = bg.request_notifier() {
-        rn.dispatch(event);
-    }
+    bg.notifier().dispatch(event);
 }
 
 #[cfg(test)]

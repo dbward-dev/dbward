@@ -1831,7 +1831,7 @@ fn break_glass_ddl_mcp_rejected() {
     );
     let err = result.unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("not allowed via MCP"), "got: {msg}");
+    assert!(msg.contains("not allowed via MCP/Slack"), "got: {msg}");
 }
 
 #[test]

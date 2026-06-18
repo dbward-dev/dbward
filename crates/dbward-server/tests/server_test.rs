@@ -696,7 +696,6 @@ fn test_state() -> AppState {
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         slack_config: None,
         slack_client: None,
-        request_notifier: None,
         max_persist_bytes: 10 * 1024 * 1024,
         auth_mode: "both".to_string(),
         storage_backend: "local".into(),

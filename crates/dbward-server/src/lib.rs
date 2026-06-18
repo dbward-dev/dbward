@@ -7,6 +7,23 @@ pub mod routes;
 pub mod state;
 pub mod util;
 
+/// Dispatches to both WebhookDispatcher and SlackNotifier.
+struct CompositeNotifier {
+    webhook: Arc<dyn dbward_app::ports::Notifier>,
+    slack: Arc<dyn dbward_app::ports::Notifier>,
+}
+
+impl dbward_app::ports::Notifier for CompositeNotifier {
+    fn dispatch(&self, event: dbward_app::ports::WebhookEvent) {
+        self.webhook.dispatch(event.clone());
+        self.slack.dispatch(event);
+    }
+
+    fn reload(&self) -> Result<(), dbward_app::error::AppError> {
+        self.webhook.reload()
+    }
+}
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -280,7 +297,16 @@ pub async fn run_from_args(
             )) as Arc<dyn dbward_infra::slack::SlackClient>
         });
 
-    let slack_notifier_for_bg = slack_notifier.clone();
+    // Composite notifier: webhook dispatcher + optional Slack notifier
+    let notifier: Arc<dyn dbward_app::ports::Notifier> = if let Some(ref sn) = slack_notifier {
+        Arc::new(CompositeNotifier {
+            webhook: notifier,
+            slack: sn.clone(),
+        })
+    } else {
+        notifier
+    };
+
     let ssrf_validator: Arc<dyn dbward_app::ports::SsrfValidator> = if cfg.allow_private_networks {
         Arc::new(dbward_infra::webhook::PermissiveSsrfGuard)
     } else {
@@ -498,7 +524,6 @@ pub async fn run_from_args(
         draining: draining.clone(),
         slack_config,
         slack_client: slack_client_for_state,
-        request_notifier: slack_notifier_for_bg,
     }
     .build();
 

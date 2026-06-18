@@ -410,6 +410,10 @@ Readiness check. Returns 200 when all subsystems (SQLite, result store) are oper
 
 Receives Slack interaction payloads (button clicks, modal submissions). Verified by Slack signing secret — no Bearer token required.
 
+### POST /api/slack/commands
+
+Receives Slack Slash Command payloads (`/dbward execute`, `/dbward help`). Verified by Slack signing secret — no Bearer token required.
+
 ---
 
 ## Infrastructure (Authenticated)

@@ -136,12 +136,44 @@ Slack buttons enable one-click approve/reject directly from Slack.
 2. Set **Request URL**: `https://your-server.com/api/slack/interactions`
 3. Save
 
+See [Slack: Handling user interaction](https://api.slack.com/interactivity/handling-user-interaction) for details.
+
 ### Flow
 
 1. Approver clicks **Review Request**
 2. Modal opens with: full SQL, risk details, EXPLAIN output
 3. Approver selects Approve/Reject + adds comment
 4. Request state updates, Slack message updates
+
+<p align="center">
+  <img src="../../demo/slack-demo.gif" alt="Slack approval flow — requester view" width="100%">
+</p>
+
+> The demo above shows the requester's perspective (create → approve → resume → result). Approvers follow the same flow via the **Review Request** button in their notifications.
+
+### Slash Command
+
+Create requests directly from Slack without CLI.
+
+**Setup:**
+
+1. In your Slack App → **Slash Commands** → **Create New Command**
+2. Command: `/dbward`
+3. Request URL: `https://your-server.com/api/slack/commands`
+4. Short Description: `Execute SQL via approval workflow`
+5. Usage Hint: `execute | help`
+6. Save (reinstall app if prompted)
+
+See [Slack: Implementing slash commands](https://api.slack.com/interactivity/implementing-slash-commands) for details.
+
+**Commands:**
+
+| Command | Action |
+|---|---|
+| `/dbward execute` | Open SQL submission modal |
+| `/dbward help` | Show usage |
+
+**Authentication:** No Bearer token required — both `/api/slack/commands` and `/api/slack/interactions` are verified using the [Slack Signing Secret](https://api.slack.com/authentication/verifying-requests-from-slack) (HMAC-SHA256). Only requests signed by Slack are accepted.
 
 ### Account linking
 
@@ -166,6 +198,8 @@ Users without linked accounts can still approve via CLI/API.
 | Signature mismatch | Verify secret matches between config and receiver |
 | Button click error | Check Interactivity URL is correct and publicly accessible |
 | "Account not linked" | Run `dbward user update --slack-user-id YOUR_ID` |
+| `/dbward` shows "not a valid command" | Register Slash Command in Slack App settings |
+| "No databases available" | User needs `request.query` or `request.execute` permission |
 
 ---
 

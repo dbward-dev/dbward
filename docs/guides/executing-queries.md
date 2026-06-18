@@ -133,6 +133,16 @@ When using dbward through an AI assistant (via MCP), the same approval flow appl
 
 See [MCP Integration](mcp-integration.md) for setup instructions.
 
+## Slack
+
+Submit SQL directly from Slack using the `/dbward execute` slash command:
+
+1. Type `/dbward execute` in any channel
+2. Fill in Database/Environment, SQL, and optional Reason
+3. Submit — the request enters the approval flow
+
+See [Notifications: Slash Command](notifications.md#slash-command) for setup instructions.
+
 ## See also
 
 - [Policies Overview](policies/overview.md) — understand when approval is required
