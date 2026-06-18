@@ -108,7 +108,8 @@ environment = "*"
 
     // Write client config (skip if reusing existing)
     if !reusing_config {
-        let client_config = format!("[server]\nurl = \"{server_url}\"\ntoken = \"{dev_token}\"\n");
+        let client_config =
+            format!("[server]\nurl = \"{server_url}\"\ntoken = \"{admin_token}\"\n");
         if let Err(e) = write_secure(&client_config_path, client_config.as_bytes()) {
             cleanup_child(&mut server_child);
             return Err(e);
