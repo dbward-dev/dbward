@@ -136,7 +136,6 @@ fn real_state() -> AppState {
         draining: Arc::new(AtomicBool::new(false)),
         slack_config: None,
         slack_client: None,
-        request_notifier: None,
         auth_mode: "token".into(),
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),

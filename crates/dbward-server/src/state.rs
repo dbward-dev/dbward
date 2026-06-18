@@ -101,7 +101,6 @@ pub struct AppState {
     // Slack — pub(crate)
     pub(crate) slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub(crate) slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
-    pub(crate) request_notifier: Option<Arc<dyn Notifier>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -486,10 +485,6 @@ impl AppState {
         &self.request_reader
     }
 
-    pub(crate) fn context_repo(&self) -> &Arc<dyn ContextRepo> {
-        &self.context_repo
-    }
-
     pub fn database_registry(&self) -> &Arc<dyn DatabaseRegistry> {
         &self.database_registry
     }
@@ -547,9 +542,6 @@ impl<'a> BackgroundAccess<'a> {
     }
     pub(crate) fn notifier(&self) -> &Arc<dyn Notifier> {
         &self.0.notifier
-    }
-    pub(crate) fn request_notifier(&self) -> &Option<Arc<dyn Notifier>> {
-        &self.0.request_notifier
     }
     pub(crate) fn webhook_sender(&self) -> &Arc<dyn dbward_app::ports::WebhookSender> {
         &self.0.webhook_sender
@@ -678,7 +670,6 @@ pub struct AppStateBuilder {
     pub draining: Arc<AtomicBool>,
     pub slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
-    pub request_notifier: Option<Arc<dyn Notifier>>,
 }
 
 impl AppStateBuilder {
@@ -727,7 +718,6 @@ impl AppStateBuilder {
             draining: self.draining,
             slack_config: self.slack_config,
             slack_client: self.slack_client,
-            request_notifier: self.request_notifier,
         }
     }
 }

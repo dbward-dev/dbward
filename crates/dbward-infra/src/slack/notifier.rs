@@ -45,10 +45,7 @@ impl SlackNotifier {
     }
 
     fn should_notify(event: &WebhookEvent) -> bool {
-        !matches!(
-            event.event_type.as_str(),
-            "request.dispatched" | "execution.started"
-        )
+        !matches!(event.event_type.as_str(), "execution.started")
     }
 
     async fn handle_event(&self, event: WebhookEvent) {
@@ -89,6 +86,15 @@ impl SlackNotifier {
             let current_step = event.step_index.unwrap_or(0);
             if let Some(formatted) = block_kit::format_approvers_field(wf_json, current_step) {
                 event.approvers = Some(vec![formatted]);
+            }
+            // Enrich step progress from workflow snapshot
+            if event.total_steps.is_none()
+                && let Ok(wf) = serde_json::from_str::<serde_json::Value>(wf_json)
+                && let Some(steps) = wf["steps"].as_array()
+                && !steps.is_empty()
+            {
+                event.step_index = Some(current_step);
+                event.total_steps = Some(steps.len() as u32);
             }
         }
 

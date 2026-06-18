@@ -18,7 +18,7 @@ use crate::use_cases::decision_trace::{self as dt};
 /// Structured denial reasons for break-glass DDL bypass.
 enum BreakGlassDenial {
     RequiresEmergency,
-    McpNotAllowed,
+    RestrictedChannel,
     MissingAllowDdl { original_reason: String },
     NonBypassableStatement { reason: String },
     NonBypassableReviewRule { reasons: Vec<String> },
@@ -30,8 +30,8 @@ impl BreakGlassDenial {
             Self::RequiresEmergency => {
                 AppError::Validation("--allow-ddl requires --emergency".into())
             }
-            Self::McpNotAllowed => {
-                AppError::Validation("--allow-ddl is not allowed via MCP".into())
+            Self::RestrictedChannel => {
+                AppError::Validation("--allow-ddl is not allowed via MCP/Slack".into())
             }
             Self::MissingAllowDdl { original_reason } => AppError::Validation(format!(
                 "{original_reason}. Hint: add --allow-ddl to bypass in emergency mode"
@@ -103,6 +103,14 @@ pub enum RequestChannel {
     Cli,
     Api,
     Mcp,
+    Slack,
+}
+
+impl RequestChannel {
+    /// Channels that restrict emergency/DDL bypass (non-CLI, non-API).
+    pub fn is_restricted(&self) -> bool {
+        matches!(self, Self::Mcp | Self::Slack)
+    }
 }
 
 #[derive(Debug)]
@@ -135,8 +143,8 @@ impl CreateRequest {
         if input.allow_ddl && !input.emergency {
             return Err(BreakGlassDenial::RequiresEmergency.into_app_error());
         }
-        if input.allow_ddl && input.channel == RequestChannel::Mcp {
-            return Err(BreakGlassDenial::McpNotAllowed.into_app_error());
+        if input.allow_ddl && input.channel.is_restricted() {
+            return Err(BreakGlassDenial::RestrictedChannel.into_app_error());
         }
 
         // Record metric for all DDL bypass attempts (both classifier and reviewer paths)
@@ -510,9 +518,9 @@ impl CreateRequest {
         }
 
         // 1c. MCP channel cannot use break_glass
-        if input.emergency && input.channel == RequestChannel::Mcp {
+        if input.emergency && input.channel.is_restricted() {
             return Err(AppError::Validation(
-                "emergency requests are not allowed via MCP".into(),
+                "emergency requests are not allowed via MCP/Slack".into(),
             ));
         }
 
@@ -1475,7 +1483,7 @@ mod tests {
             )
             .unwrap_err();
         assert!(
-            matches!(err, AppError::Validation(ref m) if m.contains("emergency requests are not allowed via MCP"))
+            matches!(err, AppError::Validation(ref m) if m.contains("emergency requests are not allowed via MCP/Slack"))
         );
     }
 

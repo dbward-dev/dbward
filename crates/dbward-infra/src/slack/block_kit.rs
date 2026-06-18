@@ -68,7 +68,9 @@ pub fn build_request_created(
         };
         summary_parts.push(format!("{risk_emoji} Risk: {level}"));
     }
-    if let (Some(step), Some(total)) = (event.step_index, event.total_steps) {
+    if let (Some(step), Some(total)) = (event.step_index, event.total_steps)
+        && total > 0
+    {
         summary_parts.push(format!("📋 Step {}/{total}", step + 1));
     }
     if !summary_parts.is_empty() {
@@ -294,14 +296,14 @@ pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Val
                 .unwrap_or_default();
             (default_emoji, format!("Rejected by {actor}{reason}"))
         }
-        "request_completed" => (default_emoji, "Execution completed successfully".into()),
-        "request_failed" => {
+        "execution.completed" => (default_emoji, "Execution completed successfully".into()),
+        "execution.failed" => {
             let err = event.error_summary.as_deref().unwrap_or("unknown error");
             (default_emoji, format!("Execution failed: {err}"))
         }
-        "request_expired" => (default_emoji, "Request expired".into()),
+        "request.expired" => (default_emoji, "Request expired".into()),
         "execution.lost" => (default_emoji, "Execution lost (agent disconnected)".into()),
-        "request_cancelled" => {
+        "request.cancelled" => {
             let reason = event
                 .reason
                 .as_deref()
@@ -309,6 +311,7 @@ pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Val
                 .unwrap_or_default();
             (default_emoji, format!("Cancelled{reason}"))
         }
+        "request.dispatched" => (default_emoji, format!("Dispatched by {actor}")),
         _ => (default_emoji, format!("{}: {actor}", event.event_type)),
     };
 
@@ -625,10 +628,10 @@ pub fn fallback_text(event: &WebhookEvent) -> String {
         "step.approved" => format!("{emoji} Step approved for {req_id}"),
         "request.approved" => format!("{emoji} Request {req_id} approved"),
         "request.rejected" => format!("{emoji} Request {req_id} rejected"),
-        "request_cancelled" => format!("{emoji} Request {req_id} cancelled"),
-        "request_completed" => format!("{emoji} Request {req_id} completed"),
-        "request_failed" => format!("{emoji} Request {req_id} failed"),
-        "request_expired" => format!("{emoji} Request {req_id} expired"),
+        "request.cancelled" => format!("{emoji} Request {req_id} cancelled"),
+        "execution.completed" => format!("{emoji} Request {req_id} completed"),
+        "execution.failed" => format!("{emoji} Request {req_id} failed"),
+        "request.expired" => format!("{emoji} Request {req_id} expired"),
         "execution.lost" => format!("{emoji} Execution lost for {req_id}"),
         _ => format!("{emoji} {}: {req_id}", event.event_type),
     }
@@ -681,6 +684,121 @@ pub fn format_approvers_field(workflow_json: &str, current_step: u32) -> Option<
         }
         Some(lines.join("\n"))
     }
+}
+
+/// Build confirmation modal before executing a resumed request.
+pub fn build_resume_confirm_modal(request_id: &str, sql: &str, db: &str, env: &str) -> Value {
+    let sql_display: String = sql.chars().take(2000).collect::<String>().replace('`', "'");
+    let blocks: Vec<Value> = vec![
+        json!({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": format!("*Database:* {db} / {env}")}
+        }),
+        json!({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": format!("```{sql_display}```")}
+        }),
+        json!({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "⚠️ This will execute the query on the target database."}
+        }),
+    ];
+
+    json!({
+        "type": "modal",
+        "callback_id": "dbward_resume_modal",
+        "private_metadata": request_id,
+        "title": {"type": "plain_text", "text": "Confirm Execution"},
+        "submit": {"type": "plain_text", "text": "Execute"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "blocks": blocks
+    })
+}
+
+/// Build the "Create Request" modal for `/dbward` slash command.
+/// `databases` should already be filtered to accessible pairs only.
+pub fn build_create_request_modal(
+    databases: &[(
+        dbward_domain::values::DatabaseName,
+        dbward_domain::values::Environment,
+    )],
+    prefill_sql: Option<&str>,
+) -> Value {
+    let mut options: Vec<Value> = databases
+        .iter()
+        .map(|(db, env)| {
+            let value = format!("{}/{}", db.as_str(), env.as_str());
+            let text = format!("{} / {}", db.as_str(), env.as_str());
+            json!({
+                "text": {"type": "plain_text", "text": text},
+                "value": value
+            })
+        })
+        .collect();
+    options.sort_by(|a, b| {
+        a["value"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["value"].as_str().unwrap_or(""))
+    });
+    options.truncate(100);
+
+    if options.is_empty() {
+        options.push(json!({
+            "text": {"type": "plain_text", "text": "No databases available"},
+            "value": "none/none"
+        }));
+    }
+
+    let mut sql_element = json!({
+        "type": "plain_text_input",
+        "action_id": "sql_input",
+        "multiline": true,
+        "max_length": 3000,
+        "placeholder": {"type": "plain_text", "text": "SELECT * FROM ..."}
+    });
+    if let Some(sql) = prefill_sql {
+        let truncated: String = sql.chars().take(3000).collect();
+        sql_element["initial_value"] = json!(truncated);
+    }
+
+    let blocks: Vec<Value> = vec![
+        json!({
+            "type": "input",
+            "block_id": "db_env_block",
+            "element": {
+                "type": "static_select",
+                "action_id": "db_env_input",
+                "placeholder": {"type": "plain_text", "text": "Select database / environment"},
+                "options": options
+            },
+            "label": {"type": "plain_text", "text": "Database / Environment"}
+        }),
+        json!({
+            "type": "input",
+            "block_id": "sql_block",
+            "element": sql_element,
+            "label": {"type": "plain_text", "text": "SQL"}
+        }),
+        json!({
+            "type": "input",
+            "block_id": "reason_block",
+            "element": {
+                "type": "plain_text_input",
+                "action_id": "reason_input",
+                "placeholder": {"type": "plain_text", "text": "Why do you need to run this query?"}
+            },
+            "label": {"type": "plain_text", "text": "Reason"}
+        }),
+    ];
+
+    json!({
+        "type": "modal",
+        "callback_id": "dbward_create_modal",
+        "title": {"type": "plain_text", "text": "Execute SQL"},
+        "submit": {"type": "plain_text", "text": "Submit"},
+        "blocks": blocks
+    })
 }
 
 #[cfg(test)]

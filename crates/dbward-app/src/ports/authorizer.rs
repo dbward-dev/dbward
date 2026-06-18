@@ -61,6 +61,37 @@ pub trait Authorizer: Send + Sync {
 
     /// Global operations (workflow.manage, user.manage, etc. No DB scope.)
     fn authorize_global(&self, user: &AuthUser, permission: Permission) -> Result<(), AuthzError>;
+
+    /// Filter DB/Env pairs to only those the user can submit requests to.
+    fn filter_accessible(
+        &self,
+        user: &AuthUser,
+        pairs: &[(DatabaseName, Environment)],
+    ) -> Vec<(DatabaseName, Environment)> {
+        pairs
+            .iter()
+            .filter(|(db, env)| {
+                self.authorize_scoped(
+                    user,
+                    Permission::RequestQuery,
+                    db,
+                    env,
+                    &ResourceContext::Global,
+                )
+                .is_ok()
+                    || self
+                        .authorize_scoped(
+                            user,
+                            Permission::RequestExecute,
+                            db,
+                            env,
+                            &ResourceContext::Global,
+                        )
+                        .is_ok()
+            })
+            .cloned()
+            .collect()
+    }
 }
 
 /// Policy evaluation: workflow matching + execution policy lookup.

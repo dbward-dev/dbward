@@ -51,6 +51,16 @@ pub trait SlackClient: Send + Sync {
     async fn lookup_user_by_email(&self, _email: &str) -> Result<Option<String>, SlackError> {
         Ok(None)
     }
+
+    /// POST to a Slack response_url (slash command / interaction callback).
+    async fn post_response_url(
+        &self,
+        _url: &str,
+        _text: &str,
+        _ephemeral: bool,
+    ) -> Result<(), SlackError> {
+        Ok(())
+    }
 }
 
 /// Persists request_id → Slack message mapping.

@@ -96,10 +96,7 @@ impl dbward_commercial_license::runtime::LicenseHost for ServerLicenseHost {
             expires_at: None,
             approvers: None,
         };
-        bg.notifier().dispatch(webhook_event.clone());
-        if let Some(rn) = bg.request_notifier() {
-            rn.dispatch(webhook_event);
-        }
+        bg.notifier().dispatch(webhook_event);
     }
 
     fn metric_online_success(&self) {

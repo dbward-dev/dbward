@@ -246,4 +246,28 @@ impl SlackClient for SlackHttpClient {
         }
         Ok(json["user"]["id"].as_str().map(String::from))
     }
+
+    async fn post_response_url(
+        &self,
+        url: &str,
+        text: &str,
+        ephemeral: bool,
+    ) -> Result<(), SlackError> {
+        let response_type = if ephemeral { "ephemeral" } else { "in_channel" };
+        let body = serde_json::json!({
+            "response_type": response_type,
+            "text": text,
+        });
+        let resp = self
+            .http
+            .post(url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| SlackError::Network(e.to_string()))?;
+        if !resp.status().is_success() {
+            tracing::debug!(status = %resp.status(), "response_url POST non-2xx");
+        }
+        Ok(())
+    }
 }

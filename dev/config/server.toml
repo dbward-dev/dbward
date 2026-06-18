@@ -9,6 +9,24 @@ allow_private_networks = true
 [auth]
 mode = "token"
 
+[[auth.roles]]
+name = "slack-user"
+permissions = ["request.execute", "request.query", "request.resume", "request.cancel", "request.approve", "result.view"]
+databases = ["*"]
+environments = ["*"]
+
+[[auth.role_bindings]]
+role = "slack-user"
+subjects = ["alice", "bob"]
+
+[[auth.groups]]
+name = "backend-team"
+members = ["bob"]
+
+[[auth.groups]]
+name = "dba-team"
+members = ["bob"]
+
 # Database registry
 [[databases]]
 name = "app"
@@ -47,7 +65,7 @@ min = 1
 role = "dba"
 min = 1
 
-# Production: 2-step approval (backend-team then dba-team, distinct actors)
+# Production: 1-step approval
 [[workflows]]
 database = "*"
 environment = "production"
@@ -57,14 +75,7 @@ require_reason = true
 type = "approval"
 
 [[workflows.steps.approvers]]
-group = "backend-team"
-min = 1
-
-[[workflows.steps]]
-type = "approval"
-
-[[workflows.steps.approvers]]
-group = "dba-team"
+role = "slack-user"
 min = 1
 
 # Global webhooks (all events, all environments)
@@ -107,7 +118,7 @@ root_dir = "/data/results"
 request_ttl_days = 7
 audit_ttl_days = 30
 result_ttl_days = 1
-approval_ttl_secs = 60
+approval_ttl_secs = 600
 
 
 
@@ -159,5 +170,15 @@ webhooks = ["dev-receiver"]
 events = ["execution.completed"]
 
 [[users]]
-id = "config-alice"
+id = "alice"
 status = "active"
+
+[[users]]
+id = "bob"
+status = "active"
+
+# Slack integration (env vars set in .env or shell)
+[slack]
+bot_token = "${SLACK_BOT_TOKEN}"
+signing_secret = "${SLACK_SIGNING_SECRET}"
+channel = "C02C1EUJ0EN"
