@@ -343,7 +343,7 @@ mod tests {
         ) -> Result<(Vec<Request>, u32), AppError> {
             Ok((vec![], 0))
         }
-        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
+        fn find_by_idempotency_key(&self, _: &str, _: &str) -> Result<Option<Request>, AppError> {
             Ok(None)
         }
         fn list_visible_to_user(
@@ -470,6 +470,7 @@ mod tests {
             emergency: false,
             reason: None,
             idempotency_key: None,
+            idempotency_fingerprint: None,
             metadata_json: "{}".into(),
             share_with: vec![],
             no_result_store: false,
@@ -604,7 +605,7 @@ mod tests {
         ) -> Result<(Vec<Request>, u32), AppError> {
             Ok((vec![], 0))
         }
-        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
+        fn find_by_idempotency_key(&self, _: &str, _: &str) -> Result<Option<Request>, AppError> {
             Ok(None)
         }
         fn list_visible_to_user(

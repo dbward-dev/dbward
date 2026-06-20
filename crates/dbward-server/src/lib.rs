@@ -1,6 +1,7 @@
 pub mod background;
 pub mod bootstrap;
 pub mod config;
+pub mod mcp_backend;
 pub mod metrics;
 pub mod middleware;
 pub mod routes;
@@ -524,6 +525,14 @@ pub async fn run_from_args(
         draining: draining.clone(),
         slack_config,
         slack_client: slack_client_for_state,
+        mcp_enabled: cfg.mcp.enabled,
+        mcp_allowed_origins: cfg.mcp.allowed_origins.clone(),
+        mcp_default_database: cfg
+            .databases
+            .first()
+            .map(|d| d.name.clone())
+            .unwrap_or_default(),
+        mcp_default_environment: cfg.mcp.default_environment.clone(),
     }
     .build();
 

@@ -767,6 +767,7 @@ fn row_to_request(r: RequestRow) -> Result<Request, AppError> {
         emergency: r.emergency,
         reason: r.reason,
         idempotency_key: r.idempotency_key,
+        idempotency_fingerprint: None,
         metadata_json: r.metadata_json,
         share_with,
         no_result_store: r.no_result_store,

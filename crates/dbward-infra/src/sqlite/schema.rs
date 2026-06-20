@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 19;
+const SCHEMA_VERSION: u32 = 20;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -273,6 +273,11 @@ CREATE TABLE IF NOT EXISTS audit_purge_checkpoints (
 );
 ";
 
+const MIGRATION_V20: &str = "
+ALTER TABLE requests ADD COLUMN idempotency_fingerprint TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_idempotency ON requests(requester, idempotency_key);
+";
+
 /// Apply V14 source-column additions idempotently.
 fn apply_migration_v14(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(MIGRATION_V14)?;
@@ -419,6 +424,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         if current < 19 {
             conn.execute_batch(MIGRATION_V19)?;
         }
+        if current < 20 {
+            conn.execute_batch(MIGRATION_V20)?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())
@@ -473,7 +481,8 @@ CREATE TABLE IF NOT EXISTS requests (
     status TEXT NOT NULL DEFAULT 'pending',
     emergency INTEGER NOT NULL DEFAULT 0,
     reason TEXT,
-    idempotency_key TEXT UNIQUE,
+    idempotency_key TEXT,
+    idempotency_fingerprint TEXT,
     metadata_json TEXT NOT NULL DEFAULT '{}',
     share_with_json TEXT NOT NULL DEFAULT '[]',
     no_store INTEGER NOT NULL DEFAULT 0,
@@ -485,6 +494,7 @@ CREATE TABLE IF NOT EXISTS requests (
     resolved_at TEXT,
     expires_at TEXT
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_idempotency ON requests(requester, idempotency_key);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);
 CREATE INDEX IF NOT EXISTS idx_requests_requester ON requests(requester);
 CREATE INDEX IF NOT EXISTS idx_requests_database_id ON requests(database_id);

@@ -47,6 +47,8 @@ pub struct ServerConfig {
     pub auto_approve: Vec<AutoApproveConfig>,
     #[serde(default)]
     pub slack: Option<SlackConfig>,
+    #[serde(default)]
+    pub mcp: McpConfig,
 }
 
 impl ServerConfig {
@@ -1587,4 +1589,33 @@ audience = ""
         // active mode is "token" so role_mappings check is skipped
         assert!(cfg.validate_for_reload("token").is_ok());
     }
+}
+
+// --- MCP Config ---
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpConfig {
+    /// Enable /mcp endpoint. Default: true.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// CORS allowed origins for browser-based MCP clients. Empty = CORS disabled.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    /// Default environment when MCP client omits it. Default: "development".
+    #[serde(default = "default_environment")]
+    pub default_environment: String,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            allowed_origins: vec![],
+            default_environment: "development".into(),
+        }
+    }
+}
+
+fn default_environment() -> String {
+    "development".into()
 }

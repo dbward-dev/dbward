@@ -115,6 +115,10 @@ fn state_with_license(license: License) -> AppState {
         auth_mode: "token".into(),
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),
+        mcp_enabled: false,
+        mcp_allowed_origins: vec![],
+        mcp_default_database: String::new(),
+        mcp_default_environment: "development".into(),
     }
     .build()
 }

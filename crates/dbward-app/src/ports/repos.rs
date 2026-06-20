@@ -26,7 +26,11 @@ pub trait RequestReader: Send + Sync {
         status: Option<&str>,
         user: Option<&str>,
     ) -> Result<(Vec<Request>, u32), AppError>;
-    fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError>;
+    fn find_by_idempotency_key(
+        &self,
+        requester: &str,
+        key: &str,
+    ) -> Result<Option<Request>, AppError>;
     fn list_visible_to_user(
         &self,
         user_id: &str,

@@ -136,6 +136,7 @@ mod tests {
             emergency: false,
             reason: None,
             idempotency_key: None,
+            idempotency_fingerprint: None,
             metadata_json: "{}".into(),
             share_with: vec![],
             no_result_store: false,

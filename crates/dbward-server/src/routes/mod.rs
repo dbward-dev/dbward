@@ -1,4 +1,9 @@
-use axum::{Json, Router, extract::DefaultBodyLimit, http::StatusCode, middleware};
+use axum::{
+    Json, Router,
+    extract::DefaultBodyLimit,
+    http::{StatusCode, header},
+    middleware,
+};
 use dbward_app::error::AppError;
 
 use crate::state::AppState;
@@ -7,6 +12,7 @@ mod agent;
 mod audit;
 mod databases;
 mod health;
+pub(crate) mod mcp;
 mod metrics;
 mod policies;
 mod requests;
@@ -256,6 +262,7 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(policies::policy_resolution),
         )
         .route("/api/schemas/{db}", axum::routing::get(schemas::get_schema))
+        // MCP (moved to mcp_router below for CORS support)
         // Public key
         .route("/api/public-key", axum::routing::get(health::public_key))
         // Stub endpoints (M-16)
@@ -285,6 +292,54 @@ pub fn build_router(state: AppState) -> Router {
         ))
         .with_state(state.clone());
 
+    // MCP router: auth + optional CORS (preflight must bypass auth)
+    let mcp_router = {
+        use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
+        let mcp_route = Router::new()
+            .route(
+                "/mcp",
+                axum::routing::post(mcp::post_mcp)
+                    .get(mcp::method_not_allowed)
+                    .delete(mcp::method_not_allowed),
+            )
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                super::middleware::auth::auth_middleware,
+            ));
+
+        let cors = if state.mcp_allowed_origins.is_empty() {
+            None
+        } else {
+            let origins: Vec<_> = state
+                .mcp_allowed_origins
+                .iter()
+                .filter_map(|o| o.parse().ok())
+                .collect();
+            Some(
+                CorsLayer::new()
+                    .allow_origin(AllowOrigin::list(origins))
+                    .allow_methods(AllowMethods::list([
+                        axum::http::Method::POST,
+                        axum::http::Method::OPTIONS,
+                    ]))
+                    .allow_headers(AllowHeaders::list([
+                        header::AUTHORIZATION,
+                        header::CONTENT_TYPE,
+                        header::ACCEPT,
+                        // Phase 2: session management + SSE resumption
+                        "mcp-session-id".parse().unwrap(),
+                        "last-event-id".parse().unwrap(),
+                    ])),
+            )
+        };
+
+        if let Some(cors) = cors {
+            mcp_route.layer(cors).with_state(state.clone())
+        } else {
+            mcp_route.with_state(state.clone())
+        }
+    };
+
     let public = Router::new()
         .route("/health", axum::routing::get(health::health))
         .route("/ready", axum::routing::get(health::ready))
@@ -297,6 +352,7 @@ pub fn build_router(state: AppState) -> Router {
 
     public
         .merge(authed)
+        .merge(mcp_router)
         .layer(middleware::map_response(version_header))
         .layer(middleware::from_fn_with_state(
             metrics_state,

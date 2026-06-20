@@ -21,6 +21,7 @@ use dbward_app::use_cases::{
     dry_run::{DryRunClaim, DryRunSubmitResult},
     get_request::GetRequest,
     get_result::GetResult,
+    get_schema::GetSchema,
     list_requests::ListRequests,
     reject_request::RejectRequest,
     resume_request::ResumeRequest,
@@ -101,6 +102,12 @@ pub struct AppState {
     // Slack — pub(crate)
     pub(crate) slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub(crate) slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
+
+    // MCP
+    pub(crate) mcp_enabled: bool,
+    pub(crate) mcp_allowed_origins: Vec<String>,
+    pub(crate) mcp_default_database: String,
+    pub(crate) mcp_default_environment: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +373,20 @@ impl<'a> TokenUseCases<'a> {
     }
 }
 
+/// Schema use cases.
+pub(crate) struct SchemaUseCases<'a>(&'a AppState);
+
+impl<'a> SchemaUseCases<'a> {
+    pub(crate) fn get(&self) -> GetSchema {
+        let s = self.0;
+        GetSchema {
+            database_registry: s.database_registry.clone(),
+            schema_repo: s.schema_repo.clone(),
+            authorizer: s.authorizer.clone(),
+        }
+    }
+}
+
 /// User use cases.
 pub(crate) struct UserUseCases<'a>(&'a AppState);
 
@@ -410,6 +431,10 @@ impl AppState {
 
     pub(crate) fn users(&self) -> UserUseCases<'_> {
         UserUseCases(self)
+    }
+
+    pub(crate) fn schemas(&self) -> SchemaUseCases<'_> {
+        SchemaUseCases(self)
     }
 
     // --- Thin helpers ---
@@ -489,6 +514,7 @@ impl AppState {
         &self.database_registry
     }
 
+    #[allow(dead_code)]
     pub(crate) fn schema_repo(&self) -> &Arc<dyn SchemaRepo> {
         &self.schema_repo
     }
@@ -670,6 +696,14 @@ pub struct AppStateBuilder {
     pub draining: Arc<AtomicBool>,
     pub slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
+    #[allow(dead_code)]
+    pub mcp_enabled: bool,
+    #[allow(dead_code)]
+    pub mcp_allowed_origins: Vec<String>,
+    #[allow(dead_code)]
+    pub mcp_default_database: String,
+    #[allow(dead_code)]
+    pub mcp_default_environment: String,
 }
 
 impl AppStateBuilder {
@@ -718,6 +752,10 @@ impl AppStateBuilder {
             draining: self.draining,
             slack_config: self.slack_config,
             slack_client: self.slack_client,
+            mcp_enabled: self.mcp_enabled,
+            mcp_allowed_origins: self.mcp_allowed_origins,
+            mcp_default_database: self.mcp_default_database,
+            mcp_default_environment: self.mcp_default_environment,
         }
     }
 }

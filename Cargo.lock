@@ -604,6 +604,7 @@ dependencies = [
 name = "dbward"
 version = "0.1.6"
 dependencies = [
+ "async-trait",
  "base64 0.22.1",
  "chrono",
  "clap",
@@ -611,6 +612,7 @@ dependencies = [
  "dbward-api-types",
  "dbward-config",
  "dbward-domain",
+ "dbward-mcp",
  "dbward-migrate",
  "dirs",
  "flate2",
@@ -811,6 +813,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbward-mcp"
+version = "0.1.6"
+dependencies = [
+ "async-trait",
+ "dbward-domain",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "dbward-migrate"
 version = "0.1.6"
 dependencies = [
@@ -843,6 +858,7 @@ dependencies = [
  "dbward-config",
  "dbward-domain",
  "dbward-infra",
+ "dbward-mcp",
  "form_urlencoded",
  "futures-core",
  "hex",

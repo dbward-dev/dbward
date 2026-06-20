@@ -146,6 +146,7 @@ mod tests {
                     detail: "UPDATE t SET x=1".into(),
                     reason: None,
                     idempotency_key: None,
+                    idempotency_fingerprint: None,
                     emergency: false,
                     workflow_snapshot_json: None,
                     decision_trace_json: None,
@@ -183,6 +184,7 @@ mod tests {
         }
         fn find_by_idempotency_key(
             &self,
+            _: &str,
             _: &str,
         ) -> Result<Option<dbward_domain::entities::Request>, AppError> {
             Ok(None)

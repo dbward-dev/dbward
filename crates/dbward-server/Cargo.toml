@@ -17,9 +17,11 @@ dbward-api-types = { path = "../dbward-api-types" }
 dbward-config = { path = "../dbward-config" }
 dbward-domain = { path = "../dbward-domain" }
 dbward-infra = { path = "../dbward-infra" }
+dbward-mcp = { path = "../dbward-mcp" }
 dbward-commercial-license = { path = "../../commercial/license", optional = true }
 dbward-commercial-oidc = { path = "../../commercial/oidc", optional = true }
 clap = { version = "4", features = ["derive", "env"] }
+async-trait = "0.1"
 axum = "0.8"
 chrono.workspace = true
 tokio.workspace = true

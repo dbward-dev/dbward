@@ -161,6 +161,7 @@ fn user_suspend_and_request_cancel() {
         emergency: false,
         reason: None,
         idempotency_key: None,
+        idempotency_fingerprint: None,
         metadata_json: "{}".into(),
         share_with: vec![],
         no_result_store: false,
