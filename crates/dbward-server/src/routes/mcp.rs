@@ -68,7 +68,12 @@ pub(crate) async fn post_mcp(
     // Parse message
     let msg = match parse_message(&body) {
         Ok(m) => m,
-        Err(err_resp) => return json_response(StatusCode::OK, &err_resp),
+        Err(err_resp) => {
+            if let Some(e) = &err_resp.error {
+                state.metrics.mcp_errors_total.inc([&e.code.to_string()]);
+            }
+            return json_response(StatusCode::OK, &err_resp);
+        }
     };
 
     // Build backend
@@ -288,6 +293,7 @@ async fn dispatch_message(
 ) -> axum::response::Response {
     match msg {
         JsonRpcMessage::Request(req) => {
+            state.metrics.mcp_requests_total.inc([&req.method]);
             // Initialize creates a new session
             if req.method == "initialize" {
                 return handle_initialize_request(req, user, state).await;
@@ -312,7 +318,7 @@ async fn dispatch_message(
         }
 
         JsonRpcMessage::Notification(notif) => {
-            handle_notification(&notif.method, &notif.params, session.as_ref());
+            handle_notification(&notif.method, &notif.params, session.as_ref(), &state.metrics);
             StatusCode::ACCEPTED.into_response()
         }
 
@@ -328,6 +334,7 @@ async fn dispatch_message(
             for m in messages {
                 match m {
                     JsonRpcMessage::Request(req) => {
+                        state.metrics.mcp_requests_total.inc([&req.method]);
                         if req.method == "initialize" {
                             responses.push(JsonRpcResponse::error(
                                 req.id, INVALID_REQUEST, "initialize must not be sent in a batch",
@@ -343,7 +350,7 @@ async fn dispatch_message(
                         }
                     }
                     JsonRpcMessage::Notification(notif) => {
-                        handle_notification(&notif.method, &notif.params, session.as_ref());
+                        handle_notification(&notif.method, &notif.params, session.as_ref(), &state.metrics);
                     }
                     JsonRpcMessage::Response(resp) => {
                         if let Some(ref s) = session {
@@ -383,6 +390,7 @@ async fn handle_sse_request(
     }
 
     let stream_id = uuid::Uuid::new_v4().to_string();
+    state.metrics.mcp_sse_streams_total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (event_tx, event_rx) = mpsc::channel::<Event>(32);
     let stream_rt = Arc::new(StreamRuntime::new(stream_id.clone(), event_tx, state.mcp_replay_buffer_size));
     session.streams.insert(stream_id.clone(), stream_rt.clone());
@@ -409,7 +417,7 @@ async fn handle_sse_request(
             // Guard: ensures active_request_count is decremented on any exit (panic, abort, normal)
             let _guard = RequestGuard(session.clone());
 
-            let elicit = HttpElicitation::new(session.clone(), stream_rt.clone(), state.mcp_elicitation_timeout_secs);
+            let elicit = HttpElicitation::new(session.clone(), stream_rt.clone(), state.mcp_elicitation_timeout_secs, state.metrics.clone());
             let response = tokio::select! {
                 resp = handler::handle_request(
                     req, &backend, &elicit, &user,
@@ -470,7 +478,10 @@ async fn handle_initialize_request(
 
     let store = state.session_store();
     let session = match store.create(user.clone(), supports_elicitation) {
-        Some(s) => s,
+        Some(s) => {
+            state.metrics.mcp_sessions_created_total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            s
+        }
         None => {
             return (StatusCode::SERVICE_UNAVAILABLE, "too many sessions").into_response();
         }
@@ -490,7 +501,7 @@ async fn handle_initialize_request(
     response
 }
 
-fn handle_notification(method: &str, params: &serde_json::Value, session: Option<&Arc<SessionRuntime>>) {
+fn handle_notification(method: &str, params: &serde_json::Value, session: Option<&Arc<SessionRuntime>>, metrics: &crate::metrics::Metrics) {
     match method {
         "notifications/initialized" => {
             if let Some(s) = session {
@@ -503,11 +514,11 @@ fn handle_notification(method: &str, params: &serde_json::Value, session: Option
             }
         }
         "notifications/cancelled" => {
-            // Step 8: cancel handling
             if let Some(s) = session {
                 let req_id = request_id_key(&params["requestId"]);
                 if let Some((_, rt)) = s.requests.remove(&req_id) {
                     rt.cancel_token.cancel();
+                    metrics.mcp_cancel_total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
         }

@@ -469,6 +469,7 @@ impl AppState {
             &self.metrics,
             self.request_reader.as_ref(),
             self.agent_repo.as_ref(),
+            &self.session_store,
         ))
     }
 

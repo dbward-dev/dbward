@@ -53,6 +53,11 @@ impl SessionStore {
         self.sessions.is_empty()
     }
 
+    /// Iterate over all sessions (for gauge computation).
+    pub fn iter_sessions(&self) -> dashmap::iter::Iter<'_, String, Arc<SessionRuntime>> {
+        self.sessions.iter()
+    }
+
     /// Remove expired sessions and prune completed streams. Call from background task.
     pub fn cleanup_expired(&self) {
         let now = Instant::now();

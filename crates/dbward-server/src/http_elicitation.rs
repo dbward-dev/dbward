@@ -8,6 +8,7 @@ use tokio::sync::oneshot;
 
 use dbward_mcp::ports::{ElicitResult, ElicitationTransport};
 
+use crate::metrics::Metrics;
 use crate::session::{SessionRuntime, StreamRuntime, PHASE_ACTIVE};
 
 /// HTTP-based elicitation transport. Emits elicitation request on SSE,
@@ -16,11 +17,12 @@ pub struct HttpElicitation {
     session: Arc<SessionRuntime>,
     stream_rt: Arc<StreamRuntime>,
     timeout_secs: u64,
+    metrics: Arc<Metrics>,
 }
 
 impl HttpElicitation {
-    pub fn new(session: Arc<SessionRuntime>, stream_rt: Arc<StreamRuntime>, timeout_secs: u64) -> Self {
-        Self { session, stream_rt, timeout_secs }
+    pub fn new(session: Arc<SessionRuntime>, stream_rt: Arc<StreamRuntime>, timeout_secs: u64, metrics: Arc<Metrics>) -> Self {
+        Self { session, stream_rt, timeout_secs, metrics }
     }
 }
 
@@ -50,11 +52,22 @@ impl ElicitationTransport for HttpElicitation {
 
         // Wait with timeout
         match tokio::time::timeout(Duration::from_secs(self.timeout_secs), rx).await {
-            Ok(Ok(result)) => Ok(result),
-            Ok(Err(_)) => Ok(ElicitResult::Cancel), // sender dropped (session closed)
+            Ok(Ok(result)) => {
+                let outcome = match &result {
+                    ElicitResult::Accept { .. } => "accept",
+                    ElicitResult::Decline => "decline",
+                    ElicitResult::Cancel => "cancel",
+                };
+                self.metrics.mcp_elicitation_total.inc([outcome]);
+                Ok(result)
+            }
+            Ok(Err(_)) => {
+                self.metrics.mcp_elicitation_total.inc(["cancel"]);
+                Ok(ElicitResult::Cancel)
+            }
             Err(_) => {
-                // Timeout — remove the pending waiter
                 self.session.pending_elicitations.remove(&elicit_id);
+                self.metrics.mcp_elicitation_total.inc(["cancel"]);
                 Ok(ElicitResult::Cancel)
             }
         }

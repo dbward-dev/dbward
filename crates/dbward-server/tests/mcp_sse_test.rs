@@ -73,7 +73,7 @@ async fn http_elicitation_supported_only_when_active() {
     let (tx, _rx) = mpsc::channel(32);
     let stream = Arc::new(StreamRuntime::new("stream1".into(), tx, 100));
 
-    let elicit = HttpElicitation::new(session.clone(), stream, 300);
+    let elicit = HttpElicitation::new(session.clone(), stream, 300, std::sync::Arc::new(dbward_server::metrics::Metrics::new()));
 
     // Phase Initializing → not supported
     assert!(!dbward_mcp::ports::ElicitationTransport::supported(&elicit));
@@ -92,7 +92,7 @@ async fn http_elicitation_not_supported_without_client_capability() {
     let (tx, _rx) = mpsc::channel(32);
     let stream = Arc::new(StreamRuntime::new("stream1".into(), tx, 100));
 
-    let elicit = HttpElicitation::new(session, stream, 300);
+    let elicit = HttpElicitation::new(session, stream, 300, std::sync::Arc::new(dbward_server::metrics::Metrics::new()));
     assert!(!dbward_mcp::ports::ElicitationTransport::supported(&elicit));
 }
 
@@ -105,7 +105,7 @@ async fn http_elicitation_ask_emits_event_and_registers_waiter() {
     session.phase.store(PHASE_ACTIVE, Ordering::SeqCst);
     let (tx, _rx) = mpsc::channel(32);
     let stream = Arc::new(StreamRuntime::new("stream1".into(), tx, 100));
-    let elicit = HttpElicitation::new(session.clone(), stream.clone(), 1); // 1s timeout
+    let elicit = HttpElicitation::new(session.clone(), stream.clone(), 1, std::sync::Arc::new(dbward_server::metrics::Metrics::new())); // 1s timeout
 
     // Spawn ask in background (will timeout after 1s)
     let handle = tokio::spawn(async move {
@@ -140,7 +140,7 @@ async fn http_elicitation_ask_resolves_on_response() {
     let (tx, _rx) = mpsc::channel(32);
     let stream = Arc::new(StreamRuntime::new("stream1".into(), tx, 100));
     let session_clone = session.clone();
-    let elicit = HttpElicitation::new(session.clone(), stream, 300);
+    let elicit = HttpElicitation::new(session.clone(), stream, 300, std::sync::Arc::new(dbward_server::metrics::Metrics::new()));
 
     let handle = tokio::spawn(async move {
         elicit.ask("Why?", serde_json::json!({})).await
