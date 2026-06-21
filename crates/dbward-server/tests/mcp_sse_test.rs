@@ -190,3 +190,40 @@ async fn emit_after_mark_completed_does_not_panic() {
     let buf = stream.replay_buffer.read();
     assert_eq!(buf.len(), 1);
 }
+
+#[tokio::test]
+async fn elicitation_fails_fast_when_stream_dead() {
+    use dbward_mcp::ports::ElicitationTransport;
+    use dbward_server::http_elicitation::HttpElicitation;
+    use dbward_server::session::{SessionRuntime, StreamRuntime, PHASE_ACTIVE};
+
+    let session = std::sync::Arc::new(SessionRuntime::new(
+        "sess1".into(),
+        dbward_domain::auth::AuthUser {
+            subject_id: "u1".into(),
+            subject_type: dbward_domain::auth::SubjectType::User,
+            groups: vec![],
+            roles: vec![],
+            token_id: None,
+        },
+        true,
+    ));
+    session.phase.store(PHASE_ACTIVE, std::sync::atomic::Ordering::Relaxed);
+
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    let stream = std::sync::Arc::new(StreamRuntime::new("s1".into(), tx, 100));
+    drop(rx); // close the channel — simulates dead SSE connection
+
+    let metrics = std::sync::Arc::new(dbward_server::metrics::Metrics::new());
+    let elicit = HttpElicitation::new(session.clone(), stream, 300, metrics.clone());
+
+    let start = std::time::Instant::now();
+    let result = elicit.ask("Why?", serde_json::json!({"type": "object"})).await.unwrap();
+    let elapsed = start.elapsed();
+
+    // Should return Cancel immediately (not wait 300s timeout)
+    assert!(matches!(result, dbward_mcp::ports::ElicitResult::Cancel));
+    assert!(elapsed.as_secs() < 1, "Should fail fast, took {:?}", elapsed);
+    // Pending elicitation should be cleaned up
+    assert!(session.pending_elicitations.is_empty());
+}

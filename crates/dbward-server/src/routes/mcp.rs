@@ -638,3 +638,34 @@ fn route_elicitation_response(
         (StatusCode::BAD_REQUEST, "unknown elicitation id").into_response()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_method_known_methods() {
+        assert_eq!(normalize_method("initialize"), "initialize");
+        assert_eq!(normalize_method("tools/call"), "tools/call");
+        assert_eq!(normalize_method("tools/list"), "tools/list");
+        assert_eq!(normalize_method("resources/list"), "resources/list");
+        assert_eq!(normalize_method("notifications/cancelled"), "notifications/cancelled");
+    }
+
+    #[test]
+    fn normalize_method_unknown_bucketed() {
+        assert_eq!(normalize_method("foo/bar"), "unknown");
+        assert_eq!(normalize_method(""), "unknown");
+        assert_eq!(normalize_method("DROP TABLE users"), "unknown");
+    }
+
+    #[test]
+    fn request_id_key_distinguishes_types() {
+        let str_id = serde_json::json!("1");
+        let num_id = serde_json::json!(1);
+        // Must produce different keys
+        assert_ne!(request_id_key(&str_id), request_id_key(&num_id));
+        assert_eq!(request_id_key(&str_id), "s:1");
+        assert_eq!(request_id_key(&num_id), "n:1");
+    }
+}

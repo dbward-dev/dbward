@@ -294,4 +294,49 @@ mod tests {
         // receiver should get None (channel closed)
         assert!(rx.try_recv().is_err());
     }
+
+    #[test]
+    fn shutdown_marks_all_streams_completed() {
+        let session = SessionRuntime::new("sess1".into(), test_user(), true);
+
+        let (tx1, _rx1) = mpsc::channel(1);
+        let stream1 = std::sync::Arc::new(StreamRuntime::new("s1".into(), tx1, 100));
+        let (tx2, _rx2) = mpsc::channel(1);
+        let stream2 = std::sync::Arc::new(StreamRuntime::new("s2".into(), tx2, 100));
+
+        session.streams.insert("s1".into(), stream1.clone());
+        session.streams.insert("s2".into(), stream2.clone());
+
+        assert!(!stream1.completed.load(Ordering::Relaxed));
+        assert!(!stream2.completed.load(Ordering::Relaxed));
+
+        session.shutdown();
+
+        // Both streams should be marked completed (channels closed)
+        assert!(stream1.completed.load(Ordering::Relaxed));
+        assert!(stream2.completed.load(Ordering::Relaxed));
+        assert!(stream1.event_tx.lock().is_none());
+        assert!(stream2.event_tx.lock().is_none());
+    }
+
+    #[tokio::test]
+    async fn emit_raw_returns_false_when_channel_closed() {
+        let (tx, rx) = mpsc::channel(1);
+        let stream = StreamRuntime::new("s1".into(), tx, 100);
+        drop(rx); // close the receiving end
+
+        let delivered = stream.emit_raw("test").await;
+        assert!(!delivered);
+        // Event should still be in replay buffer despite delivery failure
+        assert_eq!(stream.replay_buffer.read().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn emit_raw_returns_true_when_channel_open() {
+        let (tx, _rx) = mpsc::channel(32);
+        let stream = StreamRuntime::new("s1".into(), tx, 100);
+
+        let delivered = stream.emit_raw("test").await;
+        assert!(delivered);
+    }
 }
