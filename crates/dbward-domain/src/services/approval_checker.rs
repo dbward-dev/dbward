@@ -11,8 +11,8 @@ pub fn is_approvable_by(
     allow_self_approve: bool,
     allow_same_approver_across_steps: bool,
 ) -> bool {
-    // 1. Admin override: admin permission holders can always approve
-    //    (but self-approve is still blocked per ADR-002)
+    // Admin override: admin permission holders can always approve
+    // (but self-approve is still blocked per ADR-002)
     let is_admin = user.has_permission(Permission::All);
 
     // Self-approve check (applies even to admin)
@@ -20,22 +20,73 @@ pub fn is_approvable_by(
         return false;
     }
 
-    // 2. Admin bypasses cross-step and approver matching
+    // Admin bypasses cross-step and approver matching
     if is_admin {
         return true;
     }
 
-    // Cross-step distinct actors check
-    if !allow_same_approver_across_steps && previous_approver_ids.contains(&user.subject_id) {
+    let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
+    is_approvable_by_attrs_inner(
+        &user.subject_id,
+        &role_names,
+        &user.groups,
+        approvers,
+        previous_approver_ids,
+        allow_same_approver_across_steps,
+    )
+}
+
+/// Attribute-based version for use inside TX closures where &AuthUser is not available.
+/// Includes admin override via `is_admin` param (Phase 4 will remove this).
+#[allow(clippy::too_many_arguments)]
+pub fn is_approvable_by_attrs(
+    user_id: &str,
+    role_names: &[String],
+    groups: &[String],
+    approvers: &[ApproverGroup],
+    requester_id: &str,
+    previous_approver_ids: &[String],
+    allow_self_approve: bool,
+    allow_same_approver_across_steps: bool,
+    is_admin: bool,
+) -> bool {
+    // Self-approve check (applies even to admin)
+    if !allow_self_approve && user_id == requester_id {
         return false;
     }
 
-    // 3. Check if user matches any approver group's selector
-    let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
-    approvers.iter().any(|ag| {
-        ag.selector
-            .matches(&role_names, &user.groups, &user.subject_id, false)
-    })
+    // Admin bypasses cross-step and approver matching (Phase 4 will remove this)
+    if is_admin {
+        return true;
+    }
+
+    is_approvable_by_attrs_inner(
+        user_id,
+        role_names,
+        groups,
+        approvers,
+        previous_approver_ids,
+        allow_same_approver_across_steps,
+    )
+}
+
+fn is_approvable_by_attrs_inner(
+    user_id: &str,
+    role_names: &[String],
+    groups: &[String],
+    approvers: &[ApproverGroup],
+    previous_approver_ids: &[String],
+    allow_same_approver_across_steps: bool,
+) -> bool {
+    // Cross-step distinct actors check
+    if !allow_same_approver_across_steps && previous_approver_ids.contains(&user_id.to_string()) {
+        return false;
+    }
+
+    // Check if user matches any approver group's selector
+    approvers
+        .iter()
+        .any(|ag| ag.selector.matches(role_names, groups, user_id, false))
 }
 
 #[cfg(test)]

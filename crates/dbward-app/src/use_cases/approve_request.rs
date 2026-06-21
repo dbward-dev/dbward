@@ -148,10 +148,7 @@ impl ApproveRequest {
             }));
         }
 
-        // 8. Find which selector the user matches
-        let matched_selector = find_matched_selector(user, &step.approvers);
-
-        // 9. Check distinct actors within same step
+        // 9. Check distinct actors within same step (fast-fail before TX)
         let already_approved_this_step = approvals.iter().any(|a| {
             a.step_index == current_step_index
                 && a.actor_id == user.subject_id
@@ -161,88 +158,188 @@ impl ApproveRequest {
             return Err(AppError::Conflict("already approved this step".into()));
         }
 
-        // 10. Insert approval
-        let comment = input.comment.clone();
-        let approval = Approval {
-            id: self.id_gen.generate(),
-            request_id: request.id.clone(),
-            action: ApprovalAction::Approve,
-            actor_id: user.subject_id.clone(),
-            matched_selector,
-            step_index: current_step_index,
-            comment: input.comment,
-            created_at: now,
-        };
+        // Pre-generate approval ID before entering TX
+        let approval_id = self.id_gen.generate();
 
-        // 11. Check if step (and all steps) are now satisfied
-        let mut all_approvals = approvals;
-        all_approvals.push(approval.clone());
-
-        let all_satisfied = workflow_matcher::all_steps_satisfied(&workflow.steps, &all_approvals);
-
-        let step_completed = if all_satisfied {
-            total_steps
-        } else {
-            workflow_matcher::find_current_step(&workflow.steps, &all_approvals)
-        };
-
-        let trigger = if all_satisfied {
-            RequestTrigger::ApproveFinal
-        } else {
-            RequestTrigger::ApproveStep
-        };
-
-        let result = status_machine::transition(
-            request.status,
-            &trigger,
-            TransitionContext {
-                request_id: request.id.clone(),
-                actor_id: user.subject_id.clone(),
-                actor_type: user.subject_type,
-                database: request.database.clone(),
-                environment: request.environment.clone(),
-                operation: request.operation,
-                timestamp: now,
-                metadata: if all_satisfied {
-                    EventMetadata::Approved {
-                        comment: comment.clone(),
-                    }
-                } else {
-                    EventMetadata::StepApproved {
-                        step_index: current_step_index,
-                        total_steps,
-                        comment,
-                    }
-                },
-                requester_id: request.requester.clone(),
-                audit_context: ctx.clone(),
-            },
-        )
-        .map_err(|e| AppError::Conflict(e.to_string()))?;
-
-        let new_status = result.status();
-
-        let event = result.into_event();
-        let audit_event = crate::services::audit_event_builder::build_audit_event(
-            &event,
-            now,
-            crate::services::audit_event_builder::RedactionMode::default(),
-            crate::services::audit_event_builder::noop_redact,
-        );
-
-        // Atomic: approval + optional status change + audit
+        // Atomic: approval + in-TX recheck + optional status change + audit (Phase 2b)
         let request_id = request.id.clone();
-        self.uow.execute(Box::new(move |tx| {
+        let request_db = request.database.clone();
+        let request_env = request.environment.clone();
+        let request_requester = request.requester.clone();
+        let request_op = request.operation;
+        let wf_allow_self = workflow.allow_self_approve;
+        let wf_allow_cross = workflow.allow_same_approver_across_steps;
+        let wf_steps = workflow.steps.clone();
+        let user_id = user.subject_id.clone();
+        let user_type = user.subject_type;
+        let user_roles: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
+        let user_groups = user.groups.clone();
+        let is_admin = user.has_permission(Permission::All);
+        let audit_ctx = ctx.clone();
+        let comment_clone = input.comment.clone();
+
+        // Capture fresh time just before entering TX for authoritative checks
+        let tx_now = self.clock.now();
+
+        let tx_result = crate::ports::transaction::uow_execute(self.uow.as_ref(), |tx| {
+            // Use fresh timestamp from injected clock (after lock acquired)
+            // Note: In SQLite BEGIN IMMEDIATE, lock acquisition is near-instant (same-process mutex),
+            // so the difference between pre-TX and post-TX clock is negligible in practice.
+            // We use tx_now captured just before entering the TX for consistency.
+            let now = tx_now;
+
+            // Re-check status + expiry inside TX (authoritative)
+            let state = tx.get_request_state(&request_id)?;
+            let (status, expires_at) =
+                state.ok_or_else(|| AppError::NotFound("request not found".into()))?;
+            if status != RequestStatus::Pending {
+                return Err(AppError::Conflict(format!(
+                    "request is {}, expected pending",
+                    status.as_str()
+                )));
+            }
+            if let Some(ea) = expires_at
+                && now >= ea
+            {
+                return Err(AppError::Gone("request has expired".into()));
+            }
+
+            // Re-fetch approvals inside TX
+            let approvals = tx.get_approvals(&request_id)?;
+            let current_step_index = workflow_matcher::find_current_step(&wf_steps, &approvals);
+            let total_steps = wf_steps.len() as u32;
+
+            if current_step_index >= total_steps {
+                return Err(AppError::Conflict("all steps already satisfied".into()));
+            }
+
+            let step = &wf_steps[current_step_index as usize];
+
+            // Re-check approvability
+            let previous_approver_ids: Vec<String> = approvals
+                .iter()
+                .filter(|a| {
+                    a.step_index < current_step_index && a.action == ApprovalAction::Approve
+                })
+                .map(|a| a.actor_id.clone())
+                .collect();
+
+            if !approval_checker::is_approvable_by_attrs(
+                &user_id,
+                &user_roles,
+                &user_groups,
+                step.approvers.as_slice(),
+                &request_requester,
+                &previous_approver_ids,
+                wf_allow_self,
+                wf_allow_cross,
+                is_admin,
+            ) {
+                return Err(AppError::Forbidden(AuthzError::Forbidden {
+                    permission: Permission::RequestApprove,
+                    reason: "not eligible to approve this step (recheck)".into(),
+                }));
+            }
+
+            // Re-check already approved this step
+            let already = approvals.iter().any(|a| {
+                a.step_index == current_step_index
+                    && a.actor_id == user_id
+                    && a.action == ApprovalAction::Approve
+            });
+            if already {
+                return Err(AppError::Conflict("already approved this step".into()));
+            }
+
+            // Find matched selector
+            let matched_selector = find_matched_selector_by_attrs(
+                &user_roles,
+                &user_groups,
+                &user_id,
+                &step.approvers,
+            );
+
+            // Build approval
+            let approval = Approval {
+                id: approval_id.clone(),
+                request_id: request_id.clone(),
+                action: ApprovalAction::Approve,
+                actor_id: user_id.clone(),
+                matched_selector,
+                step_index: current_step_index,
+                comment: comment_clone.clone(),
+                created_at: now,
+            };
+
+            // Check satisfaction
+            let mut all_approvals = approvals;
+            all_approvals.push(approval.clone());
+            let all_satisfied = workflow_matcher::all_steps_satisfied(&wf_steps, &all_approvals);
+
+            let step_completed = if all_satisfied {
+                total_steps
+            } else {
+                workflow_matcher::find_current_step(&wf_steps, &all_approvals)
+            };
+
+            let trigger = if all_satisfied {
+                RequestTrigger::ApproveFinal
+            } else {
+                RequestTrigger::ApproveStep
+            };
+
+            let result = status_machine::transition(
+                status,
+                &trigger,
+                TransitionContext {
+                    request_id: request_id.clone(),
+                    actor_id: user_id.clone(),
+                    actor_type: user_type,
+                    database: request_db.clone(),
+                    environment: request_env.clone(),
+                    operation: request_op,
+                    timestamp: now,
+                    metadata: if all_satisfied {
+                        EventMetadata::Approved {
+                            comment: comment_clone,
+                        }
+                    } else {
+                        EventMetadata::StepApproved {
+                            step_index: current_step_index,
+                            total_steps,
+                            comment: comment_clone,
+                        }
+                    },
+                    requester_id: request_requester.clone(),
+                    audit_context: audit_ctx,
+                },
+            )
+            .map_err(|e| AppError::Conflict(e.to_string()))?;
+
+            let new_status = result.status();
+            let event = result.into_event();
+            let audit_event = crate::services::audit_event_builder::build_audit_event(
+                &event,
+                now,
+                crate::services::audit_event_builder::RedactionMode::default(),
+                crate::services::audit_event_builder::noop_redact,
+            );
+
             tx.insert_approval(&approval)?;
             if all_satisfied {
                 let ok = tx.mark_approved(&request_id, now)?;
                 if !ok {
-                    return Err(AppError::Conflict("concurrent status change".into()));
+                    return Err(AppError::Conflict(
+                        "concurrent status change or expired".into(),
+                    ));
                 }
             }
             tx.record(&audit_event)?;
-            Ok(())
-        }))?;
+
+            Ok((new_status, step_completed, total_steps, event))
+        })?;
+
+        let (new_status, step_completed, total_steps, event) = tx_result;
 
         // Post-commit: best-effort notification
         self.notifier
@@ -261,26 +358,19 @@ impl ApproveRequest {
     }
 }
 
-/// Find which selector the user matches in the approver groups.
-fn find_matched_selector(
-    user: &AuthUser,
+/// Attribute-based version for use inside TX closures.
+fn find_matched_selector_by_attrs(
+    role_names: &[String],
+    groups: &[String],
+    user_id: &str,
     approvers: &[dbward_domain::policies::workflow::ApproverGroup],
 ) -> String {
-    let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
     for ag in approvers {
-        if ag
-            .selector
-            .matches(&role_names, &user.groups, &user.subject_id, false)
-        {
+        if ag.selector.matches(role_names, groups, user_id, false) {
             return ag.selector.to_string();
         }
     }
-    if user.roles.iter().any(|r| {
-        r.permissions
-            .contains(&dbward_domain::auth::Permission::All)
-    }) {
-        return "admin_override".to_string();
-    }
+    // Admin override fallback (Phase 4 will remove this)
     "unknown".to_string()
 }
 

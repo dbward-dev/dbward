@@ -76,7 +76,7 @@ fn parse_database_id(id: &str) -> Result<(DatabaseName, Environment), AppError> 
     Ok((db, env))
 }
 
-fn parse_status(s: &str) -> Result<RequestStatus, AppError> {
+pub(crate) fn parse_status(s: &str) -> Result<RequestStatus, AppError> {
     match s {
         "pending" => Ok(RequestStatus::Pending),
         "approved" => Ok(RequestStatus::Approved),
@@ -94,7 +94,7 @@ fn parse_status(s: &str) -> Result<RequestStatus, AppError> {
     }
 }
 
-fn parse_approval_action(s: &str) -> Result<ApprovalAction, AppError> {
+pub(crate) fn parse_approval_action(s: &str) -> Result<ApprovalAction, AppError> {
     match s {
         "approve" => Ok(ApprovalAction::Approve),
         "reject" => Ok(ApprovalAction::Reject),
@@ -109,7 +109,7 @@ pub(crate) fn approval_action_str(a: &ApprovalAction) -> &'static str {
     }
 }
 
-fn parse_ts(s: &str) -> Result<DateTime<Utc>, AppError> {
+pub(crate) fn parse_ts(s: &str) -> Result<DateTime<Utc>, AppError> {
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
         .map_err(|e| AppError::Internal(format!("invalid timestamp '{s}': {e}")))

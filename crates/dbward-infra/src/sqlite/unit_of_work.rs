@@ -6,15 +6,17 @@ use rusqlite::{Connection, params};
 
 use dbward_app::error::AppError;
 use dbward_app::ports::transaction::{
-    ApprovalWriterOps, AuditWriterOps, ExecutionWriterOps, RequestWriterOps, TokenWriterOps,
-    TxScope, UnitOfWork, UserWriterOps,
+    ApprovalReaderOps, ApprovalWriterOps, AuditWriterOps, ExecutionWriterOps, RequestWriterOps,
+    TokenWriterOps, TxScope, UnitOfWork, UserWriterOps,
 };
 use dbward_domain::entities::{Approval, AuditEvent, Execution, Request, RequestStatus, Token};
 
 use super::DbConn;
 use super::audit_helper::insert_audit_event_raw;
 use super::error::db_err;
-use super::request_repo::{approval_action_str, database_id};
+use super::request_repo::{
+    approval_action_str, database_id, parse_approval_action, parse_status, parse_ts,
+};
 
 /// SQLite Unit of Work. Holds `DbConn` and acquires exclusive lock for entire closure.
 pub struct SqliteUnitOfWork {
@@ -175,7 +177,20 @@ impl RequestWriterOps for SqliteTxScope<'_> {
     }
 
     fn mark_approved(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
-        self.update_status_guarded(id, RequestStatus::Approved, &["pending", "dispatched"], now)
+        // Phase 2c: Atomic expiry check — reject if request has expired even if background
+        // job hasn't updated status yet. Uses dedicated SQL instead of update_status_guarded
+        // because other status transitions don't need the expires_at predicate.
+        let now_str = now.to_rfc3339();
+        let n = self
+            .conn
+            .execute(
+                "UPDATE requests SET status = 'approved', updated_at = ?2, resolved_at = ?2 \
+                 WHERE id = ?1 AND status = 'pending' \
+                 AND (expires_at IS NULL OR expires_at > ?2)",
+                rusqlite::params![id, now_str],
+            )
+            .map_err(db_err("tx: mark_approved"))?;
+        Ok(n > 0)
     }
 
     fn mark_rejected(&self, id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
@@ -321,6 +336,81 @@ impl ApprovalWriterOps for SqliteTxScope<'_> {
             )
             .map_err(db_err("tx: insert_approval"))?;
         Ok(())
+    }
+}
+
+impl ApprovalReaderOps for SqliteTxScope<'_> {
+    fn get_approvals(&self, request_id: &str) -> Result<Vec<Approval>, AppError> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT id, request_id, actor_id, action, matched_selector, step_index, comment, created_at \
+                 FROM approvals WHERE request_id = ?1 ORDER BY created_at",
+            )
+            .map_err(db_err("tx: get_approvals"))?;
+        let rows = stmt
+            .query_map(params![request_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, u32>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, String>(7)?,
+                ))
+            })
+            .map_err(db_err("tx: get_approvals"))?;
+        let mut approvals = Vec::new();
+        for row in rows {
+            let (
+                id,
+                req_id,
+                actor_id,
+                action_str,
+                matched_selector,
+                step_index,
+                comment,
+                created_at_str,
+            ) = row.map_err(db_err("tx: get_approvals row"))?;
+            approvals.push(Approval {
+                id,
+                request_id: req_id,
+                actor_id,
+                action: parse_approval_action(&action_str)?,
+                matched_selector,
+                step_index,
+                comment,
+                created_at: parse_ts(&created_at_str)?,
+            });
+        }
+        Ok(approvals)
+    }
+
+    fn get_request_state(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<dbward_app::ports::transaction::RequestState>, AppError> {
+        use rusqlite::OptionalExtension;
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT status, expires_at FROM requests WHERE id = ?1")
+            .map_err(db_err("tx: get_request_state"))?;
+        let result = stmt
+            .query_row(params![request_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })
+            .optional()
+            .map_err(db_err("tx: get_request_state"))?;
+        match result {
+            None => Ok(None),
+            Some((status_str, expires_at_str)) => {
+                let status = parse_status(&status_str)?;
+                let expires_at = expires_at_str.map(|s| parse_ts(&s)).transpose()?;
+                Ok(Some((status, expires_at)))
+            }
+        }
     }
 }
 
