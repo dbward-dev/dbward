@@ -174,7 +174,6 @@ impl ApproveRequest {
         let user_type = user.subject_type;
         let user_roles: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
         let user_groups = user.groups.clone();
-        let is_admin = user.has_permission(Permission::All);
         let audit_ctx = ctx.clone();
         let comment_clone = input.comment.clone();
 
@@ -233,7 +232,6 @@ impl ApproveRequest {
                 &previous_approver_ids,
                 wf_allow_self,
                 wf_allow_cross,
-                is_admin,
             ) {
                 return Err(AppError::Forbidden(AuthzError::Forbidden {
                     permission: Permission::RequestApprove,

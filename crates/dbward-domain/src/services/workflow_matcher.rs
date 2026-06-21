@@ -386,14 +386,6 @@ pub fn is_step_satisfied(step: &WorkflowStep, step_index: u32, approvals: &[Appr
         .filter(|a| a.step_index == step_index && a.action == ApprovalAction::Approve)
         .collect();
 
-    // Admin override satisfies the entire step
-    if step_approvals
-        .iter()
-        .any(|a| a.matched_selector == "admin_override")
-    {
-        return true;
-    }
-
     match step.mode {
         WorkflowStepMode::All => step.approvers.iter().all(|ag| {
             let count = step_approvals

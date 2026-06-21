@@ -1,4 +1,4 @@
-use crate::auth::{AuthUser, Permission};
+use crate::auth::AuthUser;
 use crate::policies::workflow::ApproverGroup;
 
 /// Determines whether a user can approve a given workflow step.
@@ -11,18 +11,9 @@ pub fn is_approvable_by(
     allow_self_approve: bool,
     allow_same_approver_across_steps: bool,
 ) -> bool {
-    // Admin override: admin permission holders can always approve
-    // (but self-approve is still blocked per ADR-002)
-    let is_admin = user.has_permission(Permission::All);
-
-    // Self-approve check (applies even to admin)
+    // Self-approve check
     if !allow_self_approve && user.subject_id == requester_id {
         return false;
-    }
-
-    // Admin bypasses cross-step and approver matching
-    if is_admin {
-        return true;
     }
 
     let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
@@ -37,7 +28,6 @@ pub fn is_approvable_by(
 }
 
 /// Attribute-based version for use inside TX closures where &AuthUser is not available.
-/// Includes admin override via `is_admin` param (Phase 4 will remove this).
 #[allow(clippy::too_many_arguments)]
 pub fn is_approvable_by_attrs(
     user_id: &str,
@@ -48,16 +38,10 @@ pub fn is_approvable_by_attrs(
     previous_approver_ids: &[String],
     allow_self_approve: bool,
     allow_same_approver_across_steps: bool,
-    is_admin: bool,
 ) -> bool {
-    // Self-approve check (applies even to admin)
+    // Self-approve check
     if !allow_self_approve && user_id == requester_id {
         return false;
-    }
-
-    // Admin bypasses cross-step and approver matching (Phase 4 will remove this)
-    if is_admin {
-        return true;
     }
 
     is_approvable_by_attrs_inner(
@@ -257,9 +241,9 @@ mod tests {
     }
 
     #[test]
-    fn admin_bypasses_approver_matching() {
+    fn admin_does_not_bypass_approver_matching() {
         let admin = make_admin("admin-user");
-        assert!(is_approvable_by(
+        assert!(!is_approvable_by(
             &admin,
             &[approver_role("dba")],
             "bob",
@@ -270,10 +254,10 @@ mod tests {
     }
 
     #[test]
-    fn admin_bypasses_cross_step() {
+    fn admin_does_not_bypass_cross_step() {
         let admin = make_admin("admin-user");
         let prev = vec!["admin-user".to_string()];
-        assert!(is_approvable_by(
+        assert!(!is_approvable_by(
             &admin,
             &[approver_role("dba")],
             "bob",

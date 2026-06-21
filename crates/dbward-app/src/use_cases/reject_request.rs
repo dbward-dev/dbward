@@ -137,9 +137,9 @@ impl RejectRequest {
                             .matches(&role_names, &user.groups, &user.subject_id, false)
                     })
                     .map(|ag| ag.selector.to_string())
-                    .unwrap_or_else(|| "admin".to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
             } else {
-                "admin".to_string()
+                "unknown".to_string()
             }
         };
 
