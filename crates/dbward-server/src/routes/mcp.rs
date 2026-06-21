@@ -165,7 +165,9 @@ pub(crate) async fn get_mcp(
     }
 
     // Replay from buffer
-    let (tx, rx) = mpsc::channel::<Event>(256);
+    // Channel capacity >= replay_buffer to guarantee full replay without drops
+    let replay_cap = stream_rt.replay_capacity.max(256);
+    let (tx, rx) = mpsc::channel::<Event>(replay_cap);
     let mut max_replayed_seq = after_seq;
     {
         let buf = stream_rt.replay_buffer.read();
@@ -414,18 +416,22 @@ async fn handle_sse_request(
     let req_id_str = req.id.as_ref().map(request_id_key).unwrap_or_default();
     let req_id_value = req.id.clone();
 
-    // Reject duplicate in-flight IDs to prevent orphaned tasks
-    if session.requests.contains_key(&req_id_str) {
-        session.active_request_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-        return StatusCode::CONFLICT.into_response();
+    // Reject duplicate in-flight IDs to prevent orphaned tasks (atomic check+insert)
+    use dashmap::mapref::entry::Entry;
+    let req_entry = session.requests.entry(req_id_str.clone());
+    match req_entry {
+        Entry::Occupied(_) => {
+            session.active_request_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            return StatusCode::CONFLICT.into_response();
+        }
+        Entry::Vacant(v) => {
+            v.insert(RequestRuntime {
+                stream_id: stream_id.clone(),
+                cancel_token: cancel_token.clone(),
+                abort_handle: tokio::spawn(async {}).abort_handle(), // placeholder
+            });
+        }
     }
-
-    // Pre-register with a dummy abort handle; we'll update after spawn
-    session.requests.insert(req_id_str.clone(), RequestRuntime {
-        stream_id: stream_id.clone(),
-        cancel_token: cancel_token.clone(),
-        abort_handle: tokio::spawn(async {}).abort_handle(), // placeholder
-    });
 
     let task = tokio::spawn({
         let session = session.clone();
@@ -607,7 +613,11 @@ fn route_elicitation_response(
     session: &crate::session::SessionRuntime,
     resp: &dbward_mcp::protocol::JsonRpcIncomingResponse,
 ) -> axum::response::Response {
-    let id_str = request_id_key(&resp.id);
+    // Elicitation IDs are always strings like "elicit-N" — use raw value, not request_id_key
+    let id_str = match &resp.id {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
 
     // Validate before removing
     if resp.error.is_none() {
