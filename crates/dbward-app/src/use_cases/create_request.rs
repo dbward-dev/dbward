@@ -1158,9 +1158,20 @@ fn extract_approvers(req: &dbward_domain::entities::Request) -> Vec<String> {
                     })
                     .ok()
                     .and_then(|v| {
-                        v["steps"][0]["approvers"].as_array().map(|arr| {
-                            arr.iter()
-                                .filter_map(|a| a["selector"].as_str().map(String::from))
+                        // Return approvers from ALL steps (we don't know current step without
+                        // querying approvals, and this is only used for notification hints).
+                        v["steps"].as_array().map(|steps| {
+                            steps
+                                .iter()
+                                .flat_map(|step| {
+                                    step["approvers"]
+                                        .as_array()
+                                        .into_iter()
+                                        .flatten()
+                                        .filter_map(|a| a["selector"].as_str().map(String::from))
+                                })
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
                                 .collect()
                         })
                     })
