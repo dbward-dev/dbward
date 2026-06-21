@@ -558,7 +558,7 @@ impl CreateRequest {
         if let Some(key) = &input.idempotency_key
             && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
         {
-            let approvers = extract_approvers(&existing);
+            let approvers = pending_approvers_for(self.request_reader.as_ref(), &existing);
             return Ok(CreateRequestOutput {
                 id: existing.id,
                 status: existing.status,
@@ -852,7 +852,8 @@ impl CreateRequest {
                             && let Some(existing) =
                                 self.request_reader.find_by_idempotency_key(key)?
                         {
-                            let approvers = extract_approvers(&existing);
+                            let approvers =
+                                pending_approvers_for(self.request_reader.as_ref(), &existing);
                             return Ok(CreateRequestOutput {
                                 id: existing.id,
                                 status: existing.status,
@@ -972,7 +973,8 @@ impl CreateRequest {
                     if let Some(ref key) = request.idempotency_key
                         && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
                     {
-                        let approvers = extract_approvers(&existing);
+                        let approvers =
+                            pending_approvers_for(self.request_reader.as_ref(), &existing);
                         return Ok(CreateRequestOutput {
                             id: existing.id,
                             status: existing.status,
@@ -1036,7 +1038,8 @@ impl CreateRequest {
                     if let Some(ref key) = request.idempotency_key
                         && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
                     {
-                        let approvers = extract_approvers(&existing);
+                        let approvers =
+                            pending_approvers_for(self.request_reader.as_ref(), &existing);
                         return Ok(CreateRequestOutput {
                             id: existing.id,
                             status: existing.status,
@@ -1143,43 +1146,18 @@ impl CreateRequest {
     }
 }
 
-fn extract_approvers(req: &dbward_domain::entities::Request) -> Vec<String> {
-    if req.status == dbward_domain::entities::RequestStatus::Pending {
-        req.workflow_snapshot_json
-            .as_ref()
-            .and_then(|json| {
-                serde_json::from_str::<serde_json::Value>(json)
-                    .inspect_err(|e| {
-                        tracing::warn!(
-                            error = %e,
-                            request_id = %req.id,
-                            "corrupt workflow_snapshot_json in extract_approvers"
-                        );
-                    })
-                    .ok()
-                    .and_then(|v| {
-                        // Return approvers from ALL steps (we don't know current step without
-                        // querying approvals, and this is only used for notification hints).
-                        v["steps"].as_array().map(|steps| {
-                            steps
-                                .iter()
-                                .flat_map(|step| {
-                                    step["approvers"]
-                                        .as_array()
-                                        .into_iter()
-                                        .flatten()
-                                        .filter_map(|a| a["selector"].as_str().map(String::from))
-                                })
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect()
-                        })
-                    })
-            })
-            .unwrap_or_default()
-    } else {
-        vec![]
+fn pending_approvers_for(
+    reader: &dyn crate::ports::RequestReader,
+    req: &dbward_domain::entities::Request,
+) -> Vec<String> {
+    if req.status != dbward_domain::entities::RequestStatus::Pending {
+        return vec![];
     }
+    reader
+        .get_pending_approvers_for_requests(&[req.id.as_str()])
+        .ok()
+        .and_then(|mut m| m.remove(&req.id).map(|(_, sels)| sels))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

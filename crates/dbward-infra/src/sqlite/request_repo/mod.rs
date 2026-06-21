@@ -37,7 +37,7 @@ pub(crate) fn database_id(db: &DatabaseName, env: &Environment) -> String {
     format!("{}:{}", db.as_str(), env.as_str())
 }
 
-fn populate_pending_approvers(
+pub(crate) fn populate_pending_approvers(
     conn: &rusqlite::Connection,
     request_id: &str,
     workflow_snapshot_json: &Option<String>,

@@ -104,6 +104,7 @@ pub fn build_review_modal(
     request_id: &str,
     sql: Option<&str>,
     context: Option<&RequestContextRecord>,
+    selector_options: Option<&[String]>,
 ) -> Value {
     let mut blocks: Vec<Value> = Vec::new();
 
@@ -248,6 +249,27 @@ pub fn build_review_modal(
         "label": {"type": "plain_text", "text": "Decision"}
     }));
 
+    // Selector (only shown when user matches multiple approver groups)
+    if let Some(options) = selector_options
+        && options.len() >= 2
+    {
+        let select_opts: Vec<Value> = options
+            .iter()
+            .map(|s| json!({"text": {"type": "plain_text", "text": s}, "value": s}))
+            .collect();
+        blocks.push(json!({
+                "type": "input",
+                "block_id": "selector_block",
+                "element": {
+                    "type": "static_select",
+                    "action_id": "selector_input",
+                    "options": select_opts
+                },
+                "label": {"type": "plain_text", "text": "Approve as"},
+                "hint": {"type": "plain_text", "text": "Required for Approve. You match multiple groups — select which role to approve as."}
+            }));
+    }
+
     // Comment (always required)
     blocks.push(json!({
         "type": "input",
@@ -282,12 +304,27 @@ pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Val
                 (Some(s), Some(t)) => format!(" (step {}/{})", s + 1, t),
                 _ => String::new(),
             };
+            let selector_info = event
+                .matched_selector
+                .as_deref()
+                .map(|s| format!(" as {s}"))
+                .unwrap_or_default();
             (
                 default_emoji,
-                format!("Step approved by {actor}{step_info}"),
+                format!("Step approved by {actor}{selector_info}{step_info}"),
             )
         }
-        "request.approved" => (default_emoji, format!("Request approved by {actor}")),
+        "request.approved" => {
+            let selector_info = event
+                .matched_selector
+                .as_deref()
+                .map(|s| format!(" as {s}"))
+                .unwrap_or_default();
+            (
+                default_emoji,
+                format!("Request approved by {actor}{selector_info}"),
+            )
+        }
         "request.rejected" => {
             let reason = event
                 .reason
@@ -800,7 +837,6 @@ pub fn build_create_request_modal(
         "blocks": blocks
     })
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -823,6 +859,7 @@ mod tests {
             total_steps: Some(2),
             expires_at: None,
             approvers: None,
+            matched_selector: None,
         }
     }
 
@@ -844,7 +881,7 @@ mod tests {
 
     #[test]
     fn review_modal_contains_sql_and_decision() {
-        let modal = build_review_modal("req-123", Some("DELETE FROM orders"), None);
+        let modal = build_review_modal("req-123", Some("DELETE FROM orders"), None, None);
         let blocks_str = serde_json::to_string(&modal["blocks"]).unwrap();
         assert!(blocks_str.contains("DELETE FROM orders"));
         assert!(blocks_str.contains("decision_input"));
@@ -895,7 +932,7 @@ mod tests {
             created_at: "2026-01-01".into(),
             updated_at: "2026-01-01".into(),
         };
-        let modal = build_review_modal("req-1", Some("SELECT 1"), Some(&ctx));
+        let modal = build_review_modal("req-1", Some("SELECT 1"), Some(&ctx), None);
         let blocks_str = serde_json::to_string(&modal["blocks"]).unwrap();
         assert!(blocks_str.contains("Execution Plan"));
         assert!(blocks_str.contains("Result"));
@@ -915,7 +952,7 @@ mod tests {
             created_at: "2026-01-01".into(),
             updated_at: "2026-01-01".into(),
         };
-        let modal = build_review_modal("req-2", Some("DROP TABLE x"), Some(&ctx));
+        let modal = build_review_modal("req-2", Some("DROP TABLE x"), Some(&ctx), None);
         let blocks_str = serde_json::to_string(&modal["blocks"]).unwrap();
         assert!(blocks_str.contains("permission denied"));
     }
@@ -934,7 +971,7 @@ mod tests {
             created_at: "2026-01-01".into(),
             updated_at: "2026-01-01".into(),
         };
-        let modal = build_review_modal("req-3", Some("SELECT 1"), Some(&ctx));
+        let modal = build_review_modal("req-3", Some("SELECT 1"), Some(&ctx), None);
         let blocks_str = serde_json::to_string(&modal["blocks"]).unwrap();
         assert!(!blocks_str.contains("Execution Plan"));
     }
@@ -960,7 +997,7 @@ mod tests {
             updated_at: "2026-01-01".into(),
         };
         // Should not panic
-        let modal = build_review_modal("req-4", Some("SELECT 1"), Some(&ctx));
+        let modal = build_review_modal("req-4", Some("SELECT 1"), Some(&ctx), None);
         let blocks_str = serde_json::to_string(&modal["blocks"]).unwrap();
         assert!(blocks_str.contains("Execution Plan"));
     }
@@ -1042,6 +1079,7 @@ mod view_result_tests {
             total_steps: None,
             expires_at: None,
             approvers: None,
+            matched_selector: None,
         };
         let text = fallback_text(&event);
         assert!(text.contains("☑️"), "expected ☑️ in: {text}");

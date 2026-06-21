@@ -265,11 +265,15 @@ impl ServerClient {
         &self,
         request_id: &str,
         comment: Option<&str>,
+        selector: Option<&str>,
     ) -> Result<Value, ServerError> {
-        let body = match comment {
-            Some(c) => serde_json::json!({ "comment": c }),
-            None => serde_json::json!({}),
-        };
+        let mut body = serde_json::json!({});
+        if let Some(c) = comment {
+            body["comment"] = serde_json::Value::String(c.to_string());
+        }
+        if let Some(s) = selector {
+            body["selector"] = serde_json::Value::String(s.to_string());
+        }
         let path = format!("/api/requests/{}/approve", request_id);
         let (status, text) = self
             .api

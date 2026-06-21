@@ -73,6 +73,20 @@ fn is_approvable_by_attrs_inner(
         .any(|ag| ag.selector.matches(role_names, groups, user_id, false))
 }
 
+/// Attribute-based version for use inside TX closures.
+pub fn matched_selectors_by_attrs(
+    role_names: &[String],
+    groups: &[String],
+    user_id: &str,
+    approvers: &[ApproverGroup],
+) -> Vec<String> {
+    approvers
+        .iter()
+        .filter(|ag| ag.selector.matches(role_names, groups, user_id, false))
+        .map(|ag| ag.selector.to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

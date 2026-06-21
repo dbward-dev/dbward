@@ -53,16 +53,21 @@ pub fn build_audit_event(
 
     match &event.metadata {
         EventMetadata::Approved {
-            comment: Some(c), ..
+            comment,
+            matched_selector,
         } => {
             let mut meta = parse_metadata_object(&audit_event.metadata_json);
-            meta["approval_comment"] = serde_json::Value::String(c.clone());
+            if let Some(c) = comment {
+                meta["approval_comment"] = serde_json::Value::String(c.clone());
+            }
+            meta["matched_selector"] = serde_json::Value::String(matched_selector.clone());
             audit_event.metadata_json = meta.to_string();
         }
         EventMetadata::StepApproved {
             comment,
             step_index,
             total_steps,
+            matched_selector,
         } => {
             let mut meta = parse_metadata_object(&audit_event.metadata_json);
             if let Some(c) = comment {
@@ -70,6 +75,7 @@ pub fn build_audit_event(
             }
             meta["step_number"] = (*step_index + 1).into();
             meta["total_steps"] = (*total_steps).into();
+            meta["matched_selector"] = serde_json::Value::String(matched_selector.clone());
             audit_event.metadata_json = meta.to_string();
         }
         _ => {}
@@ -158,5 +164,14 @@ pub fn build_webhook_event(event: &TransitionEvent) -> crate::ports::WebhookEven
         },
         expires_at: None,
         approvers: None,
+        matched_selector: match &event.metadata {
+            EventMetadata::StepApproved {
+                matched_selector, ..
+            }
+            | EventMetadata::Approved {
+                matched_selector, ..
+            } => Some(matched_selector.clone()),
+            _ => None,
+        },
     }
 }

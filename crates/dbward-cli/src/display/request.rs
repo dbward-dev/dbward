@@ -404,8 +404,9 @@ pub(crate) fn print_approve_result(body: &serde_json::Value, id: &str) {
     let total = body["total_steps"].as_u64().unwrap_or(0);
     let status = dbward_api_types::requests::RequestStatus::from_json(&body["status"]);
     let short_id = short_request_id(id);
+    let selector = body["matched_selector"].as_str().unwrap_or("unknown");
 
-    println!("Approved step {step}/{total}");
+    println!("Approved as {selector} (step {step}/{total})");
     println!("Request: {short_id}");
     if matches!(
         status,

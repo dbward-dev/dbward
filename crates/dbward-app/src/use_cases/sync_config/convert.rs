@@ -170,16 +170,16 @@ pub fn webhooks_from_config(defs: &[server::WebhookDef]) -> Vec<WebhookInput> {
         .collect()
 }
 
-pub fn workflows_from_config(defs: &[server::WorkflowDef]) -> Vec<WorkflowInput> {
+pub fn workflows_from_config(
+    defs: &[server::WorkflowDef],
+) -> Result<Vec<WorkflowInput>, crate::error::AppError> {
     defs.iter()
-        .map(|wf| WorkflowInput {
-            database: wf.database.clone(),
-            environment: wf.environment.clone(),
-            operations: wf.operations.clone(),
-            steps: wf
+        .map(|wf| {
+            let steps = wf
                 .steps
                 .iter()
-                .map(|step_val| {
+                .enumerate()
+                .map(|(step_idx, step_val)| {
                     let mode = step_val
                         .get("mode")
                         .and_then(|m| m.as_str())
@@ -190,7 +190,8 @@ pub fn workflows_from_config(defs: &[server::WorkflowDef]) -> Vec<WorkflowInput>
                         .and_then(|a| a.as_array())
                         .map(|arr| {
                             arr.iter()
-                                .filter_map(|a| {
+                                .enumerate()
+                                .map(|(a_idx, a)| {
                                     let min =
                                         a.get("min").and_then(|m| m.as_u64()).unwrap_or(1) as u32;
                                     let (selector_type, value) = if let Some(role) =
@@ -206,26 +207,37 @@ pub fn workflows_from_config(defs: &[server::WorkflowDef]) -> Vec<WorkflowInput>
                                     {
                                         ("user", user)
                                     } else {
-                                        return None;
+                                        return Err(crate::error::AppError::Validation(format!(
+                                            "workflow '{}' step[{}].approvers[{}]: missing role/group/user selector",
+                                            wf.database, step_idx, a_idx
+                                        )));
                                     };
-                                    Some(ApproverInput {
+                                    Ok(ApproverInput {
                                         selector_type: selector_type.to_string(),
                                         value: value.to_string(),
                                         min,
                                     })
                                 })
-                                .collect()
+                                .collect::<Result<Vec<_>, _>>()
                         })
+                        .transpose()?
                         .unwrap_or_default();
-                    WorkflowStepInput { mode, approvers }
+                    Ok(WorkflowStepInput { mode, approvers })
                 })
-                .collect(),
-            require_reason: wf.require_reason,
-            allow_self_approve: wf.allow_self_approve,
-            allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
-            explain: wf.explain,
-            pending_ttl_secs: wf.pending_ttl_secs,
-            statement_timeout_secs: wf.statement_timeout_secs,
+                .collect::<Result<Vec<_>, crate::error::AppError>>()?;
+
+            Ok(WorkflowInput {
+                database: wf.database.clone(),
+                environment: wf.environment.clone(),
+                operations: wf.operations.clone(),
+                steps,
+                require_reason: wf.require_reason,
+                allow_self_approve: wf.allow_self_approve,
+                allow_same_approver_across_steps: wf.allow_same_approver_across_steps,
+                explain: wf.explain,
+                pending_ttl_secs: wf.pending_ttl_secs,
+                statement_timeout_secs: wf.statement_timeout_secs,
+            })
         })
         .collect()
 }

@@ -28,6 +28,9 @@ pub enum RequestAction {
         id: String,
         #[arg(long)]
         comment: Option<String>,
+        /// Approve as a specific selector (e.g. role:dba). Required when you match multiple groups.
+        #[arg(long = "as")]
+        selector: Option<String>,
     },
     Reject {
         id: String,
@@ -82,9 +85,20 @@ pub async fn run_request(
     default_format: ResultFormat,
 ) -> Result<(), CliError> {
     match action {
-        RequestAction::Approve { id, comment } => {
+        RequestAction::Approve {
+            id,
+            comment,
+            selector,
+        } => {
             let resolved = resolve_request_id(sc, &id).await?;
-            run_approve(sc, json_output, &resolved, comment.as_deref()).await
+            run_approve(
+                sc,
+                json_output,
+                &resolved,
+                comment.as_deref(),
+                selector.as_deref(),
+            )
+            .await
         }
         RequestAction::Reject { id, reason } => {
             let resolved = resolve_request_id(sc, &id).await?;
@@ -165,8 +179,9 @@ async fn run_approve(
     json_output: bool,
     id: &str,
     comment: Option<&str>,
+    selector: Option<&str>,
 ) -> Result<(), CliError> {
-    match sc.approve(id, comment).await {
+    match sc.approve(id, comment, selector).await {
         Ok(body) => {
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&body)?);

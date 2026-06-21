@@ -24,12 +24,14 @@ pub struct ApproveRequest {
 pub struct ApproveRequestInput {
     pub request_id: String,
     pub comment: Option<String>,
+    pub selector: Option<String>,
 }
 
 pub struct ApproveRequestOutput {
     pub id: String,
     pub status: RequestStatus,
     pub approved_by: String,
+    pub matched_selector: String,
     pub step_completed: u32,
     pub current_step: u32,
     pub total_steps: u32,
@@ -176,16 +178,14 @@ impl ApproveRequest {
         let user_groups = user.groups.clone();
         let audit_ctx = ctx.clone();
         let comment_clone = input.comment.clone();
+        let requested_selector = input.selector.clone();
 
-        // Capture fresh time just before entering TX for authoritative checks
-        let tx_now = self.clock.now();
+        let clock = self.clock.clone();
 
         let tx_result = crate::ports::transaction::uow_execute(self.uow.as_ref(), |tx| {
-            // Use fresh timestamp from injected clock (after lock acquired)
-            // Note: In SQLite BEGIN IMMEDIATE, lock acquisition is near-instant (same-process mutex),
-            // so the difference between pre-TX and post-TX clock is negligible in practice.
-            // We use tx_now captured just before entering the TX for consistency.
-            let now = tx_now;
+            // Acquire authoritative time INSIDE the TX (after lock is held).
+            // Prevents stale clock if BEGIN IMMEDIATE waited on busy_timeout.
+            let now = clock.now();
 
             // Re-check status + expiry inside TX (authoritative)
             let state = tx.get_request_state(&request_id)?;
@@ -249,13 +249,93 @@ impl ApproveRequest {
                 return Err(AppError::Conflict("already approved this step".into()));
             }
 
-            // Find matched selector
-            let matched_selector = find_matched_selector_by_attrs(
+            // Find matched selector (Phase 2a: selector choice)
+            let all_matched = approval_checker::matched_selectors_by_attrs(
                 &user_roles,
                 &user_groups,
                 &user_id,
                 &step.approvers,
             );
+
+            let matched_selector = if let Some(ref requested) = requested_selector {
+                // User explicitly specified a selector
+                if !all_matched.contains(requested) {
+                    return Err(AppError::Validation(format!(
+                        "you do not match selector '{requested}'"
+                    )));
+                }
+                // Check if that selector is already satisfied
+                let count = approvals
+                    .iter()
+                    .filter(|a| {
+                        a.step_index == current_step_index
+                            && a.action == ApprovalAction::Approve
+                            && a.matched_selector == *requested
+                    })
+                    .count() as u32;
+                let required = step
+                    .approvers
+                    .iter()
+                    .find(|ag| ag.selector.to_string() == *requested)
+                    .map(|ag| ag.min)
+                    .unwrap_or(1);
+                if count >= required {
+                    return Err(AppError::Conflict(format!(
+                        "selector '{}' is already satisfied for this step ({}/{})",
+                        requested, count, required
+                    )));
+                }
+                requested.clone()
+            } else {
+                // Auto-select
+                match all_matched.len() {
+                    0 => {
+                        return Err(AppError::Forbidden(AuthzError::Forbidden {
+                            permission: Permission::RequestApprove,
+                            reason: "not eligible to approve this step".into(),
+                        }));
+                    }
+                    _ => {
+                        // Filter to unsatisfied only
+                        let unsatisfied: Vec<String> = all_matched
+                            .iter()
+                            .filter(|sel| {
+                                let count = approvals
+                                    .iter()
+                                    .filter(|a| {
+                                        a.step_index == current_step_index
+                                            && a.action == ApprovalAction::Approve
+                                            && &a.matched_selector == *sel
+                                    })
+                                    .count() as u32;
+                                let required = step
+                                    .approvers
+                                    .iter()
+                                    .find(|ag| ag.selector.to_string() == **sel)
+                                    .map(|ag| ag.min)
+                                    .unwrap_or(1);
+                                count < required
+                            })
+                            .cloned()
+                            .collect();
+
+                        match unsatisfied.len() {
+                            0 => {
+                                return Err(AppError::Conflict(
+                                    "all approver groups you match are already satisfied".into(),
+                                ));
+                            }
+                            1 => unsatisfied.into_iter().next().expect("len==1"),
+                            _ => {
+                                return Err(AppError::Validation(format!(
+                                    "ambiguous: you match multiple unsatisfied approver groups: {}. Specify 'selector' parameter to choose.",
+                                    unsatisfied.join(", ")
+                                )));
+                            }
+                        }
+                    }
+                }
+            };
 
             // Build approval
             let approval = Approval {
@@ -263,7 +343,7 @@ impl ApproveRequest {
                 request_id: request_id.clone(),
                 action: ApprovalAction::Approve,
                 actor_id: user_id.clone(),
-                matched_selector,
+                matched_selector: matched_selector.clone(),
                 step_index: current_step_index,
                 comment: comment_clone.clone(),
                 created_at: now,
@@ -300,12 +380,14 @@ impl ApproveRequest {
                     metadata: if all_satisfied {
                         EventMetadata::Approved {
                             comment: comment_clone,
+                            matched_selector: matched_selector.clone(),
                         }
                     } else {
                         EventMetadata::StepApproved {
                             step_index: current_step_index,
                             total_steps,
                             comment: comment_clone,
+                            matched_selector: matched_selector.clone(),
                         }
                     },
                     requester_id: request_requester.clone(),
@@ -334,10 +416,16 @@ impl ApproveRequest {
             }
             tx.record(&audit_event)?;
 
-            Ok((new_status, step_completed, total_steps, event))
+            Ok((
+                new_status,
+                matched_selector,
+                step_completed,
+                total_steps,
+                event,
+            ))
         })?;
 
-        let (new_status, step_completed, total_steps, event) = tx_result;
+        let (new_status, matched_selector, step_completed, total_steps, event) = tx_result;
 
         // Post-commit: best-effort notification
         self.notifier
@@ -349,27 +437,12 @@ impl ApproveRequest {
             id: request.id,
             status: new_status,
             approved_by: user.subject_id.clone(),
+            matched_selector,
             step_completed,
             current_step: step_completed,
             total_steps,
         })
     }
-}
-
-/// Attribute-based version for use inside TX closures.
-fn find_matched_selector_by_attrs(
-    role_names: &[String],
-    groups: &[String],
-    user_id: &str,
-    approvers: &[dbward_domain::policies::workflow::ApproverGroup],
-) -> String {
-    for ag in approvers {
-        if ag.selector.matches(role_names, groups, user_id, false) {
-            return ag.selector.to_string();
-        }
-    }
-    // Admin override fallback (Phase 4 will remove this)
-    "unknown".to_string()
 }
 
 #[cfg(test)]
@@ -477,6 +550,7 @@ mod tests {
                 ApproveRequestInput {
                     request_id: "req-001".into(),
                     comment: None,
+                    selector: None,
                 },
                 &user,
                 &dbward_domain::entities::AuditContext::System,
@@ -501,6 +575,7 @@ mod tests {
             ApproveRequestInput {
                 request_id: "req-001".into(),
                 comment: None,
+                selector: None,
             },
             &user,
             &dbward_domain::entities::AuditContext::System,
@@ -522,6 +597,7 @@ mod tests {
             ApproveRequestInput {
                 request_id: "req-001".into(),
                 comment: None,
+                selector: None,
             },
             &user,
             &dbward_domain::entities::AuditContext::System,
@@ -540,6 +616,7 @@ mod tests {
             ApproveRequestInput {
                 request_id: "nope".into(),
                 comment: None,
+                selector: None,
             },
             &user,
             &dbward_domain::entities::AuditContext::System,
@@ -561,6 +638,7 @@ mod tests {
             ApproveRequestInput {
                 request_id: "req-001".into(),
                 comment: None,
+                selector: None,
             },
             &user,
             &dbward_domain::entities::AuditContext::System,
@@ -582,10 +660,144 @@ mod tests {
             ApproveRequestInput {
                 request_id: "req-001".into(),
                 comment: None,
+                selector: None,
             },
             &user,
             &dbward_domain::entities::AuditContext::System,
         );
         assert!(result.is_ok());
+    }
+
+    // --- Phase 2a: selector choice tests ---
+
+    fn multi_group_workflow() -> Workflow {
+        Workflow {
+            id: "wf-1".into(),
+            database: DatabaseName::new("app").unwrap(),
+            environment: Environment::new("production").unwrap(),
+            operations: vec![],
+            steps: vec![WorkflowStep {
+                approvers: vec![
+                    ApproverGroup {
+                        selector: Selector::Role("dba".into()),
+                        min: 1,
+                    },
+                    ApproverGroup {
+                        selector: Selector::Role("sre".into()),
+                        min: 1,
+                    },
+                ],
+                mode: WorkflowStepMode::All,
+            }],
+            require_reason: false,
+            allow_self_approve: false,
+            allow_same_approver_across_steps: true,
+            explain: true,
+            pending_ttl_secs: None,
+            statement_timeout_secs: None,
+            approval_ttl_secs: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    fn make_user_multi(id: &str, roles: &[&str], groups: &[&str]) -> AuthUser {
+        AuthUser {
+            subject_id: id.to_string(),
+            subject_type: SubjectType::User,
+            roles: roles
+                .iter()
+                .map(|name| ResolvedRole {
+                    name: name.to_string(),
+                    permissions: [Permission::RequestApprove].into_iter().collect(),
+                    databases: vec![],
+                    environments: vec![],
+                })
+                .collect(),
+            groups: groups.iter().map(|g| g.to_string()).collect(),
+            token_id: None,
+        }
+    }
+
+    #[test]
+    fn ambiguous_selector_returns_validation_error() {
+        let wf = multi_group_workflow();
+        let reader = Arc::new(FakeRequestReader::with_request(make_pending_request(&wf)));
+        let approval = Arc::new(FakeApprovalRepo::new());
+        let uc = make_uc(reader, approval);
+        // User matches both role:dba and role:sre
+        let user = make_user_multi("bob", &["dba", "sre"], &[]);
+
+        let result = uc.execute(
+            ApproveRequestInput {
+                request_id: "req-001".into(),
+                comment: None,
+                selector: None,
+            },
+            &user,
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(matches!(result, Err(AppError::Validation(msg)) if msg.contains("ambiguous")));
+    }
+
+    #[test]
+    fn explicit_selector_succeeds() {
+        let wf = multi_group_workflow();
+        let reader = Arc::new(FakeRequestReader::with_request(make_pending_request(&wf)));
+        let approval = Arc::new(FakeApprovalRepo::new());
+        let uc = make_uc(reader, approval);
+        let user = make_user_multi("bob", &["dba", "sre"], &[]);
+
+        let result = uc.execute(
+            ApproveRequestInput {
+                request_id: "req-001".into(),
+                comment: None,
+                selector: Some("role:dba".into()),
+            },
+            &user,
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().matched_selector, "role:dba");
+    }
+
+    #[test]
+    fn explicit_selector_not_matched_returns_validation() {
+        let wf = multi_group_workflow();
+        let reader = Arc::new(FakeRequestReader::with_request(make_pending_request(&wf)));
+        let approval = Arc::new(FakeApprovalRepo::new());
+        let uc = make_uc(reader, approval);
+        let user = make_user("bob", &["dba"]);
+
+        let result = uc.execute(
+            ApproveRequestInput {
+                request_id: "req-001".into(),
+                comment: None,
+                selector: Some("role:sre".into()),
+            },
+            &user,
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(matches!(result, Err(AppError::Validation(msg)) if msg.contains("do not match")));
+    }
+
+    #[test]
+    fn no_match_returns_forbidden() {
+        let wf = single_step_workflow(); // requires role:dba
+        let reader = Arc::new(FakeRequestReader::with_request(make_pending_request(&wf)));
+        let approval = Arc::new(FakeApprovalRepo::new());
+        let uc = make_uc(reader, approval);
+        let user = make_user("bob", &["developer"]); // no dba role
+
+        let result = uc.execute(
+            ApproveRequestInput {
+                request_id: "req-001".into(),
+                comment: None,
+                selector: None,
+            },
+            &user,
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(matches!(result, Err(AppError::Forbidden(_))));
     }
 }

@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
-use dbward_domain::auth::{AuthUser, Permission, ResourceContext};
+use dbward_domain::auth::{AuthUser, Permission};
 use dbward_domain::entities::{Approval, ApprovalAction, RequestStatus};
 use dbward_domain::policies::workflow::Workflow;
 use dbward_domain::services::status_machine::{
     self, EventMetadata, RequestTrigger, TransitionContext,
 };
 
-#[allow(unused_imports)]
 use crate::error::{AppError, AuthzError};
 use crate::ports::*;
 use crate::services::audit_event_builder;
@@ -85,38 +84,19 @@ impl RejectRequest {
             }
 
             let step = &wf.steps[current_step_index as usize];
-            let previous_approver_ids: Vec<String> = approvals
-                .iter()
-                .filter(|a| {
-                    a.step_index < current_step_index && a.action == ApprovalAction::Approve
-                })
-                .map(|a| a.actor_id.clone())
-                .collect();
 
-            // ADR-002: approver designation = permission grant (same bypass as approve_request)
+            // Reject requires matching any approver selector in the current step
             let role_names: Vec<String> = user.roles.iter().map(|r| r.name.clone()).collect();
-            let is_designated_approver = step.approvers.iter().any(|ag| {
+            let is_eligible = step.approvers.iter().any(|ag| {
                 ag.selector
                     .matches(&role_names, &user.groups, &user.subject_id, false)
             });
 
-            if !is_designated_approver {
-                self.authorizer
-                    .authorize_scoped(
-                        user,
-                        Permission::RequestApprove,
-                        &request.database,
-                        &request.environment,
-                        &ResourceContext::ApprovalStep {
-                            requester_id: request.requester.clone(),
-                            step_index: current_step_index,
-                            approvers: step.approvers.clone(),
-                            allow_self_approve: true,
-                            allow_same_approver_across_steps: true,
-                            previous_approver_ids,
-                        },
-                    )
-                    .map_err(AppError::Forbidden)?;
+            if !is_eligible {
+                return Err(AppError::Forbidden(AuthzError::Forbidden {
+                    permission: Permission::RequestApprove,
+                    reason: "not eligible to reject this step".into(),
+                }));
             }
         }
 
