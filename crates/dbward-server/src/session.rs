@@ -83,7 +83,12 @@ impl SessionRuntime {
         // Drop all pending elicitations (oneshot senders will be dropped)
         self.pending_elicitations.clear();
 
-        // Clear streams (dropping event_tx closes SSE)
+        // Mark all streams completed (closes SSE channels reliably)
+        for entry in self.streams.iter() {
+            entry.value().mark_completed();
+        }
+
+        // Clear maps
         self.streams.clear();
         self.requests.clear();
     }
@@ -94,7 +99,7 @@ impl SessionRuntime {
 pub struct StreamRuntime {
     pub stream_id: String,
     pub event_tx: Mutex<Option<mpsc::Sender<axum::response::sse::Event>>>,
-    pub subscribers: Mutex<Vec<mpsc::UnboundedSender<SseEvent>>>,
+    pub subscribers: Mutex<Vec<mpsc::Sender<SseEvent>>>,
     pub replay_buffer: RwLock<VecDeque<SseEvent>>,
     pub replay_capacity: usize,
     pub next_seq: AtomicU64,
@@ -122,8 +127,8 @@ impl StreamRuntime {
         self.emit_raw(&data).await;
     }
 
-    /// Emit raw JSON string as an SSE event.
-    pub async fn emit_raw(&self, data: &str) {
+    /// Emit raw JSON string as an SSE event. Returns false if primary channel is closed.
+    pub async fn emit_raw(&self, data: &str) -> bool {
         use axum::response::sse::Event;
 
         let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
@@ -144,16 +149,18 @@ impl StreamRuntime {
             }
         }
 
-        // 2. Fan-out to GET resume subscribers
+        // 2. Fan-out to GET resume subscribers (drop slow/closed ones)
         {
             let mut subs = self.subscribers.lock();
-            subs.retain(|tx| tx.send(sse_event.clone()).is_ok());
+            subs.retain(|tx| tx.try_send(sse_event.clone()).is_ok());
         }
 
         // 3. Send to primary SSE channel (if still open)
         let tx = self.event_tx.lock().clone();
         if let Some(tx) = tx {
-            let _ = tx.send(Event::default().id(event_id).data(data)).await;
+            tx.send(Event::default().id(event_id).data(data)).await.is_ok()
+        } else {
+            false
         }
     }
 
@@ -211,7 +218,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(32);
         let stream = StreamRuntime::new("s1".into(), tx, 100);
 
-        let (sub_tx, mut sub_rx) = mpsc::unbounded_channel();
+        let (sub_tx, mut sub_rx) = mpsc::channel(256);
         stream.subscribers.lock().push(sub_tx);
 
         stream.emit_raw(r#"{"test":true}"#).await;
@@ -239,7 +246,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(32);
         let stream = StreamRuntime::new("s1".into(), tx, 100);
 
-        let (sub_tx, sub_rx) = mpsc::unbounded_channel();
+        let (sub_tx, sub_rx) = mpsc::channel(256);
         stream.subscribers.lock().push(sub_tx);
         drop(sub_rx); // close receiver
 
@@ -271,7 +278,7 @@ mod tests {
         let stream = StreamRuntime::new("s1".into(), tx, 100);
 
         // Add a subscriber
-        let (sub_tx, _sub_rx) = mpsc::unbounded_channel();
+        let (sub_tx, _sub_rx) = mpsc::channel(256);
         stream.subscribers.lock().push(sub_tx);
 
         assert!(!stream.completed.load(Ordering::Relaxed));

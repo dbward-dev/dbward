@@ -145,13 +145,27 @@ pub(crate) async fn get_mcp(
     };
 
     // Subscribe FIRST (before replay) to avoid gap
-    let (sub_tx, mut sub_rx) = tokio::sync::mpsc::unbounded_channel::<crate::session::SseEvent>();
+    let (sub_tx, mut sub_rx) = tokio::sync::mpsc::channel::<crate::session::SseEvent>(256);
     if !stream_rt.completed.load(std::sync::atomic::Ordering::Relaxed) {
         stream_rt.subscribers.lock().push(sub_tx);
     }
 
+    // Gap detection: if client is behind the oldest buffered event, resync needed
+    {
+        let buf = stream_rt.replay_buffer.read();
+        if let Some(oldest) = buf.front() {
+            let oldest_seq: u64 = oldest.id.rsplit_once(':')
+                .and_then(|(_, s)| s.parse().ok())
+                .unwrap_or(0);
+            if after_seq < oldest_seq.saturating_sub(1) {
+                // Client missed events that were already evicted from buffer
+                return StatusCode::NOT_FOUND.into_response();
+            }
+        }
+    }
+
     // Replay from buffer
-    let (tx, rx) = mpsc::unbounded_channel::<Event>();
+    let (tx, rx) = mpsc::channel::<Event>(256);
     let mut max_replayed_seq = after_seq;
     {
         let buf = stream_rt.replay_buffer.read();
@@ -160,7 +174,7 @@ pub(crate) async fn get_mcp(
                 .and_then(|(_, s)| s.parse().ok())
                 .unwrap_or(0);
             if seq > after_seq {
-                let _ = tx.send(Event::default().id(&event.id).data(&event.data));
+                let _ = tx.try_send(Event::default().id(&event.id).data(&event.data));
                 max_replayed_seq = max_replayed_seq.max(seq);
             }
         }
@@ -175,7 +189,7 @@ pub(crate) async fn get_mcp(
                     .and_then(|(_, s)| s.parse().ok())
                     .unwrap_or(0);
                 if seq > max_replayed_seq
-                    && tx_live.send(Event::default().id(&event.id).data(&event.data)).is_err()
+                    && tx_live.send(Event::default().id(&event.id).data(&event.data)).await.is_err()
                 {
                     break;
                 }
@@ -183,7 +197,7 @@ pub(crate) async fn get_mcp(
         });
     }
 
-    let stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx);
+    let stream = ReceiverStream::new(rx);
     let mut resp = Sse::new(stream.map(Ok::<_, Infallible>))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response();
@@ -293,7 +307,7 @@ async fn dispatch_message(
 ) -> axum::response::Response {
     match msg {
         JsonRpcMessage::Request(req) => {
-            state.metrics.mcp_requests_total.inc([&req.method]);
+            state.metrics.mcp_requests_total.inc([normalize_method(&req.method)]);
             // Initialize creates a new session
             if req.method == "initialize" {
                 return handle_initialize_request(req, user, state).await;
@@ -334,7 +348,7 @@ async fn dispatch_message(
             for m in messages {
                 match m {
                     JsonRpcMessage::Request(req) => {
-                        state.metrics.mcp_requests_total.inc([&req.method]);
+                        state.metrics.mcp_requests_total.inc([normalize_method(&req.method)]);
                         if req.method == "initialize" {
                             responses.push(JsonRpcResponse::error(
                                 req.id, INVALID_REQUEST, "initialize must not be sent in a batch",
@@ -396,10 +410,15 @@ async fn handle_sse_request(
     session.streams.insert(stream_id.clone(), stream_rt.clone());
 
     // Register in-flight request BEFORE spawn to prevent race
-    // (task's remove() cannot run before insert because we haven't spawned yet)
     let cancel_token = CancellationToken::new();
     let req_id_str = req.id.as_ref().map(request_id_key).unwrap_or_default();
     let req_id_value = req.id.clone();
+
+    // Reject duplicate in-flight IDs to prevent orphaned tasks
+    if session.requests.contains_key(&req_id_str) {
+        session.active_request_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        return StatusCode::CONFLICT.into_response();
+    }
 
     // Pre-register with a dummy abort handle; we'll update after spawn
     session.requests.insert(req_id_str.clone(), RequestRuntime {
@@ -516,8 +535,8 @@ fn handle_notification(method: &str, params: &serde_json::Value, session: Option
         "notifications/cancelled" => {
             if let Some(s) = session {
                 let req_id = request_id_key(&params["requestId"]);
-                if let Some((_, rt)) = s.requests.remove(&req_id) {
-                    rt.cancel_token.cancel();
+                if let Some(entry) = s.requests.get(&req_id) {
+                    entry.value().cancel_token.cancel();
                     metrics.mcp_cancel_total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
@@ -532,6 +551,20 @@ struct RequestGuard(Arc<SessionRuntime>);
 impl Drop for RequestGuard {
     fn drop(&mut self) {
         self.0.active_request_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Normalize method name to prevent unbounded label cardinality.
+fn normalize_method(method: &str) -> &str {
+    match method {
+        "initialize" | "ping" |
+        "tools/list" | "tools/call" |
+        "resources/list" | "resources/read" | "resources/templates/list" |
+        "prompts/list" | "prompts/get" |
+        "completions/complete" |
+        "notifications/initialized" | "notifications/cancelled" |
+        "logging/setLevel" => method,
+        _ => "unknown",
     }
 }
 

@@ -48,7 +48,13 @@ impl ElicitationTransport for HttpElicitation {
             "method": "elicitation/create",
             "params": {"message": message, "requestedSchema": schema}
         });
-        self.stream_rt.emit_raw(&serde_json::to_string(&raw).unwrap()).await;
+        let delivered = self.stream_rt.emit_raw(&serde_json::to_string(&raw).unwrap()).await;
+        if !delivered {
+            // SSE channel dead — client disconnected, fail fast
+            self.session.pending_elicitations.remove(&elicit_id);
+            self.metrics.mcp_elicitation_total.inc(["cancel"]);
+            return Ok(ElicitResult::Cancel);
+        }
 
         // Wait with timeout
         match tokio::time::timeout(Duration::from_secs(self.timeout_secs), rx).await {
