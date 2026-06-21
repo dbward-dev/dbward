@@ -403,6 +403,7 @@ async fn dispatch_message(
                             .mcp_requests_total
                             .inc([normalize_method(&req.method)]);
                         if req.method == "initialize" {
+                            state.metrics.mcp_errors_total.inc(["-32600"]);
                             responses.push(JsonRpcResponse::error(
                                 req.id,
                                 INVALID_REQUEST,
@@ -439,6 +440,7 @@ async fn dispatch_message(
                         }
                     }
                     JsonRpcMessage::Batch(_) => {
+                        state.metrics.mcp_errors_total.inc(["-32600"]);
                         responses.push(JsonRpcResponse::error(
                             None,
                             INVALID_REQUEST,
