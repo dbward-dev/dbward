@@ -108,6 +108,9 @@ pub struct AppState {
     pub(crate) mcp_allowed_origins: Vec<String>,
     pub(crate) mcp_default_database: String,
     pub(crate) mcp_default_environment: String,
+    pub(crate) mcp_elicitation_timeout_secs: u64,
+    pub(crate) mcp_replay_buffer_size: usize,
+    pub(crate) session_store: Arc<crate::session_store::SessionStore>,
 }
 
 // ---------------------------------------------------------------------------
@@ -645,6 +648,10 @@ impl AppState {
     pub(crate) fn result_channel(&self) -> &Arc<dyn ResultChannel> {
         &self.result_channel
     }
+
+    pub(crate) fn session_store(&self) -> &Arc<crate::session_store::SessionStore> {
+        &self.session_store
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -704,6 +711,9 @@ pub struct AppStateBuilder {
     pub mcp_default_database: String,
     #[allow(dead_code)]
     pub mcp_default_environment: String,
+    pub mcp_elicitation_timeout_secs: u64,
+    pub mcp_replay_buffer_size: usize,
+    pub session_store: Arc<crate::session_store::SessionStore>,
 }
 
 impl AppStateBuilder {
@@ -756,6 +766,9 @@ impl AppStateBuilder {
             mcp_allowed_origins: self.mcp_allowed_origins,
             mcp_default_database: self.mcp_default_database,
             mcp_default_environment: self.mcp_default_environment,
+            mcp_elicitation_timeout_secs: self.mcp_elicitation_timeout_secs,
+            mcp_replay_buffer_size: self.mcp_replay_buffer_size,
+            session_store: self.session_store,
         }
     }
 }

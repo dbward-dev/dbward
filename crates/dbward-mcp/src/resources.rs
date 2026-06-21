@@ -17,21 +17,21 @@ pub async fn read_resource(
             let value = backend
                 .list_databases(user)
                 .await
-                .map_err(ResourceError::Internal)?;
+                .map_err(|e| ResourceError::Internal(e.to_string()))?;
             Ok(serde_json::to_string_pretty(&value).unwrap_or_default())
         }
         "dbward://requests/pending" => {
             let value = backend
                 .list_pending(20, user)
                 .await
-                .map_err(ResourceError::Internal)?;
+                .map_err(|e| ResourceError::Internal(e.to_string()))?;
             Ok(serde_json::to_string_pretty(&value).unwrap_or_default())
         }
         "dbward://audit/recent" => {
             let value = backend
                 .audit_recent(10, user)
                 .await
-                .map_err(ResourceError::Internal)?;
+                .map_err(|e| ResourceError::Internal(e.to_string()))?;
             Ok(serde_json::to_string_pretty(&value).unwrap_or_default())
         }
         _ if uri.starts_with("dbward://requests/") => {
@@ -44,7 +44,7 @@ pub async fn read_resource(
             let value = backend
                 .get_request(req_id, user)
                 .await
-                .map_err(ResourceError::Internal)?;
+                .map_err(|e| ResourceError::Internal(e.to_string()))?;
             Ok(serde_json::to_string_pretty(&value).unwrap_or_default())
         }
         _ if uri.starts_with("dbward://schema/") => {
@@ -68,7 +68,7 @@ pub async fn read_resource(
             let value = backend
                 .inspect_schema(db, None, table, table.is_none(), user)
                 .await
-                .map_err(ResourceError::Internal)?;
+                .map_err(|e| ResourceError::Internal(e.to_string()))?;
             Ok(serde_json::to_string_pretty(&value).unwrap_or_default())
         }
         _ => Err(ResourceError::NotFound(format!(

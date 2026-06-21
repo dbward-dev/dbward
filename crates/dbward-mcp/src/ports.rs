@@ -3,8 +3,56 @@ use serde_json::Value;
 
 use dbward_domain::auth::AuthUser;
 
+/// Error type for MCP backend operations.
+#[derive(Debug, Clone)]
+pub enum McpError {
+    /// Workflow requires a reason — triggers elicitation if supported.
+    ReasonRequired { message: String, schema: Value },
+    /// Resource not found.
+    NotFound(String),
+    /// Forbidden.
+    Forbidden(String),
+    /// Conflict (e.g. idempotency).
+    Conflict(String),
+    /// Internal / unclassified error.
+    Internal(String),
+}
+
+impl std::fmt::Display for McpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ReasonRequired { message, .. } => write!(f, "{message}"),
+            Self::NotFound(m) => write!(f, "{m}"),
+            Self::Forbidden(m) => write!(f, "{m}"),
+            Self::Conflict(m) => write!(f, "{m}"),
+            Self::Internal(m) => write!(f, "{m}"),
+        }
+    }
+}
+
+impl From<String> for McpError {
+    fn from(s: String) -> Self {
+        Self::Internal(s)
+    }
+}
+
+impl From<&str> for McpError {
+    fn from(s: &str) -> Self {
+        Self::from(s.to_string())
+    }
+}
+
 /// Result type for MCP backend operations.
-pub type McpResult<T> = Result<T, String>;
+pub type McpResult<T> = Result<T, McpError>;
+
+/// Default schema for reason elicitation (single source of truth).
+pub fn reason_elicitation_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {"reason": {"type": "string", "description": "Why is this operation needed?"}},
+        "required": ["reason"]
+    })
+}
 
 /// Backend operations for MCP tool handlers.
 /// CLI implements this via ServerClient (HTTP), Server implements via UC direct calls.

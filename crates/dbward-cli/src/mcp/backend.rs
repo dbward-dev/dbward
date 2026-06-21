@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use dbward_domain::auth::AuthUser;
 use dbward_mcp::ports::{
-    CreateRequestInput, CreateRequestOutput, McpBackend, McpResult, RequestStatus, WaitOutput,
+    CreateRequestInput, CreateRequestOutput, McpBackend, McpError, McpResult, RequestStatus, WaitOutput,
 };
 
 use crate::commands::workflow;
@@ -44,7 +44,7 @@ impl McpBackend for CliMcpBackend {
             },
         )
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| McpError::Internal(e.to_string()))?;
 
         let status = match cr.status {
             dbward_api_types::requests::RequestStatus::Pending => RequestStatus::Pending,
@@ -90,7 +90,7 @@ impl McpBackend for CliMcpBackend {
                 let text = serde_json::to_string_pretty(&result).unwrap_or_default();
                 Ok(WaitOutput::Completed(text))
             }
-            Ok(Err(e)) => Err(e.to_string()),
+            Ok(Err(e)) => Err(McpError::Internal(e.to_string())),
             Err(_) => Ok(WaitOutput::TimedOut {
                 request_id: request_id.into(),
             }),
@@ -111,7 +111,7 @@ impl McpBackend for CliMcpBackend {
         self.client
             .list_pending_for_me(Some(limit))
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| McpError::Internal(e.to_string()))
     }
 
     async fn find_similar(&self, sql: &str, limit: u32, _user: &AuthUser) -> McpResult<Value> {
@@ -120,7 +120,7 @@ impl McpBackend for CliMcpBackend {
             .client
             .get_json(&path)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| McpError::Internal(e.to_string()))?;
 
         // Client-side containment filter
         let normalized = sql.to_lowercase();
@@ -168,7 +168,7 @@ impl McpBackend for CliMcpBackend {
         self.client
             .get_request(request_id)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| McpError::Internal(e.to_string()))
     }
 
     async fn explain_policy_failure(
@@ -180,7 +180,7 @@ impl McpBackend for CliMcpBackend {
         _user: &AuthUser,
     ) -> McpResult<Value> {
         if let Some(id) = request_id {
-            return self.client.get_request(id).await.map_err(|e| e.to_string());
+            return self.client.get_request(id).await.map_err(|e| McpError::Internal(e.to_string()));
         }
         Ok(json!({"explanation": "Submit a request to see the policy evaluation result."}))
     }
@@ -198,21 +198,21 @@ impl McpBackend for CliMcpBackend {
         } else {
             format!("/api/schemas/{database}")
         };
-        self.client.get_json(&path).await.map_err(|e| e.to_string())
+        self.client.get_json(&path).await.map_err(|e| McpError::Internal(e.to_string()))
     }
 
     async fn get_request(&self, request_id: &str, _user: &AuthUser) -> McpResult<Value> {
         self.client
             .get_request(request_id)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| McpError::Internal(e.to_string()))
     }
 
     async fn list_databases(&self, _user: &AuthUser) -> McpResult<Value> {
         self.client
             .get_json("/api/databases")
             .await
-            .map_err(|e| e.to_string())
+            .map_err(|e| McpError::Internal(e.to_string()))
     }
 
     async fn migrate_status(
@@ -243,6 +243,6 @@ impl McpBackend for CliMcpBackend {
 
     async fn audit_recent(&self, limit: u32, _user: &AuthUser) -> McpResult<Value> {
         let path = format!("/api/audit/events?limit={limit}");
-        self.client.get_json(&path).await.map_err(|e| e.to_string())
+        self.client.get_json(&path).await.map_err(|e| McpError::Internal(e.to_string()))
     }
 }

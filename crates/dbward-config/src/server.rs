@@ -1604,6 +1604,18 @@ pub struct McpConfig {
     /// Default environment when MCP client omits it. Default: "development".
     #[serde(default = "default_environment")]
     pub default_environment: String,
+    /// Session TTL in seconds. Default: 3600 (1 hour).
+    #[serde(default)]
+    pub session_ttl_secs: Option<u64>,
+    /// Maximum concurrent sessions. Default: 1000.
+    #[serde(default)]
+    pub max_sessions: Option<usize>,
+    /// Elicitation response timeout in seconds. Default: 300 (5 min).
+    #[serde(default)]
+    pub elicitation_timeout_secs: Option<u64>,
+    /// Max events per stream replay buffer. Default: 100.
+    #[serde(default)]
+    pub replay_buffer_size: Option<usize>,
 }
 
 impl Default for McpConfig {
@@ -1612,6 +1624,10 @@ impl Default for McpConfig {
             enabled: true,
             allowed_origins: vec![],
             default_environment: "development".into(),
+            session_ttl_secs: None,
+            max_sessions: None,
+            elicitation_timeout_secs: None,
+            replay_buffer_size: None,
         }
     }
 }

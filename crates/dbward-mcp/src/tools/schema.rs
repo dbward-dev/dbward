@@ -8,6 +8,7 @@ pub(super) async fn inspect_schema(ctx: &ToolContext<'_>, args: &Value) -> Resul
     let value = ctx
         .backend
         .inspect_schema(db, None, table, true, ctx.user)
-        .await?;
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(serde_json::to_string_pretty(&value).unwrap_or_default())
 }

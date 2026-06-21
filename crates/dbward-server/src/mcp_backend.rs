@@ -11,12 +11,13 @@ use dbward_domain::auth::AuthUser;
 use dbward_domain::entities::{AuditContext, RequestStatus};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 use dbward_mcp::ports::{
-    CreateRequestInput, CreateRequestOutput, McpBackend, McpResult, RequestStatus as McpStatus,
+    CreateRequestInput, CreateRequestOutput, McpBackend, McpError, McpResult, RequestStatus as McpStatus,
     WaitOutput,
 };
 
 use crate::state::AppState;
 
+#[derive(Clone)]
 pub(crate) struct ServerMcpBackend {
     pub(crate) state: AppState,
     pub(crate) audit_ctx: AuditContext,
@@ -33,8 +34,8 @@ impl McpBackend for ServerMcpBackend {
             .operation
             .parse::<Operation>()
             .map_err(|e| format!("Invalid operation: {e}"))?;
-        let db = DatabaseName::new(&input.database).map_err(|e| e.to_string())?;
-        let env = Environment::new(&input.environment).map_err(|e| e.to_string())?;
+        let db = DatabaseName::new(&input.database).map_err(|e| McpError::Internal(e.to_string()))?;
+        let env = Environment::new(&input.environment).map_err(|e| McpError::Internal(e.to_string()))?;
 
         let app_input = AppCreateInput {
             database: db,
@@ -197,8 +198,8 @@ impl McpBackend for ServerMcpBackend {
         user: &AuthUser,
     ) -> McpResult<Value> {
         // preview_impact creates a request with operation "explain"
-        let db = DatabaseName::new(database).map_err(|e| e.to_string())?;
-        let env = Environment::new(environment).map_err(|e| e.to_string())?;
+        let db = DatabaseName::new(database).map_err(|e| McpError::Internal(e.to_string()))?;
+        let env = Environment::new(environment).map_err(|e| McpError::Internal(e.to_string()))?;
 
         let app_input = AppCreateInput {
             database: db,
@@ -235,7 +236,7 @@ impl McpBackend for ServerMcpBackend {
                 .execute(resume_input, user, &ctx)
             {
                 tracing::warn!(error = %e, request_id = %output.id, "resume failed for preview_impact");
-                return Err(format!("resume failed: {e}"));
+                return Err(format!("resume failed: {e}").into());
             }
             if let WaitOutput::Completed(text) = self.stream_result(&output.id, 30, user).await? {
                 return Ok(json!({"plan": text}));
@@ -308,7 +309,7 @@ impl McpBackend for ServerMcpBackend {
             .execute(input, user)
             .map_err(format_app_error)?;
 
-        serde_json::to_value(&output).map_err(|e| e.to_string())
+        serde_json::to_value(&output).map_err(|e| McpError::Internal(e.to_string()))
     }
 
     async fn get_request(&self, request_id: &str, user: &AuthUser) -> McpResult<Value> {
@@ -349,8 +350,8 @@ impl McpBackend for ServerMcpBackend {
         user: &AuthUser,
     ) -> McpResult<Value> {
         // migrate_status goes through the request workflow (same as CLI)
-        let db = DatabaseName::new(database).map_err(|e| e.to_string())?;
-        let env = Environment::new(environment).map_err(|e| e.to_string())?;
+        let db = DatabaseName::new(database).map_err(|e| McpError::Internal(e.to_string()))?;
+        let env = Environment::new(environment).map_err(|e| McpError::Internal(e.to_string()))?;
 
         let app_input = AppCreateInput {
             database: db,
@@ -386,7 +387,7 @@ impl McpBackend for ServerMcpBackend {
                 .execute(resume_input, user, &ctx)
             {
                 tracing::warn!(error = %e, request_id = %output.id, "resume failed for migrate_status");
-                return Err(format!("resume failed: {e}"));
+                return Err(format!("resume failed: {e}").into());
             }
             if let WaitOutput::Completed(text) = self.stream_result(&output.id, 30, user).await? {
                 return Ok(serde_json::from_str(&text).unwrap_or(json!({"raw": text})));
@@ -486,13 +487,17 @@ impl ServerMcpBackend {
     }
 }
 
-fn format_app_error(e: AppError) -> String {
+fn format_app_error(e: AppError) -> McpError {
     match e {
-        AppError::NotFound(msg) => msg,
-        AppError::Validation(msg) => msg,
-        AppError::Forbidden(err) => format!("Permission denied: {err}"),
-        AppError::Conflict(msg) => msg,
-        AppError::Internal(msg) => msg,
-        _ => e.to_string(),
+        AppError::Validation(msg) if msg == "reason_required" => McpError::ReasonRequired {
+            message: "reason is required by workflow policy".into(),
+            schema: dbward_mcp::ports::reason_elicitation_schema(),
+        },
+        AppError::NotFound(msg) => McpError::NotFound(msg),
+        AppError::Forbidden(err) => McpError::Forbidden(format!("Permission denied: {err}")),
+        AppError::Conflict(msg) => McpError::Conflict(msg),
+        AppError::Validation(msg) => McpError::Internal(msg),
+        AppError::Internal(msg) => McpError::Internal(msg),
+        _ => McpError::Internal(e.to_string()),
     }
 }

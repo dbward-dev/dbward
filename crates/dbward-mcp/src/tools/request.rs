@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::ports::{CreateRequestInput, ElicitResult, WaitOutput};
+use crate::ports::{CreateRequestInput, ElicitResult, McpError, WaitOutput};
 
 use super::ToolContext;
 
@@ -29,32 +29,23 @@ pub(super) async fn execute_query(ctx: &ToolContext<'_>, args: &Value) -> Result
         .await
     {
         Ok(cr) => cr,
-        Err(e)
-            if e.contains("reason is required") && reason.is_none() && ctx.elicit.supported() =>
+        Err(McpError::ReasonRequired { message, schema })
+            if reason.is_none() && ctx.elicit.supported() =>
         {
-            let schema = serde_json::json!({
-                "type": "object",
-                "properties": {"reason": {"type": "string", "description": "Why is this operation needed?"}},
-                "required": ["reason"]
-            });
-            match ctx
-                .elicit
-                .ask(
-                    "This workflow requires a reason. Why is this operation needed?",
-                    schema,
-                )
-                .await
-            {
+            match ctx.elicit.ask(&message, schema).await {
                 Ok(ElicitResult::Accept { content }) => {
-                    let r = content["reason"].as_str().ok_or_else(|| e.clone())?;
+                    let r = content["reason"]
+                        .as_str()
+                        .ok_or_else(|| "reason field missing in elicitation response".to_string())?;
                     ctx.backend
                         .create_request(make_input(Some(r.into()), idempotency_key), ctx.user)
-                        .await?
+                        .await
+                        .map_err(|e| e.to_string())?
                 }
-                _ => return Err(e),
+                _ => return Err(message),
             }
         }
-        Err(e) => return Err(e),
+        Err(e) => return Err(e.to_string()),
     };
 
     if cr.status.is_pending() {
@@ -69,7 +60,8 @@ pub(super) async fn execute_query(ctx: &ToolContext<'_>, args: &Value) -> Result
     match ctx
         .backend
         .resume_and_wait(&cr.request_id, 120, ctx.user)
-        .await?
+        .await
+        .map_err(|e| e.to_string())?
     {
         WaitOutput::Completed(text) => Ok(text),
         WaitOutput::Pending { request_id } => Ok(format!(
@@ -88,14 +80,16 @@ pub(super) async fn wait_request(ctx: &ToolContext<'_>, args: &Value) -> Result<
     let include_result = args["include_result"].as_bool().unwrap_or(true);
 
     if !include_result {
-        let value = ctx.backend.get_request(request_id, ctx.user).await?;
+        let value = ctx.backend.get_request(request_id, ctx.user).await
+            .map_err(|e| e.to_string())?;
         return Ok(format_json(value));
     }
 
     match ctx
         .backend
         .resume_and_wait(request_id, timeout, ctx.user)
-        .await?
+        .await
+        .map_err(|e| e.to_string())?
     {
         WaitOutput::Completed(text) => Ok(text),
         WaitOutput::Pending { request_id } => {
@@ -112,6 +106,7 @@ pub(super) async fn list_pending(ctx: &ToolContext<'_>) -> Result<String, String
         .list_pending(20, ctx.user)
         .await
         .map(format_json)
+        .map_err(|e| e.to_string())
 }
 
 pub(super) async fn find_similar(ctx: &ToolContext<'_>, args: &Value) -> Result<String, String> {
@@ -124,6 +119,7 @@ pub(super) async fn find_similar(ctx: &ToolContext<'_>, args: &Value) -> Result<
         .find_similar(sql, limit, ctx.user)
         .await
         .map(format_json)
+        .map_err(|e| e.to_string())
 }
 
 pub(super) async fn preview_impact(ctx: &ToolContext<'_>, args: &Value) -> Result<String, String> {
@@ -134,6 +130,7 @@ pub(super) async fn preview_impact(ctx: &ToolContext<'_>, args: &Value) -> Resul
         .preview_impact(sql, db, env, ctx.user)
         .await
         .map(format_json)
+        .map_err(|e| e.to_string())
 }
 
 pub(super) async fn who_can_approve(ctx: &ToolContext<'_>, args: &Value) -> Result<String, String> {
@@ -142,6 +139,7 @@ pub(super) async fn who_can_approve(ctx: &ToolContext<'_>, args: &Value) -> Resu
         .who_can_approve(request_id, ctx.user)
         .await
         .map(format_json)
+        .map_err(|e| e.to_string())
 }
 
 pub(super) async fn explain_policy_failure(
@@ -159,6 +157,7 @@ pub(super) async fn explain_policy_failure(
         .explain_policy_failure(request_id, operation, db, env, ctx.user)
         .await
         .map(format_json)
+        .map_err(|e| e.to_string())
 }
 
 // --- Helpers ---

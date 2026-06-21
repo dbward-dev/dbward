@@ -299,8 +299,8 @@ pub fn build_router(state: AppState) -> Router {
             .route(
                 "/mcp",
                 axum::routing::post(mcp::post_mcp)
-                    .get(mcp::method_not_allowed)
-                    .delete(mcp::method_not_allowed),
+                    .get(mcp::get_mcp)
+                    .delete(mcp::delete_mcp),
             )
             .layer(middleware::from_fn_with_state(
                 state.clone(),
@@ -320,6 +320,8 @@ pub fn build_router(state: AppState) -> Router {
                     .allow_origin(AllowOrigin::list(origins))
                     .allow_methods(AllowMethods::list([
                         axum::http::Method::POST,
+                        axum::http::Method::GET,
+                        axum::http::Method::DELETE,
                         axum::http::Method::OPTIONS,
                     ]))
                     .allow_headers(AllowHeaders::list([
