@@ -7,7 +7,10 @@ pub(super) async fn migrate_status(ctx: &ToolContext<'_>, args: &Value) -> Resul
     let env = args["environment"]
         .as_str()
         .unwrap_or(ctx.default_environment);
-    let value = ctx.backend.migrate_status(db, env, ctx.user).await
+    let value = ctx
+        .backend
+        .migrate_status(db, env, ctx.user)
+        .await
         .map_err(|e| e.to_string())?;
     Ok(serde_json::to_string_pretty(&value).unwrap_or_default())
 }

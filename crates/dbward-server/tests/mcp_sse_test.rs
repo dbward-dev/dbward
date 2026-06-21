@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use dbward_domain::auth::{AuthUser, SubjectType};
 use dbward_mcp::ports::ElicitResult;
-use dbward_server::session::{SessionRuntime, StreamRuntime, PHASE_ACTIVE, PHASE_INITIALIZING};
+use dbward_server::session::{PHASE_ACTIVE, PHASE_INITIALIZING, SessionRuntime, StreamRuntime};
 use dbward_server::session_store::SessionStore;
 use tokio::sync::mpsc;
 
@@ -73,7 +73,12 @@ async fn http_elicitation_supported_only_when_active() {
     let (tx, _rx) = mpsc::channel(32);
     let stream = Arc::new(StreamRuntime::new("stream1".into(), tx, 100));
 
-    let elicit = HttpElicitation::new(session.clone(), stream, 300, std::sync::Arc::new(dbward_server::metrics::Metrics::new()));
+    let elicit = HttpElicitation::new(
+        session.clone(),
+        stream,
+        300,
+        std::sync::Arc::new(dbward_server::metrics::Metrics::new()),
+    );
 
     // Phase Initializing → not supported
     assert!(!dbward_mcp::ports::ElicitationTransport::supported(&elicit));
@@ -92,7 +97,12 @@ async fn http_elicitation_not_supported_without_client_capability() {
     let (tx, _rx) = mpsc::channel(32);
     let stream = Arc::new(StreamRuntime::new("stream1".into(), tx, 100));
 
-    let elicit = HttpElicitation::new(session, stream, 300, std::sync::Arc::new(dbward_server::metrics::Metrics::new()));
+    let elicit = HttpElicitation::new(
+        session,
+        stream,
+        300,
+        std::sync::Arc::new(dbward_server::metrics::Metrics::new()),
+    );
     assert!(!dbward_mcp::ports::ElicitationTransport::supported(&elicit));
 }
 
@@ -105,11 +115,18 @@ async fn http_elicitation_ask_emits_event_and_registers_waiter() {
     session.phase.store(PHASE_ACTIVE, Ordering::SeqCst);
     let (tx, _rx) = mpsc::channel(32);
     let stream = Arc::new(StreamRuntime::new("stream1".into(), tx, 100));
-    let elicit = HttpElicitation::new(session.clone(), stream.clone(), 1, std::sync::Arc::new(dbward_server::metrics::Metrics::new())); // 1s timeout
+    let elicit = HttpElicitation::new(
+        session.clone(),
+        stream.clone(),
+        1,
+        std::sync::Arc::new(dbward_server::metrics::Metrics::new()),
+    ); // 1s timeout
 
     // Spawn ask in background (will timeout after 1s)
     let handle = tokio::spawn(async move {
-        elicit.ask("Why?", serde_json::json!({"type": "object"})).await
+        elicit
+            .ask("Why?", serde_json::json!({"type": "object"}))
+            .await
     });
 
     // Give it a moment to register
@@ -140,20 +157,30 @@ async fn http_elicitation_ask_resolves_on_response() {
     let (tx, _rx) = mpsc::channel(32);
     let stream = Arc::new(StreamRuntime::new("stream1".into(), tx, 100));
     let session_clone = session.clone();
-    let elicit = HttpElicitation::new(session.clone(), stream, 300, std::sync::Arc::new(dbward_server::metrics::Metrics::new()));
+    let elicit = HttpElicitation::new(
+        session.clone(),
+        stream,
+        300,
+        std::sync::Arc::new(dbward_server::metrics::Metrics::new()),
+    );
 
-    let handle = tokio::spawn(async move {
-        elicit.ask("Why?", serde_json::json!({})).await
-    });
+    let handle = tokio::spawn(async move { elicit.ask("Why?", serde_json::json!({})).await });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Resolve the pending elicitation
-    let key = session_clone.pending_elicitations.iter().next().unwrap().key().clone();
+    let key = session_clone
+        .pending_elicitations
+        .iter()
+        .next()
+        .unwrap()
+        .key()
+        .clone();
     let (_, tx) = session_clone.pending_elicitations.remove(&key).unwrap();
     tx.send(ElicitResult::Accept {
         content: serde_json::json!({"reason": "testing"}),
-    }).unwrap();
+    })
+    .unwrap();
 
     let result = handle.await.unwrap().unwrap();
     match result {
@@ -195,7 +222,7 @@ async fn emit_after_mark_completed_does_not_panic() {
 async fn elicitation_fails_fast_when_stream_dead() {
     use dbward_mcp::ports::ElicitationTransport;
     use dbward_server::http_elicitation::HttpElicitation;
-    use dbward_server::session::{SessionRuntime, StreamRuntime, PHASE_ACTIVE};
+    use dbward_server::session::{PHASE_ACTIVE, SessionRuntime, StreamRuntime};
 
     let session = std::sync::Arc::new(SessionRuntime::new(
         "sess1".into(),
@@ -208,7 +235,9 @@ async fn elicitation_fails_fast_when_stream_dead() {
         },
         true,
     ));
-    session.phase.store(PHASE_ACTIVE, std::sync::atomic::Ordering::Relaxed);
+    session
+        .phase
+        .store(PHASE_ACTIVE, std::sync::atomic::Ordering::Relaxed);
 
     let (tx, rx) = tokio::sync::mpsc::channel(1);
     let stream = std::sync::Arc::new(StreamRuntime::new("s1".into(), tx, 100));
@@ -218,12 +247,19 @@ async fn elicitation_fails_fast_when_stream_dead() {
     let elicit = HttpElicitation::new(session.clone(), stream, 300, metrics.clone());
 
     let start = std::time::Instant::now();
-    let result = elicit.ask("Why?", serde_json::json!({"type": "object"})).await.unwrap();
+    let result = elicit
+        .ask("Why?", serde_json::json!({"type": "object"}))
+        .await
+        .unwrap();
     let elapsed = start.elapsed();
 
     // Should return Cancel immediately (not wait 300s timeout)
     assert!(matches!(result, dbward_mcp::ports::ElicitResult::Cancel));
-    assert!(elapsed.as_secs() < 1, "Should fail fast, took {:?}", elapsed);
+    assert!(
+        elapsed.as_secs() < 1,
+        "Should fail fast, took {:?}",
+        elapsed
+    );
     // Pending elicitation should be cleaned up
     assert!(session.pending_elicitations.is_empty());
 }

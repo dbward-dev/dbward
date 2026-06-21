@@ -11,8 +11,8 @@ use dbward_domain::auth::AuthUser;
 use dbward_domain::entities::{AuditContext, RequestStatus};
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 use dbward_mcp::ports::{
-    CreateRequestInput, CreateRequestOutput, McpBackend, McpError, McpResult, RequestStatus as McpStatus,
-    WaitOutput,
+    CreateRequestInput, CreateRequestOutput, McpBackend, McpError, McpResult,
+    RequestStatus as McpStatus, WaitOutput,
 };
 
 use crate::state::AppState;
@@ -34,8 +34,10 @@ impl McpBackend for ServerMcpBackend {
             .operation
             .parse::<Operation>()
             .map_err(|e| format!("Invalid operation: {e}"))?;
-        let db = DatabaseName::new(&input.database).map_err(|e| McpError::Internal(e.to_string()))?;
-        let env = Environment::new(&input.environment).map_err(|e| McpError::Internal(e.to_string()))?;
+        let db =
+            DatabaseName::new(&input.database).map_err(|e| McpError::Internal(e.to_string()))?;
+        let env =
+            Environment::new(&input.environment).map_err(|e| McpError::Internal(e.to_string()))?;
 
         let app_input = AppCreateInput {
             database: db,

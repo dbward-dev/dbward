@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 
 use dbward_domain::auth::AuthUser;
 use dbward_mcp::ports::{
-    CreateRequestInput, CreateRequestOutput, McpBackend, McpError, McpResult, RequestStatus, WaitOutput,
+    CreateRequestInput, CreateRequestOutput, McpBackend, McpError, McpResult, RequestStatus,
+    WaitOutput,
 };
 
 use crate::commands::workflow;
@@ -180,7 +181,11 @@ impl McpBackend for CliMcpBackend {
         _user: &AuthUser,
     ) -> McpResult<Value> {
         if let Some(id) = request_id {
-            return self.client.get_request(id).await.map_err(|e| McpError::Internal(e.to_string()));
+            return self
+                .client
+                .get_request(id)
+                .await
+                .map_err(|e| McpError::Internal(e.to_string()));
         }
         Ok(json!({"explanation": "Submit a request to see the policy evaluation result."}))
     }
@@ -198,7 +203,10 @@ impl McpBackend for CliMcpBackend {
         } else {
             format!("/api/schemas/{database}")
         };
-        self.client.get_json(&path).await.map_err(|e| McpError::Internal(e.to_string()))
+        self.client
+            .get_json(&path)
+            .await
+            .map_err(|e| McpError::Internal(e.to_string()))
     }
 
     async fn get_request(&self, request_id: &str, _user: &AuthUser) -> McpResult<Value> {
@@ -243,6 +251,9 @@ impl McpBackend for CliMcpBackend {
 
     async fn audit_recent(&self, limit: u32, _user: &AuthUser) -> McpResult<Value> {
         let path = format!("/api/audit/events?limit={limit}");
-        self.client.get_json(&path).await.map_err(|e| McpError::Internal(e.to_string()))
+        self.client
+            .get_json(&path)
+            .await
+            .map_err(|e| McpError::Internal(e.to_string()))
     }
 }

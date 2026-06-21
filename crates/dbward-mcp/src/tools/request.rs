@@ -34,9 +34,9 @@ pub(super) async fn execute_query(ctx: &ToolContext<'_>, args: &Value) -> Result
         {
             match ctx.elicit.ask(&message, schema).await {
                 Ok(ElicitResult::Accept { content }) => {
-                    let r = content["reason"]
-                        .as_str()
-                        .ok_or_else(|| "reason field missing in elicitation response".to_string())?;
+                    let r = content["reason"].as_str().ok_or_else(|| {
+                        "reason field missing in elicitation response".to_string()
+                    })?;
                     ctx.backend
                         .create_request(make_input(Some(r.into()), idempotency_key), ctx.user)
                         .await
@@ -80,7 +80,10 @@ pub(super) async fn wait_request(ctx: &ToolContext<'_>, args: &Value) -> Result<
     let include_result = args["include_result"].as_bool().unwrap_or(true);
 
     if !include_result {
-        let value = ctx.backend.get_request(request_id, ctx.user).await
+        let value = ctx
+            .backend
+            .get_request(request_id, ctx.user)
+            .await
             .map_err(|e| e.to_string())?;
         return Ok(format_json(value));
     }

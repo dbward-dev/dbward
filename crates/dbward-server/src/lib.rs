@@ -539,8 +539,8 @@ pub async fn run_from_args(
         mcp_elicitation_timeout_secs: cfg.mcp.elicitation_timeout_secs.unwrap_or(300).max(10),
         mcp_replay_buffer_size: cfg.mcp.replay_buffer_size.unwrap_or(100).max(1),
         session_store: Arc::new(session_store::SessionStore::new(
-            cfg.mcp.session_ttl_secs.unwrap_or(3600).max(10),  // minimum 10s
-            cfg.mcp.max_sessions.unwrap_or(1000).max(1),       // minimum 1
+            cfg.mcp.session_ttl_secs.unwrap_or(3600).max(10), // minimum 10s
+            cfg.mcp.max_sessions.unwrap_or(1000).max(1),      // minimum 1
         )),
     }
     .build();

@@ -9,21 +9,21 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 use dbward_domain::auth::AuthUser;
 use dbward_mcp::handler;
 use dbward_mcp::ports::NoopElicitation;
-use dbward_mcp::protocol::{
-    JsonRpcMessage, JsonRpcResponse, parse_message, INVALID_REQUEST,
-};
+use dbward_mcp::protocol::{INVALID_REQUEST, JsonRpcMessage, JsonRpcResponse, parse_message};
 
 use crate::http_elicitation::HttpElicitation;
 use crate::mcp_backend::ServerMcpBackend;
 use crate::middleware::trusted_proxies::ClientIp;
-use crate::session::{RequestRuntime, SessionRuntime, StreamRuntime, PHASE_ACTIVE, PHASE_INITIALIZING};
+use crate::session::{
+    PHASE_ACTIVE, PHASE_INITIALIZING, RequestRuntime, SessionRuntime, StreamRuntime,
+};
 use crate::state::AppState;
 
 /// POST /mcp — MCP JSON-RPC endpoint (Phase 2: session-aware, SSE-capable).
@@ -45,14 +45,22 @@ pub(crate) async fn post_mcp(
     }
 
     // Content-Type check
-    match headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
+    match headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+    {
         Some(ct) if ct.contains("application/json") => {}
         _ => return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
     }
 
     // Accept header parsing
-    let accept_str = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()).unwrap_or("");
-    let accepts_json = accept_str.is_empty() || accept_str.contains("application/json") || accept_str.contains("*/*");
+    let accept_str = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let accepts_json = accept_str.is_empty()
+        || accept_str.contains("application/json")
+        || accept_str.contains("*/*");
     let accepts_sse = accept_str.contains("text/event-stream");
     if !accepts_json && !accepts_sse {
         return StatusCode::NOT_ACCEPTABLE.into_response();
@@ -105,7 +113,10 @@ pub(crate) async fn get_mcp(
     }
 
     // Accept header check: must request text/event-stream
-    let accept_str = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let accept_str = headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
     if !accept_str.contains("text/event-stream") && !accept_str.contains("*/*") {
         return StatusCode::NOT_ACCEPTABLE.into_response();
     }
@@ -146,7 +157,10 @@ pub(crate) async fn get_mcp(
 
     // Subscribe FIRST (before replay) to avoid gap
     let (sub_tx, mut sub_rx) = tokio::sync::mpsc::channel::<crate::session::SseEvent>(256);
-    if !stream_rt.completed.load(std::sync::atomic::Ordering::Relaxed) {
+    if !stream_rt
+        .completed
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
         stream_rt.subscribers.lock().push(sub_tx);
     }
 
@@ -154,7 +168,9 @@ pub(crate) async fn get_mcp(
     {
         let buf = stream_rt.replay_buffer.read();
         if let Some(oldest) = buf.front() {
-            let oldest_seq: u64 = oldest.id.rsplit_once(':')
+            let oldest_seq: u64 = oldest
+                .id
+                .rsplit_once(':')
                 .and_then(|(_, s)| s.parse().ok())
                 .unwrap_or(0);
             if after_seq < oldest_seq.saturating_sub(1) {
@@ -172,7 +188,9 @@ pub(crate) async fn get_mcp(
     {
         let buf = stream_rt.replay_buffer.read();
         for event in buf.iter() {
-            let seq: u64 = event.id.rsplit_once(':')
+            let seq: u64 = event
+                .id
+                .rsplit_once(':')
                 .and_then(|(_, s)| s.parse().ok())
                 .unwrap_or(0);
             if seq > after_seq {
@@ -183,15 +201,23 @@ pub(crate) async fn get_mcp(
     }
 
     // Stream live events from subscriber (deduplicated by seq)
-    if !stream_rt.completed.load(std::sync::atomic::Ordering::Relaxed) {
+    if !stream_rt
+        .completed
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
         let tx_live = tx.clone();
         tokio::spawn(async move {
             while let Some(event) = sub_rx.recv().await {
-                let seq: u64 = event.id.rsplit_once(':')
+                let seq: u64 = event
+                    .id
+                    .rsplit_once(':')
                     .and_then(|(_, s)| s.parse().ok())
                     .unwrap_or(0);
                 if seq > max_replayed_seq
-                    && tx_live.send(Event::default().id(&event.id).data(&event.data)).await.is_err()
+                    && tx_live
+                        .send(Event::default().id(&event.id).data(&event.data))
+                        .await
+                        .is_err()
                 {
                     break;
                 }
@@ -203,8 +229,10 @@ pub(crate) async fn get_mcp(
     let mut resp = Sse::new(stream.map(Ok::<_, Infallible>))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response();
-    resp.headers_mut().insert("cache-control", "no-cache".parse().unwrap());
-    resp.headers_mut().insert("x-accel-buffering", "no".parse().unwrap());
+    resp.headers_mut()
+        .insert("cache-control", "no-cache".parse().unwrap());
+    resp.headers_mut()
+        .insert("x-accel-buffering", "no".parse().unwrap());
     resp
 }
 
@@ -224,7 +252,7 @@ pub(crate) async fn delete_mcp(
 
     let session_id = match headers.get("mcp-session-id").and_then(|v| v.to_str().ok()) {
         Some(id) => id,
-        None => return StatusCode::NOT_FOUND.into_response(),  // design doc: 404
+        None => return StatusCode::NOT_FOUND.into_response(), // design doc: 404
     };
 
     let store = state.session_store();
@@ -309,7 +337,10 @@ async fn dispatch_message(
 ) -> axum::response::Response {
     match msg {
         JsonRpcMessage::Request(req) => {
-            state.metrics.mcp_requests_total.inc([normalize_method(&req.method)]);
+            state
+                .metrics
+                .mcp_requests_total
+                .inc([normalize_method(&req.method)]);
             // Initialize creates a new session
             if req.method == "initialize" {
                 return handle_initialize_request(req, user, state).await;
@@ -317,15 +348,27 @@ async fn dispatch_message(
 
             // SSE path: session + accepts_sse
             if let Some(session) = session.filter(|_| accepts_sse) {
-                return handle_sse_request(session, req, backend.clone(), user.clone(), state.clone()).await;
+                return handle_sse_request(
+                    session,
+                    req,
+                    backend.clone(),
+                    user.clone(),
+                    state.clone(),
+                )
+                .await;
             }
 
             // JSON path (Phase 1 compat)
             let elicit = NoopElicitation;
             let resp = handler::handle_request(
-                req, backend, &elicit, user,
-                &state.mcp_default_database, &state.mcp_default_environment,
-            ).await;
+                req,
+                backend,
+                &elicit,
+                user,
+                &state.mcp_default_database,
+                &state.mcp_default_environment,
+            )
+            .await;
 
             match resp {
                 None => StatusCode::ACCEPTED.into_response(),
@@ -334,7 +377,12 @@ async fn dispatch_message(
         }
 
         JsonRpcMessage::Notification(notif) => {
-            handle_notification(&notif.method, &notif.params, session.as_ref(), &state.metrics);
+            handle_notification(
+                &notif.method,
+                &notif.params,
+                session.as_ref(),
+                &state.metrics,
+            );
             StatusCode::ACCEPTED.into_response()
         }
 
@@ -350,23 +398,39 @@ async fn dispatch_message(
             for m in messages {
                 match m {
                     JsonRpcMessage::Request(req) => {
-                        state.metrics.mcp_requests_total.inc([normalize_method(&req.method)]);
+                        state
+                            .metrics
+                            .mcp_requests_total
+                            .inc([normalize_method(&req.method)]);
                         if req.method == "initialize" {
                             responses.push(JsonRpcResponse::error(
-                                req.id, INVALID_REQUEST, "initialize must not be sent in a batch",
+                                req.id,
+                                INVALID_REQUEST,
+                                "initialize must not be sent in a batch",
                             ));
                             continue;
                         }
                         let elicit = NoopElicitation;
                         if let Some(r) = handler::handle_request(
-                            req, backend, &elicit, user,
-                            &state.mcp_default_database, &state.mcp_default_environment,
-                        ).await {
+                            req,
+                            backend,
+                            &elicit,
+                            user,
+                            &state.mcp_default_database,
+                            &state.mcp_default_environment,
+                        )
+                        .await
+                        {
                             responses.push(r);
                         }
                     }
                     JsonRpcMessage::Notification(notif) => {
-                        handle_notification(&notif.method, &notif.params, session.as_ref(), &state.metrics);
+                        handle_notification(
+                            &notif.method,
+                            &notif.params,
+                            session.as_ref(),
+                            &state.metrics,
+                        );
                     }
                     JsonRpcMessage::Response(resp) => {
                         if let Some(ref s) = session {
@@ -376,7 +440,9 @@ async fn dispatch_message(
                     }
                     JsonRpcMessage::Batch(_) => {
                         responses.push(JsonRpcResponse::error(
-                            None, INVALID_REQUEST, "Nested batch not allowed",
+                            None,
+                            INVALID_REQUEST,
+                            "Nested batch not allowed",
                         ));
                     }
                 }
@@ -385,7 +451,12 @@ async fn dispatch_message(
                 StatusCode::ACCEPTED.into_response()
             } else {
                 let bytes = serde_json::to_vec(&responses).unwrap_or_default();
-                (StatusCode::OK, [(header::CONTENT_TYPE, "application/json")], bytes).into_response()
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    bytes,
+                )
+                    .into_response()
             }
         }
     }
@@ -399,16 +470,27 @@ async fn handle_sse_request(
     state: AppState,
 ) -> axum::response::Response {
     // Per-session concurrency limit (atomic)
-    let count = session.active_request_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let count = session
+        .active_request_count
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if count >= 10 {
-        session.active_request_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        session
+            .active_request_count
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
 
     let stream_id = uuid::Uuid::new_v4().to_string();
-    state.metrics.mcp_sse_streams_total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state
+        .metrics
+        .mcp_sse_streams_total
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (event_tx, event_rx) = mpsc::channel::<Event>(32);
-    let stream_rt = Arc::new(StreamRuntime::new(stream_id.clone(), event_tx, state.mcp_replay_buffer_size));
+    let stream_rt = Arc::new(StreamRuntime::new(
+        stream_id.clone(),
+        event_tx,
+        state.mcp_replay_buffer_size,
+    ));
     session.streams.insert(stream_id.clone(), stream_rt.clone());
 
     // Register in-flight request BEFORE spawn to prevent race
@@ -421,7 +503,9 @@ async fn handle_sse_request(
     let req_entry = session.requests.entry(req_id_str.clone());
     match req_entry {
         Entry::Occupied(_) => {
-            session.active_request_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            session
+                .active_request_count
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             return StatusCode::CONFLICT.into_response();
         }
         Entry::Vacant(v) => {
@@ -442,7 +526,12 @@ async fn handle_sse_request(
             // Guard: ensures active_request_count is decremented on any exit (panic, abort, normal)
             let _guard = RequestGuard(session.clone());
 
-            let elicit = HttpElicitation::new(session.clone(), stream_rt.clone(), state.mcp_elicitation_timeout_secs, state.metrics.clone());
+            let elicit = HttpElicitation::new(
+                session.clone(),
+                stream_rt.clone(),
+                state.mcp_elicitation_timeout_secs,
+                state.metrics.clone(),
+            );
             let response = tokio::select! {
                 resp = handler::handle_request(
                     req, &backend, &elicit, &user,
@@ -476,8 +565,10 @@ async fn handle_sse_request(
     let mut resp = Sse::new(stream.map(Ok::<_, Infallible>))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response();
-    resp.headers_mut().insert("cache-control", "no-cache".parse().unwrap());
-    resp.headers_mut().insert("x-accel-buffering", "no".parse().unwrap());
+    resp.headers_mut()
+        .insert("cache-control", "no-cache".parse().unwrap());
+    resp.headers_mut()
+        .insert("x-accel-buffering", "no".parse().unwrap());
     resp
 }
 
@@ -504,7 +595,10 @@ async fn handle_initialize_request(
     let store = state.session_store();
     let session = match store.create(user.clone(), supports_elicitation) {
         Some(s) => {
-            state.metrics.mcp_sessions_created_total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            state
+                .metrics
+                .mcp_sessions_created_total
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             s
         }
         None => {
@@ -518,24 +612,33 @@ async fn handle_initialize_request(
         StatusCode::OK,
         [(header::CONTENT_TYPE, "application/json")],
         bytes,
-    ).into_response();
-    response.headers_mut().insert(
-        "mcp-session-id",
-        session.id.parse().unwrap(),
-    );
+    )
+        .into_response();
+    response
+        .headers_mut()
+        .insert("mcp-session-id", session.id.parse().unwrap());
     response
 }
 
-fn handle_notification(method: &str, params: &serde_json::Value, session: Option<&Arc<SessionRuntime>>, metrics: &crate::metrics::Metrics) {
+fn handle_notification(
+    method: &str,
+    params: &serde_json::Value,
+    session: Option<&Arc<SessionRuntime>>,
+    metrics: &crate::metrics::Metrics,
+) {
     match method {
         "notifications/initialized" => {
             if let Some(s) = session {
                 use std::sync::atomic::Ordering;
                 // Transition from Initializing → Active
-                s.phase.compare_exchange(
-                    PHASE_INITIALIZING, PHASE_ACTIVE,
-                    Ordering::SeqCst, Ordering::Relaxed,
-                ).ok();
+                s.phase
+                    .compare_exchange(
+                        PHASE_INITIALIZING,
+                        PHASE_ACTIVE,
+                        Ordering::SeqCst,
+                        Ordering::Relaxed,
+                    )
+                    .ok();
             }
         }
         "notifications/cancelled" => {
@@ -543,7 +646,9 @@ fn handle_notification(method: &str, params: &serde_json::Value, session: Option
                 let req_id = request_id_key(&params["requestId"]);
                 if let Some(entry) = s.requests.get(&req_id) {
                     entry.value().cancel_token.cancel();
-                    metrics.mcp_cancel_total.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    metrics
+                        .mcp_cancel_total
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
             }
         }
@@ -556,20 +661,28 @@ struct RequestGuard(Arc<SessionRuntime>);
 
 impl Drop for RequestGuard {
     fn drop(&mut self) {
-        self.0.active_request_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        self.0
+            .active_request_count
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
 /// Normalize method name to prevent unbounded label cardinality.
 fn normalize_method(method: &str) -> &str {
     match method {
-        "initialize" | "ping" |
-        "tools/list" | "tools/call" |
-        "resources/list" | "resources/read" | "resources/templates/list" |
-        "prompts/list" | "prompts/get" |
-        "completions/complete" |
-        "notifications/initialized" | "notifications/cancelled" |
-        "logging/setLevel" => method,
+        "initialize"
+        | "ping"
+        | "tools/list"
+        | "tools/call"
+        | "resources/list"
+        | "resources/read"
+        | "resources/templates/list"
+        | "prompts/list"
+        | "prompts/get"
+        | "completions/complete"
+        | "notifications/initialized"
+        | "notifications/cancelled"
+        | "logging/setLevel" => method,
         _ => "unknown",
     }
 }
@@ -589,7 +702,9 @@ fn request_id_key(id: &serde_json::Value) -> String {
     }
 }
 
-fn parse_elicit_result(resp: &dbward_mcp::protocol::JsonRpcIncomingResponse) -> dbward_mcp::ports::ElicitResult {
+fn parse_elicit_result(
+    resp: &dbward_mcp::protocol::JsonRpcIncomingResponse,
+) -> dbward_mcp::ports::ElicitResult {
     use dbward_mcp::ports::ElicitResult;
 
     if resp.error.is_some() {
@@ -602,7 +717,9 @@ fn parse_elicit_result(resp: &dbward_mcp::protocol::JsonRpcIncomingResponse) -> 
     };
 
     match result.get("action").and_then(|a| a.as_str()) {
-        Some("accept") => ElicitResult::Accept { content: result["content"].clone() },
+        Some("accept") => ElicitResult::Accept {
+            content: result["content"].clone(),
+        },
         Some("decline") => ElicitResult::Decline,
         _ => ElicitResult::Cancel,
     }
@@ -621,7 +738,12 @@ fn route_elicitation_response(
 
     // Validate before removing
     if resp.error.is_none() {
-        match resp.result.as_ref().and_then(|r| r.get("action")).and_then(|a| a.as_str()) {
+        match resp
+            .result
+            .as_ref()
+            .and_then(|r| r.get("action"))
+            .and_then(|a| a.as_str())
+        {
             Some("accept" | "decline" | "cancel") => {}
             _ => return (StatusCode::BAD_REQUEST, "invalid elicitation response").into_response(),
         }
@@ -630,7 +752,9 @@ fn route_elicitation_response(
     if let Some((_, tx)) = session.pending_elicitations.remove(&id_str) {
         let result = parse_elicit_result(resp);
         let _ = tx.send(result);
-        session.resolved_elicitations.insert(id_str, std::time::Instant::now());
+        session
+            .resolved_elicitations
+            .insert(id_str, std::time::Instant::now());
         StatusCode::ACCEPTED.into_response()
     } else if session.resolved_elicitations.contains_key(&id_str) {
         (StatusCode::BAD_REQUEST, "elicitation already resolved").into_response()
@@ -649,7 +773,10 @@ mod tests {
         assert_eq!(normalize_method("tools/call"), "tools/call");
         assert_eq!(normalize_method("tools/list"), "tools/list");
         assert_eq!(normalize_method("resources/list"), "resources/list");
-        assert_eq!(normalize_method("notifications/cancelled"), "notifications/cancelled");
+        assert_eq!(
+            normalize_method("notifications/cancelled"),
+            "notifications/cancelled"
+        );
     }
 
     #[test]

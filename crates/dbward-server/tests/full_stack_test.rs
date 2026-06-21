@@ -145,7 +145,9 @@ fn real_state() -> AppState {
         mcp_default_environment: "development".into(),
         mcp_elicitation_timeout_secs: 300,
         mcp_replay_buffer_size: 100,
-        session_store: std::sync::Arc::new(dbward_server::session_store::SessionStore::new(3600, 100)),
+        session_store: std::sync::Arc::new(dbward_server::session_store::SessionStore::new(
+            3600, 100,
+        )),
     }
     .build()
 }

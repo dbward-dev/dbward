@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::Instant;
 
 use dashmap::DashMap;
@@ -38,9 +38,9 @@ pub struct SessionRuntime {
 
     pub streams: DashMap<String, std::sync::Arc<StreamRuntime>>,
     pub requests: DashMap<String, RequestRuntime>,
-    pub active_request_count: AtomicU64,  // atomic counter for concurrency limit
+    pub active_request_count: AtomicU64, // atomic counter for concurrency limit
     pub pending_elicitations: DashMap<String, oneshot::Sender<ElicitResult>>,
-    pub resolved_elicitations: DashMap<String, Instant>,  // short-lived cache for "already resolved" detection
+    pub resolved_elicitations: DashMap<String, Instant>, // short-lived cache for "already resolved" detection
     pub elicit_id_counter: AtomicU64,
 }
 
@@ -108,7 +108,11 @@ pub struct StreamRuntime {
 }
 
 impl StreamRuntime {
-    pub fn new(stream_id: String, event_tx: mpsc::Sender<axum::response::sse::Event>, replay_capacity: usize) -> Self {
+    pub fn new(
+        stream_id: String,
+        event_tx: mpsc::Sender<axum::response::sse::Event>,
+        replay_capacity: usize,
+    ) -> Self {
         Self {
             stream_id,
             event_tx: Mutex::new(Some(event_tx)),
@@ -158,7 +162,9 @@ impl StreamRuntime {
         // 3. Send to primary SSE channel (if still open)
         let tx = self.event_tx.lock().clone();
         if let Some(tx) = tx {
-            tx.send(Event::default().id(event_id).data(data)).await.is_ok()
+            tx.send(Event::default().id(event_id).data(data))
+                .await
+                .is_ok()
         } else {
             false
         }

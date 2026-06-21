@@ -285,10 +285,20 @@ pub fn render(
     );
 
     writeln!(out, "# TYPE dbward_mcp_sse_streams_total counter").ok();
-    writeln!(out, "dbward_mcp_sse_streams_total {}", metrics.mcp_sse_streams_total.load(Ordering::Relaxed)).ok();
+    writeln!(
+        out,
+        "dbward_mcp_sse_streams_total {}",
+        metrics.mcp_sse_streams_total.load(Ordering::Relaxed)
+    )
+    .ok();
 
     writeln!(out, "# TYPE dbward_mcp_cancel_total counter").ok();
-    writeln!(out, "dbward_mcp_cancel_total {}", metrics.mcp_cancel_total.load(Ordering::Relaxed)).ok();
+    writeln!(
+        out,
+        "dbward_mcp_cancel_total {}",
+        metrics.mcp_cancel_total.load(Ordering::Relaxed)
+    )
+    .ok();
 
     write_counter_vec(
         &mut out,
@@ -298,7 +308,12 @@ pub fn render(
     );
 
     writeln!(out, "# TYPE dbward_mcp_sessions_created_total counter").ok();
-    writeln!(out, "dbward_mcp_sessions_created_total {}", metrics.mcp_sessions_created_total.load(Ordering::Relaxed)).ok();
+    writeln!(
+        out,
+        "dbward_mcp_sessions_created_total {}",
+        metrics.mcp_sessions_created_total.load(Ordering::Relaxed)
+    )
+    .ok();
 
     write_counter_vec(
         &mut out,
@@ -308,17 +323,29 @@ pub fn render(
     );
 
     // MCP gauges (computed from session store)
-    let mcp_sessions_active: usize = session_store.iter_sessions()
+    let mcp_sessions_active: usize = session_store
+        .iter_sessions()
         .filter(|s| s.value().phase() == crate::session::PHASE_ACTIVE)
         .count();
     writeln!(out, "# TYPE dbward_mcp_sessions_active gauge").ok();
     writeln!(out, "dbward_mcp_sessions_active {mcp_sessions_active}").ok();
 
-    let mcp_sse_streams_active: usize = session_store.iter_sessions()
-        .map(|s| s.value().streams.iter().filter(|e| !e.value().completed.load(Ordering::Relaxed)).count())
+    let mcp_sse_streams_active: usize = session_store
+        .iter_sessions()
+        .map(|s| {
+            s.value()
+                .streams
+                .iter()
+                .filter(|e| !e.value().completed.load(Ordering::Relaxed))
+                .count()
+        })
         .sum();
     writeln!(out, "# TYPE dbward_mcp_sse_streams_active gauge").ok();
-    writeln!(out, "dbward_mcp_sse_streams_active {mcp_sse_streams_active}").ok();
+    writeln!(
+        out,
+        "dbward_mcp_sse_streams_active {mcp_sse_streams_active}"
+    )
+    .ok();
 
     out
 }

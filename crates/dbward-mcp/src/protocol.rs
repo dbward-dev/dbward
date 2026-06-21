@@ -339,12 +339,15 @@ mod tests {
     fn parse_message_notification() {
         let body = br#"{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}"#;
         let msg = parse_message(body).unwrap();
-        assert!(matches!(msg, JsonRpcMessage::Notification(n) if n.method == "notifications/initialized"));
+        assert!(
+            matches!(msg, JsonRpcMessage::Notification(n) if n.method == "notifications/initialized")
+        );
     }
 
     #[test]
     fn parse_message_response() {
-        let body = br#"{"jsonrpc":"2.0","id":"elicit-1","result":{"action":"accept","content":{}}}"#;
+        let body =
+            br#"{"jsonrpc":"2.0","id":"elicit-1","result":{"action":"accept","content":{}}}"#;
         let msg = parse_message(body).unwrap();
         assert!(matches!(msg, JsonRpcMessage::Response(r) if r.id == json!("elicit-1")));
     }

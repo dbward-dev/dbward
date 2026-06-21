@@ -9,7 +9,7 @@ use tokio::sync::oneshot;
 use dbward_mcp::ports::{ElicitResult, ElicitationTransport};
 
 use crate::metrics::Metrics;
-use crate::session::{SessionRuntime, StreamRuntime, PHASE_ACTIVE};
+use crate::session::{PHASE_ACTIVE, SessionRuntime, StreamRuntime};
 
 /// HTTP-based elicitation transport. Emits elicitation request on SSE,
 /// waits for client to respond via separate POST with matching id.
@@ -21,8 +21,18 @@ pub struct HttpElicitation {
 }
 
 impl HttpElicitation {
-    pub fn new(session: Arc<SessionRuntime>, stream_rt: Arc<StreamRuntime>, timeout_secs: u64, metrics: Arc<Metrics>) -> Self {
-        Self { session, stream_rt, timeout_secs, metrics }
+    pub fn new(
+        session: Arc<SessionRuntime>,
+        stream_rt: Arc<StreamRuntime>,
+        timeout_secs: u64,
+        metrics: Arc<Metrics>,
+    ) -> Self {
+        Self {
+            session,
+            stream_rt,
+            timeout_secs,
+            metrics,
+        }
     }
 }
 
@@ -30,16 +40,24 @@ impl HttpElicitation {
 impl ElicitationTransport for HttpElicitation {
     fn supported(&self) -> bool {
         self.session.phase.load(Ordering::Relaxed) == PHASE_ACTIVE
-            && self.session.client_supports_elicitation.load(Ordering::Relaxed)
+            && self
+                .session
+                .client_supports_elicitation
+                .load(Ordering::Relaxed)
     }
 
     async fn ask(&self, message: &str, schema: Value) -> Result<ElicitResult, String> {
-        let seq = self.session.elicit_id_counter.fetch_add(1, Ordering::Relaxed);
+        let seq = self
+            .session
+            .elicit_id_counter
+            .fetch_add(1, Ordering::Relaxed);
         let elicit_id = format!("elicit-{seq}");
 
         // Register oneshot waiter
         let (tx, rx) = oneshot::channel();
-        self.session.pending_elicitations.insert(elicit_id.clone(), tx);
+        self.session
+            .pending_elicitations
+            .insert(elicit_id.clone(), tx);
 
         // Emit elicitation request as SSE event
         let raw = json!({
@@ -48,7 +66,10 @@ impl ElicitationTransport for HttpElicitation {
             "method": "elicitation/create",
             "params": {"message": message, "requestedSchema": schema}
         });
-        let delivered = self.stream_rt.emit_raw(&serde_json::to_string(&raw).unwrap()).await;
+        let delivered = self
+            .stream_rt
+            .emit_raw(&serde_json::to_string(&raw).unwrap())
+            .await;
         if !delivered {
             // SSE channel dead — client disconnected, fail fast
             self.session.pending_elicitations.remove(&elicit_id);

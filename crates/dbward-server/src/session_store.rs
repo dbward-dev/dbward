@@ -21,7 +21,11 @@ impl SessionStore {
         }
     }
 
-    pub fn create(&self, user: AuthUser, supports_elicitation: bool) -> Option<Arc<SessionRuntime>> {
+    pub fn create(
+        &self,
+        user: AuthUser,
+        supports_elicitation: bool,
+    ) -> Option<Arc<SessionRuntime>> {
         // Generate ID first, then use entry API to atomically check + insert.
         // If we exceed max_sessions after insert, remove immediately.
         let id = uuid::Uuid::new_v4().to_string();
@@ -69,7 +73,9 @@ impl SessionStore {
 
             // Prune resolved elicitation cache (keep 60s)
             let elicit_cutoff = now - Duration::from_secs(60);
-            session.resolved_elicitations.retain(|_, ts| *ts > elicit_cutoff);
+            session
+                .resolved_elicitations
+                .retain(|_, ts| *ts > elicit_cutoff);
 
             let expired_streams: Vec<String> = session
                 .streams
@@ -182,7 +188,9 @@ mod tests {
         // Add a completed stream with old completed_at
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let stream = std::sync::Arc::new(crate::session::StreamRuntime::new("s1".into(), tx, 100));
-        stream.completed.store(true, std::sync::atomic::Ordering::Relaxed);
+        stream
+            .completed
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         // Set completed_at to 400s ago (exceeds 300s TTL)
         *stream.completed_at.write() = Some(Instant::now() - Duration::from_secs(400));
         session.streams.insert("s1".into(), stream);
@@ -200,10 +208,9 @@ mod tests {
         let session = store.create(user(), false).unwrap();
 
         // Add a resolved elicitation from 120s ago (exceeds 60s cutoff)
-        session.resolved_elicitations.insert(
-            "e1".into(),
-            Instant::now() - Duration::from_secs(120),
-        );
+        session
+            .resolved_elicitations
+            .insert("e1".into(), Instant::now() - Duration::from_secs(120));
 
         store.cleanup_expired();
 
