@@ -1,5 +1,6 @@
 use dbward_config::server;
 use dbward_domain::policies::{ApproverGroup, Workflow, WorkflowStep, WorkflowStepMode};
+use dbward_domain::services::workflow_validator;
 use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
 
 use super::{
@@ -66,6 +67,29 @@ pub(super) fn parse_workflow(id: &str, wf: &super::WorkflowInput) -> Result<Work
             )));
         }
         steps.push(WorkflowStep { approvers, mode });
+    }
+
+    // Validate steps for logical consistency
+    if !steps.is_empty() {
+        let issues =
+            workflow_validator::validate_steps(&steps, wf.allow_same_approver_across_steps);
+        for issue in &issues {
+            match issue.severity {
+                workflow_validator::Severity::Error => {
+                    return Err(AppError::Validation(format!(
+                        "workflow {}/{}: {}",
+                        wf.database, wf.environment, issue.message
+                    )));
+                }
+                workflow_validator::Severity::Warning => {
+                    tracing::warn!(
+                        workflow = %format!("{}/{}", wf.database, wf.environment),
+                        "{}",
+                        issue.message
+                    );
+                }
+            }
+        }
     }
 
     Ok(Workflow {

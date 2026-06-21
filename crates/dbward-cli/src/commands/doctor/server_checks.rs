@@ -45,6 +45,9 @@ pub(super) fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
     // S3: workflow_validity
     check_workflow_validity(ctx, &cfg);
 
+    // S3b: workflow_step_validity (approver logic checks)
+    check_workflow_step_validity(ctx, &cfg);
+
     // S4: workflow_coverage (reverse check)
     check_workflow_coverage(ctx, &cfg);
 
@@ -152,6 +155,129 @@ fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &dbward_config::ServerC
             message: format!("{} dead: {}", dead.len(), dead.join("; ")),
             hint: None,
         });
+    }
+}
+
+/// S3b: Validate workflow step logic (approver selectors, deadlock detection).
+fn check_workflow_step_validity(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
+    use dbward_domain::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
+    use dbward_domain::services::workflow_validator;
+    use dbward_domain::values::Selector;
+
+    for (wf_idx, wf) in cfg.workflows.iter().enumerate() {
+        if wf.steps.is_empty() {
+            continue; // auto-approve workflow, nothing to validate
+        }
+
+        // Parse steps from serde_json::Value → WorkflowStep
+        let mut steps = Vec::new();
+        let mut parse_error = false;
+        for (step_idx, step_val) in wf.steps.iter().enumerate() {
+            let mode = match step_val
+                .get("mode")
+                .and_then(|m| m.as_str())
+                .unwrap_or("all")
+            {
+                "any" => WorkflowStepMode::Any,
+                "all" => WorkflowStepMode::All,
+                other => {
+                    ctx.record(CheckResult {
+                        id: "workflow_step_validity",
+                        status: Status::Fail,
+                        message: format!(
+                            "workflows[{wf_idx}].steps[{step_idx}]: unknown mode '{other}'"
+                        ),
+                        hint: None,
+                    });
+                    parse_error = true;
+                    continue;
+                }
+            };
+            let approvers: Vec<ApproverGroup> = step_val
+                .get("approvers")
+                .and_then(|a| a.as_array())
+                .map(|arr| {
+                    let mut parsed = Vec::new();
+                    for (a_idx, a) in arr.iter().enumerate() {
+                        let raw_min = a.get("min").and_then(|m| m.as_u64()).unwrap_or(1);
+                        if raw_min > u32::MAX as u64 {
+                            ctx.record(CheckResult {
+                                id: "workflow_step_validity",
+                                status: Status::Fail,
+                                message: format!(
+                                    "workflows[{wf_idx}].steps[{step_idx}].approvers[{a_idx}]: min={raw_min} exceeds maximum ({})",
+                                    u32::MAX
+                                ),
+                                hint: None,
+                            });
+                            parse_error = true;
+                            continue;
+                        }
+                        let min = raw_min as u32;
+                        let selector = if let Some(r) = a.get("role").and_then(|v| v.as_str()) {
+                            Selector::Role(r.to_string())
+                        } else if let Some(g) = a.get("group").and_then(|v| v.as_str()) {
+                            Selector::Group(g.to_string())
+                        } else if let Some(u) = a.get("user").and_then(|v| v.as_str()) {
+                            Selector::User(u.to_string())
+                        } else {
+                            ctx.record(CheckResult {
+                                id: "workflow_step_validity",
+                                status: Status::Fail,
+                                message: format!(
+                                    "workflows[{wf_idx}].steps[{step_idx}].approvers[{a_idx}]: no valid selector"
+                                ),
+                                hint: Some(
+                                    "Each approver must have 'role', 'group', or 'user' key".into(),
+                                ),
+                            });
+                            parse_error = true;
+                            continue;
+                        };
+                        parsed.push(ApproverGroup { selector, min });
+                    }
+                    parsed
+                })
+                .unwrap_or_default();
+            steps.push(WorkflowStep { approvers, mode });
+        }
+
+        if parse_error && steps.is_empty() {
+            continue;
+        }
+
+        // Skip logical validation if any parse error occurred for this workflow
+        if parse_error {
+            continue;
+        }
+
+        let issues =
+            workflow_validator::validate_steps(&steps, wf.allow_same_approver_across_steps);
+        for issue in issues {
+            let status = match issue.severity {
+                workflow_validator::Severity::Error => Status::Fail,
+                workflow_validator::Severity::Warning => Status::Warn,
+            };
+            ctx.record(CheckResult {
+                id: "workflow_step_validity",
+                status,
+                message: format!("workflows[{wf_idx}]: {}", issue.message),
+                hint: None,
+            });
+        }
+    }
+
+    // Emit pass if no workflow_step_validity results were recorded
+    if !ctx.results.iter().any(|r| r.id == "workflow_step_validity") {
+        let non_auto = cfg.workflows.iter().filter(|w| !w.steps.is_empty()).count();
+        if non_auto > 0 {
+            ctx.record(CheckResult {
+                id: "workflow_step_validity",
+                status: Status::Pass,
+                message: format!("{non_auto} workflows with steps, all valid"),
+                hint: None,
+            });
+        }
     }
 }
 
