@@ -80,7 +80,7 @@ impl McpBackend for ServerMcpBackend {
         user: &AuthUser,
     ) -> McpResult<WaitOutput> {
         let ctx = self.audit_ctx.clone();
-        let resume_output = self
+        let resume_output = match self
             .state
             .requests()
             .resume()
@@ -90,8 +90,14 @@ impl McpBackend for ServerMcpBackend {
                 },
                 user,
                 &ctx,
-            )
-            .map_err(format_app_error)?;
+            ) {
+            Ok(o) => o,
+            Err(AppError::Conflict(_)) => {
+                // Already dispatched/running — skip resume, go straight to stream
+                return self.stream_result(request_id, timeout_secs, user).await;
+            }
+            Err(e) => return Err(format_app_error(e)),
+        };
 
         if resume_output.status == RequestStatus::Pending {
             return Ok(WaitOutput::Pending {
@@ -231,14 +237,17 @@ impl McpBackend for ServerMcpBackend {
             let resume_input = ResumeRequestInput {
                 request_id: output.id.clone(),
             };
-            if let Err(e) = self
+            match self
                 .state
                 .requests()
                 .resume()
                 .execute(resume_input, user, &ctx)
             {
-                tracing::warn!(error = %e, request_id = %output.id, "resume failed for preview_impact");
-                return Err(format!("resume failed: {e}").into());
+                Ok(_) | Err(AppError::Conflict(_)) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, request_id = %output.id, "resume failed for preview_impact");
+                    return Err(format!("resume failed: {e}").into());
+                }
             }
             if let WaitOutput::Completed(text) = self.stream_result(&output.id, 30, user).await? {
                 return Ok(json!({"plan": text}));
@@ -382,14 +391,17 @@ impl McpBackend for ServerMcpBackend {
             let resume_input = ResumeRequestInput {
                 request_id: output.id.clone(),
             };
-            if let Err(e) = self
+            match self
                 .state
                 .requests()
                 .resume()
                 .execute(resume_input, user, &ctx)
             {
-                tracing::warn!(error = %e, request_id = %output.id, "resume failed for migrate_status");
-                return Err(format!("resume failed: {e}").into());
+                Ok(_) | Err(AppError::Conflict(_)) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, request_id = %output.id, "resume failed for migrate_status");
+                    return Err(format!("resume failed: {e}").into());
+                }
             }
             if let WaitOutput::Completed(text) = self.stream_result(&output.id, 30, user).await? {
                 return Ok(serde_json::from_str(&text).unwrap_or(json!({"raw": text})));
