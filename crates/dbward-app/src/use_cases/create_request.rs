@@ -1180,6 +1180,11 @@ fn pending_approvers_for(
         .unwrap_or_default()
 }
 
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(data))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1513,9 +1518,4 @@ mod tests {
         // With empty steps workflow → auto-approved (risk doesn't block because config disabled)
         assert_eq!(result.status, RequestStatus::Dispatched);
     }
-}
-
-fn sha256_hex(data: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    hex::encode(Sha256::digest(data))
 }
