@@ -129,11 +129,33 @@ pub(super) async fn preview_impact(ctx: &ToolContext<'_>, args: &Value) -> Resul
     let sql = require_str(args, "sql")?;
     let db = str_or(args, "database", ctx.default_database);
     let env = str_or(args, "environment", ctx.default_environment);
-    ctx.backend
-        .preview_impact(sql, db, env, ctx.user)
+    let reason = args["reason"].as_str().map(String::from);
+
+    match ctx
+        .backend
+        .preview_impact(sql, db, env, reason.as_deref(), ctx.user)
         .await
-        .map(format_json)
-        .map_err(|e| e.to_string())
+    {
+        Ok(v) => Ok(format_json(v)),
+        Err(McpError::ReasonRequired { message, schema })
+            if reason.is_none() && ctx.elicit.supported() =>
+        {
+            match ctx.elicit.ask(&message, schema).await {
+                Ok(ElicitResult::Accept { content }) => {
+                    let r = content["reason"]
+                        .as_str()
+                        .ok_or("reason field missing in elicitation response")?;
+                    ctx.backend
+                        .preview_impact(sql, db, env, Some(r), ctx.user)
+                        .await
+                        .map(format_json)
+                        .map_err(|e| e.to_string())
+                }
+                _ => Err(message),
+            }
+        }
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 pub(super) async fn who_can_approve(ctx: &ToolContext<'_>, args: &Value) -> Result<String, String> {

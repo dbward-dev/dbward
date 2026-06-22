@@ -80,17 +80,13 @@ impl McpBackend for ServerMcpBackend {
         user: &AuthUser,
     ) -> McpResult<WaitOutput> {
         let ctx = self.audit_ctx.clone();
-        let resume_output = match self
-            .state
-            .requests()
-            .resume()
-            .execute(
-                ResumeRequestInput {
-                    request_id: request_id.into(),
-                },
-                user,
-                &ctx,
-            ) {
+        let resume_output = match self.state.requests().resume().execute(
+            ResumeRequestInput {
+                request_id: request_id.into(),
+            },
+            user,
+            &ctx,
+        ) {
             Ok(o) => o,
             Err(AppError::Conflict(_)) => {
                 // Already dispatched/running — skip resume, go straight to stream
@@ -203,6 +199,7 @@ impl McpBackend for ServerMcpBackend {
         sql: &str,
         database: &str,
         environment: &str,
+        reason: Option<&str>,
         user: &AuthUser,
     ) -> McpResult<Value> {
         // preview_impact creates a request with operation "explain"
@@ -214,7 +211,7 @@ impl McpBackend for ServerMcpBackend {
             environment: env,
             operation: Operation::ExecuteSelect,
             detail: format!("EXPLAIN {sql}"),
-            reason: None,
+            reason: reason.map(String::from),
             emergency: false,
             allow_ddl: false,
             idempotency_key: None,
@@ -358,6 +355,7 @@ impl McpBackend for ServerMcpBackend {
         &self,
         database: &str,
         environment: &str,
+        reason: Option<&str>,
         user: &AuthUser,
     ) -> McpResult<Value> {
         // migrate_status goes through the request workflow (same as CLI)
@@ -369,7 +367,7 @@ impl McpBackend for ServerMcpBackend {
             environment: env,
             operation: Operation::MigrateStatus,
             detail: "{}".into(),
-            reason: None,
+            reason: reason.map(String::from),
             emergency: false,
             allow_ddl: false,
             idempotency_key: None,

@@ -89,6 +89,7 @@ pub trait McpBackend: Send + Sync {
         sql: &str,
         database: &str,
         environment: &str,
+        reason: Option<&str>,
         user: &AuthUser,
     ) -> McpResult<Value>;
 
@@ -126,6 +127,7 @@ pub trait McpBackend: Send + Sync {
         &self,
         database: &str,
         environment: &str,
+        reason: Option<&str>,
         user: &AuthUser,
     ) -> McpResult<Value>;
 

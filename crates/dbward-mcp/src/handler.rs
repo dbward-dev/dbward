@@ -257,6 +257,7 @@ mod tests {
             _: &str,
             _: &str,
             _: &str,
+            _: Option<&str>,
             _: &AuthUser,
         ) -> McpResult<Value> {
             Ok(json!({"plan": "Seq Scan"}))
@@ -290,7 +291,13 @@ mod tests {
         async fn list_databases(&self, _: &AuthUser) -> McpResult<Value> {
             Ok(json!([]))
         }
-        async fn migrate_status(&self, _: &str, _: &str, _: &AuthUser) -> McpResult<Value> {
+        async fn migrate_status(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+            _: &AuthUser,
+        ) -> McpResult<Value> {
             Ok(json!({"applied": 3, "pending": 1}))
         }
         async fn audit_recent(&self, _: u32, _: &AuthUser) -> McpResult<Value> {

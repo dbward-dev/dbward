@@ -145,6 +145,7 @@ impl McpBackend for CliMcpBackend {
         sql: &str,
         database: &str,
         environment: &str,
+        reason: Option<&str>,
         _user: &AuthUser,
     ) -> McpResult<Value> {
         let input = CreateRequestInput {
@@ -152,7 +153,7 @@ impl McpBackend for CliMcpBackend {
             environment: environment.into(),
             database: database.into(),
             detail: format!("EXPLAIN {sql}"),
-            reason: None,
+            reason: reason.map(String::from),
             idempotency_key: None,
         };
         let cr = self.create_request(input, _user).await?;
@@ -227,6 +228,7 @@ impl McpBackend for CliMcpBackend {
         &self,
         database: &str,
         environment: &str,
+        reason: Option<&str>,
         _user: &AuthUser,
     ) -> McpResult<Value> {
         let input = CreateRequestInput {
@@ -234,7 +236,7 @@ impl McpBackend for CliMcpBackend {
             environment: environment.into(),
             database: database.into(),
             detail: "{}".into(),
-            reason: None,
+            reason: reason.map(String::from),
             idempotency_key: None,
         };
         let cr = self.create_request(input, _user).await?;
