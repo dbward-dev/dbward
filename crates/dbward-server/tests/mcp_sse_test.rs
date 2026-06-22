@@ -136,9 +136,11 @@ async fn http_elicitation_ask_emits_event_and_registers_waiter() {
     assert_eq!(session.pending_elicitations.len(), 1);
 
     // Verify event emitted to replay buffer
-    let buf = stream.replay_buffer.read();
-    assert_eq!(buf.len(), 1);
-    assert!(buf[0].data.contains("elicitation/create"));
+    {
+        let buf = stream.replay_buffer.read();
+        assert_eq!(buf.len(), 1);
+        assert!(buf[0].data.contains("elicitation/create"));
+    }
 
     // Wait for timeout → Cancel
     let result = handle.await.unwrap().unwrap();
