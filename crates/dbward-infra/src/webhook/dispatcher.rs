@@ -248,6 +248,7 @@ fn build_generic_body(event: &WebhookEvent) -> String {
         "actor": event.actor,
         "requester": event.requester,
         "detail": event.redacted_detail,
+        "matched_selector": event.matched_selector,
     }))
     .unwrap_or_default()
 }
@@ -515,6 +516,7 @@ mod slack_body_tests {
             total_steps: None,
             expires_at: None,
             approvers: None,
+            matched_selector: None,
         }
     }
 

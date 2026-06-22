@@ -372,6 +372,24 @@ impl dbward_app::ports::transaction::ResultWriterOps for NoopTxScope {
         Ok(())
     }
 }
+impl dbward_app::ports::transaction::ApprovalReaderOps for NoopTxScope {
+    fn get_approvals(
+        &self,
+        _: &str,
+    ) -> Result<Vec<dbward_domain::entities::Approval>, dbward_app::error::AppError> {
+        Ok(vec![])
+    }
+    fn get_request_state(
+        &self,
+        _: &str,
+    ) -> Result<Option<dbward_app::ports::transaction::RequestState>, dbward_app::error::AppError>
+    {
+        Ok(Some((
+            dbward_domain::entities::RequestStatus::Pending,
+            None,
+        )))
+    }
+}
 impl dbward_app::ports::transaction::TxScope for NoopTxScope {}
 
 // --- AuditSigner ---

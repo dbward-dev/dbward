@@ -59,6 +59,22 @@ pub trait ApprovalWriterOps {
     -> Result<(), AppError>;
 }
 
+/// Read operations on approvals within a transaction (for in-TX recheck).
+/// Status + expiry snapshot for in-TX recheck.
+pub type RequestState = (
+    dbward_domain::entities::RequestStatus,
+    Option<chrono::DateTime<chrono::Utc>>,
+);
+
+pub trait ApprovalReaderOps {
+    fn get_approvals(
+        &self,
+        request_id: &str,
+    ) -> Result<Vec<dbward_domain::entities::Approval>, AppError>;
+    /// Returns (status, expires_at) for authoritative in-TX recheck.
+    fn get_request_state(&self, request_id: &str) -> Result<Option<RequestState>, AppError>;
+}
+
 /// Operations available on audit within a transaction.
 pub trait AuditWriterOps {
     fn record(&self, event: &AuditEvent) -> Result<(), AppError>;
@@ -120,6 +136,7 @@ pub trait ResultWriterOps {
 pub trait TxScope:
     RequestWriterOps
     + ApprovalWriterOps
+    + ApprovalReaderOps
     + AuditWriterOps
     + ExecutionWriterOps
     + TokenWriterOps

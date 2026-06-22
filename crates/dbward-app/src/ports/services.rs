@@ -30,4 +30,5 @@ pub struct WebhookEvent {
     pub total_steps: Option<u32>,
     pub expires_at: Option<String>,
     pub approvers: Option<Vec<String>>,
+    pub matched_selector: Option<String>,
 }
