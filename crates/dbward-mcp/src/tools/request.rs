@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::ports::{CreateRequestInput, ElicitResult, McpError, WaitOutput};
+use crate::ports::{CreateRequestInput, ElicitResult, McpError, McpResult, WaitOutput};
 
 use super::ToolContext;
 
@@ -131,31 +131,11 @@ pub(super) async fn preview_impact(ctx: &ToolContext<'_>, args: &Value) -> Resul
     let env = str_or(args, "environment", ctx.default_environment);
     let reason = args["reason"].as_str().map(String::from);
 
-    match ctx
-        .backend
-        .preview_impact(sql, db, env, reason.as_deref(), ctx.user)
-        .await
-    {
-        Ok(v) => Ok(format_json(v)),
-        Err(McpError::ReasonRequired { message, schema })
-            if reason.is_none() && ctx.elicit.supported() =>
-        {
-            match ctx.elicit.ask(&message, schema).await {
-                Ok(ElicitResult::Accept { content }) => {
-                    let r = content["reason"]
-                        .as_str()
-                        .ok_or("reason field missing in elicitation response")?;
-                    ctx.backend
-                        .preview_impact(sql, db, env, Some(r), ctx.user)
-                        .await
-                        .map(format_json)
-                        .map_err(|e| e.to_string())
-                }
-                _ => Err(message),
-            }
-        }
-        Err(e) => Err(e.to_string()),
-    }
+    with_elicitation(ctx, reason, |r| {
+        ctx.backend.preview_impact(sql, db, env, r, ctx.user)
+    })
+    .await
+    .map(format_json)
 }
 
 pub(super) async fn who_can_approve(ctx: &ToolContext<'_>, args: &Value) -> Result<String, String> {
@@ -186,6 +166,37 @@ pub(super) async fn explain_policy_failure(
 }
 
 // --- Helpers ---
+
+/// Elicitation retry helper. Calls the backend operation, and if it returns
+/// `ReasonRequired` with elicitation supported, asks the client for a reason
+/// and retries once with the provided reason.
+pub(super) async fn with_elicitation<'a, F, Fut>(
+    ctx: &ToolContext<'a>,
+    reason: Option<String>,
+    f: F,
+) -> Result<Value, String>
+where
+    F: Fn(Option<String>) -> Fut,
+    Fut: std::future::Future<Output = McpResult<Value>>,
+{
+    match f(reason.clone()).await {
+        Ok(v) => Ok(v),
+        Err(McpError::ReasonRequired { message, schema })
+            if reason.is_none() && ctx.elicit.supported() =>
+        {
+            match ctx.elicit.ask(&message, schema).await {
+                Ok(ElicitResult::Accept { content }) => {
+                    let r = content["reason"]
+                        .as_str()
+                        .ok_or("elicitation response missing 'reason' field")?;
+                    f(Some(r.to_string())).await.map_err(|e| e.to_string())
+                }
+                _ => Err(message),
+            }
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
 
 fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     args[key]

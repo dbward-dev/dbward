@@ -199,7 +199,7 @@ impl McpBackend for ServerMcpBackend {
         sql: &str,
         database: &str,
         environment: &str,
-        reason: Option<&str>,
+        reason: Option<String>,
         user: &AuthUser,
     ) -> McpResult<Value> {
         // preview_impact creates a request with operation "explain"
@@ -211,7 +211,7 @@ impl McpBackend for ServerMcpBackend {
             environment: env,
             operation: Operation::ExecuteSelect,
             detail: format!("EXPLAIN {sql}"),
-            reason: reason.map(String::from),
+            reason,
             emergency: false,
             allow_ddl: false,
             idempotency_key: None,
@@ -355,7 +355,7 @@ impl McpBackend for ServerMcpBackend {
         &self,
         database: &str,
         environment: &str,
-        reason: Option<&str>,
+        reason: Option<String>,
         user: &AuthUser,
     ) -> McpResult<Value> {
         // migrate_status goes through the request workflow (same as CLI)
@@ -367,7 +367,7 @@ impl McpBackend for ServerMcpBackend {
             environment: env,
             operation: Operation::MigrateStatus,
             detail: "{}".into(),
-            reason: reason.map(String::from),
+            reason,
             emergency: false,
             allow_ddl: false,
             idempotency_key: None,

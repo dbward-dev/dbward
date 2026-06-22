@@ -62,6 +62,7 @@ pub(super) async fn handle_preview_impact(
     client_supports_elicitation: bool,
 ) -> Result<String, String> {
     let db = args["database"].as_str().unwrap_or(db_name);
+    let reason = args["reason"].as_str();
     let explain_sql = format!("EXPLAIN {sql}");
     submit_and_wait(
         client,
@@ -69,7 +70,7 @@ pub(super) async fn handle_preview_impact(
         env,
         db,
         &explain_sql,
-        None,
+        reason,
         elicit,
         client_supports_elicitation,
     )

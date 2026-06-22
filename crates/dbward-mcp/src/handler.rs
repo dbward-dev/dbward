@@ -257,7 +257,7 @@ mod tests {
             _: &str,
             _: &str,
             _: &str,
-            _: Option<&str>,
+            _: Option<String>,
             _: &AuthUser,
         ) -> McpResult<Value> {
             Ok(json!({"plan": "Seq Scan"}))
@@ -295,7 +295,7 @@ mod tests {
             &self,
             _: &str,
             _: &str,
-            _: Option<&str>,
+            _: Option<String>,
             _: &AuthUser,
         ) -> McpResult<Value> {
             Ok(json!({"applied": 3, "pending": 1}))

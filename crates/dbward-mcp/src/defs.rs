@@ -12,7 +12,7 @@ pub fn tools_definitions() -> Value {
                     "sql": {"type": "string", "description": "SQL statement to execute"},
                     "database": {"type": "string", "description": "Target database name"},
                     "environment": {"type": "string", "description": "Environment (development/staging/production)"},
-                    "reason": {"type": "string", "description": "Reason for execution (required by some workflows)"},
+                    "reason": {"type": "string", "description": "Reason for execution (required by some workflows)", "maxLength": 1024},
                     "_idempotency_key": {"type": "string", "description": "Client-supplied UUID for replay protection (optional)"}
                 },
                 "required": ["sql"]
@@ -26,7 +26,7 @@ pub fn tools_definitions() -> Value {
                 "properties": {
                     "database": {"type": "string", "description": "Target database name"},
                     "environment": {"type": "string", "description": "Environment"},
-                    "reason": {"type": "string", "description": "Reason for execution (required by some workflows)"}
+                    "reason": {"type": "string", "description": "Reason for execution (required by some workflows)", "maxLength": 1024}
                 }
             }
         },
@@ -61,7 +61,7 @@ pub fn tools_definitions() -> Value {
         {
             "name": "dbward_preview_impact",
             "description": "Preview the impact of a SQL statement (EXPLAIN output)",
-            "inputSchema": {"type": "object", "properties": {"sql": {"type": "string"}, "database": {"type": "string"}, "environment": {"type": "string"}, "reason": {"type": "string", "description": "Reason for execution (required by some workflows)"}}, "required": ["sql"]}
+            "inputSchema": {"type": "object", "properties": {"sql": {"type": "string"}, "database": {"type": "string"}, "environment": {"type": "string"}, "reason": {"type": "string", "description": "Reason for execution (required by some workflows)", "maxLength": 1024}}, "required": ["sql"]}
         },
         {
             "name": "dbward_explain_policy_failure",
