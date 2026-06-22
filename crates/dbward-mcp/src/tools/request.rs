@@ -213,3 +213,275 @@ fn str_or<'a>(args: &'a Value, key: &str, default: &'a str) -> &'a str {
 fn format_json(value: Value) -> String {
     serde_json::to_string_pretty(&value).unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ports::{ElicitResult, ElicitationTransport, McpError, McpResult};
+    use async_trait::async_trait;
+    use serde_json::{Value, json};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    struct MockElicit {
+        result: ElicitResult,
+    }
+
+    #[async_trait]
+    impl ElicitationTransport for MockElicit {
+        fn supported(&self) -> bool {
+            true
+        }
+        async fn ask(&self, _message: &str, _schema: Value) -> Result<ElicitResult, String> {
+            Ok(self.result.clone())
+        }
+    }
+
+    struct NoElicit;
+
+    #[async_trait]
+    impl ElicitationTransport for NoElicit {
+        fn supported(&self) -> bool {
+            false
+        }
+        async fn ask(&self, _: &str, _: Value) -> Result<ElicitResult, String> {
+            Err("not supported".into())
+        }
+    }
+
+    fn make_ctx<'a>(elicit: &'a dyn ElicitationTransport) -> ToolContext<'a> {
+        use dbward_domain::auth::{AuthUser, SubjectType};
+        static USER: std::sync::LazyLock<AuthUser> = std::sync::LazyLock::new(|| AuthUser {
+            subject_id: "u1".into(),
+            subject_type: SubjectType::User,
+            groups: vec![],
+            roles: vec![],
+            token_id: None,
+        });
+        static BACKEND: std::sync::LazyLock<DummyBackend> =
+            std::sync::LazyLock::new(|| DummyBackend);
+        ToolContext {
+            backend: &*BACKEND,
+            elicit,
+            user: &USER,
+            default_database: "app",
+            default_environment: "dev",
+        }
+    }
+
+    /// Minimal backend that satisfies the trait (never actually called in these tests).
+    struct DummyBackend;
+
+    #[async_trait]
+    impl crate::ports::McpBackend for DummyBackend {
+        async fn create_request(
+            &self,
+            _: crate::ports::CreateRequestInput,
+            _: &dbward_domain::auth::AuthUser,
+        ) -> McpResult<crate::ports::CreateRequestOutput> {
+            unimplemented!()
+        }
+        async fn resume_and_wait(
+            &self,
+            _: &str,
+            _: u64,
+            _: &dbward_domain::auth::AuthUser,
+        ) -> McpResult<crate::ports::WaitOutput> {
+            unimplemented!()
+        }
+        async fn wait_request(
+            &self,
+            _: &str,
+            _: u64,
+            _: &dbward_domain::auth::AuthUser,
+        ) -> McpResult<crate::ports::WaitOutput> {
+            unimplemented!()
+        }
+        async fn list_pending(
+            &self,
+            _: u32,
+            _: &dbward_domain::auth::AuthUser,
+        ) -> McpResult<Value> {
+            unimplemented!()
+        }
+        async fn find_similar(
+            &self,
+            _: &str,
+            _: u32,
+            _: &dbward_domain::auth::AuthUser,
+        ) -> McpResult<Value> {
+            unimplemented!()
+        }
+        async fn preview_impact(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: Option<String>,
+            _: &dbward_domain::auth::AuthUser,
+        ) -> McpResult<Value> {
+            unimplemented!()
+        }
+        async fn who_can_approve(
+            &self,
+            _: &str,
+            _: &dbward_domain::auth::AuthUser,
+        ) -> McpResult<Value> {
+            unimplemented!()
+        }
+        async fn explain_policy_failure(
+            &self,
+            _: Option<&str>,
+            _: Option<&str>,
+            _: &str,
+            _: &str,
+            _: &dbward_domain::auth::AuthUser,
+        ) -> McpResult<Value> {
+            unimplemented!()
+        }
+        async fn inspect_schema(
+            &self,
+            _: &str,
+            _: Option<&str>,
+            _: Option<&str>,
+            _: bool,
+            _: &dbward_domain::auth::AuthUser,
+        ) -> McpResult<Value> {
+            unimplemented!()
+        }
+        async fn list_databases(&self, _: &dbward_domain::auth::AuthUser) -> McpResult<Value> {
+            unimplemented!()
+        }
+        async fn get_request(
+            &self,
+            _: &str,
+            _: &dbward_domain::auth::AuthUser,
+        ) -> McpResult<Value> {
+            unimplemented!()
+        }
+        async fn migrate_status(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<String>,
+            _: &dbward_domain::auth::AuthUser,
+        ) -> McpResult<Value> {
+            unimplemented!()
+        }
+        async fn audit_recent(
+            &self,
+            _: u32,
+            _: &dbward_domain::auth::AuthUser,
+        ) -> McpResult<Value> {
+            unimplemented!()
+        }
+    }
+
+    #[tokio::test]
+    async fn with_elicitation_passes_through_on_success() {
+        let elicit = MockElicit {
+            result: ElicitResult::Accept {
+                content: json!({"reason": "test"}),
+            },
+        };
+        let ctx = make_ctx(&elicit);
+        let result = with_elicitation(&ctx, None, |_r| async { Ok(json!({"ok": true})) }).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn with_elicitation_retries_with_reason_on_accept() {
+        let call_count = AtomicU32::new(0);
+        let elicit = MockElicit {
+            result: ElicitResult::Accept {
+                content: json!({"reason": "because"}),
+            },
+        };
+        let ctx = make_ctx(&elicit);
+        let result = with_elicitation(&ctx, None, |r| {
+            let n = call_count.fetch_add(1, Ordering::Relaxed);
+            async move {
+                if n == 0 && r.is_none() {
+                    Err(McpError::ReasonRequired {
+                        message: "reason required".into(),
+                        schema: json!({}),
+                    })
+                } else {
+                    assert_eq!(r.as_deref(), Some("because"));
+                    Ok(json!({"retried": true}))
+                }
+            }
+        })
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["retried"], true);
+        assert_eq!(call_count.load(Ordering::Relaxed), 2);
+    }
+
+    #[tokio::test]
+    async fn with_elicitation_returns_error_when_not_supported() {
+        let elicit = NoElicit;
+        let ctx = make_ctx(&elicit);
+        let result = with_elicitation(&ctx, None, |_r| async {
+            Err(McpError::ReasonRequired {
+                message: "reason required".into(),
+                schema: json!({}),
+            })
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("reason required"));
+    }
+
+    #[tokio::test]
+    async fn with_elicitation_returns_error_on_decline() {
+        let elicit = MockElicit {
+            result: ElicitResult::Decline,
+        };
+        let ctx = make_ctx(&elicit);
+        let result = with_elicitation(&ctx, None, |_r| async {
+            Err(McpError::ReasonRequired {
+                message: "reason required".into(),
+                schema: json!({}),
+            })
+        })
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn with_elicitation_errors_when_reason_field_missing() {
+        let elicit = MockElicit {
+            result: ElicitResult::Accept {
+                content: json!({"not_reason": "x"}),
+            },
+        };
+        let ctx = make_ctx(&elicit);
+        let result = with_elicitation(&ctx, None, |_r| async {
+            Err(McpError::ReasonRequired {
+                message: "reason required".into(),
+                schema: json!({}),
+            })
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("'reason' field"));
+    }
+
+    #[tokio::test]
+    async fn with_elicitation_skips_when_reason_provided() {
+        let elicit = MockElicit {
+            result: ElicitResult::Accept {
+                content: json!({"reason": "should not be called"}),
+            },
+        };
+        let ctx = make_ctx(&elicit);
+        let result = with_elicitation(&ctx, Some("pre-provided".into()), |r| async move {
+            assert_eq!(r.as_deref(), Some("pre-provided"));
+            Ok(json!({"direct": true}))
+        })
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["direct"], true);
+    }
+}
