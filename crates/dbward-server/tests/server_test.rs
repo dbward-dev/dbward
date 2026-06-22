@@ -90,6 +90,7 @@ impl RequestReader for StubRequestRepo {
     fn find_by_idempotency_key(
         &self,
         _: &str,
+        _: &str,
     ) -> Result<Option<dbward_domain::entities::Request>, AppError> {
         Ok(None)
     }
@@ -699,6 +700,15 @@ fn test_state() -> AppState {
         max_persist_bytes: 10 * 1024 * 1024,
         auth_mode: "both".to_string(),
         storage_backend: "local".into(),
+        mcp_enabled: false,
+        mcp_allowed_origins: vec![],
+        mcp_default_database: String::new(),
+        mcp_default_environment: "development".into(),
+        mcp_elicitation_timeout_secs: 300,
+        mcp_replay_buffer_size: 100,
+        session_store: std::sync::Arc::new(dbward_server::session_store::SessionStore::new(
+            3600, 100,
+        )),
     }
     .build()
 }

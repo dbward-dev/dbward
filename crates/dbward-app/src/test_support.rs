@@ -143,7 +143,7 @@ impl RequestReader for FakeRequestReader {
         let total = reqs.len() as u32;
         Ok((reqs, total))
     }
-    fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
+    fn find_by_idempotency_key(&self, _: &str, _: &str) -> Result<Option<Request>, AppError> {
         Ok(None)
     }
     fn list_visible_to_user(

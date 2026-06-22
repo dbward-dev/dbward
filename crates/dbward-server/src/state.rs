@@ -21,6 +21,7 @@ use dbward_app::use_cases::{
     dry_run::{DryRunClaim, DryRunSubmitResult},
     get_request::GetRequest,
     get_result::GetResult,
+    get_schema::GetSchema,
     list_requests::ListRequests,
     reject_request::RejectRequest,
     resume_request::ResumeRequest,
@@ -101,6 +102,15 @@ pub struct AppState {
     // Slack — pub(crate)
     pub(crate) slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub(crate) slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
+
+    // MCP
+    pub(crate) mcp_enabled: bool,
+    pub(crate) mcp_allowed_origins: Vec<String>,
+    pub(crate) mcp_default_database: String,
+    pub(crate) mcp_default_environment: String,
+    pub(crate) mcp_elicitation_timeout_secs: u64,
+    pub(crate) mcp_replay_buffer_size: usize,
+    pub(crate) session_store: Arc<crate::session_store::SessionStore>,
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +376,20 @@ impl<'a> TokenUseCases<'a> {
     }
 }
 
+/// Schema use cases.
+pub(crate) struct SchemaUseCases<'a>(&'a AppState);
+
+impl<'a> SchemaUseCases<'a> {
+    pub(crate) fn get(&self) -> GetSchema {
+        let s = self.0;
+        GetSchema {
+            database_registry: s.database_registry.clone(),
+            schema_repo: s.schema_repo.clone(),
+            authorizer: s.authorizer.clone(),
+        }
+    }
+}
+
 /// User use cases.
 pub(crate) struct UserUseCases<'a>(&'a AppState);
 
@@ -412,6 +436,10 @@ impl AppState {
         UserUseCases(self)
     }
 
+    pub(crate) fn schemas(&self) -> SchemaUseCases<'_> {
+        SchemaUseCases(self)
+    }
+
     // --- Thin helpers ---
 
     pub(crate) fn list_databases(
@@ -441,6 +469,7 @@ impl AppState {
             &self.metrics,
             self.request_reader.as_ref(),
             self.agent_repo.as_ref(),
+            &self.session_store,
         ))
     }
 
@@ -489,6 +518,7 @@ impl AppState {
         &self.database_registry
     }
 
+    #[allow(dead_code)]
     pub(crate) fn schema_repo(&self) -> &Arc<dyn SchemaRepo> {
         &self.schema_repo
     }
@@ -619,6 +649,10 @@ impl AppState {
     pub(crate) fn result_channel(&self) -> &Arc<dyn ResultChannel> {
         &self.result_channel
     }
+
+    pub(crate) fn session_store(&self) -> &Arc<crate::session_store::SessionStore> {
+        &self.session_store
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -670,6 +704,17 @@ pub struct AppStateBuilder {
     pub draining: Arc<AtomicBool>,
     pub slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
+    #[allow(dead_code)]
+    pub mcp_enabled: bool,
+    #[allow(dead_code)]
+    pub mcp_allowed_origins: Vec<String>,
+    #[allow(dead_code)]
+    pub mcp_default_database: String,
+    #[allow(dead_code)]
+    pub mcp_default_environment: String,
+    pub mcp_elicitation_timeout_secs: u64,
+    pub mcp_replay_buffer_size: usize,
+    pub session_store: Arc<crate::session_store::SessionStore>,
 }
 
 impl AppStateBuilder {
@@ -718,6 +763,13 @@ impl AppStateBuilder {
             draining: self.draining,
             slack_config: self.slack_config,
             slack_client: self.slack_client,
+            mcp_enabled: self.mcp_enabled,
+            mcp_allowed_origins: self.mcp_allowed_origins,
+            mcp_default_database: self.mcp_default_database,
+            mcp_default_environment: self.mcp_default_environment,
+            mcp_elicitation_timeout_secs: self.mcp_elicitation_timeout_secs,
+            mcp_replay_buffer_size: self.mcp_replay_buffer_size,
+            session_store: self.session_store,
         }
     }
 }

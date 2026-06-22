@@ -80,6 +80,7 @@ pub struct Request {
     pub emergency: bool,
     pub reason: Option<String>,
     pub idempotency_key: Option<String>,
+    pub idempotency_fingerprint: Option<String>,
     pub metadata_json: String,
     pub share_with: Vec<String>,
     pub no_result_store: bool,

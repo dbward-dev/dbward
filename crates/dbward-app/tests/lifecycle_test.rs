@@ -61,7 +61,11 @@ impl RequestReader for SharedRepo {
         let total = reqs.len() as u32;
         Ok((reqs, total))
     }
-    fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {
+    fn find_by_idempotency_key(
+        &self,
+        _requester: &str,
+        key: &str,
+    ) -> Result<Option<Request>, AppError> {
         Ok(self
             .requests
             .lock()

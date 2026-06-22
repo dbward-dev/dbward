@@ -34,6 +34,14 @@ pub struct Metrics {
     pub approval_wait: Histogram,
     pub execution_duration: HistogramVec<2>,
     // Gauge snapshots are computed at render time from repos
+
+    // MCP counters
+    pub mcp_requests_total: CounterVec<1>,
+    pub mcp_sse_streams_total: AtomicU64,
+    pub mcp_cancel_total: AtomicU64,
+    pub mcp_elicitation_total: CounterVec<1>,
+    pub mcp_sessions_created_total: AtomicU64,
+    pub mcp_errors_total: CounterVec<1>,
 }
 
 impl Default for Metrics {
@@ -65,6 +73,12 @@ impl Metrics {
             http_request_duration: HistogramVec::new(),
             approval_wait: Histogram::new(),
             execution_duration: HistogramVec::new(),
+            mcp_requests_total: CounterVec::new(),
+            mcp_sse_streams_total: AtomicU64::new(0),
+            mcp_cancel_total: AtomicU64::new(0),
+            mcp_elicitation_total: CounterVec::new(),
+            mcp_sessions_created_total: AtomicU64::new(0),
+            mcp_errors_total: CounterVec::new(),
         }
     }
 }
@@ -91,6 +105,7 @@ pub fn render(
     metrics: &Metrics,
     request_repo: &dyn RequestReader,
     agent_repo: &dyn AgentRepo,
+    session_store: &crate::session_store::SessionStore,
 ) -> String {
     let mut out = String::with_capacity(4096);
 
@@ -260,6 +275,77 @@ pub fn render(
         .filter(|a| a.in_flight >= a.max_concurrent)
         .count();
     writeln!(out, "dbward_agents_saturated {saturated}").ok();
+
+    // --- MCP metrics ---
+    write_counter_vec(
+        &mut out,
+        "dbward_mcp_requests_total",
+        &["method"],
+        &metrics.mcp_requests_total,
+    );
+
+    writeln!(out, "# TYPE dbward_mcp_sse_streams_total counter").ok();
+    writeln!(
+        out,
+        "dbward_mcp_sse_streams_total {}",
+        metrics.mcp_sse_streams_total.load(Ordering::Relaxed)
+    )
+    .ok();
+
+    writeln!(out, "# TYPE dbward_mcp_cancel_total counter").ok();
+    writeln!(
+        out,
+        "dbward_mcp_cancel_total {}",
+        metrics.mcp_cancel_total.load(Ordering::Relaxed)
+    )
+    .ok();
+
+    write_counter_vec(
+        &mut out,
+        "dbward_mcp_elicitation_total",
+        &["outcome"],
+        &metrics.mcp_elicitation_total,
+    );
+
+    writeln!(out, "# TYPE dbward_mcp_sessions_created_total counter").ok();
+    writeln!(
+        out,
+        "dbward_mcp_sessions_created_total {}",
+        metrics.mcp_sessions_created_total.load(Ordering::Relaxed)
+    )
+    .ok();
+
+    write_counter_vec(
+        &mut out,
+        "dbward_mcp_errors_total",
+        &["code"],
+        &metrics.mcp_errors_total,
+    );
+
+    // MCP gauges (computed from session store)
+    let mcp_sessions_active: usize = session_store
+        .iter_sessions()
+        .filter(|s| s.value().phase() == crate::session::PHASE_ACTIVE)
+        .count();
+    writeln!(out, "# TYPE dbward_mcp_sessions_active gauge").ok();
+    writeln!(out, "dbward_mcp_sessions_active {mcp_sessions_active}").ok();
+
+    let mcp_sse_streams_active: usize = session_store
+        .iter_sessions()
+        .map(|s| {
+            s.value()
+                .streams
+                .iter()
+                .filter(|e| !e.value().completed.load(Ordering::Relaxed))
+                .count()
+        })
+        .sum();
+    writeln!(out, "# TYPE dbward_mcp_sse_streams_active gauge").ok();
+    writeln!(
+        out,
+        "dbward_mcp_sse_streams_active {mcp_sse_streams_active}"
+    )
+    .ok();
 
     out
 }

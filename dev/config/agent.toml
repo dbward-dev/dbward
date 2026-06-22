@@ -8,11 +8,11 @@ url = "http://dbward-server:3000"
 agent_token = "${DBWARD_AGENT_TOKEN}"
 
 [databases.app.development]
-url = "postgres://dbward:dbward@postgres:5432/dbward_dev"
+url = "postgres://dbward:testpassword@postgres:5432/dbward_dev"
 
 [databases.app.production]
-url = "postgres://dbward:dbward@postgres:5432/dbward_dev"
+url = "postgres://dbward:testpassword@postgres:5432/dbward_dev"
 
 [databases.app.staging]
-url = "postgres://dbward:dbward@postgres:5432/dbward_dev"
+url = "postgres://dbward:testpassword@postgres:5432/dbward_dev"
 

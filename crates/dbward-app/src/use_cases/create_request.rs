@@ -554,10 +554,21 @@ impl CreateRequest {
             return Err(AppError::Validation(msg));
         }
 
-        // 3. Idempotency
+        // 3. Idempotency (requester-scoped + fingerprint verification)
         if let Some(key) = &input.idempotency_key
-            && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
+            && let Some(existing) = self
+                .request_reader
+                .find_by_idempotency_key(&user.subject_id, key)?
         {
+            // Verify fingerprint: same key + different detail = conflict
+            let fingerprint = sha256_hex(input.detail.as_bytes());
+            if let Some(ref existing_fp) = existing.idempotency_fingerprint
+                && *existing_fp != fingerprint
+            {
+                return Err(AppError::Conflict(
+                    "idempotency key conflict: same key used with different SQL".into(),
+                ));
+            }
             let approvers = pending_approvers_for(self.request_reader.as_ref(), &existing);
             return Ok(CreateRequestOutput {
                 id: existing.id,
@@ -726,7 +737,11 @@ impl CreateRequest {
             status,
             emergency: input.emergency,
             reason: input.reason,
-            idempotency_key: input.idempotency_key,
+            idempotency_key: input.idempotency_key.clone(),
+            idempotency_fingerprint: input
+                .idempotency_key
+                .as_ref()
+                .map(|_| sha256_hex(input.detail.as_bytes())),
             metadata_json: input.metadata_json,
             share_with: input.share_with,
             no_result_store: input.no_result_store,
@@ -849,8 +864,9 @@ impl CreateRequest {
                         if msg.contains("idempotency_key") || msg.contains("UNIQUE constraint") =>
                     {
                         if let Some(ref key) = request.idempotency_key
-                            && let Some(existing) =
-                                self.request_reader.find_by_idempotency_key(key)?
+                            && let Some(existing) = self
+                                .request_reader
+                                .find_by_idempotency_key(&user.subject_id, key)?
                         {
                             let approvers =
                                 pending_approvers_for(self.request_reader.as_ref(), &existing);
@@ -971,7 +987,9 @@ impl CreateRequest {
                     if msg.contains("idempotency_key") || msg.contains("UNIQUE constraint") =>
                 {
                     if let Some(ref key) = request.idempotency_key
-                        && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
+                        && let Some(existing) = self
+                            .request_reader
+                            .find_by_idempotency_key(&user.subject_id, key)?
                     {
                         let approvers =
                             pending_approvers_for(self.request_reader.as_ref(), &existing);
@@ -1036,7 +1054,9 @@ impl CreateRequest {
                     if msg.contains("idempotency_key") || msg.contains("UNIQUE constraint") =>
                 {
                     if let Some(ref key) = request.idempotency_key
-                        && let Some(existing) = self.request_reader.find_by_idempotency_key(key)?
+                        && let Some(existing) = self
+                            .request_reader
+                            .find_by_idempotency_key(&user.subject_id, key)?
                     {
                         let approvers =
                             pending_approvers_for(self.request_reader.as_ref(), &existing);
@@ -1158,6 +1178,11 @@ fn pending_approvers_for(
         .ok()
         .and_then(|mut m| m.remove(&req.id).map(|(_, sels)| sels))
         .unwrap_or_default()
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(data))
 }
 
 #[cfg(test)]

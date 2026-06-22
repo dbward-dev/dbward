@@ -1,9 +1,13 @@
 pub mod background;
 pub mod bootstrap;
 pub mod config;
+pub mod http_elicitation;
+pub mod mcp_backend;
 pub mod metrics;
 pub mod middleware;
 pub mod routes;
+pub mod session;
+pub mod session_store;
 pub mod state;
 pub mod util;
 
@@ -524,6 +528,20 @@ pub async fn run_from_args(
         draining: draining.clone(),
         slack_config,
         slack_client: slack_client_for_state,
+        mcp_enabled: cfg.mcp.enabled,
+        mcp_allowed_origins: cfg.mcp.allowed_origins.clone(),
+        mcp_default_database: cfg
+            .databases
+            .first()
+            .map(|d| d.name.clone())
+            .unwrap_or_default(),
+        mcp_default_environment: cfg.mcp.default_environment.clone(),
+        mcp_elicitation_timeout_secs: cfg.mcp.elicitation_timeout_secs.unwrap_or(300).max(10),
+        mcp_replay_buffer_size: cfg.mcp.replay_buffer_size.unwrap_or(100).max(1),
+        session_store: Arc::new(session_store::SessionStore::new(
+            cfg.mcp.session_ttl_secs.unwrap_or(3600).max(10), // minimum 10s
+            cfg.mcp.max_sessions.unwrap_or(1000).max(1),      // minimum 1
+        )),
     }
     .build();
 
@@ -859,6 +877,9 @@ pub async fn start(
     // Spawn background tasks
     let (bg_shutdown, bg_handle) =
         background::spawn_background_tasks(state.clone(), draining.clone(), retention);
+
+    // Spawn MCP session cleanup (uses same shutdown token)
+    state.session_store().spawn_cleanup(bg_shutdown.clone());
 
     let app = build_app(state, trusted);
     let listener = tokio::net::TcpListener::bind(addr).await?;
