@@ -36,9 +36,11 @@ pub enum EventMetadata {
         step_index: u32,
         total_steps: u32,
         comment: Option<String>,
+        matched_selector: String,
     },
     Approved {
         comment: Option<String>,
+        matched_selector: String,
     },
     Rejected {
         comment: Option<String>,

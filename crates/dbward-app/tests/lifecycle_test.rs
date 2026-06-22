@@ -685,6 +685,23 @@ mod common {
             Ok(())
         }
     }
+    impl ApprovalReaderOps for NoopTx {
+        fn get_approvals(
+            &self,
+            _: &str,
+        ) -> Result<Vec<dbward_domain::entities::Approval>, AppError> {
+            Ok(vec![])
+        }
+        fn get_request_state(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_app::ports::transaction::RequestState>, AppError> {
+            Ok(Some((
+                dbward_domain::entities::RequestStatus::Pending,
+                None,
+            )))
+        }
+    }
     impl TxScope for NoopTx {}
 
     pub struct NoopNotifier;

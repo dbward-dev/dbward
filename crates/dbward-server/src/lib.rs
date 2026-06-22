@@ -978,7 +978,7 @@ fn build_sync_inputs_and_run(
     let roles = convert::roles_from_config(&cfg.auth.roles);
     let role_bindings = convert::role_bindings_from_config(&cfg.auth.role_bindings);
     let webhooks = convert::webhooks_from_config(&cfg.webhooks);
-    let workflows = convert::workflows_from_config(&cfg.workflows);
+    let workflows = convert::workflows_from_config(&cfg.workflows)?;
     let execution_policies = convert::execution_policies_from_config(&cfg.execution_policies);
     let result_policies = convert::result_policies_from_config(&cfg.result_policies);
     let notification_policies =

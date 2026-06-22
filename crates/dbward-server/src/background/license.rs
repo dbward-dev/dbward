@@ -95,6 +95,7 @@ impl dbward_commercial_license::runtime::LicenseHost for ServerLicenseHost {
             total_steps: None,
             expires_at: None,
             approvers: None,
+            matched_selector: None,
         };
         bg.notifier().dispatch(webhook_event);
     }

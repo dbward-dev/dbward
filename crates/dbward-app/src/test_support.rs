@@ -705,6 +705,24 @@ impl crate::ports::transaction::ResultWriterOps for NoopTxScope {
     }
 }
 
+impl crate::ports::transaction::ApprovalReaderOps for NoopTxScope {
+    fn get_approvals(
+        &self,
+        _: &str,
+    ) -> Result<Vec<dbward_domain::entities::Approval>, crate::error::AppError> {
+        Ok(vec![])
+    }
+    fn get_request_state(
+        &self,
+        _: &str,
+    ) -> Result<Option<crate::ports::transaction::RequestState>, crate::error::AppError> {
+        Ok(Some((
+            dbward_domain::entities::RequestStatus::Pending,
+            None,
+        )))
+    }
+}
+
 impl crate::ports::transaction::TxScope for NoopTxScope {}
 
 // --- NoopNotifier ---
