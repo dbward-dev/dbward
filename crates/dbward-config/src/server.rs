@@ -767,7 +767,7 @@ pub struct WorkflowDef {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[serde(tag = "mode", rename_all = "snake_case")]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AutoApproveDef {
     Always,
     RiskBased {

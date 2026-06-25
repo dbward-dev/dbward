@@ -152,11 +152,11 @@ pub async fn run_resolve(
     }
 
     let reason_display = match reason {
-        "read_only_low_risk" => "read_only",
-        "empty_steps" => "empty steps",
+        "explicit_always" => "always auto-approve",
+        "no_auto_approve" => "no auto-approve configured",
+        "risk_unknown_until_analyzed" => "risk unknown until SQL analyzed",
         "no_matching_workflow" => "no matching workflow",
         "db_not_registered" => "database not registered",
-        "risk_unknown_until_analyzed" => "risk unknown until SQL analyzed",
         other => other,
     };
     println!("Decision:    {decision} ({reason_display})");
