@@ -5,7 +5,7 @@ use crate::display::*;
 use crate::error::CliError;
 use crate::server_client::{CreateRequest, ServerClient};
 
-use super::helpers::build_request_metadata;
+use super::helpers::{self, build_request_metadata};
 use super::workflow::{self, Outcome};
 
 #[derive(Subcommand)]
@@ -65,6 +65,7 @@ pub enum MigrateAction {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_migrate(
     sc: &ServerClient,
     config: &ClientConfig,
@@ -73,6 +74,7 @@ pub async fn run_migrate(
     json_output: bool,
     action: &MigrateAction,
     _selected_db: Option<&str>,
+    yes: bool,
 ) -> Result<(), CliError> {
     let (operation, detail, metadata, idempotency_key, share_with) = match action {
         MigrateAction::Up {
@@ -222,6 +224,20 @@ pub async fn run_migrate(
         MigrateAction::Repair { reason, .. } => reason.as_deref(),
         _ => None,
     };
+
+    // migrate_status is read-only — no confirmation needed
+    if operation != "migrate_status" {
+        helpers::confirm_submission(
+            &helpers::SubmissionSummary {
+                operation,
+                database: db_name,
+                environment: env_str,
+                detail: &detail,
+                emergency,
+            },
+            yes || json_output,
+        )?;
+    }
 
     let outcome = tokio::select! {
         result = workflow::submit_and_orchestrate(

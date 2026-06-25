@@ -479,7 +479,7 @@ fn api_to_cli(e: ApiError, context: &str) -> CliError {
         ApiError::Http { status, body } => {
             ServerError::from_response(status, body).into_cli_error(context)
         }
-        ApiError::Network(e) => CliError::Server(format!("{context}: {e}")),
+        ApiError::Network(e) => CliError::Transport(format!("{context}: {e}")),
         ApiError::Deserialize(msg) => CliError::Server(format!("{context}: invalid JSON: {msg}")),
     }
 }

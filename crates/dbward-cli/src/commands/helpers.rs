@@ -1,5 +1,67 @@
 use std::path::{Path, PathBuf};
 
+use crate::error::CliError;
+
+pub struct SubmissionSummary<'a> {
+    pub operation: &'a str,
+    pub database: &'a str,
+    pub environment: &'a str,
+    pub detail: &'a str,
+    pub emergency: bool,
+}
+
+/// Display submission summary and prompt for confirmation.
+/// Returns Ok(()) if confirmed, Err if rejected or non-interactive without skip.
+pub fn confirm_submission(summary: &SubmissionSummary, skip: bool) -> Result<(), CliError> {
+    if skip {
+        return Ok(());
+    }
+
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return Err(CliError::Other(
+            "interactive confirmation required but stdin is not a terminal. Use --yes to skip."
+                .into(),
+        ));
+    }
+
+    eprintln!();
+    eprintln!("  Operation:   {}", summary.operation);
+    eprintln!("  Database:    {}", summary.database);
+    eprintln!("  Environment: {}", summary.environment);
+    if summary.emergency {
+        eprintln!("  Mode:        \u{26a0} EMERGENCY (bypass approval)");
+    }
+    let detail_display = truncate_detail(summary.detail, 200);
+    if !detail_display.is_empty() {
+        eprintln!("  Detail:      {}", detail_display);
+    }
+    eprintln!();
+    eprint!("Submit this request? [y/N] ");
+
+    let mut input = String::new();
+    std::io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| CliError::Other(format!("failed to read input: {e}")))?;
+
+    match input.trim().to_lowercase().as_str() {
+        "y" | "yes" => Ok(()),
+        _ => Err(CliError::Other("aborted by user".into())),
+    }
+}
+
+fn truncate_detail(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let boundary = s
+        .char_indices()
+        .take_while(|(i, _)| *i <= max)
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    format!("{}…", &s[..boundary])
+}
+
 pub fn build_request_metadata(
     ticket: Option<&str>,
     repo: Option<&str>,

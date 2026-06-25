@@ -11,6 +11,10 @@ pub enum CliError {
     #[error("server: {0}")]
     Server(String),
 
+    /// Network/connection failure (distinct from server-side errors)
+    #[error("server: {0}")]
+    Transport(String),
+
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 

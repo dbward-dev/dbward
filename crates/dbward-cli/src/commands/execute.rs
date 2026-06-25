@@ -4,7 +4,7 @@ use crate::display::*;
 use crate::error::CliError;
 use crate::server_client::{CreateRequest, ServerClient};
 
-use super::helpers::{build_request_metadata, save_result};
+use super::helpers::{self, build_request_metadata, save_result};
 use super::workflow::{self, Outcome};
 
 #[allow(clippy::too_many_arguments)]
@@ -26,10 +26,22 @@ pub async fn run_execute(
     no_result_store: bool,
     result_format: ResultFormat,
     timeout: Option<u64>,
+    yes: bool,
 ) -> Result<(), CliError> {
     if emergency && reason.is_none() {
         return Err(CliError::Config("--emergency requires --reason".into()));
     }
+
+    helpers::confirm_submission(
+        &helpers::SubmissionSummary {
+            operation: "execute_query",
+            database: db_name,
+            environment: env_str,
+            detail: sql,
+            emergency,
+        },
+        yes || json_output,
+    )?;
     if no_result_store {
         eprintln!(
             "⚠ --no-result-store: query result will not be stored. If you disconnect, it cannot be recovered.
