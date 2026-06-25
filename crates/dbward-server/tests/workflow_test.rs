@@ -139,10 +139,10 @@ fn workflow_state() -> AppState {
             ],
         ).unwrap();
 
-        // Auto-approve development workflow (empty steps)
+        // Auto-approve development workflow (always mode)
         c.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params!["wf-dev", "app", "development", "[]", "[]", 0, 0, 1],
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, auto_approve_json, require_reason, allow_self_approve, allow_same_approver_across_steps) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            rusqlite::params!["wf-dev", "app", "development", "[]", "[]", r#"{"mode":"always","max_risk_level":null,"allow_read_only":true,"allow_safe_ddl":true,"max_estimated_rows":1000}"#, 0, 0, 1],
         ).unwrap();
     }
 
@@ -151,7 +151,6 @@ fn workflow_state() -> AppState {
         reloadable: Arc::new(arc_swap::ArcSwap::from_pointee(
             dbward_server::state::ReloadableConfig {
                 role_resolver: Arc::new(NoopRoleResolver),
-                auto_approve_entries: vec![],
                 sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
                 default_approval_ttl_secs: Some(3600),
             },

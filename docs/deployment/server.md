@@ -137,7 +137,7 @@ environment = "development"
 
 ```toml
 # Auto-approve low-risk requests globally
-[[auto_approve]]
+[workflows.auto_approve]
 database = "*"
 environment = "*"
 risk = "low"
@@ -145,7 +145,7 @@ allow_read_only = true
 allow_safe_ddl = true
 
 # Production: never auto-approve
-[[auto_approve]]
+[workflows.auto_approve]
 database = "*"
 environment = "production"
 risk = "none"

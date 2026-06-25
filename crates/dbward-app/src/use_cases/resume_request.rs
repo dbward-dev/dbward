@@ -718,6 +718,7 @@ mod tests {
             database: DatabaseName::wildcard(),
             environment: Environment::wildcard(),
             operations: vec![],
+            auto_approve: None,
             steps: vec![],
             require_reason: false,
             allow_self_approve: false,

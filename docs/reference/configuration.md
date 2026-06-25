@@ -221,25 +221,27 @@ min = 1
 | `user` | String | | — | Specific user subject. |
 | `min` | u32 | | `1` | Minimum approvals needed from this entry. |
 
-### [[auto_approve]]
+### [workflows.auto_approve]
 
-Risk-based automatic approval.
+Risk-based or unconditional automatic approval. Configured as a sub-table within each `[[workflows]]`.
 
 ```toml
-[[auto_approve]]
+[[workflows]]
 database = "app"
 environment = "staging"
+
+[workflows.auto_approve]
+mode = "risk_based"
 risk = "low"
 ```
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `database` | String | | `"*"` | Scope filter. |
-| `environment` | String | | `"*"` | Scope filter. |
-| `risk` | String | | `"none"` | Max risk level: `"none"`, `"low"`, `"medium"`, `"high"`. `"none"` = disabled. |
+| `mode` | String | Yes | — | `"always"` (unconditional) or `"risk_based"` (conditional). |
+| `risk` | String | risk_based | — | Max risk level: `"low"`, `"medium"`, `"high"`. |
 | `allow_read_only` | bool | | `true` | SELECT counts as Low risk. |
 | `allow_safe_ddl` | bool | | `true` | CREATE TABLE/INDEX/VIEW counts as Low risk. |
-| `max_estimated_rows` | u64 | | `1000` | Threshold for large-table risk increase. |
+| `max_estimated_rows` | i64 | | `1000` | Threshold for large-table risk increase. |
 
 ### [sql_review]
 

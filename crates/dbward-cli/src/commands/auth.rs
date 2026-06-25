@@ -201,16 +201,22 @@ state_dir = "./data"
 name = "{db_name}"
 environments = ["development", "staging", "production"]
 
-# Development: no approval required
+# Development: auto-approve all
 [[workflows]]
 database = "*"
 environment = "development"
-steps = []
 
-# Staging: 1 approval from admin
+[workflows.auto_approve]
+mode = "always"
+
+# Staging: risk-based auto-approve + 1 approval from admin
 [[workflows]]
 database = "*"
 environment = "staging"
+
+[workflows.auto_approve]
+mode = "risk_based"
+risk = "low"
 
 [[workflows.steps]]
 type = "approval"
@@ -219,7 +225,7 @@ type = "approval"
 role = "admin"
 min = 1
 
-# Production: admin approval + reason required
+# Production: admin approval + reason required (no auto-approve)
 [[workflows]]
 database = "*"
 environment = "production"
@@ -245,21 +251,6 @@ no_where_delete = "block"
 no_where_update = "block"
 drop_table = "warn"
 
-# Auto-approve by environment
-[[auto_approve]]
-database = "*"
-environment = "development"
-risk = "high"
-
-[[auto_approve]]
-database = "*"
-environment = "staging"
-risk = "low"
-
-[[auto_approve]]
-database = "*"
-environment = "production"
-risk = "none"
 "#
     )
 }

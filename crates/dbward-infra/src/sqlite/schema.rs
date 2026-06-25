@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 20;
+const SCHEMA_VERSION: u32 = 21;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -278,6 +278,10 @@ ALTER TABLE requests ADD COLUMN idempotency_fingerprint TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_idempotency ON requests(requester, idempotency_key);
 ";
 
+const MIGRATION_V21: &str = "
+ALTER TABLE workflows ADD COLUMN auto_approve_json TEXT;
+";
+
 /// Apply V14 source-column additions idempotently.
 fn apply_migration_v14(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(MIGRATION_V14)?;
@@ -426,6 +430,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 20 {
             conn.execute_batch(MIGRATION_V20)?;
+        }
+        if current < 21 {
+            conn.execute_batch(MIGRATION_V21)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -577,6 +584,7 @@ CREATE TABLE IF NOT EXISTS workflows (
     environment TEXT NOT NULL,
     operations_json TEXT NOT NULL DEFAULT '[]',
     steps_json TEXT NOT NULL DEFAULT '[]',
+    auto_approve_json TEXT,
     skip_approval_for_json TEXT NOT NULL DEFAULT '[]',
     require_reason INTEGER NOT NULL DEFAULT 0,
     allow_self_approve INTEGER NOT NULL DEFAULT 0,

@@ -507,6 +507,7 @@ mod tests {
             database: DatabaseName::new("app").unwrap(),
             environment: Environment::new("production").unwrap(),
             operations: vec![],
+            auto_approve: None,
             steps: vec![WorkflowStep {
                 approvers: vec![ApproverGroup {
                     selector: Selector::Role("dba".into()),
@@ -677,6 +678,7 @@ mod tests {
             database: DatabaseName::new("app").unwrap(),
             environment: Environment::new("production").unwrap(),
             operations: vec![],
+            auto_approve: None,
             steps: vec![WorkflowStep {
                 approvers: vec![
                     ApproverGroup {

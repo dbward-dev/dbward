@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::services::risk_scorer::RiskLevel;
 use crate::values::{DatabaseName, Environment, Operation, Selector};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +23,22 @@ pub struct WorkflowStep {
     pub mode: WorkflowStepMode,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoApproveMode {
+    Always,
+    RiskBased,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoApproveSettings {
+    pub mode: AutoApproveMode,
+    pub max_risk_level: Option<RiskLevel>,
+    pub allow_read_only: bool,
+    pub allow_safe_ddl: bool,
+    pub max_estimated_rows: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workflow {
     pub id: String,
@@ -29,6 +46,8 @@ pub struct Workflow {
     pub environment: Environment,
     #[serde(default)]
     pub operations: Vec<Operation>,
+    #[serde(default)]
+    pub auto_approve: Option<AutoApproveSettings>,
     #[serde(default)]
     pub steps: Vec<WorkflowStep>,
     #[serde(default)]
@@ -56,11 +75,6 @@ fn default_true_fn() -> bool {
     true
 }
 impl Workflow {
-    /// A workflow with no steps means auto-approval.
-    pub fn is_auto_approve(&self) -> bool {
-        self.steps.is_empty()
-    }
-
     /// Check if the given operations list matches this workflow.
     /// Empty operations = matches all.
     pub fn matches_operation(&self, op: Operation) -> bool {
@@ -78,6 +92,7 @@ mod tests {
             database: DatabaseName::wildcard(),
             environment: Environment::wildcard(),
             operations,
+            auto_approve: None,
             steps,
             require_reason: false,
             allow_self_approve: false,
@@ -89,25 +104,6 @@ mod tests {
             created_at: None,
             updated_at: None,
         }
-    }
-
-    #[test]
-    fn auto_approve_when_no_steps() {
-        let w = make_workflow(vec![], vec![]);
-        assert!(w.is_auto_approve());
-    }
-
-    #[test]
-    fn not_auto_approve_with_steps() {
-        let step = WorkflowStep {
-            approvers: vec![ApproverGroup {
-                selector: Selector::Role("admin".to_string()),
-                min: 1,
-            }],
-            mode: WorkflowStepMode::All,
-        };
-        let w = make_workflow(vec![], vec![step]);
-        assert!(!w.is_auto_approve());
     }
 
     #[test]
@@ -130,8 +126,18 @@ mod tests {
         let wf: Workflow = serde_json::from_str(json).unwrap();
         assert_eq!(wf.id, "w1");
         assert!(wf.steps.is_empty());
+        assert!(wf.auto_approve.is_none());
         assert!(!wf.require_reason);
         assert!(wf.operations.is_empty());
         assert!(!wf.allow_self_approve);
+    }
+
+    #[test]
+    fn workflow_deserialize_with_auto_approve() {
+        let json = r#"{"id":"w1","database":"*","environment":"*","auto_approve":{"mode":"always","max_risk_level":null,"allow_read_only":true,"allow_safe_ddl":true,"max_estimated_rows":1000}}"#;
+        let wf: Workflow = serde_json::from_str(json).unwrap();
+        let aa = wf.auto_approve.unwrap();
+        assert_eq!(aa.mode, AutoApproveMode::Always);
+        assert!(aa.max_risk_level.is_none());
     }
 }

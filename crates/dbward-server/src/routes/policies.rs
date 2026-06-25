@@ -196,7 +196,6 @@ pub async fn policy_resolution(
     axum::extract::Query(q): axum::extract::Query<PolicyResolutionQuery>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     use dbward_domain::auth::ResourceContext;
-    use dbward_domain::services::workflow_matcher;
     use serde_json::json;
 
     let db = DatabaseName::new(&q.database).map_err(|e| {
@@ -263,8 +262,7 @@ pub async fn policy_resolution(
     }
 
     let reloadable = state.reloadable.load();
-    let auto_entry =
-        workflow_matcher::find_auto_approve(&reloadable.auto_approve_entries, &db, &env);
+    let _ = &reloadable; // used for role_resolver in auth above
     let exec_policy = state
         .policy_evaluator()
         .get_execution_policy(&db, &env)
@@ -288,24 +286,19 @@ pub async fn policy_resolution(
         })
     };
 
-    let auto_approve_json = auto_entry.map(|e| {
-        let matched_by = format!("({}, {})", e.database, e.environment);
-        let max_risk = e.max_risk_level.map(|l| format!("{l:?}").to_lowercase());
-        json!({
-            "max_risk": max_risk,
-            "allow_read_only": e.allow_read_only,
-            "allow_safe_ddl": e.allow_safe_ddl,
-            "matched_by": matched_by,
-        })
-    });
-
     if q.operation.is_some() {
         let op = ops[0];
         let wf = state
             .policy_evaluator()
             .evaluate_workflow(&db, &env, op)
             .map_err(map_error)?;
-        let (decision, reason_code, _) = resolve_single(&wf, op, auto_entry);
+        let (decision, reason_code, _) = resolve_single(&wf);
+
+        let auto_approve_json = wf.as_ref().and_then(|w| {
+            w.auto_approve
+                .as_ref()
+                .map(|aa| serde_json::to_value(aa).unwrap_or_default())
+        });
 
         let resp = json!({
             "database": q.database,
@@ -327,16 +320,22 @@ pub async fn policy_resolution(
             .policy_evaluator()
             .evaluate_workflow(&db, &env, *op)
             .map_err(map_error)?;
-        let (decision, reason_code, _) = resolve_single(&wf, *op, auto_entry);
+        let (decision, reason_code, _) = resolve_single(&wf);
         let wf_id = wf.as_ref().map(|w| w.id.as_str()).unwrap_or("");
         let matched_by = wf
             .as_ref()
             .map(|w| format!("({}, {})", w.database, w.environment))
             .unwrap_or_default();
+        let aa_json = wf.as_ref().and_then(|w| {
+            w.auto_approve
+                .as_ref()
+                .map(|aa| serde_json::to_value(aa).unwrap_or_default())
+        });
         resolutions.push(json!({
             "operation": op.as_str(),
             "workflow_id": if wf_id.is_empty() { serde_json::Value::Null } else { json!(wf_id) },
             "matched_by": if matched_by.is_empty() { serde_json::Value::Null } else { json!(matched_by) },
+            "auto_approve": aa_json,
             "decision_preview": decision,
             "reason_code": reason_code,
         }));
@@ -355,31 +354,22 @@ pub async fn policy_resolution(
 
 fn resolve_single(
     wf: &Option<dbward_domain::policies::Workflow>,
-    op: Operation,
-    auto_entry: Option<&dbward_domain::services::workflow_matcher::AutoApproveEntry>,
 ) -> (&'static str, &'static str, serde_json::Value) {
+    use dbward_domain::policies::AutoApproveMode;
     use serde_json::json;
     match wf {
         None => ("deny", "no_matching_workflow", json!(null)),
-        Some(w) => {
-            if w.steps.is_empty() {
-                ("auto_approved", "empty_steps", build_workflow_json(w))
-            } else if op == Operation::ExecuteSelect
-                && auto_entry.is_some_and(|e| e.allow_read_only && e.max_risk_level.is_some())
-            {
-                (
-                    "auto_approved",
-                    "read_only_low_risk",
-                    build_workflow_json(w),
-                )
-            } else {
-                (
-                    "needs_approval",
-                    "risk_unknown_until_analyzed",
-                    build_workflow_json(w),
-                )
+        Some(w) => match &w.auto_approve {
+            Some(aa) if aa.mode == AutoApproveMode::Always => {
+                ("auto_approved", "explicit_always", build_workflow_json(w))
             }
-        }
+            Some(_) => (
+                "may_auto_approve",
+                "risk_unknown_until_analyzed",
+                build_workflow_json(w),
+            ),
+            None => ("needs_approval", "no_auto_approve", build_workflow_json(w)),
+        },
     }
 }
 

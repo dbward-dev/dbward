@@ -1,5 +1,7 @@
 use dbward_config::server;
-use dbward_domain::policies::{ApproverGroup, Workflow, WorkflowStep, WorkflowStepMode};
+use dbward_domain::policies::{
+    ApproverGroup, AutoApproveMode, AutoApproveSettings, Workflow, WorkflowStep, WorkflowStepMode,
+};
 use dbward_domain::services::workflow_validator;
 use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
 
@@ -9,6 +11,45 @@ use super::{
     WorkflowStepInput,
 };
 use crate::error::AppError;
+
+fn convert_auto_approve_def(
+    def: &Option<server::AutoApproveDef>,
+) -> Result<Option<String>, AppError> {
+    let Some(d) = def else { return Ok(None) };
+    let settings = match d {
+        server::AutoApproveDef::Always => AutoApproveSettings {
+            mode: AutoApproveMode::Always,
+            max_risk_level: None,
+            allow_read_only: true,
+            allow_safe_ddl: true,
+            max_estimated_rows: 1000,
+        },
+        server::AutoApproveDef::RiskBased {
+            risk,
+            allow_read_only,
+            allow_safe_ddl,
+            max_estimated_rows,
+        } => {
+            use dbward_domain::services::risk_scorer::RiskLevel;
+            let max_risk_level = match risk.as_str() {
+                "low" => Some(RiskLevel::Low),
+                "medium" => Some(RiskLevel::Medium),
+                "high" => Some(RiskLevel::High),
+                _ => None,
+            };
+            AutoApproveSettings {
+                mode: AutoApproveMode::RiskBased,
+                max_risk_level,
+                allow_read_only: *allow_read_only,
+                allow_safe_ddl: *allow_safe_ddl,
+                max_estimated_rows: *max_estimated_rows,
+            }
+        }
+    };
+    serde_json::to_string(&settings)
+        .map(Some)
+        .map_err(|e| AppError::Internal(format!("serialize auto_approve: {e}")))
+}
 
 pub(super) fn parse_workflow(id: &str, wf: &super::WorkflowInput) -> Result<Workflow, AppError> {
     let db = if wf.database == "*" {
@@ -92,11 +133,19 @@ pub(super) fn parse_workflow(id: &str, wf: &super::WorkflowInput) -> Result<Work
         }
     }
 
+    let auto_approve: Option<AutoApproveSettings> = wf
+        .auto_approve_json
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|e| AppError::Internal(format!("parse auto_approve_json: {e}")))?;
+
     Ok(Workflow {
         id: id.to_string(),
         database: db,
         environment: env,
         operations,
+        auto_approve,
         steps,
         require_reason: wf.require_reason,
         allow_self_approve: wf.allow_self_approve,
@@ -230,6 +279,7 @@ pub fn workflows_from_config(
                 database: wf.database.clone(),
                 environment: wf.environment.clone(),
                 operations: wf.operations.clone(),
+                auto_approve_json: convert_auto_approve_def(&wf.auto_approve)?,
                 steps,
                 require_reason: wf.require_reason,
                 allow_self_approve: wf.allow_self_approve,

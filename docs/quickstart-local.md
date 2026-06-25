@@ -89,7 +89,9 @@ environments = ["development", "production"]
 # Development: auto-approve
 [[workflows]]
 environment = "development"
-steps = []
+
+[workflows.auto_approve]
+mode = "always"
 
 # Production: require admin approval
 [[workflows]]

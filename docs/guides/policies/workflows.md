@@ -13,7 +13,7 @@ Workflows define who must approve a database operation before it executes. Confi
 - **Workflow with steps = approval required** (one or more people must approve)
 - **Workflow without steps = auto-approve** (executes immediately)
 - Workflows are scoped by **database × environment × operation**
-- Auto-approve thresholds are configured separately in `[[auto_approve]]`
+- Auto-approve thresholds are configured as `[workflows.auto_approve]` sub-table within each workflow
 
 ## Quick examples
 
@@ -59,7 +59,7 @@ role = "dba"
 min = 1
 
 # Auto-approve Low-risk requests on staging
-[[auto_approve]]
+[workflows.auto_approve]
 database = "*"
 environment = "staging"
 risk = "low"       # Auto-approve Low risk only (SELECT + safe DDL)
@@ -79,7 +79,7 @@ Auto-approve evaluates the risk level of each request and skips human approval i
 ### Configuration
 
 ```toml
-[[auto_approve]]
+[workflows.auto_approve]
 database = "*"          # Scope: "*" = all databases
 environment = "*"       # Scope: "*" = all environments
 risk = "low"            # Threshold: "none" | "low" | "medium" | "high"
@@ -91,7 +91,7 @@ max_estimated_rows = 1000  # Tables above this increase risk
 ### How it works
 
 1. A request matches a workflow with steps (approval required)
-2. dbward looks up the most specific `[[auto_approve]]` entry for that (database, environment)
+2. dbward looks up the most specific `[workflows.auto_approve]` entry for that (database, environment)
 3. If the request's risk level ≤ threshold → auto-approved
 4. Otherwise → human approval required
 
@@ -160,19 +160,19 @@ Request created
 
 ```toml
 # Global default: only Low is auto-approved
-[[auto_approve]]
+[workflows.auto_approve]
 database = "*"
 environment = "*"
 risk = "low"
 
 # Staging: auto-approve up to Medium
-[[auto_approve]]
+[workflows.auto_approve]
 database = "*"
 environment = "staging"
 risk = "medium"
 
 # Production: no auto-approve
-[[auto_approve]]
+[workflows.auto_approve]
 database = "*"
 environment = "production"
 risk = "none"
@@ -344,7 +344,7 @@ When a request comes in, dbward finds the most specific matching workflow:
 ## Tips
 
 - **Start simple:** One workflow rule for production, auto-approve for development.
-- **Use `[[auto_approve]]` for risk-based automation:** Don't manually approve every low-risk SELECT.
+- **Use `[workflows.auto_approve]` for risk-based automation:** Don't manually approve every low-risk SELECT.
 - **Use groups over roles:** Groups come from your IdP and don't require dbward-specific configuration.
 - **Require reason for production:** `require_reason = true` creates better audit trails.
 - **Monitor with webhooks:** Get Slack notifications so approvers don't miss requests.

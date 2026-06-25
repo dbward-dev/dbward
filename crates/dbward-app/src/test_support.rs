@@ -354,6 +354,13 @@ impl PolicyEvaluator for FakePolicyEvaluator {
             database: DatabaseName::wildcard(),
             environment: Environment::wildcard(),
             operations: vec![],
+            auto_approve: Some(dbward_domain::policies::AutoApproveSettings {
+                mode: dbward_domain::policies::AutoApproveMode::Always,
+                max_risk_level: None,
+                allow_read_only: true,
+                allow_safe_ddl: true,
+                max_estimated_rows: 1000,
+            }),
             steps: vec![],
             require_reason: false,
             allow_self_approve: false,

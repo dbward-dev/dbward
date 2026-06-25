@@ -34,6 +34,7 @@ pub struct WorkflowInput {
     pub database: String,
     pub environment: String,
     pub operations: Vec<String>,
+    pub auto_approve_json: Option<String>,
     pub steps: Vec<WorkflowStepInput>,
     pub require_reason: bool,
     pub allow_self_approve: bool,
@@ -932,6 +933,7 @@ mod tests {
             database: "primary".into(),
             environment: "production".into(),
             operations: vec!["execute_select".into()],
+            auto_approve_json: None,
             steps: vec![WorkflowStepInput {
                 mode: "any".into(),
                 approvers: vec![ApproverInput {

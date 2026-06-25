@@ -36,7 +36,6 @@ use crate::metrics::Metrics;
 /// Config fields that can be hot-reloaded via SIGHUP without restarting.
 pub struct ReloadableConfig {
     pub role_resolver: Arc<dyn RoleResolver>,
-    pub auto_approve_entries: Vec<dbward_domain::services::workflow_matcher::AutoApproveEntry>,
     pub sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
     pub default_approval_ttl_secs: Option<u64>,
 }
@@ -141,7 +140,6 @@ impl<'a> RequestUseCases<'a> {
             id_gen: s.id_generator.clone(),
             default_approval_ttl_secs: r.default_approval_ttl_secs,
             review_rules: r.sql_review_rules.clone(),
-            auto_approve_entries: r.auto_approve_entries.clone(),
         }
     }
 

@@ -62,7 +62,6 @@ pub struct CreateRequest {
     pub id_gen: Arc<dyn IdGenerator>,
     pub default_approval_ttl_secs: Option<u64>,
     pub review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
-    pub auto_approve_entries: Vec<workflow_matcher::AutoApproveEntry>,
 }
 
 const MAX_QUERY_BYTES: usize = 100_000;
@@ -225,6 +224,16 @@ impl CreateRequest {
             }
         };
 
+        // 1a-pre. Early workflow lookup (needed for risk assessment params)
+        // This mirrors the old find_auto_approve() call position (also before auth).
+        // On failure: restrictive defaults (allow_read_only=false, allow_safe_ddl=false)
+        // ensure risk is scored conservatively — fail-closed, never permissive.
+        let early_workflow = self
+            .policy
+            .evaluate_workflow(&input.database, &input.environment, operation)
+            .ok()
+            .flatten();
+
         // 1a. SQL Review + Risk assessment (best-effort, never blocks request creation)
         let assessment = {
             use dbward_domain::services::{risk_scorer, sql_parser, sql_reviewer, table_extractor};
@@ -340,14 +349,17 @@ impl CreateRequest {
                     Ok(Some(s)) => (risk_scorer::SchemaStatus::Failed, Some(s.collected_at)),
                     _ => (risk_scorer::SchemaStatus::NotSynced, None),
                 };
-                let auto_entry = workflow_matcher::find_auto_approve(
-                    &self.auto_approve_entries,
-                    &input.database,
-                    &input.environment,
-                );
                 let allow_read_only = operation == Operation::ExecuteSelect
-                    && auto_entry.map(|e| e.allow_read_only).unwrap_or(true);
-                let safe_ddl = auto_entry.map(|e| e.allow_safe_ddl).unwrap_or(true)
+                    && early_workflow
+                        .as_ref()
+                        .and_then(|w| w.auto_approve.as_ref())
+                        .map(|aa| aa.allow_read_only)
+                        .unwrap_or(false); // restrictive on lookup failure
+                let safe_ddl = early_workflow
+                    .as_ref()
+                    .and_then(|w| w.auto_approve.as_ref())
+                    .map(|aa| aa.allow_safe_ddl)
+                    .unwrap_or(false)
                     && stmts.len() == 1
                     && stmts
                         .iter()
@@ -415,8 +427,10 @@ impl CreateRequest {
                     has_dml: matches!(operation, Operation::ExecuteDml),
                     allow_read_only,
                     safe_ddl,
-                    max_estimated_rows: auto_entry
-                        .map(|e| e.max_estimated_rows as i64)
+                    max_estimated_rows: early_workflow
+                        .as_ref()
+                        .and_then(|w| w.auto_approve.as_ref())
+                        .map(|aa| aa.max_estimated_rows)
                         .unwrap_or(1000),
                 });
                 let r_json = serde_json::json!({
@@ -580,29 +594,27 @@ impl CreateRequest {
             });
         }
 
-        // 4. Workflow evaluation
-        let workflow =
+        // 4. Workflow evaluation (reuse early lookup if available, else formal lookup)
+        let workflow = if early_workflow.is_some() {
+            early_workflow
+        } else {
             self.policy
-                .evaluate_workflow(&input.database, &input.environment, operation)?;
+                .evaluate_workflow(&input.database, &input.environment, operation)?
+        };
         // Fail-closed: no workflow configured = reject (unless break-glass)
-        let decision = if workflow.is_none() {
-            if input.emergency {
-                workflow_matcher::ApprovalDecision::AutoApproved {
-                    reason: workflow_matcher::AutoApproveReason::EmptySteps,
-                }
-            } else {
-                return Err(AppError::Validation(format!(
-                    "no workflow configured for {}/{}",
-                    input.database, input.environment
-                )));
+        let decision = if let Some(ref wf) = workflow {
+            workflow_matcher::evaluate(wf, assessment.risk_level)
+        } else if input.emergency {
+            // Break-glass without workflow: synthesize auto-approve decision.
+            // The reason is overridden to BreakGlass in decision_trace below.
+            workflow_matcher::ApprovalDecision::AutoApproved {
+                reason: workflow_matcher::AutoApproveReason::Always,
             }
         } else {
-            let auto_approve_entry = workflow_matcher::find_auto_approve(
-                &self.auto_approve_entries,
-                &input.database,
-                &input.environment,
-            );
-            workflow_matcher::evaluate(workflow.as_ref(), assessment.risk_level, auto_approve_entry)
+            return Err(AppError::Validation(format!(
+                "no workflow configured for {}/{}",
+                input.database, input.environment
+            )));
         };
 
         // 5. Determine initial status
@@ -638,18 +650,15 @@ impl CreateRequest {
         };
         // 6b. Build decision trace
         let parse_failed = assessment.parsed_stmt_texts.is_none();
-        let auto_approve_entry_for_trace = workflow_matcher::find_auto_approve(
-            &self.auto_approve_entries,
-            &input.database,
-            &input.environment,
-        );
+        let auto_approve_entry_for_trace =
+            workflow.as_ref().and_then(|wf| wf.auto_approve.as_ref());
         let trace_risk_level = assessment
             .risk_level
             .unwrap_or(risk_scorer::RiskLevel::Unavailable);
         let trace_reasons = match &decision {
             workflow_matcher::ApprovalDecision::AutoApproved { reason } => match reason {
-                workflow_matcher::AutoApproveReason::EmptySteps => {
-                    vec![dt::DecisionReason::EmptySteps]
+                workflow_matcher::AutoApproveReason::Always => {
+                    vec![dt::DecisionReason::Always]
                 }
                 workflow_matcher::AutoApproveReason::RiskBased => {
                     vec![dt::DecisionReason::RiskBelowThreshold]
@@ -658,19 +667,13 @@ impl CreateRequest {
             workflow_matcher::ApprovalDecision::NeedsApproval => {
                 if auto_approve_entry_for_trace.is_none() {
                     vec![dt::DecisionReason::NoAutoApproveRule]
-                } else if auto_approve_entry_for_trace
-                    .and_then(|e| e.max_risk_level)
-                    .is_none()
+                } else if assessment.risk_level.is_none()
+                    || assessment.risk_level == Some(risk_scorer::RiskLevel::Unknown)
                 {
-                    vec![dt::DecisionReason::AutoApproveDisabled]
-                } else if assessment.risk_level.is_none() {
                     vec![dt::DecisionReason::RiskUnavailable]
                 } else {
                     vec![dt::DecisionReason::RiskAboveThreshold]
                 }
-            }
-            workflow_matcher::ApprovalDecision::Pending => {
-                vec![]
             }
         };
         let trace_outcome = if !needs_approval {
@@ -687,7 +690,7 @@ impl CreateRequest {
         } else {
             (trace_outcome, trace_reasons)
         };
-        let trace_threshold = auto_approve_entry_for_trace.and_then(|e| e.max_risk_level);
+        let trace_threshold = auto_approve_entry_for_trace.and_then(|aa| aa.max_risk_level);
         let decision_trace = dt::DecisionTrace {
             version: 1,
             classification: dt::Classification {
@@ -1209,7 +1212,6 @@ mod tests {
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
             review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-            auto_approve_entries: vec![],
         }
     }
 
@@ -1350,6 +1352,7 @@ mod tests {
                 database: DatabaseName::wildcard(),
                 environment: Environment::wildcard(),
                 operations: vec![],
+                auto_approve: None,
                 steps: vec![],
                 require_reason: true,
                 allow_self_approve: false,
@@ -1435,7 +1438,6 @@ mod tests {
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
             review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-            auto_approve_entries: vec![],
         };
         let err = uc
             .execute(
@@ -1468,7 +1470,6 @@ mod tests {
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
             review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-            auto_approve_entries: vec![],
         };
         let mut input = make_input();
         input.reason = None;
