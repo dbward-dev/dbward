@@ -7,11 +7,13 @@ mode = "token"
 name = "app"
 environments = ["development", "staging"]
 
-# Development: no approval needed (empty steps = auto-dispatch)
+# Development: auto-approve all requests
 [[workflows]]
 database = "*"
 environment = "development"
-steps = []
+
+[workflows.auto_approve]
+mode = "always"
 
 # Staging: 1 admin must approve before execution
 [[workflows]]

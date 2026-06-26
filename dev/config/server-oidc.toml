@@ -25,7 +25,9 @@ role = "developer"
 [[workflows]]
 database = "*"
 environment = "development"
-steps = []
+
+[workflows.auto_approve]
+mode = "always"
 
 # Staging: team-lead OR dba (either one)
 [[workflows]]

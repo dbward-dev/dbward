@@ -1130,7 +1130,9 @@ mod safety_guard_tests {
             database = "db"
             environment = "prod"
             operations = ["execute_select"]
-            steps = []
+
+            [workflows.auto_approve]
+            mode = "always"
             "#,
         )
         .unwrap();
