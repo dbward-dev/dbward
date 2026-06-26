@@ -156,6 +156,62 @@ mod tests {
     }
 
     #[test]
+    fn confirm_submission_skip_true_returns_ok() {
+        let summary = SubmissionSummary {
+            operation: "execute_query",
+            database: "app",
+            environment: "production",
+            detail: "SELECT 1",
+            emergency: false,
+        };
+        assert!(confirm_submission(&summary, true).is_ok());
+    }
+
+    #[test]
+    fn confirm_submission_non_tty_without_skip_returns_error() {
+        // CI environments typically don't have a tty on stdin
+        if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            // Skip in interactive terminals
+            return;
+        }
+        let summary = SubmissionSummary {
+            operation: "execute_query",
+            database: "app",
+            environment: "production",
+            detail: "DELETE FROM users",
+            emergency: true,
+        };
+        let result = confirm_submission(&summary, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not a terminal"));
+    }
+
+    #[test]
+    fn truncate_detail_short_string_unchanged() {
+        assert_eq!(truncate_detail("hello", 200), "hello");
+    }
+
+    #[test]
+    fn truncate_detail_long_string_truncated() {
+        let long = "a".repeat(300);
+        let result = truncate_detail(&long, 200);
+        assert!(result.len() <= 204); // 200 + "…" (3 bytes)
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn truncate_detail_multibyte_boundary_safe() {
+        // Japanese chars are 3 bytes each
+        let jp = "あ".repeat(100); // 300 bytes
+        let result = truncate_detail(&jp, 200);
+        // Must be valid UTF-8 and end with …
+        assert!(result.ends_with('…'));
+        // The truncated part should be valid (no panics from mid-char slicing)
+        assert!(result.len() <= 203);
+    }
+
+    #[test]
     fn no_output_no_config_returns_none() {
         let result = save_result("req_123", &sample_result(), None, None);
         assert!(result.is_none());

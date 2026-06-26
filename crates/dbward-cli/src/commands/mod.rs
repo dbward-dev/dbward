@@ -767,4 +767,55 @@ mod tests {
             _ => panic!("unexpected command"),
         }
     }
+
+    #[test]
+    fn yes_flag_parses_short() {
+        let cli = Cli::try_parse_from(["dbward", "-y", "execute", "SELECT 1"]).unwrap();
+        assert!(cli.yes);
+    }
+
+    #[test]
+    fn yes_flag_parses_long() {
+        let cli = Cli::try_parse_from(["dbward", "--yes", "execute", "SELECT 1"]).unwrap();
+        assert!(cli.yes);
+    }
+
+    #[test]
+    fn yes_flag_defaults_to_false() {
+        let cli = Cli::try_parse_from(["dbward", "execute", "SELECT 1"]).unwrap();
+        assert!(!cli.yes);
+    }
+
+    #[test]
+    fn print_whoami_server_with_groups_and_roles() {
+        let resp = serde_json::json!({
+            "subject_id": "alice@example.com",
+            "subject_type": "user",
+            "roles": [{"name": "dba", "permissions": ["execute"]}, {"name": "dev"}],
+            "groups": ["backend-team", "sre"]
+        });
+        // Should not panic; output goes to stdout
+        print_whoami_server(&resp);
+    }
+
+    #[test]
+    fn print_whoami_server_empty_groups_and_roles() {
+        let resp = serde_json::json!({
+            "subject_id": "bot",
+            "subject_type": "api_token",
+            "roles": [],
+            "groups": []
+        });
+        print_whoami_server(&resp);
+    }
+
+    #[test]
+    fn print_whoami_server_legacy_string_roles() {
+        let resp = serde_json::json!({
+            "subject_id": "old-server",
+            "subject_type": "user",
+            "roles": ["admin", "developer"]
+        });
+        print_whoami_server(&resp);
+    }
 }
