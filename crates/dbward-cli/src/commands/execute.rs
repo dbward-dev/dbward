@@ -31,6 +31,12 @@ pub async fn run_execute(
     if emergency && reason.is_none() {
         return Err(CliError::Config("--emergency requires --reason".into()));
     }
+    if no_result_store {
+        eprintln!(
+            "⚠ --no-result-store: query result will not be stored. If you disconnect, it cannot be recovered.
+  Note: request metadata and SQL text are always retained for audit/approval."
+        );
+    }
 
     helpers::confirm_submission(
         &helpers::SubmissionSummary {
@@ -42,12 +48,6 @@ pub async fn run_execute(
         },
         yes || json_output,
     )?;
-    if no_result_store {
-        eprintln!(
-            "⚠ --no-result-store: query result will not be stored. If you disconnect, it cannot be recovered.
-  Note: request metadata and SQL text are always retained for audit/approval."
-        );
-    }
 
     let metadata = build_request_metadata(ticket, repo);
     let sw = if share_with.is_empty() {
