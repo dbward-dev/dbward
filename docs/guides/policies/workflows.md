@@ -11,7 +11,7 @@ Workflows define who must approve a database operation before it executes. Confi
 
 - **No workflow match = request rejected (fail-closed)**
 - **Workflow with steps = approval required** (one or more people must approve)
-- **Workflow without steps = auto-approve** (executes immediately)
+- **`[workflows.auto_approve] mode = "always"`** = unconditional auto-approve (executes immediately)
 - Workflows are scoped by **database × environment × operation**
 - Auto-approve thresholds are configured as `[workflows.auto_approve]` sub-table within each workflow
 
@@ -140,7 +140,7 @@ This is used during risk scoring for DML statements:
 ```
 Request created
   │
-  ├─ Workflow has no steps? ──→ Auto-approved (empty steps)
+  ├─ mode = "always"? ──→ Auto-approved
   │
   ├─ No auto_approve entry? ──→ Needs approval
   │

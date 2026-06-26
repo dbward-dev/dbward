@@ -127,7 +127,7 @@ type = "approval"
 role = "admin"
 min = 1
 
-# Development: auto-approve (no steps = no approval needed)
+# Development: auto-approve (mode = "always")
 [[workflows]]
 database = "*"
 environment = "development"
