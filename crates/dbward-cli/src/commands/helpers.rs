@@ -14,6 +14,9 @@ pub struct SubmissionSummary<'a> {
 /// Returns Ok(()) if confirmed, Err if rejected or non-interactive without skip.
 pub fn confirm_submission(summary: &SubmissionSummary, skip: bool) -> Result<(), CliError> {
     if skip {
+        if std::env::var_os("DBWARD_YES").is_some() {
+            eprintln!("note: confirmation skipped (DBWARD_YES)");
+        }
         return Ok(());
     }
 
