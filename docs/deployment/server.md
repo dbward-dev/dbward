@@ -135,20 +135,44 @@ environment = "development"
 
 ### Auto-Approve
 
+Auto-approve is configured within each workflow:
+
 ```toml
-# Auto-approve low-risk requests globally
-[workflows.auto_approve]
+# Development: auto-approve everything
+[[workflows]]
 database = "*"
-environment = "*"
+environment = "development"
+
+[workflows.auto_approve]
+mode = "always"
+
+# Staging: auto-approve low-risk only
+[[workflows]]
+database = "*"
+environment = "staging"
+
+[workflows.auto_approve]
+mode = "risk_based"
 risk = "low"
 allow_read_only = true
 allow_safe_ddl = true
 
-# Production: never auto-approve
-[workflows.auto_approve]
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "dba"
+min = 1
+
+# Production: no auto-approve (always require human)
+[[workflows]]
 database = "*"
 environment = "production"
-risk = "none"
+
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "dba"
+min = 1
 ```
 
 ### Execution policies

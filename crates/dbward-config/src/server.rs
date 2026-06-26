@@ -1070,6 +1070,96 @@ environment = "dev"
     }
 
     #[test]
+    fn rejects_always_with_steps() {
+        let toml = test_cfg(
+            r#"
+[[workflows]]
+database = "*"
+environment = "*"
+[workflows.auto_approve]
+mode = "always"
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("steps unreachable"));
+    }
+
+    #[test]
+    fn rejects_risk_based_without_steps() {
+        let toml = test_cfg(
+            r#"
+[[workflows]]
+database = "*"
+environment = "*"
+[workflows.auto_approve]
+mode = "risk_based"
+risk = "low"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("no fallback"));
+    }
+
+    #[test]
+    fn rejects_no_auto_approve_no_steps() {
+        let toml = test_cfg(
+            r#"
+[[workflows]]
+database = "*"
+environment = "*"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("must have"));
+    }
+
+    #[test]
+    fn rejects_invalid_risk_value() {
+        let toml = test_cfg(
+            r#"
+[[workflows]]
+database = "*"
+environment = "*"
+[workflows.auto_approve]
+mode = "risk_based"
+risk = "extreme"
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("unknown value"));
+    }
+
+    #[test]
+    fn accepts_valid_risk_based() {
+        let toml = test_cfg(
+            r#"
+[[workflows]]
+database = "*"
+environment = "*"
+[workflows.auto_approve]
+mode = "risk_based"
+risk = "medium"
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
+"#,
+        );
+        ServerConfig::from_str(&toml, "test").unwrap();
+    }
+
+    #[test]
     fn webhook_valid_id() {
         let toml = test_cfg(
             r#"

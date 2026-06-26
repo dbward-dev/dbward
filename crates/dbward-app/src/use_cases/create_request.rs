@@ -658,7 +658,7 @@ impl CreateRequest {
         let trace_reasons = match &decision {
             workflow_matcher::ApprovalDecision::AutoApproved { reason } => match reason {
                 workflow_matcher::AutoApproveReason::Always => {
-                    vec![dt::DecisionReason::Always]
+                    vec![dt::DecisionReason::ExplicitAlways]
                 }
                 workflow_matcher::AutoApproveReason::RiskBased => {
                     vec![dt::DecisionReason::RiskBelowThreshold]

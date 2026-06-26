@@ -31,22 +31,27 @@ role = "admin"
 min = 1
 ```
 
-### Auto-approve development (no steps)
+### Auto-approve development
 
 ```toml
 [[workflows]]
 database = "*"
 environment = "development"
-# No steps = auto-approve
+
+[workflows.auto_approve]
+mode = "always"
 ```
 
 ### Risk-based auto-approve for staging
 
 ```toml
-# Workflow with steps (approval required if risk exceeds threshold)
 [[workflows]]
 database = "*"
 environment = "staging"
+
+[workflows.auto_approve]
+mode = "risk_based"
+risk = "low"
 
 [[workflows.steps]]
 type = "approval"
@@ -57,12 +62,6 @@ min = 1
 [[workflows.steps.approvers]]
 role = "dba"
 min = 1
-
-# Auto-approve Low-risk requests on staging
-[workflows.auto_approve]
-database = "*"
-environment = "staging"
-risk = "low"       # Auto-approve Low risk only (SELECT + safe DDL)
 ```
 
 With this config:
@@ -74,33 +73,31 @@ With this config:
 
 ## Auto-Approve
 
-Auto-approve evaluates the risk level of each request and skips human approval if the risk is at or below the configured threshold.
+Auto-approve evaluates the risk level of each request and skips human approval if the risk is at or below the configured threshold. It is configured as a sub-table within each workflow.
 
 ### Configuration
 
 ```toml
 [workflows.auto_approve]
-database = "*"          # Scope: "*" = all databases
-environment = "*"       # Scope: "*" = all environments
-risk = "low"            # Threshold: "none" | "low" | "medium" | "high"
-allow_read_only = true  # SELECT → Low risk
-allow_safe_ddl = true   # CREATE TABLE/INDEX/VIEW → Low risk
+mode = "risk_based"        # "always" or "risk_based"
+risk = "low"               # Threshold (risk_based only): "low" | "medium" | "high"
+allow_read_only = true     # SELECT → Low risk
+allow_safe_ddl = true      # CREATE TABLE/INDEX/VIEW → Low risk
 max_estimated_rows = 1000  # Tables above this increase risk
 ```
 
 ### How it works
 
-1. A request matches a workflow with steps (approval required)
-2. dbward looks up the most specific `[workflows.auto_approve]` entry for that (database, environment)
-3. If the request's risk level ≤ threshold → auto-approved
-4. Otherwise → human approval required
-
-**Priority order:** `(db, env)` > `(*, env)` > `(db, *)` > `(*, *)`
+1. A request matches a workflow
+2. dbward checks the workflow's `[workflows.auto_approve]` sub-table
+3. `mode = "always"` → auto-approved unconditionally
+4. `mode = "risk_based"` + risk ≤ threshold → auto-approved
+5. Otherwise → falls through to `[[workflows.steps]]` for human approval
 
 **Important rules:**
-- `risk = "none"` → never auto-approve (always require human)
-- No matching entry → same as `risk = "none"`
-- Risk level `Unknown` (schema not synced) → never auto-approved
+- No `[workflows.auto_approve]` → always require human approval
+- `mode = "risk_based"` requires `[[workflows.steps]]` as fallback
+- Risk level `Unknown` or `Unavailable` → never auto-approved
 
 ### Risk levels
 

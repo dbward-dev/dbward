@@ -35,7 +35,11 @@ fn convert_auto_approve_def(
                 "low" => Some(RiskLevel::Low),
                 "medium" => Some(RiskLevel::Medium),
                 "high" => Some(RiskLevel::High),
-                _ => None,
+                other => {
+                    return Err(AppError::Internal(format!(
+                        "invalid auto_approve risk '{other}' (should be caught by config validation)"
+                    )));
+                }
             };
             AutoApproveSettings {
                 mode: AutoApproveMode::RiskBased,

@@ -360,7 +360,7 @@ async fn get_request_includes_decision_trace() {
         trace["decision"]["reasons"]
             .as_array()
             .unwrap()
-            .contains(&serde_json::json!("always"))
+            .contains(&serde_json::json!("explicit_always"))
     );
     assert!(trace["workflow"]["matched"].is_object());
 }
