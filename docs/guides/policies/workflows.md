@@ -142,9 +142,7 @@ Request created
   │
   ├─ mode = "always"? ──→ Auto-approved
   │
-  ├─ No auto_approve entry? ──→ Needs approval
-  │
-  ├─ risk = "none"? ──────────→ Needs approval
+  ├─ No [workflows.auto_approve]? ──→ Needs approval
   │
   ├─ Risk = Unknown? ─────────→ Needs approval
   │
@@ -156,23 +154,39 @@ Request created
 ### Example: different thresholds per environment
 
 ```toml
-# Global default: only Low is auto-approved
-[workflows.auto_approve]
+# Development: auto-approve everything
+[[workflows]]
 database = "*"
-environment = "*"
-risk = "low"
+environment = "development"
 
-# Staging: auto-approve up to Medium
 [workflows.auto_approve]
+mode = "always"
+
+# Staging: auto-approve up to Medium risk
+[[workflows]]
 database = "*"
 environment = "staging"
+
+[workflows.auto_approve]
+mode = "risk_based"
 risk = "medium"
 
-# Production: no auto-approve
-[workflows.auto_approve]
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "team-lead"
+min = 1
+
+# Production: no auto-approve (always require human)
+[[workflows]]
 database = "*"
 environment = "production"
-risk = "none"
+
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "dba"
+min = 1
 ```
 
 ---
