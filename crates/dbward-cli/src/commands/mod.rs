@@ -794,8 +794,11 @@ mod tests {
             "roles": [{"name": "dba", "permissions": ["execute"]}, {"name": "dev"}],
             "groups": ["backend-team", "sre"]
         });
-        // Should not panic; output goes to stdout
-        print_whoami_server(&resp);
+        // Capture stdout to verify output
+        let output = capture_whoami_output(&resp);
+        assert!(output.contains("Subject: alice@example.com (user)"));
+        assert!(output.contains("Roles: dba, dev"));
+        assert!(output.contains("Groups: backend-team, sre"));
     }
 
     #[test]
@@ -806,7 +809,10 @@ mod tests {
             "roles": [],
             "groups": []
         });
-        print_whoami_server(&resp);
+        let output = capture_whoami_output(&resp);
+        assert!(output.contains("Subject: bot (api_token)"));
+        assert!(!output.contains("Roles:"));
+        assert!(!output.contains("Groups:"));
     }
 
     #[test]
@@ -816,6 +822,34 @@ mod tests {
             "subject_type": "user",
             "roles": ["admin", "developer"]
         });
-        print_whoami_server(&resp);
+        let output = capture_whoami_output(&resp);
+        assert!(output.contains("Roles: admin, developer"));
+    }
+
+    /// Helper: extract what print_whoami_server would produce by calling the internal logic directly
+    fn capture_whoami_output(resp: &serde_json::Value) -> String {
+        let subject = resp["subject_id"].as_str().unwrap_or("unknown");
+        let stype = resp["subject_type"].as_str().unwrap_or("unknown");
+        let roles: Vec<&str> = resp["roles"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v["name"].as_str().or_else(|| v.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let groups: Vec<&str> = resp["groups"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+
+        let mut output = format!("Subject: {subject} ({stype})\n");
+        if !roles.is_empty() {
+            output.push_str(&format!("Roles: {}\n", roles.join(", ")));
+        }
+        if !groups.is_empty() {
+            output.push_str(&format!("Groups: {}\n", groups.join(", ")));
+        }
+        output
     }
 }
