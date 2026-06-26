@@ -44,7 +44,7 @@ pub struct ServerConfig {
     #[serde(default)]
     pub sql_review: SqlReviewConfig,
     #[serde(default)]
-    pub auto_approve: Vec<AutoApproveConfig>,
+    pub auto_approve: Vec<serde_json::Value>,
     #[serde(default)]
     pub slack: Option<SlackConfig>,
     #[serde(default)]
@@ -262,14 +262,43 @@ impl ServerConfig {
             }
         }
 
-        // Auto-approve scope uniqueness
-        let mut aa_scopes: HashSet<(&str, &str)> = HashSet::new();
-        for a in &self.auto_approve {
-            if !aa_scopes.insert((a.database.as_str(), a.environment.as_str())) {
+        // Legacy [[auto_approve]] rejection
+        if !self.auto_approve.is_empty() {
+            return Err(ConfigError::Validation(
+                "[[auto_approve]] is no longer supported. \
+                 Move auto_approve settings into [workflows.auto_approve]. \
+                 See: docs/guides/policies/auto-approve.md"
+                    .into(),
+            ));
+        }
+
+        // Workflow auto_approve validation
+        for (i, wf) in self.workflows.iter().enumerate() {
+            if wf.auto_approve.is_none() && wf.steps.is_empty() {
                 return Err(ConfigError::Validation(format!(
-                    "auto_approve validation: duplicate scope (database={}, environment={})",
-                    a.database, a.environment
+                    "workflows[{i}]: must have [workflows.auto_approve], [[workflows.steps]], or both"
                 )));
+            }
+            if let Some(AutoApproveDef::Always) = &wf.auto_approve
+                && !wf.steps.is_empty()
+            {
+                return Err(ConfigError::Validation(format!(
+                    "workflows[{i}]: mode = \"always\" makes steps unreachable — \
+                     remove [[workflows.steps]] or use mode = \"risk_based\""
+                )));
+            }
+            if let Some(AutoApproveDef::RiskBased { risk, .. }) = &wf.auto_approve {
+                if wf.steps.is_empty() {
+                    return Err(ConfigError::Validation(format!(
+                        "workflows[{i}]: risk_based auto_approve without steps has no fallback — \
+                         add [[workflows.steps]] or use mode = \"always\""
+                    )));
+                }
+                if !["low", "medium", "high"].contains(&risk.as_str()) {
+                    return Err(ConfigError::Validation(format!(
+                        "workflows[{i}].auto_approve.risk: unknown value '{risk}' (expected: low, medium, high)"
+                    )));
+                }
             }
         }
 
@@ -720,6 +749,8 @@ pub struct WorkflowDef {
     #[serde(default)]
     pub operations: Vec<String>,
     #[serde(default)]
+    pub auto_approve: Option<AutoApproveDef>,
+    #[serde(default)]
     pub steps: Vec<serde_json::Value>,
     #[serde(default)]
     pub require_reason: bool,
@@ -733,6 +764,21 @@ pub struct WorkflowDef {
     pub pending_ttl_secs: Option<u64>,
     #[serde(default)]
     pub statement_timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AutoApproveDef {
+    Always,
+    RiskBased {
+        risk: String,
+        #[serde(default = "default_allow_read_only")]
+        allow_read_only: bool,
+        #[serde(default = "default_allow_safe_ddl")]
+        allow_safe_ddl: bool,
+        #[serde(default = "default_max_estimated_rows")]
+        max_estimated_rows: i64,
+    },
 }
 
 fn default_true() -> bool {
@@ -907,33 +953,13 @@ fn default_warn() -> String {
     "warn".into()
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AutoApproveConfig {
-    #[serde(default = "star")]
-    pub database: String,
-    #[serde(default = "star")]
-    pub environment: String,
-    #[serde(default = "default_risk_none")]
-    pub risk: String,
-    #[serde(default = "default_allow_read_only")]
-    pub allow_read_only: bool,
-    #[serde(default = "default_allow_safe_ddl")]
-    pub allow_safe_ddl: bool,
-    #[serde(default = "default_max_estimated_rows")]
-    pub max_estimated_rows: u64,
-}
-
-fn default_risk_none() -> String {
-    "none".into()
-}
 fn default_allow_read_only() -> bool {
     true
 }
 fn default_allow_safe_ddl() -> bool {
     true
 }
-fn default_max_estimated_rows() -> u64 {
+fn default_max_estimated_rows() -> i64 {
     1000
 }
 
@@ -970,6 +996,9 @@ environments = ["dev"]
 [[workflows]]
 database = "*"
 environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
 "#,
         );
         let cfg = ServerConfig::from_str(&toml, "test").unwrap();
@@ -1028,20 +1057,106 @@ max_statement_timeout_secs = 600
     }
 
     #[test]
-    fn rejects_duplicate_auto_approve_scope() {
+    fn rejects_legacy_auto_approve() {
         let toml = test_cfg(
             r#"
-[[auto_approve]]
-database = "app"
-environment = "dev"
-
 [[auto_approve]]
 database = "app"
 environment = "dev"
 "#,
         );
         let err = ServerConfig::from_str(&toml, "test").unwrap_err();
-        assert!(err.to_string().contains("duplicate scope"));
+        assert!(err.to_string().contains("no longer supported"));
+    }
+
+    #[test]
+    fn rejects_always_with_steps() {
+        let toml = test_cfg(
+            r#"
+[[workflows]]
+database = "*"
+environment = "*"
+[workflows.auto_approve]
+mode = "always"
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("steps unreachable"));
+    }
+
+    #[test]
+    fn rejects_risk_based_without_steps() {
+        let toml = test_cfg(
+            r#"
+[[workflows]]
+database = "*"
+environment = "*"
+[workflows.auto_approve]
+mode = "risk_based"
+risk = "low"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("no fallback"));
+    }
+
+    #[test]
+    fn rejects_no_auto_approve_no_steps() {
+        let toml = test_cfg(
+            r#"
+[[workflows]]
+database = "*"
+environment = "*"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("must have"));
+    }
+
+    #[test]
+    fn rejects_invalid_risk_value() {
+        let toml = test_cfg(
+            r#"
+[[workflows]]
+database = "*"
+environment = "*"
+[workflows.auto_approve]
+mode = "risk_based"
+risk = "extreme"
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("unknown value"));
+    }
+
+    #[test]
+    fn accepts_valid_risk_based() {
+        let toml = test_cfg(
+            r#"
+[[workflows]]
+database = "*"
+environment = "*"
+[workflows.auto_approve]
+mode = "risk_based"
+risk = "medium"
+[[workflows.steps]]
+type = "approval"
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
+"#,
+        );
+        ServerConfig::from_str(&toml, "test").unwrap();
     }
 
     #[test]

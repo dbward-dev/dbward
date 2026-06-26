@@ -32,7 +32,7 @@ Use this checklist before deploying dbward to production and for periodic securi
 - [ ] **Outbound network restricted** — Agent can only reach server URL + target databases
 - [ ] **Trusted proxies configured** — `trusted_proxies` in server.toml matches your reverse proxy CIDRs
 - [ ] **sql_review rules configured** — Review [sql_review] settings; set destructive rules (drop_table, truncate) to "block" for production
-- [ ] **auto_approve scoped** — Verify auto_approve rules don't apply to production (or set risk = "none")
+- [ ] **auto_approve scoped** — Verify production workflow has no [workflows.auto_approve] section)
 - [ ] **S3 result encryption** — If using S3 storage, enable server-side encryption (SSE-S3 or SSE-KMS)
 
 ## Operational (Periodic Review)

@@ -54,9 +54,6 @@ pub(super) fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
     // S5: role_resolution
     check_role_resolution(ctx, &cfg);
 
-    // S6: auto_approve_consistency
-    check_auto_approve_consistency(ctx, &cfg);
-
     // S7: built_in_role_collision
     check_built_in_role_collision(ctx, &cfg);
 
@@ -314,19 +311,7 @@ fn check_workflow_coverage(ctx: &mut DoctorContext, cfg: &dbward_config::ServerC
                 )
             });
             if !covered {
-                // Check if there's an inert auto_approve for this scope
-                let has_inert_aa = cfg.auto_approve.iter().any(|aa| {
-                    workflow_covers_scope(
-                        aa.database.as_str(),
-                        aa.environment.as_str(),
-                        db.name.as_str(),
-                        env.as_str(),
-                    )
-                });
-                let mut msg = format!("{}:{} → no workflow (fail-closed)", db.name, env);
-                if has_inert_aa {
-                    msg.push_str(" [auto_approve rule is inert here]");
-                }
+                let msg = format!("{}:{} → no workflow (fail-closed)", db.name, env);
                 gaps.push(msg);
             }
         }
@@ -409,56 +394,6 @@ fn check_role_resolution(ctx: &mut DoctorContext, cfg: &dbward_config::ServerCon
                 undefined.join(", ")
             ),
             hint: Some("Define them in [[auth.roles]] in server.toml".into()),
-        });
-    }
-}
-
-fn check_auto_approve_consistency(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
-    if cfg.auto_approve.is_empty() {
-        ctx.record(CheckResult {
-            id: "auto_approve_consistency",
-            status: Status::Pass,
-            message: "no auto_approve rules (all requests need approval)".into(),
-            hint: None,
-        });
-        return;
-    }
-
-    let mut orphaned = Vec::new();
-    for aa in &cfg.auto_approve {
-        // Check if any workflow covers this auto_approve scope
-        let has_matching_workflow = cfg.workflows.iter().any(|wf| {
-            workflow_covers_scope(
-                wf.database.as_str(),
-                wf.environment.as_str(),
-                aa.database.as_str(),
-                aa.environment.as_str(),
-            )
-        });
-        if !has_matching_workflow {
-            orphaned.push(format!("{}:{}", aa.database, aa.environment));
-        }
-    }
-
-    if orphaned.is_empty() {
-        ctx.record(CheckResult {
-            id: "auto_approve_consistency",
-            status: Status::Pass,
-            message: format!(
-                "{} rules, all have matching workflows",
-                cfg.auto_approve.len()
-            ),
-            hint: None,
-        });
-    } else {
-        ctx.record(CheckResult {
-            id: "auto_approve_consistency",
-            status: Status::Warn,
-            message: format!(
-                "orphaned auto_approve (no workflow): {}",
-                orphaned.join(", ")
-            ),
-            hint: Some("These auto_approve rules will never trigger".into()),
         });
     }
 }
@@ -602,6 +537,9 @@ environments = ["production"]
 [[workflows]]
 database = "nonexistent"
 environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
 "#,
         );
         check_workflow_validity(&mut ctx, &cfg);
@@ -625,9 +563,15 @@ environments = ["production"]
 database = "app"
 environment = "*"
 
+[workflows.auto_approve]
+mode = "always"
+
 [[workflows]]
 database = "ghost"
 environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
 "#,
         );
         check_workflow_validity(&mut ctx, &cfg);
@@ -650,6 +594,9 @@ environments = ["production"]
 [[workflows]]
 database = "*"
 environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
 "#,
         );
         check_workflow_validity(&mut ctx, &cfg);

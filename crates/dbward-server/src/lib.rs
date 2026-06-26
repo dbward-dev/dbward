@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use arc_swap::ArcSwap;
 use axum::Router;
-use config::{AutoApproveExt, SqlReviewExt};
+use config::SqlReviewExt;
 use dbward_app::ports::ResultStore;
 use dbward_app::use_cases::sync_config::SyncConfig;
 use dbward_domain::values::{DatabaseName, Environment};
@@ -1053,17 +1053,8 @@ fn build_reloadable_config_with(
     );
     let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new(resolver);
 
-    let mut auto_approve_entries = Vec::new();
-    for (i, a) in cfg.auto_approve.iter().enumerate() {
-        auto_approve_entries.push(
-            a.to_entry()
-                .map_err(|e| format!("auto_approve[{i}]: {e}"))?,
-        );
-    }
-
     Ok(state::ReloadableConfig {
         role_resolver,
-        auto_approve_entries,
         sql_review_rules: cfg
             .sql_review
             .to_review_rules()
@@ -1139,7 +1130,9 @@ mod safety_guard_tests {
             database = "db"
             environment = "prod"
             operations = ["execute_select"]
-            steps = []
+
+            [workflows.auto_approve]
+            mode = "always"
             "#,
         )
         .unwrap();

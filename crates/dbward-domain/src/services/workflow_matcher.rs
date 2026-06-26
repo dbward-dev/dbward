@@ -1,11 +1,10 @@
 use crate::policies::Workflow;
+use crate::policies::workflow::AutoApproveMode;
 use crate::values::{DatabaseName, Environment, Operation};
 
 /// Result of workflow evaluation for a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalDecision {
-    /// No workflow matched → pending (fail-closed).
-    Pending,
     /// Workflow requires human approval.
     NeedsApproval,
     /// Auto-approved with explicit reason.
@@ -15,8 +14,8 @@ pub enum ApprovalDecision {
 /// Why a request was auto-approved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutoApproveReason {
-    /// Workflow has no approval steps.
-    EmptySteps,
+    /// Workflow has mode = "always".
+    Always,
     /// Risk level is below threshold.
     RiskBased,
 }
@@ -24,55 +23,11 @@ pub enum AutoApproveReason {
 impl ApprovalDecision {
     /// Returns true if the request needs human approval.
     pub fn needs_approval(&self) -> bool {
-        matches!(self, Self::Pending | Self::NeedsApproval)
+        matches!(self, Self::NeedsApproval)
     }
 }
 
 pub use super::risk_scorer::RiskLevel;
-
-/// Scoped auto-approve entry. Matched by (database, environment) specificity.
-#[derive(Debug, Clone)]
-pub struct AutoApproveEntry {
-    pub database: DatabaseName,
-    pub environment: Environment,
-    /// Maximum risk level that can be auto-approved.
-    /// `None` means auto-approve is disabled for this scope.
-    pub max_risk_level: Option<RiskLevel>,
-    pub allow_safe_ddl: bool,
-    pub allow_read_only: bool,
-    pub max_estimated_rows: u64,
-}
-
-impl AutoApproveEntry {
-    /// Whether auto-approve is enabled for this entry.
-    pub fn is_enabled(&self) -> bool {
-        self.max_risk_level.is_some()
-    }
-}
-
-/// Find the most specific auto_approve entry for a given (database, environment).
-/// Priority: (db, env) > (*, env) > (db, *) > (*, *)
-/// Returns None if no entry matches (equivalent to auto-approve disabled).
-pub fn find_auto_approve<'a>(
-    entries: &'a [AutoApproveEntry],
-    database: &DatabaseName,
-    environment: &Environment,
-) -> Option<&'a AutoApproveEntry> {
-    let candidates: Vec<&AutoApproveEntry> = entries
-        .iter()
-        .filter(|e| {
-            matches_scope(&e.database, database) && matches_scope_env(&e.environment, environment)
-        })
-        .collect();
-
-    if candidates.is_empty() {
-        return None;
-    }
-
-    candidates
-        .into_iter()
-        .max_by_key(|e| scope_specificity(&e.database, &e.environment, database, environment))
-}
 
 /// 4-stage workflow lookup.
 /// Priority: (db, env) > (*, env) > (db, *) > (*, *)
@@ -101,33 +56,26 @@ pub fn find_matching_workflow<'a>(
 }
 
 /// Evaluate the matched workflow to determine approval decision.
-pub fn evaluate(
-    workflow: Option<&Workflow>,
-    risk_level: Option<RiskLevel>,
-    auto_approve_entry: Option<&AutoApproveEntry>,
-) -> ApprovalDecision {
-    let workflow = match workflow {
-        None => return ApprovalDecision::Pending,
-        Some(w) => w,
-    };
-
-    // stepsなし = short-circuit to auto-approve (auto_approve not consulted)
-    if workflow.is_auto_approve() {
-        return ApprovalDecision::AutoApproved {
-            reason: AutoApproveReason::EmptySteps,
-        };
-    }
-
-    // Risk-based auto-approve
-    if let Some(entry) = auto_approve_entry
-        && let Some(max_level) = entry.max_risk_level
-        && let Some(level) = risk_level
-    {
-        // Unknown is never auto-approved even with risk = "high"
-        if level != RiskLevel::Unknown && level <= max_level {
-            return ApprovalDecision::AutoApproved {
-                reason: AutoApproveReason::RiskBased,
-            };
+pub fn evaluate(workflow: &Workflow, risk_level: Option<RiskLevel>) -> ApprovalDecision {
+    // Always mode → unconditional auto-approve
+    if let Some(ref aa) = workflow.auto_approve {
+        match aa.mode {
+            AutoApproveMode::Always => {
+                return ApprovalDecision::AutoApproved {
+                    reason: AutoApproveReason::Always,
+                };
+            }
+            AutoApproveMode::RiskBased => {
+                if let Some(max_level) = aa.max_risk_level
+                    && let Some(level) = risk_level
+                    && level != RiskLevel::Unknown
+                    && level <= max_level
+                {
+                    return ApprovalDecision::AutoApproved {
+                        reason: AutoApproveReason::RiskBased,
+                    };
+                }
+            }
         }
     }
 
@@ -170,6 +118,7 @@ fn specificity_score(w: &Workflow, db: &DatabaseName, env: &Environment, op: Ope
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policies::workflow::{AutoApproveMode, AutoApproveSettings};
     use crate::policies::{ApproverGroup, WorkflowStep, WorkflowStepMode};
     use crate::values::Selector;
 
@@ -179,6 +128,7 @@ mod tests {
             database: DatabaseName::new(db).unwrap(),
             environment: Environment::new(env).unwrap(),
             operations: ops,
+            auto_approve: None,
             steps,
             require_reason: false,
             allow_self_approve: false,
@@ -192,6 +142,37 @@ mod tests {
         }
     }
 
+    fn wf_with_aa(
+        db: &str,
+        env: &str,
+        aa: AutoApproveSettings,
+        steps: Vec<WorkflowStep>,
+    ) -> Workflow {
+        let mut w = wf(db, env, vec![], steps);
+        w.auto_approve = Some(aa);
+        w
+    }
+
+    fn aa_always() -> AutoApproveSettings {
+        AutoApproveSettings {
+            mode: AutoApproveMode::Always,
+            max_risk_level: None,
+            allow_read_only: true,
+            allow_safe_ddl: true,
+            max_estimated_rows: 1000,
+        }
+    }
+
+    fn aa_risk(level: RiskLevel) -> AutoApproveSettings {
+        AutoApproveSettings {
+            mode: AutoApproveMode::RiskBased,
+            max_risk_level: Some(level),
+            allow_read_only: true,
+            allow_safe_ddl: true,
+            max_estimated_rows: 1000,
+        }
+    }
+
     fn step() -> WorkflowStep {
         WorkflowStep {
             approvers: vec![ApproverGroup {
@@ -202,71 +183,48 @@ mod tests {
         }
     }
 
-    fn entry(db: &str, env: &str, max: Option<RiskLevel>) -> AutoApproveEntry {
-        AutoApproveEntry {
-            database: DatabaseName::new(db).unwrap(),
-            environment: Environment::new(env).unwrap(),
-            max_risk_level: max,
-            allow_safe_ddl: true,
-            allow_read_only: true,
-            max_estimated_rows: 1000,
-        }
+    #[test]
+    fn always_mode_returns_auto_approved() {
+        let w = wf_with_aa("*", "*", aa_always(), vec![]);
+        let decision = evaluate(&w, None);
+        assert_eq!(
+            decision,
+            ApprovalDecision::AutoApproved {
+                reason: AutoApproveReason::Always
+            }
+        );
     }
 
     #[test]
-    fn no_workflow_returns_pending() {
-        let decision = evaluate(None, None, None);
-        assert_eq!(decision, ApprovalDecision::Pending);
-    }
-
-    #[test]
-    fn empty_steps_returns_auto_approved() {
-        let w = wf("*", "*", vec![], vec![]);
-        let decision = evaluate(Some(&w), None, None);
-        assert!(matches!(decision, ApprovalDecision::AutoApproved { .. }));
-    }
-
-    #[test]
-    fn steps_present_no_auto_approve_returns_needs_approval() {
+    fn no_auto_approve_returns_needs_approval() {
         let w = wf("*", "*", vec![], vec![step()]);
-        let decision = evaluate(Some(&w), None, None);
+        let decision = evaluate(&w, None);
         assert_eq!(decision, ApprovalDecision::NeedsApproval);
     }
 
     #[test]
     fn risk_based_auto_approve_low() {
-        let w = wf("*", "*", vec![], vec![step()]);
-        let e = entry("*", "*", Some(RiskLevel::Low));
-        let decision = evaluate(Some(&w), Some(RiskLevel::Low), Some(&e));
-        assert!(matches!(
+        let w = wf_with_aa("*", "*", aa_risk(RiskLevel::Low), vec![step()]);
+        let decision = evaluate(&w, Some(RiskLevel::Low));
+        assert_eq!(
             decision,
             ApprovalDecision::AutoApproved {
                 reason: AutoApproveReason::RiskBased
             }
-        ));
+        );
     }
 
     #[test]
     fn risk_above_threshold_needs_approval() {
-        let w = wf("*", "*", vec![], vec![step()]);
-        let e = entry("*", "*", Some(RiskLevel::Low));
-        let decision = evaluate(Some(&w), Some(RiskLevel::Medium), Some(&e));
+        let w = wf_with_aa("*", "*", aa_risk(RiskLevel::Low), vec![step()]);
+        let decision = evaluate(&w, Some(RiskLevel::Medium));
         assert_eq!(decision, ApprovalDecision::NeedsApproval);
     }
 
     #[test]
     fn unknown_risk_never_auto_approved() {
-        let w = wf("*", "*", vec![], vec![step()]);
-        let e = entry("*", "*", Some(RiskLevel::High));
-        let decision = evaluate(Some(&w), Some(RiskLevel::Unknown), Some(&e));
-        assert_eq!(decision, ApprovalDecision::NeedsApproval);
-    }
-
-    #[test]
-    fn auto_approve_disabled_entry() {
-        let w = wf("*", "*", vec![], vec![step()]);
-        let e = entry("*", "*", None); // risk = "none"
-        let decision = evaluate(Some(&w), Some(RiskLevel::Low), Some(&e));
+        let w = wf_with_aa("*", "*", aa_risk(RiskLevel::High), vec![step()]);
+        let decision = evaluate(&w, Some(RiskLevel::Unknown));
         assert_eq!(decision, ApprovalDecision::NeedsApproval);
     }
 
@@ -326,41 +284,6 @@ mod tests {
         let env = Environment::new("staging").unwrap();
         let matched = find_matching_workflow(&workflows, &db, &env, Operation::ExecuteSelect);
         assert!(matched.is_some());
-    }
-
-    #[test]
-    fn find_auto_approve_specificity() {
-        let entries = vec![
-            entry("*", "*", Some(RiskLevel::Low)),
-            entry("*", "production", None),
-            entry("app", "production", Some(RiskLevel::Medium)),
-        ];
-        let db = DatabaseName::new("app").unwrap();
-        let env = Environment::new("production").unwrap();
-        let found = find_auto_approve(&entries, &db, &env).unwrap();
-        // (app, production) = score 6, most specific
-        assert_eq!(found.max_risk_level, Some(RiskLevel::Medium));
-    }
-
-    #[test]
-    fn find_auto_approve_env_wins_over_db() {
-        let entries = vec![
-            entry("app", "*", Some(RiskLevel::High)),
-            entry("*", "production", None),
-        ];
-        let db = DatabaseName::new("app").unwrap();
-        let env = Environment::new("production").unwrap();
-        let found = find_auto_approve(&entries, &db, &env).unwrap();
-        // (*, production) = score 4 vs (app, *) = score 2
-        assert_eq!(found.max_risk_level, None);
-    }
-
-    #[test]
-    fn find_auto_approve_no_match() {
-        let entries = vec![entry("other", "staging", Some(RiskLevel::Low))];
-        let db = DatabaseName::new("app").unwrap();
-        let env = Environment::new("production").unwrap();
-        assert!(find_auto_approve(&entries, &db, &env).is_none());
     }
 }
 

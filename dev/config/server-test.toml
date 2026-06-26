@@ -11,7 +11,9 @@ environments = ["development", "staging", "production"]
 [[workflows]]
 database = "*"
 environment = "development"
-steps = []
+
+[workflows.auto_approve]
+mode = "always"
 
 [[execution_policies]]
 database = "*"

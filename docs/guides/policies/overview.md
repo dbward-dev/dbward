@@ -47,7 +47,7 @@ This means every (database, environment) pair that should accept operations must
 [[workflows]]
 database = "*"
 environment = "development"
-# steps = [] means auto-approve
+# [workflows.auto_approve] mode = "always" means auto-approve
 ```
 
 ## Operations

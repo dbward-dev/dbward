@@ -28,16 +28,23 @@ impl PolicyRepo for SqlitePolicyRepo {
             serde_json::to_string(&wf.operations).map_err(json_err("policy: create_workflow"))?;
         let steps_json =
             serde_json::to_string(&wf.steps).map_err(json_err("policy: create_workflow"))?;
+        let auto_approve_json: Option<String> = wf
+            .auto_approve
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(json_err("policy: create_workflow auto_approve"))?;
         conn.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs, source, lifecycle_state)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'config', 'active')
-             ON CONFLICT(id) DO UPDATE SET database_name=excluded.database_name, environment=excluded.environment, operations_json=excluded.operations_json, steps_json=excluded.steps_json, require_reason=excluded.require_reason, allow_self_approve=excluded.allow_self_approve, allow_same_approver_across_steps=excluded.allow_same_approver_across_steps, explain=excluded.explain, pending_ttl_secs=excluded.pending_ttl_secs, approval_ttl_secs=excluded.approval_ttl_secs, statement_timeout_secs=excluded.statement_timeout_secs, lifecycle_state='active'",
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, auto_approve_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs, source, lifecycle_state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'config', 'active')
+             ON CONFLICT(id) DO UPDATE SET database_name=excluded.database_name, environment=excluded.environment, operations_json=excluded.operations_json, steps_json=excluded.steps_json, auto_approve_json=excluded.auto_approve_json, require_reason=excluded.require_reason, allow_self_approve=excluded.allow_self_approve, allow_same_approver_across_steps=excluded.allow_same_approver_across_steps, explain=excluded.explain, pending_ttl_secs=excluded.pending_ttl_secs, approval_ttl_secs=excluded.approval_ttl_secs, statement_timeout_secs=excluded.statement_timeout_secs, lifecycle_state='active'",
             params![
                 wf.id,
                 wf.database.as_str(),
                 wf.environment.as_str(),
                 operations_json,
                 steps_json,
+                auto_approve_json,
                 wf.require_reason,
                 wf.allow_self_approve,
                 wf.allow_same_approver_across_steps,
@@ -59,7 +66,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn get_workflow(&self, id: &str) -> Result<Option<Workflow>, AppError> {
         let conn = self.conn.lock();
         conn.query_row(
-            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs
+            "SELECT id, database_name, environment, operations_json, steps_json, auto_approve_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs
              FROM workflows WHERE id = ?1",
             params![id],
             row_to_workflow,
@@ -72,7 +79,7 @@ impl PolicyRepo for SqlitePolicyRepo {
     fn list_workflows(&self) -> Result<Vec<Workflow>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows WHERE lifecycle_state = 'active'",
+            "SELECT id, database_name, environment, operations_json, steps_json, auto_approve_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows WHERE lifecycle_state = 'active'",
         ).map_err(db_err("policy: list_workflows"))?;
         let rows = stmt
             .query_map([], row_to_workflow)
@@ -896,7 +903,7 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
         let workflows = {
             let conn = self.conn.lock();
             let mut stmt = conn.prepare(
-                "SELECT id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows WHERE lifecycle_state = 'active'",
+                "SELECT id, database_name, environment, operations_json, steps_json, auto_approve_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs FROM workflows WHERE lifecycle_state = 'active'",
             ).map_err(db_err("policy: evaluate_workflow"))?;
             let rows = stmt
                 .query_map([], row_to_workflow)
@@ -984,13 +991,14 @@ fn row_to_workflow(row: &rusqlite::Row) -> rusqlite::Result<Result<Workflow, App
     let env_str: String = row.get(2)?;
     let ops_json: String = row.get(3)?;
     let steps_json: String = row.get(4)?;
-    let require_reason: bool = row.get(5)?;
-    let allow_self_approve: bool = row.get(6)?;
-    let allow_same: bool = row.get(7)?;
-    let explain: bool = row.get::<_, bool>(8).unwrap_or(true);
-    let pending_ttl: Option<i64> = row.get(9)?;
-    let approval_ttl: Option<i64> = row.get(10)?;
-    let stmt_timeout: Option<i64> = row.get(11)?;
+    let aa_json: Option<String> = row.get(5)?;
+    let require_reason: bool = row.get(6)?;
+    let allow_self_approve: bool = row.get(7)?;
+    let allow_same: bool = row.get(8)?;
+    let explain: bool = row.get::<_, bool>(9).unwrap_or(true);
+    let pending_ttl: Option<i64> = row.get(10)?;
+    let approval_ttl: Option<i64> = row.get(11)?;
+    let stmt_timeout: Option<i64> = row.get(12)?;
 
     Ok((|| {
         let database = DatabaseName::new(db_str).map_err(|e| AppError::Internal(e.to_string()))?;
@@ -1000,11 +1008,17 @@ fn row_to_workflow(row: &rusqlite::Row) -> rusqlite::Result<Result<Workflow, App
             serde_json::from_str(&ops_json).map_err(json_err("policy: row_to_workflow"))?;
         let steps =
             serde_json::from_str(&steps_json).map_err(json_err("policy: row_to_workflow"))?;
+        let auto_approve = aa_json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(json_err("policy: row_to_workflow auto_approve"))?;
         Ok(Workflow {
             id,
             database,
             environment,
             operations,
+            auto_approve,
             steps,
             require_reason,
             allow_self_approve,

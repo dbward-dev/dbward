@@ -8,8 +8,6 @@ pub use dbward_config::server::*;
 // ---------------------------------------------------------------------------
 
 use dbward_domain::services::sql_reviewer::{ReviewRules, RuleAction};
-use dbward_domain::services::workflow_matcher::AutoApproveEntry;
-use dbward_domain::values::{DatabaseName, Environment};
 
 pub trait SqlReviewExt {
     fn to_review_rules(&self) -> Result<ReviewRules, String>;
@@ -44,45 +42,6 @@ impl SqlReviewExt for SqlReviewConfig {
             truncate: parse_action(&self.truncate, "truncate")?,
             mixed_ddl_dml: parse_action(&self.mixed_ddl_dml, "mixed_ddl_dml")?,
             large_in_list: parse_action(&self.large_in_list, "large_in_list")?,
-        })
-    }
-}
-
-pub trait AutoApproveExt {
-    fn to_entry(&self) -> Result<AutoApproveEntry, String>;
-}
-
-impl AutoApproveExt for AutoApproveConfig {
-    fn to_entry(&self) -> Result<AutoApproveEntry, String> {
-        use dbward_domain::services::risk_scorer::RiskLevel;
-
-        let database = DatabaseName::new(&self.database)
-            .map_err(|e| format!("auto_approve: invalid database '{}': {e}", self.database))?;
-        let environment = Environment::new(&self.environment).map_err(|e| {
-            format!(
-                "auto_approve: invalid environment '{}': {e}",
-                self.environment
-            )
-        })?;
-        let max_risk_level = match self.risk.as_str() {
-            "none" => None,
-            "low" => Some(RiskLevel::Low),
-            "medium" => Some(RiskLevel::Medium),
-            "high" => Some(RiskLevel::High),
-            other => {
-                return Err(format!(
-                    "auto_approve: invalid risk '{}' (expected none/low/medium/high)",
-                    other
-                ));
-            }
-        };
-        Ok(AutoApproveEntry {
-            database,
-            environment,
-            max_risk_level,
-            allow_safe_ddl: self.allow_safe_ddl,
-            allow_read_only: self.allow_read_only,
-            max_estimated_rows: self.max_estimated_rows,
         })
     }
 }

@@ -46,12 +46,18 @@ environments = ["development"]
 [[workflows]]
 database = "*"
 environment = "development"
-steps = []
 
-# Staging: team-lead OR dba (either one)
+[workflows.auto_approve]
+mode = "always"
+
+# Staging: risk-based auto-approve + team-lead OR dba (either one)
 [[workflows]]
 database = "*"
 environment = "staging"
+
+[workflows.auto_approve]
+mode = "risk_based"
+risk = "low"
 
 [[workflows.steps]]
 type = "approval"
@@ -125,36 +131,6 @@ approval_ttl_secs = 600
 [sql_review]
 no_where_delete = "block"
 no_where_update = "block"
-
-# Auto-approve configuration (scoped by database/environment)
-# Priority: (db, env) > (*, env) > (db, *) > (*, *)
-
-# Global default: auto-approve Low risk
-[[auto_approve]]
-database = "*"
-environment = "*"
-risk = "low"
-allow_read_only = true
-allow_safe_ddl = true
-max_estimated_rows = 1000
-
-# Staging: auto-approve up to Medium
-[[auto_approve]]
-database = "*"
-environment = "staging"
-risk = "low"
-
-# Development: auto-approve up to High (nearly everything)
-[[auto_approve]]
-database = "*"
-environment = "development"
-risk = "high"
-
-# Production: no auto-approve (explicit human approval required)
-[[auto_approve]]
-database = "*"
-environment = "production"
-risk = "none"
 
 [[result_policies]]
 database = "app"

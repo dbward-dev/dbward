@@ -98,10 +98,17 @@ pub async fn run_resolve(
 
         // Only show auto_approve / execution_policy when workflow matched
         if let Some(aa) = resp["auto_approve"].as_object() {
-            let max_risk = aa.get("max_risk").and_then(|v| v.as_str());
-            let display = match max_risk {
-                Some(level) => format!("risk ≤ {level}"),
-                None => "disabled".to_string(),
+            let mode = aa.get("mode").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let display = match mode {
+                "always" => "always (all requests auto-approved)".to_string(),
+                "risk_based" => {
+                    let max_risk = aa
+                        .get("max_risk_level")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("none");
+                    format!("risk ≤ {max_risk}")
+                }
+                other => other.to_string(),
             };
             let flags: Vec<&str> = [
                 aa.get("allow_read_only")
@@ -122,6 +129,8 @@ pub async fn run_resolve(
                 format!(" ({})", flags.join(", "))
             };
             println!("Auto-approve: {display}{flags_str}");
+        } else if resp.get("auto_approve").is_some_and(|v| v.is_null()) {
+            println!("Auto-approve: disabled (no auto_approve configured)");
         }
 
         if let Some(ep) = resp["execution_policy"].as_object() {
@@ -143,11 +152,11 @@ pub async fn run_resolve(
     }
 
     let reason_display = match reason {
-        "read_only_low_risk" => "read_only",
-        "empty_steps" => "empty steps",
+        "explicit_always" => "always auto-approve",
+        "no_auto_approve" => "no auto-approve configured",
+        "risk_unknown_until_analyzed" => "risk unknown until SQL analyzed",
         "no_matching_workflow" => "no matching workflow",
         "db_not_registered" => "database not registered",
-        "risk_unknown_until_analyzed" => "risk unknown until SQL analyzed",
         other => other,
     };
     println!("Decision:    {decision} ({reason_display})");
