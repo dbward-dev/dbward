@@ -61,7 +61,7 @@ pub struct Cli {
     pub allow_insecure: bool,
 
     /// Skip interactive confirmation prompts
-    #[arg(long, short = 'y', global = true, env = "DBWARD_YES")]
+    #[arg(long, short = 'y', global = true)]
     pub yes: bool,
 
     #[command(subcommand)]
@@ -299,7 +299,12 @@ async fn try_authenticate(config: &ClientConfig) -> Result<Option<(String, Strin
 // Main dispatch
 // ---------------------------------------------------------------------------
 
-pub async fn run(cli: Cli) -> Result<(), CliError> {
+pub async fn run(mut cli: Cli) -> Result<(), CliError> {
+    // Merge DBWARD_YES env var (accepts 1/true/yes)
+    if let (false, Ok(val)) = (cli.yes, std::env::var("DBWARD_YES")) {
+        cli.yes = matches!(val.to_lowercase().as_str(), "1" | "true" | "yes");
+    }
+
     // Commands that don't need config/auth
     match &cli.command {
         Command::Init {
