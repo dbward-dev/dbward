@@ -76,6 +76,12 @@ pub struct ExecutionPolicyInput {
     pub migration_statement_timeout_secs: Option<u32>,
 }
 
+pub struct SqlReviewInput {
+    pub database: String,
+    pub environment: String,
+    pub rules: dbward_domain::services::sql_reviewer::ReviewRules,
+}
+
 pub struct ResultPolicyInput {
     pub database: String,
     pub environment: String,
@@ -130,6 +136,7 @@ pub struct SyncSummary {
     pub webhooks: (u64, u64),
     pub workflows: (u64, u64),
     pub execution_policies: (u64, u64),
+    pub sql_review_policies: (u64, u64),
     pub result_policies: (u64, u64),
     pub notification_policies: (u64, u64),
 }
@@ -148,6 +155,7 @@ impl SyncConfig {
         webhooks: Vec<WebhookInput>,
         workflows: Vec<WorkflowInput>,
         execution_policies: Vec<ExecutionPolicyInput>,
+        sql_review_policies: Vec<SqlReviewInput>,
         result_policies: Vec<ResultPolicyInput>,
         notification_policies: Vec<NotificationPolicyInput>,
     ) -> Result<SyncSummary, AppError> {
@@ -170,6 +178,7 @@ impl SyncConfig {
                 webhooks,
                 workflows,
                 execution_policies,
+                sql_review_policies,
                 result_policies,
                 notification_policies,
             )?;
@@ -185,6 +194,7 @@ impl SyncConfig {
                 "webhooks": {"upserted": summary.webhooks.1, "stale": summary.webhooks.0},
                 "workflows": {"upserted": summary.workflows.1, "stale": summary.workflows.0},
                 "execution_policies": {"upserted": summary.execution_policies.1, "stale": summary.execution_policies.0},
+                "sql_review_policies": {"upserted": summary.sql_review_policies.1, "stale": summary.sql_review_policies.0},
                 "result_policies": {"upserted": summary.result_policies.1, "stale": summary.result_policies.0},
                 "notification_policies": {"upserted": summary.notification_policies.1, "stale": summary.notification_policies.0},
             });
@@ -266,6 +276,7 @@ impl SyncConfig {
         webhooks: Vec<WebhookInput>,
         workflows: Vec<WorkflowInput>,
         execution_policies: Vec<ExecutionPolicyInput>,
+        sql_review_policies: Vec<SqlReviewInput>,
         result_policies: Vec<ResultPolicyInput>,
         notification_policies: Vec<NotificationPolicyInput>,
     ) -> Result<SyncSummary, AppError> {
@@ -308,6 +319,7 @@ impl SyncConfig {
                 w
             },
             execution_policies: apply::sync_execution_policies(scope, execution_policies)?,
+            sql_review_policies: apply::sync_sql_review_policies(scope, sql_review_policies)?,
             result_policies: apply::sync_result_policies(scope, result_policies)?,
             notification_policies: apply::sync_notification_policies(scope, notification_policies)?,
         })
@@ -522,6 +534,15 @@ mod tests {
             Ok(())
         }
         fn delete_stale_execution_policies(&self, _: &[String]) -> Result<u64, AppError> {
+            Ok(0)
+        }
+        fn create_sql_review_policy(
+            &self,
+            _: &dbward_domain::policies::SqlReviewPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn delete_stale_sql_review_policies(&self, _: &[String]) -> Result<u64, AppError> {
             Ok(0)
         }
         fn create_notification_policy(
@@ -1230,6 +1251,15 @@ mod tests {
                 Ok(())
             }
             fn delete_stale_execution_policies(&self, _: &[String]) -> Result<u64, AppError> {
+                Ok(0)
+            }
+            fn create_sql_review_policy(
+                &self,
+                _: &dbward_domain::policies::SqlReviewPolicy,
+            ) -> Result<(), AppError> {
+                Ok(())
+            }
+            fn delete_stale_sql_review_policies(&self, _: &[String]) -> Result<u64, AppError> {
                 Ok(0)
             }
             fn create_notification_policy(

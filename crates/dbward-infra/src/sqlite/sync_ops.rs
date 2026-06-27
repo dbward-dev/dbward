@@ -418,6 +418,61 @@ impl SyncPolicyOps for SqliteTxScope<'_> {
         Ok(n as u64)
     }
 
+    fn create_sql_review_policy(
+        &self,
+        policy: &dbward_domain::policies::SqlReviewPolicy,
+    ) -> Result<(), AppError> {
+        let rules_json = serde_json::to_string(&policy.rules)
+            .map_err(|e| AppError::Internal(format!("json: {e}")))?;
+        self.conn
+            .execute(
+                "INSERT INTO sql_review_policies (id, database_name, environment, rules_json, source, lifecycle_state) \
+                 VALUES (?1, ?2, ?3, ?4, 'config', 'active') \
+                 ON CONFLICT(id) DO UPDATE SET \
+                   database_name=excluded.database_name, \
+                   environment=excluded.environment, \
+                   rules_json=excluded.rules_json, \
+                   lifecycle_state='active'",
+                rusqlite::params![
+                    policy.id,
+                    policy.database.as_str(),
+                    policy.environment.as_str(),
+                    rules_json,
+                ],
+            )
+            .map_err(db_err("sync: create_sql_review_policy"))?;
+        Ok(())
+    }
+
+    fn delete_stale_sql_review_policies(&self, active_ids: &[String]) -> Result<u64, AppError> {
+        if active_ids.is_empty() {
+            let n = self
+                .conn
+                .execute(
+                    "DELETE FROM sql_review_policies WHERE source = 'config'",
+                    [],
+                )
+                .map_err(db_err("sync: del_srp"))?;
+            return Ok(n as u64);
+        }
+        let placeholders: String = (1..=active_ids.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "DELETE FROM sql_review_policies WHERE source = 'config' AND id NOT IN ({placeholders})"
+        );
+        let params: Vec<&dyn rusqlite::types::ToSql> = active_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let n = self
+            .conn
+            .execute(&sql, params.as_slice())
+            .map_err(db_err("sync: del_srp"))?;
+        Ok(n as u64)
+    }
+
     fn create_notification_policy(&self, np: &NotificationPolicy) -> Result<(), AppError> {
         let webhooks_json = serde_json::to_string(&np.webhooks)
             .map_err(|e| AppError::Internal(format!("json: {e}")))?;

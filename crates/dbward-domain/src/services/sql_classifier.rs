@@ -112,6 +112,8 @@ pub struct ClassifyResult {
     pub classification: Result<Classification, ClassifyError>,
     /// Parsed statements — None only when parser itself failed.
     pub parsed_statements: Option<Vec<Statement>>,
+    /// Per-statement categories (empty when parse fails).
+    pub categories: Vec<StatementCategory>,
 }
 
 /// Classify SQL and return parsed statements alongside the result.
@@ -119,15 +121,19 @@ pub struct ClassifyResult {
 pub fn classify_full(sql: &str, dialect: Dialect) -> ClassifyResult {
     match sql_parser::parse_statements(sql, dialect) {
         Ok(statements) => {
+            let categories: Vec<StatementCategory> =
+                statements.iter().map(categorize_statement).collect();
             let classification = classify_statements(&statements);
             ClassifyResult {
                 classification,
                 parsed_statements: Some(statements),
+                categories,
             }
         }
         Err(ParseError::Empty) => ClassifyResult {
             classification: Err(ClassifyError::Empty),
             parsed_statements: None,
+            categories: vec![],
         },
         Err(ParseError::ParseFailed) => ClassifyResult {
             classification: Ok(Classification {
@@ -138,28 +144,33 @@ pub fn classify_full(sql: &str, dialect: Dialect) -> ClassifyResult {
                 is_ddl_only: false,
             }),
             parsed_statements: None,
+            categories: vec![],
         },
         Err(ParseError::NullBytes) => ClassifyResult {
             classification: Err(ClassifyError::Rejected {
                 reason: "query contains null bytes".into(),
             }),
             parsed_statements: None,
+            categories: vec![],
         },
         Err(ParseError::TooLarge) => ClassifyResult {
             classification: Err(ClassifyError::Rejected {
                 reason: format!("query exceeds maximum size of {} bytes", 1_048_576),
             }),
             parsed_statements: None,
+            categories: vec![],
         },
         Err(ParseError::TooManyStatements) => ClassifyResult {
             classification: Err(ClassifyError::Rejected {
                 reason: format!("query exceeds maximum of {} statements", 100),
             }),
             parsed_statements: None,
+            categories: vec![],
         },
         Err(ParseError::Rejected { reason }) => ClassifyResult {
             classification: Err(ClassifyError::Rejected { reason }),
             parsed_statements: None,
+            categories: vec![],
         },
     }
 }
@@ -663,6 +674,7 @@ fn classify_set(set: &Set) -> InternalClass {
 }
 
 /// Replace string literals with `?` for audit safety.
+#[deprecated(note = "Use sql_redactor::redact_literals() instead")]
 pub fn redact_literals(sql: &str) -> String {
     let mut result = String::with_capacity(sql.len());
     let mut chars = sql.chars().peekable();
@@ -1339,6 +1351,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn redact_literals_replaces_strings() {
         assert_eq!(
             redact_literals("SELECT * FROM users WHERE name = 'alice'"),
@@ -1347,11 +1360,13 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn redact_literals_handles_escaped_quotes() {
         assert_eq!(redact_literals("SELECT 'it''s fine'"), "SELECT ?");
     }
 
     #[test]
+    #[allow(deprecated)]
     fn redact_literals_no_strings() {
         assert_eq!(redact_literals("SELECT 1"), "SELECT 1");
     }

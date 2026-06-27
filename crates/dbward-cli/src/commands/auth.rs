@@ -245,8 +245,10 @@ environment = "production"
 statement_timeout_secs = 30
 max_statement_timeout_secs = 300
 
-# SQL review rules
-[sql_review]
+# SQL review rules (scoped per database×environment)
+[[sql_review]]
+database = "*"
+environment = "*"
 no_where_delete = "block"
 no_where_update = "block"
 drop_table = "warn"

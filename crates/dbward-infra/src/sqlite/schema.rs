@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 21;
+const SCHEMA_VERSION: u32 = 22;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -282,6 +282,18 @@ const MIGRATION_V21: &str = "
 ALTER TABLE workflows ADD COLUMN auto_approve_json TEXT;
 ";
 
+const MIGRATION_V22: &str = "
+CREATE TABLE IF NOT EXISTS sql_review_policies (
+    id TEXT PRIMARY KEY,
+    database_name TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    rules_json TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'config',
+    lifecycle_state TEXT NOT NULL DEFAULT 'active',
+    UNIQUE(database_name, environment)
+);
+";
+
 /// Apply V14 source-column additions idempotently.
 fn apply_migration_v14(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(MIGRATION_V14)?;
@@ -433,6 +445,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 21 {
             conn.execute_batch(MIGRATION_V21)?;
+        }
+        if current < 22 {
+            conn.execute_batch(MIGRATION_V22)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -605,6 +620,17 @@ CREATE TABLE IF NOT EXISTS execution_policies (
     retry_on_failure INTEGER NOT NULL DEFAULT 0,
     statement_timeout_secs INTEGER NOT NULL DEFAULT 30,
     max_statement_timeout_secs INTEGER NOT NULL DEFAULT 600,
+    UNIQUE(database_name, environment)
+);
+
+-- SQL review policies (scoped per database×environment)
+CREATE TABLE IF NOT EXISTS sql_review_policies (
+    id TEXT PRIMARY KEY,
+    database_name TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    rules_json TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'config',
+    lifecycle_state TEXT NOT NULL DEFAULT 'active',
     UNIQUE(database_name, environment)
 );
 

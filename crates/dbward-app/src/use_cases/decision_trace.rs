@@ -43,6 +43,8 @@ impl From<dbward_domain::values::Operation> for OperationKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SqlReview {
+    #[serde(default)]
+    pub policy_id: Option<String>,
     pub findings_count: usize,
     #[serde(default)]
     pub parse_failed: bool,
@@ -117,6 +119,7 @@ mod tests {
                 resolved_operation: OperationKind::ExecuteSelect,
             },
             sql_review: SqlReview {
+                policy_id: None,
                 findings_count: 0,
                 parse_failed: false,
             },
@@ -153,6 +156,7 @@ mod tests {
                 resolved_operation: OperationKind::ExecuteDml,
             },
             sql_review: SqlReview {
+                policy_id: None,
                 findings_count: 0,
                 parse_failed: true,
             },

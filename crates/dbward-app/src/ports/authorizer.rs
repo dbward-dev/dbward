@@ -108,4 +108,15 @@ pub trait PolicyEvaluator: Send + Sync {
         db: &DatabaseName,
         env: &Environment,
     ) -> Result<dbward_domain::policies::ExecutionPolicy, AppError>;
+
+    /// Returns the sql_review policy matching this (db, env) scope.
+    /// Default impl returns builtin-default rules (block dangerous ops, warn others).
+    /// This is intentionally the MOST restrictive default — not permissive.
+    fn get_sql_review_policy(
+        &self,
+        _db: &DatabaseName,
+        _env: &Environment,
+    ) -> Result<dbward_domain::policies::SqlReviewPolicy, AppError> {
+        Ok(dbward_domain::policies::SqlReviewPolicy::default())
+    }
 }

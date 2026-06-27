@@ -61,7 +61,6 @@ pub struct CreateRequest {
     pub clock: Arc<dyn Clock>,
     pub id_gen: Arc<dyn IdGenerator>,
     pub default_approval_ttl_secs: Option<u64>,
-    pub review_rules: dbward_domain::services::sql_reviewer::ReviewRules,
 }
 
 const MAX_QUERY_BYTES: usize = 100_000;
@@ -78,6 +77,24 @@ struct AssessmentResult {
     trace_findings_count: usize,
     trace_risk_factors: Vec<String>,
     trace_schema_status: dt::SchemaStatus,
+    trace_policy_id: Option<String>,
+}
+
+impl AssessmentResult {
+    fn unavailable() -> Self {
+        Self {
+            risk_level: None,
+            review_json: None,
+            risk_json: None,
+            parsed_stmt_texts: None,
+            tables_json: None,
+            schema_collected_at: None,
+            trace_findings_count: 0,
+            trace_risk_factors: vec![],
+            trace_schema_status: dt::SchemaStatus::Unavailable,
+            trace_policy_id: None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -165,17 +182,17 @@ impl CreateRequest {
         // 1. Determine operation: migration types are explicit, others classified from SQL
         let mut classifier_bypassed = false;
         let mut reviewer_bypassed = false;
-        let (operation, classification, parsed_stmts) = match input.operation {
+        let (operation, classification, parsed_stmts, _) = match input.operation {
             Operation::MigrateUp
             | Operation::MigrateDown
             | Operation::MigrateStatus
-            | Operation::MigrateRepair => (input.operation, None, None),
+            | Operation::MigrateRepair => (input.operation, None, None, vec![]),
             _ => {
                 let result = sql_classifier::classify_full(&input.detail, dialect);
                 match result.classification {
                     Ok(c) => {
                         let op = c.operation;
-                        (op, Some(c), result.parsed_statements)
+                        (op, Some(c), result.parsed_statements, result.categories)
                     }
                     Err(ClassifyError::Empty) => {
                         return Err(AppError::Validation("empty query".into()));
@@ -201,7 +218,12 @@ impl CreateRequest {
                                         is_ddl_only: true,
                                     };
                                     classifier_bypassed = true;
-                                    (c.operation, Some(c), result.parsed_statements)
+                                    (
+                                        c.operation,
+                                        Some(c),
+                                        result.parsed_statements,
+                                        result.categories,
+                                    )
                                 }
                                 _ => {
                                     self.break_glass_metrics.record_ddl_denied();
@@ -234,38 +256,84 @@ impl CreateRequest {
             .ok()
             .flatten();
 
-        // 1a. SQL Review + Risk assessment (best-effort, never blocks request creation)
+        // 1a. SQL Review + Risk assessment
+        // When parsed_stmts is None (parse failed), classify_full() classified as
+        // ExecuteDml with DmlReason::ParseFailure. ARCH-6: fail-closed — block the request
+        // because sql_review cannot verify safety without parsed AST.
         let assessment = {
-            use dbward_domain::services::{risk_scorer, sql_parser, sql_reviewer, table_extractor};
-            let parse_result = sql_parser::parse_statements(&input.detail, dialect);
-            if let Ok(stmts) = parse_result {
-                let review =
-                    sql_reviewer::review_statements(&stmts, Some(dialect), &self.review_rules);
-                if review.blocked {
-                    if input.emergency && input.allow_ddl {
-                        // Break-glass reviewer bypass
-                        let bypass_ok = match parsed_stmts.as_deref() {
-                            Some(ps) if !ps.is_empty() => ps.iter().all(|s| {
-                                sql_classifier::categorize_statement(s).is_break_glass_eligible()
-                            }),
-                            _ => false,
-                        };
-                        let non_bypassable: Vec<&str> = review
-                            .findings
-                            .iter()
-                            .filter(|f| {
-                                f.action == sql_reviewer::RuleAction::Block
-                                    && !f.rule.is_break_glass_bypassable()
-                            })
-                            .map(|f| f.message.as_str())
-                            .collect();
-                        if !bypass_ok || !non_bypassable.is_empty() {
+            use dbward_domain::services::{risk_scorer, sql_reviewer, table_extractor};
+            if let Some(stmts) = parsed_stmts.as_deref() {
+                if stmts.is_empty() {
+                    AssessmentResult::unavailable()
+                } else {
+                    let sql_review_policy = self
+                        .policy
+                        .get_sql_review_policy(&input.database, &input.environment)?;
+                    let review = sql_reviewer::review_statements(
+                        stmts,
+                        Some(dialect),
+                        &sql_review_policy.rules,
+                    );
+                    if review.blocked {
+                        if input.emergency && input.allow_ddl {
+                            // Break-glass reviewer bypass
+                            let bypass_ok = match parsed_stmts.as_deref() {
+                                Some(ps) if !ps.is_empty() => ps.iter().all(|s| {
+                                    sql_classifier::categorize_statement(s)
+                                        .is_break_glass_eligible()
+                                }),
+                                _ => false,
+                            };
+                            let non_bypassable: Vec<&str> = review
+                                .findings
+                                .iter()
+                                .filter(|f| {
+                                    f.action == sql_reviewer::RuleAction::Block
+                                        && !f.rule.is_break_glass_bypassable()
+                                })
+                                .map(|f| f.message.as_str())
+                                .collect();
+                            if !bypass_ok || !non_bypassable.is_empty() {
+                                let reasons: Vec<&str> = review
+                                    .findings
+                                    .iter()
+                                    .filter(|f| f.action == sql_reviewer::RuleAction::Block)
+                                    .map(|f| f.message.as_str())
+                                    .collect();
+                                let mut audit_event = dbward_domain::entities::AuditEvent::simple(
+                                    "request.blocked_by_review",
+                                    "request",
+                                    &user.subject_id,
+                                    None,
+                                    self.clock.now(),
+                                    ctx,
+                                );
+                                audit_event.metadata_json = serde_json::json!({
+                                    "blocked_rules": reasons,
+                                    "break_glass_attempted": true,
+                                })
+                                .to_string();
+                                if let Err(e) = self.audit_logger.record(&audit_event) {
+                                    tracing::warn!(
+                                        "audit write failed for blocked break-glass attempt: {e}"
+                                    );
+                                }
+                                self.break_glass_metrics.record_ddl_denied();
+                                return Err(BreakGlassDenial::NonBypassableReviewRule {
+                                    reasons: reasons.iter().map(|s| s.to_string()).collect(),
+                                }
+                                .into_app_error());
+                            }
+                            // All blocks are bypassable DDL rules → proceed
+                            reviewer_bypassed = true;
+                        } else {
                             let reasons: Vec<&str> = review
                                 .findings
                                 .iter()
                                 .filter(|f| f.action == sql_reviewer::RuleAction::Block)
                                 .map(|f| f.message.as_str())
                                 .collect();
+                            // Audit: record blocked request
                             let mut audit_event = dbward_domain::entities::AuditEvent::simple(
                                 "request.blocked_by_review",
                                 "request",
@@ -274,208 +342,180 @@ impl CreateRequest {
                                 self.clock.now(),
                                 ctx,
                             );
+                            audit_event.database_name = Some(input.database.to_string());
+                            audit_event.environment = Some(input.environment.to_string());
                             audit_event.metadata_json = serde_json::json!({
                                 "blocked_rules": reasons,
-                                "break_glass_attempted": true,
                             })
                             .to_string();
                             if let Err(e) = self.audit_logger.record(&audit_event) {
-                                tracing::warn!(
-                                    "audit write failed for blocked break-glass attempt: {e}"
-                                );
+                                tracing::error!(error = %e, "failed to record request_blocked_by_review audit event");
                             }
-                            self.break_glass_metrics.record_ddl_denied();
-                            return Err(BreakGlassDenial::NonBypassableReviewRule {
-                                reasons: reasons.iter().map(|s| s.to_string()).collect(),
-                            }
-                            .into_app_error());
+                            return Err(AppError::Validation(format!(
+                                "SQL blocked by review: {}",
+                                reasons.join("; ")
+                            )));
                         }
-                        // All blocks are bypassable DDL rules → proceed
-                        reviewer_bypassed = true;
-                    } else {
-                        let reasons: Vec<&str> = review
-                            .findings
+                    }
+                    let tables = table_extractor::extract_tables(stmts);
+                    let t_json = serde_json::to_string(
+                        &tables
                             .iter()
-                            .filter(|f| f.action == sql_reviewer::RuleAction::Block)
-                            .map(|f| f.message.as_str())
-                            .collect();
-                        // Audit: record blocked request
-                        let mut audit_event = dbward_domain::entities::AuditEvent::simple(
-                            "request.blocked_by_review",
-                            "request",
-                            &user.subject_id,
-                            None,
-                            self.clock.now(),
-                            ctx,
-                        );
-                        audit_event.database_name = Some(input.database.to_string());
-                        audit_event.environment = Some(input.environment.to_string());
-                        audit_event.metadata_json = serde_json::json!({
-                            "blocked_rules": reasons,
-                        })
-                        .to_string();
-                        if let Err(e) = self.audit_logger.record(&audit_event) {
-                            tracing::error!(error = %e, "failed to record request_blocked_by_review audit event");
-                        }
-                        return Err(AppError::Validation(format!(
-                            "SQL blocked by review: {}",
-                            reasons.join("; ")
-                        )));
-                    }
-                }
-                let tables = table_extractor::extract_tables(&stmts);
-                let t_json = serde_json::to_string(
-                    &tables
-                        .iter()
-                        .map(|t| {
-                            if let Some(ref s) = t.schema {
-                                format!("{}.{}", s, t.name)
-                            } else {
-                                t.name.clone()
-                            }
-                        })
-                        .collect::<Vec<_>>(),
-                )
-                .ok();
-                let (schema_status, schema_collected_at) = match self
-                    .schema_repo
-                    .get_snapshot(input.database.as_str(), input.environment.as_str())
-                {
-                    Ok(Some(s))
-                        if s.status == dbward_domain::services::status_constants::schema::READY =>
+                            .map(|t| {
+                                if let Some(ref s) = t.schema {
+                                    format!("{}.{}", s, t.name)
+                                } else {
+                                    t.name.clone()
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                    .ok();
+                    let (schema_status, schema_collected_at) = match self
+                        .schema_repo
+                        .get_snapshot(input.database.as_str(), input.environment.as_str())
                     {
-                        (risk_scorer::SchemaStatus::Ready, Some(s.collected_at))
-                    }
-                    Ok(Some(s)) => (risk_scorer::SchemaStatus::Failed, Some(s.collected_at)),
-                    _ => (risk_scorer::SchemaStatus::NotSynced, None),
-                };
-                let allow_read_only = operation == Operation::ExecuteSelect
-                    && early_workflow
+                        Ok(Some(s))
+                            if s.status
+                                == dbward_domain::services::status_constants::schema::READY =>
+                        {
+                            (risk_scorer::SchemaStatus::Ready, Some(s.collected_at))
+                        }
+                        Ok(Some(s)) => (risk_scorer::SchemaStatus::Failed, Some(s.collected_at)),
+                        _ => (risk_scorer::SchemaStatus::NotSynced, None),
+                    };
+                    let allow_read_only = operation == Operation::ExecuteSelect
+                        && early_workflow
+                            .as_ref()
+                            .and_then(|w| w.auto_approve.as_ref())
+                            .map(|aa| aa.allow_read_only)
+                            .unwrap_or(false); // restrictive on lookup failure
+                    let safe_ddl = early_workflow
                         .as_ref()
                         .and_then(|w| w.auto_approve.as_ref())
-                        .map(|aa| aa.allow_read_only)
-                        .unwrap_or(false); // restrictive on lookup failure
-                let safe_ddl = early_workflow
-                    .as_ref()
-                    .and_then(|w| w.auto_approve.as_ref())
-                    .map(|aa| aa.allow_safe_ddl)
-                    .unwrap_or(false)
-                    && stmts.len() == 1
-                    && stmts
-                        .iter()
-                        .all(|s| sql_classifier::is_safe_ddl_statement(s, Some(dialect)))
-                    && review.findings.is_empty();
-                let table_risk_info: Vec<risk_scorer::TableRiskInfo> = self
-                    .schema_repo
-                    .get_tables_for(input.database.as_str(), input.environment.as_str(), &tables)
-                    .unwrap_or(None)
-                    .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(&json).ok())
-                    .map(|arr| {
-                        arr.iter()
-                            .map(|t| {
-                                let has_cascade = t
-                                    .get("constraints")
-                                    .and_then(|c| c.as_array())
-                                    .map(|cs| {
-                                        cs.iter().any(|c| {
-                                            c.get("on_delete")
-                                                .and_then(|d| d.as_str())
-                                                .map(|d| d == "CASCADE")
-                                                .unwrap_or(false)
-                                        })
-                                    })
-                                    .unwrap_or(false);
-                                risk_scorer::TableRiskInfo {
-                                    name: t
-                                        .get("name")
-                                        .and_then(|n| n.as_str())
-                                        .unwrap_or("")
-                                        .to_string(),
-                                    estimated_rows: t
-                                        .get("estimated_rows")
-                                        .and_then(|r| r.as_i64())
-                                        .unwrap_or(0),
-                                    has_cascade_fk: has_cascade,
-                                    cascade_targets: t
+                        .map(|aa| aa.allow_safe_ddl)
+                        .unwrap_or(false)
+                        && stmts.len() == 1
+                        && stmts
+                            .iter()
+                            .all(|s| sql_classifier::is_safe_ddl_statement(s, Some(dialect)))
+                        && review.findings.is_empty();
+                    let table_risk_info: Vec<risk_scorer::TableRiskInfo> = self
+                        .schema_repo
+                        .get_tables_for(
+                            input.database.as_str(),
+                            input.environment.as_str(),
+                            &tables,
+                        )
+                        .unwrap_or(None)
+                        .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(&json).ok())
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|t| {
+                                    let has_cascade = t
                                         .get("constraints")
                                         .and_then(|c| c.as_array())
                                         .map(|cs| {
-                                            cs.iter()
-                                                .filter(|c| {
-                                                    c.get("on_delete").and_then(|d| d.as_str())
-                                                        == Some("CASCADE")
-                                                })
-                                                .filter_map(|c| {
-                                                    c.get("referenced_table")
-                                                        .and_then(|t| t.as_str())
-                                                        .map(String::from)
-                                                })
-                                                .collect()
+                                            cs.iter().any(|c| {
+                                                c.get("on_delete")
+                                                    .and_then(|d| d.as_str())
+                                                    .map(|d| d == "CASCADE")
+                                                    .unwrap_or(false)
+                                            })
                                         })
-                                        .unwrap_or_default(),
-                                }
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let assessment = risk_scorer::evaluate(&risk_scorer::RiskInput {
-                    operation,
-                    findings: &review.findings,
-                    schema_status,
-                    tables: &table_risk_info,
-                    statement_count: stmts.len(),
-                    has_dml: matches!(operation, Operation::ExecuteDml),
-                    allow_read_only,
-                    safe_ddl,
-                    max_estimated_rows: early_workflow
-                        .as_ref()
-                        .and_then(|w| w.auto_approve.as_ref())
-                        .map(|aa| aa.max_estimated_rows)
-                        .unwrap_or(1000),
-                });
-                let r_json = serde_json::json!({
-                    "level": format!("{:?}", assessment.level),
-                    "factors": assessment.factors.iter().map(|f| format!("{:?}", f)).collect::<Vec<_>>(),
-                });
-                let rev_json = serde_json::json!({
-                    "findings": review.findings.iter().map(|f| {
-                        serde_json::json!({"rule": format!("{:?}", f.rule), "message": &f.message})
-                    }).collect::<Vec<_>>(),
-                    "blocked": review.blocked,
-                });
-                let trace_factors: Vec<String> = assessment
-                    .factors
-                    .iter()
-                    .map(|f| format!("{:?}", f))
-                    .collect();
-                let trace_ss = match schema_status {
-                    risk_scorer::SchemaStatus::Ready => dt::SchemaStatus::Ready,
-                    risk_scorer::SchemaStatus::Failed => dt::SchemaStatus::Failed,
-                    risk_scorer::SchemaStatus::NotSynced => dt::SchemaStatus::NotSynced,
-                };
-                AssessmentResult {
-                    risk_level: Some(assessment.level),
-                    review_json: Some(rev_json.to_string()),
-                    risk_json: Some(r_json.to_string()),
-                    parsed_stmt_texts: Some(stmts.iter().map(|s| s.to_string()).collect()),
-                    tables_json: t_json,
-                    schema_collected_at,
-                    trace_findings_count: review.findings.len(),
-                    trace_risk_factors: trace_factors,
-                    trace_schema_status: trace_ss,
+                                        .unwrap_or(false);
+                                    risk_scorer::TableRiskInfo {
+                                        name: t
+                                            .get("name")
+                                            .and_then(|n| n.as_str())
+                                            .unwrap_or("")
+                                            .to_string(),
+                                        estimated_rows: t
+                                            .get("estimated_rows")
+                                            .and_then(|r| r.as_i64())
+                                            .unwrap_or(0),
+                                        has_cascade_fk: has_cascade,
+                                        cascade_targets: t
+                                            .get("constraints")
+                                            .and_then(|c| c.as_array())
+                                            .map(|cs| {
+                                                cs.iter()
+                                                    .filter(|c| {
+                                                        c.get("on_delete").and_then(|d| d.as_str())
+                                                            == Some("CASCADE")
+                                                    })
+                                                    .filter_map(|c| {
+                                                        c.get("referenced_table")
+                                                            .and_then(|t| t.as_str())
+                                                            .map(String::from)
+                                                    })
+                                                    .collect()
+                                            })
+                                            .unwrap_or_default(),
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let assessment = risk_scorer::evaluate(&risk_scorer::RiskInput {
+                        operation,
+                        findings: &review.findings,
+                        schema_status,
+                        tables: &table_risk_info,
+                        statement_count: stmts.len(),
+                        has_dml: matches!(operation, Operation::ExecuteDml),
+                        allow_read_only,
+                        safe_ddl,
+                        max_estimated_rows: early_workflow
+                            .as_ref()
+                            .and_then(|w| w.auto_approve.as_ref())
+                            .map(|aa| aa.max_estimated_rows)
+                            .unwrap_or(1000),
+                    });
+                    let r_json = serde_json::json!({
+                        "level": format!("{:?}", assessment.level),
+                        "factors": assessment.factors.iter().map(|f| format!("{:?}", f)).collect::<Vec<_>>(),
+                    });
+                    let rev_json = serde_json::json!({
+                        "findings": review.findings.iter().map(|f| {
+                            serde_json::json!({"rule": format!("{:?}", f.rule), "message": &f.message})
+                        }).collect::<Vec<_>>(),
+                        "blocked": review.blocked,
+                    });
+                    let trace_factors: Vec<String> = assessment
+                        .factors
+                        .iter()
+                        .map(|f| format!("{:?}", f))
+                        .collect();
+                    let trace_ss = match schema_status {
+                        risk_scorer::SchemaStatus::Ready => dt::SchemaStatus::Ready,
+                        risk_scorer::SchemaStatus::Failed => dt::SchemaStatus::Failed,
+                        risk_scorer::SchemaStatus::NotSynced => dt::SchemaStatus::NotSynced,
+                    };
+                    AssessmentResult {
+                        risk_level: Some(assessment.level),
+                        review_json: Some(rev_json.to_string()),
+                        risk_json: Some(r_json.to_string()),
+                        parsed_stmt_texts: Some(stmts.iter().map(|s| s.to_string()).collect()),
+                        tables_json: t_json,
+                        schema_collected_at,
+                        trace_findings_count: review.findings.len(),
+                        trace_risk_factors: trace_factors,
+                        trace_schema_status: trace_ss,
+                        trace_policy_id: Some(sql_review_policy.id.clone()),
+                    }
                 }
+            } else if classification
+                .as_ref()
+                .is_some_and(|c| c.dml_reason == Some(DmlReason::ParseFailure))
+            {
+                // ARCH-6: Fail-closed — unparseable SQL cannot be reviewed
+                return Err(AppError::Validation(
+                    "SQL blocked by review: SQL could not be parsed; cannot verify safety rules"
+                        .to_string(),
+                ));
             } else {
-                AssessmentResult {
-                    risk_level: None,
-                    review_json: None,
-                    risk_json: None,
-                    parsed_stmt_texts: None,
-                    tables_json: None,
-                    schema_collected_at: None,
-                    trace_findings_count: 0,
-                    trace_risk_factors: vec![],
-                    trace_schema_status: dt::SchemaStatus::Unavailable,
-                }
+                AssessmentResult::unavailable()
             }
         };
 
@@ -697,6 +737,7 @@ impl CreateRequest {
                 resolved_operation: operation.into(),
             },
             sql_review: dt::SqlReview {
+                policy_id: assessment.trace_policy_id,
                 findings_count: assessment.trace_findings_count,
                 parse_failed,
             },
@@ -841,7 +882,7 @@ impl CreateRequest {
                 ddl_event.environment = Some(request.environment.as_str().to_string());
                 ddl_event.metadata_json = serde_json::json!({
                     "request_id": &id,
-                    "sql_redacted": sql_classifier::redact_literals(&request.detail),
+                    "sql_redacted": dbward_domain::services::sql_redactor::redact_literals(&request.detail),
                     "statement_count": classification.as_ref().map(|c| c.statement_count).unwrap_or(0),
                     "reason": request.reason.as_deref().unwrap_or(""),
                     "classifier_bypassed": classifier_bypassed,
@@ -1211,7 +1252,6 @@ mod tests {
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
-            review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
         }
     }
 
@@ -1437,7 +1477,6 @@ mod tests {
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
-            review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
         };
         let err = uc
             .execute(
@@ -1469,7 +1508,6 @@ mod tests {
             clock: Arc::new(FixedClock::now_utc()),
             id_gen: Arc::new(FixedIdGen::new()),
             default_approval_ttl_secs: None,
-            review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
         };
         let mut input = make_input();
         input.reason = None;
@@ -1499,6 +1537,23 @@ mod tests {
             .unwrap_err();
         assert!(
             matches!(err, AppError::Validation(ref m) if m.contains("emergency requests are not allowed via MCP/Slack"))
+        );
+    }
+
+    #[test]
+    fn parse_failure_sql_is_blocked() {
+        // ARCH-6: unparseable SQL must be rejected (fail-closed)
+        let uc = make_uc(Arc::new(AllowAll));
+        let mut input = make_input();
+        input.operation = Operation::ExecuteDml;
+        input.detail = "THIS IS NOT VALID SQL AT ALL".into();
+        let result = uc.execute(
+            input,
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("could not be parsed"))
         );
     }
 

@@ -34,7 +34,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use arc_swap::ArcSwap;
 use axum::Router;
-use config::SqlReviewExt;
 use dbward_app::ports::ResultStore;
 use dbward_app::use_cases::sync_config::SyncConfig;
 use dbward_domain::values::{DatabaseName, Environment};
@@ -983,6 +982,8 @@ fn build_sync_inputs_and_run(
     let result_policies = convert::result_policies_from_config(&cfg.result_policies);
     let notification_policies =
         convert::notification_policies_from_config(&cfg.notification_policies);
+    let sql_review_policies = convert::sql_review_from_config(&cfg.sql_review)
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
     uc.sync_all(
         databases,
@@ -993,6 +994,7 @@ fn build_sync_inputs_and_run(
         webhooks,
         workflows,
         execution_policies,
+        sql_review_policies,
         result_policies,
         notification_policies,
     )
@@ -1055,10 +1057,6 @@ fn build_reloadable_config_with(
 
     Ok(state::ReloadableConfig {
         role_resolver,
-        sql_review_rules: cfg
-            .sql_review
-            .to_review_rules()
-            .map_err(|e| format!("config: {e}"))?,
         default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
     })
 }

@@ -287,15 +287,27 @@ Get a specific notification policy.
 
 Permission: `policy.manage`
 
+### ~~POST /api/sql-review-policies~~ → 405
+
+### GET /api/sql-review-policies
+
+List all active SQL review policies (config-managed).
+
+Response: `{"sql_review_policies": [{"id", "database", "environment", "rules", "source"}]}`
+
+Permission: `workflow.read`
+
 ### GET /api/policy-resolution
 
-Resolve the effective policy for a database/environment. Shows which workflow matches, auto-approve rules, and the predicted decision.
+Resolve the effective policy for a database/environment. Shows which workflow matches, auto-approve rules, execution policy, SQL review policy, and the predicted decision.
 
 | Param | Required | Description |
 |-------|----------|-------------|
 | `database` | ✓ | Database name |
 | `environment` | ✓ | Environment name |
 | `operation` | | Specific operation (omit for all) |
+
+Response includes `sql_review_policy` field showing the best-matching policy by specificity.
 
 Permission: `request.view` (scoped)
 

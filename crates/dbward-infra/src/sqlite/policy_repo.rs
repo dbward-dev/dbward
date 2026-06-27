@@ -172,6 +172,51 @@ impl PolicyRepo for SqlitePolicyRepo {
         Ok(changed > 0)
     }
 
+    fn list_sql_review_policies(
+        &self,
+    ) -> Result<Vec<dbward_domain::policies::SqlReviewPolicy>, AppError> {
+        use dbward_domain::policies::SqlReviewPolicy;
+        use dbward_domain::services::sql_reviewer::ReviewRules;
+
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, database_name, environment, rules_json, source \
+                 FROM sql_review_policies WHERE lifecycle_state = 'active'",
+            )
+            .map_err(db_err("policy: list_sql_review_policies"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(db_err("policy: list_sql_review_policies"))?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (id, db_str, env_str, rules_json, source) =
+                row.map_err(db_err("policy: list_sql_review_policies"))?;
+            let database =
+                DatabaseName::new(&db_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            let environment =
+                Environment::new(&env_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            let rules: ReviewRules = serde_json::from_str(&rules_json)
+                .map_err(|e| AppError::Internal(format!("malformed rules_json: {e}")))?;
+            result.push(SqlReviewPolicy {
+                id,
+                database,
+                environment,
+                rules,
+                source,
+            });
+        }
+        Ok(result)
+    }
+
     fn find_result_policy(
         &self,
         db: &DatabaseName,
@@ -957,6 +1002,67 @@ impl PolicyEvaluator for SqlitePolicyEvaluator {
         }
         Ok(best.cloned().unwrap_or_default())
     }
+
+    fn get_sql_review_policy(
+        &self,
+        db: &DatabaseName,
+        env: &Environment,
+    ) -> Result<dbward_domain::policies::SqlReviewPolicy, AppError> {
+        use dbward_domain::policies::SqlReviewPolicy;
+        use dbward_domain::services::sql_reviewer::ReviewRules;
+
+        let policies = {
+            let conn = self.conn.lock();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, database_name, environment, rules_json, source \
+                     FROM sql_review_policies WHERE lifecycle_state = 'active'",
+                )
+                .map_err(db_err("policy: get_sql_review_policy"))?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                })
+                .map_err(db_err("policy: get_sql_review_policy"))?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row.map_err(db_err("policy: get_sql_review_policy"))?);
+            }
+            result
+        };
+
+        let mut best: Option<SqlReviewPolicy> = None;
+        let mut best_score: u8 = 0;
+        for (id, db_str, env_str, rules_json, source) in &policies {
+            let policy_db =
+                DatabaseName::new(db_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            let policy_env =
+                Environment::new(env_str).map_err(|e| AppError::Internal(e.to_string()))?;
+            if !scope_matches_db(&policy_db, db) || !scope_matches_env(&policy_env, env) {
+                continue;
+            }
+            let score = specificity_score_ep(&policy_db, &policy_env, db, env);
+            if score > best_score || best.is_none() {
+                let rules: ReviewRules = serde_json::from_str(rules_json)
+                    .map_err(|e| AppError::Internal(format!("malformed rules_json: {e}")))?;
+                best = Some(SqlReviewPolicy {
+                    id: id.clone(),
+                    database: policy_db,
+                    environment: policy_env,
+                    rules,
+                    source: source.clone(),
+                });
+                best_score = score;
+            }
+        }
+        Ok(best.unwrap_or_default())
+    }
 }
 
 fn scope_matches_db(policy_db: &DatabaseName, request_db: &DatabaseName) -> bool {
@@ -1102,4 +1208,72 @@ fn row_to_role(row: &rusqlite::Row) -> rusqlite::Result<Result<RoleDefinition, A
             environments,
         })
     })())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sqlite::open_memory;
+    use crate::sqlite::schema::initialize;
+    use dbward_app::ports::PolicyEvaluator;
+
+    fn setup() -> DbConn {
+        let conn = open_memory().unwrap();
+        {
+            let c = conn.lock();
+            initialize(&c).unwrap();
+        }
+        conn
+    }
+
+    fn insert_sql_review_policy(conn: &DbConn, id: &str, db: &str, env: &str, rules_json: &str) {
+        let c = conn.lock();
+        c.execute(
+            "INSERT INTO sql_review_policies (id, database_name, environment, rules_json, source, lifecycle_state) VALUES (?1, ?2, ?3, ?4, 'config', 'active')",
+            params![id, db, env, rules_json],
+        ).unwrap();
+    }
+
+    fn default_rules_json() -> String {
+        serde_json::to_string(&dbward_domain::services::sql_reviewer::ReviewRules::default())
+            .unwrap()
+    }
+
+    #[test]
+    fn specificity_exact_wins_over_catchall() {
+        let conn = setup();
+        let rules = default_rules_json();
+        insert_sql_review_policy(&conn, "catchall", "*", "*", &rules);
+        insert_sql_review_policy(&conn, "exact", "billing", "production", &rules);
+
+        let evaluator = SqlitePolicyEvaluator::new(conn);
+        let db = DatabaseName::new("billing").unwrap();
+        let env = Environment::new("production").unwrap();
+        let policy = evaluator.get_sql_review_policy(&db, &env).unwrap();
+        assert_eq!(policy.id, "exact");
+    }
+
+    #[test]
+    fn specificity_env_wins_over_catchall() {
+        let conn = setup();
+        let rules = default_rules_json();
+        insert_sql_review_policy(&conn, "catchall", "*", "*", &rules);
+        insert_sql_review_policy(&conn, "env-prod", "*", "production", &rules);
+
+        let evaluator = SqlitePolicyEvaluator::new(conn);
+        let db = DatabaseName::new("app").unwrap();
+        let env = Environment::new("production").unwrap();
+        let policy = evaluator.get_sql_review_policy(&db, &env).unwrap();
+        assert_eq!(policy.id, "env-prod");
+    }
+
+    #[test]
+    fn specificity_fallback_to_builtin() {
+        let conn = setup();
+        let evaluator = SqlitePolicyEvaluator::new(conn);
+        let db = DatabaseName::new("anything").unwrap();
+        let env = Environment::new("staging").unwrap();
+        let policy = evaluator.get_sql_review_policy(&db, &env).unwrap();
+        assert_eq!(policy.id, "builtin-default");
+    }
 }
