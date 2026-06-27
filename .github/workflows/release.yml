@@ -34,7 +34,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container || null }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust toolchain (non-container)
         if: matrix.container == ''
@@ -103,7 +103,7 @@ jobs:
           - component: cli
             image: ghcr.io/dbward-dev/dbward
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v8
         with:
