@@ -41,8 +41,8 @@ pub struct ServerConfig {
     pub trusted_proxies: Vec<String>,
     #[serde(default)]
     pub allow_private_networks: bool,
-    #[serde(default)]
-    pub sql_review: SqlReviewConfig,
+    #[serde(default, deserialize_with = "deserialize_sql_review")]
+    pub sql_review: Vec<SqlReviewEntry>,
     #[serde(default)]
     pub auto_approve: Vec<serde_json::Value>,
     #[serde(default)]
@@ -534,6 +534,49 @@ impl ServerConfig {
             }
         }
 
+        // sql_review: (database, environment) uniqueness + reserved word + rule value validation
+        {
+            let valid_actions = ["block", "warn", "off"];
+            let mut sr_scopes: HashSet<(String, String)> = HashSet::new();
+            for (i, sr) in self.sql_review.iter().enumerate() {
+                if sr.database == "any" || sr.environment == "any" {
+                    return Err(ConfigError::Validation(format!(
+                        "sql_review[{i}]: 'any' is reserved (use '*' for wildcard)"
+                    )));
+                }
+                let scope = (sr.database.clone(), sr.environment.clone());
+                if !sr_scopes.insert(scope) {
+                    return Err(ConfigError::Validation(format!(
+                        "sql_review[{i}]: duplicate scope (database='{}', environment='{}')",
+                        sr.database, sr.environment
+                    )));
+                }
+                let rules: &[(&str, &str)] = &[
+                    ("no_where_delete", &sr.no_where_delete),
+                    ("no_where_update", &sr.no_where_update),
+                    ("drop_table", &sr.drop_table),
+                    ("drop_column", &sr.drop_column),
+                    ("not_null_without_default", &sr.not_null_without_default),
+                    (
+                        "create_index_not_concurrently",
+                        &sr.create_index_not_concurrently,
+                    ),
+                    ("alter_column_type", &sr.alter_column_type),
+                    ("truncate", &sr.truncate),
+                    ("mixed_ddl_dml", &sr.mixed_ddl_dml),
+                    ("large_in_list", &sr.large_in_list),
+                ];
+                for (field, value) in rules {
+                    if !valid_actions.contains(value) {
+                        return Err(ConfigError::Validation(format!(
+                            "sql_review[{i}].{field}: invalid value '{}' (expected: block, warn, off)",
+                            value
+                        )));
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -903,9 +946,13 @@ fn default_user_status() -> String {
     "active".into()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct SqlReviewConfig {
+pub struct SqlReviewEntry {
+    #[serde(default = "star")]
+    pub database: String,
+    #[serde(default = "star")]
+    pub environment: String,
     #[serde(default = "default_block")]
     pub no_where_delete: String,
     #[serde(default = "default_block")]
@@ -928,21 +975,33 @@ pub struct SqlReviewConfig {
     pub large_in_list: String,
 }
 
-impl Default for SqlReviewConfig {
-    fn default() -> Self {
-        Self {
-            no_where_delete: "block".into(),
-            no_where_update: "block".into(),
-            drop_table: "block".into(),
-            drop_column: "warn".into(),
-            not_null_without_default: "warn".into(),
-            create_index_not_concurrently: "warn".into(),
-            alter_column_type: "warn".into(),
-            truncate: "block".into(),
-            mixed_ddl_dml: "warn".into(),
-            large_in_list: "warn".into(),
-        }
+/// Legacy trap: catches old [sql_review] table form and gives helpful error.
+fn deserialize_sql_review<'de, D>(deserializer: D) -> Result<Vec<SqlReviewEntry>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+
+    // Deserialize raw value first, then try to interpret it.
+    let raw = serde_json::Value::deserialize(deserializer)?;
+
+    // If it's an array, it's the new [[sql_review]] format — deserialize strictly.
+    if raw.is_array() {
+        let entries: Vec<SqlReviewEntry> = serde_json::from_value(raw)
+            .map_err(|e| serde::de::Error::custom(format!("sql_review: {e}")))?;
+        return Ok(entries);
     }
+
+    // If it's an object (table), it's the legacy [sql_review] format.
+    if raw.is_object() {
+        return Err(serde::de::Error::custom(
+            "sql_review: use [[sql_review]] (array of tables), not [sql_review]",
+        ));
+    }
+
+    Err(serde::de::Error::custom(
+        "sql_review: expected array ([[sql_review]]) or table ([sql_review])",
+    ))
 }
 
 fn default_block() -> String {
@@ -1300,6 +1359,71 @@ events = ["request_completed"]
         let err = ServerConfig::from_str(&toml, "test").unwrap_err();
         assert!(err.to_string().contains("does not match any"));
     }
+
+    #[test]
+    fn sql_review_legacy_format_rejected() {
+        let toml = test_cfg(
+            r#"
+[sql_review]
+no_where_delete = "block"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("not [sql_review]"), "got: {}", err);
+    }
+
+    #[test]
+    fn sql_review_reserved_word_any() {
+        let toml = test_cfg(
+            r#"
+[[sql_review]]
+database = "any"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("reserved"));
+    }
+
+    #[test]
+    fn sql_review_duplicate_scope() {
+        let toml = test_cfg(
+            r#"
+[[sql_review]]
+database = "app"
+environment = "prod"
+
+[[sql_review]]
+database = "app"
+environment = "prod"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("duplicate scope"));
+    }
+
+    #[test]
+    fn sql_review_invalid_action() {
+        let toml = test_cfg(
+            r#"
+[[sql_review]]
+drop_table = "yolo"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("invalid value"));
+    }
+
+    #[test]
+    fn sql_review_unknown_field_rejected() {
+        let toml = test_cfg(
+            r#"
+[[sql_review]]
+drop_tables = "block"
+"#,
+        );
+        let err = ServerConfig::from_str(&toml, "test").unwrap_err();
+        assert!(err.to_string().contains("unknown field"), "got: {}", err);
+    }
 }
 
 #[cfg(test)]
@@ -1336,7 +1460,7 @@ mode = "token"
 [result_storage]
 root_dir = "/tmp/r"
 
-[sql_review]
+[[sql_review]]
 no_where_delete = "warn"
 no_where_update = "warn"
 

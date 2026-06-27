@@ -43,6 +43,36 @@ pub async fn list_execution_policies(
     ))
 }
 
+pub(super) async fn list_sql_review_policies(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    state
+        .authorizer
+        .authorize_global(&user, Permission::WorkflowRead)
+        .map_err(|e| map_error(dbward_app::error::AppError::Forbidden(e)))?;
+    let policies = state
+        .policy_repo()
+        .list_sql_review_policies()
+        .map_err(map_error)?;
+    let items: Vec<serde_json::Value> = policies
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "id": p.id,
+                "database": p.database.as_str(),
+                "environment": p.environment.as_str(),
+                "rules": p.rules,
+                "source": p.source,
+            })
+        })
+        .collect();
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({"sql_review_policies": items})),
+    ))
+}
+
 pub async fn list_roles(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
@@ -286,6 +316,25 @@ pub async fn policy_resolution(
         })
     };
 
+    let sql_review_policy_json = {
+        let p = state
+            .policy_evaluator()
+            .get_sql_review_policy(&db, &env)
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to load sql_review policy");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "internal server error", "code": "internal"})),
+                )
+            })?;
+        json!({
+            "id": p.id,
+            "database": p.database.as_str(),
+            "environment": p.environment.as_str(),
+            "source": p.source,
+        })
+    };
+
     if q.operation.is_some() {
         let op = ops[0];
         let wf = state
@@ -308,6 +357,7 @@ pub async fn policy_resolution(
             "workflow": wf.as_ref().map(build_workflow_json),
             "auto_approve": auto_approve_json,
             "execution_policy": exec_policy_json,
+            "sql_review_policy": sql_review_policy_json,
             "decision_preview": decision,
             "reason_code": reason_code,
         });
@@ -347,6 +397,8 @@ pub async fn policy_resolution(
             "database": q.database,
             "environment": q.environment,
             "registered": true,
+            "execution_policy": exec_policy_json,
+            "sql_review_policy": sql_review_policy_json,
             "resolutions": resolutions,
         })),
     ))

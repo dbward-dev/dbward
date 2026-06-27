@@ -866,6 +866,18 @@ impl crate::ports::sync_scope::SyncPolicyOps for NoopSyncScope {
     fn delete_stale_execution_policies(&self, _: &[String]) -> Result<u64, crate::error::AppError> {
         Ok(0)
     }
+    fn create_sql_review_policy(
+        &self,
+        _: &dbward_domain::policies::SqlReviewPolicy,
+    ) -> Result<(), crate::error::AppError> {
+        Ok(())
+    }
+    fn delete_stale_sql_review_policies(
+        &self,
+        _: &[String],
+    ) -> Result<u64, crate::error::AppError> {
+        Ok(0)
+    }
     fn create_notification_policy(
         &self,
         _: &dbward_domain::policies::NotificationPolicy,

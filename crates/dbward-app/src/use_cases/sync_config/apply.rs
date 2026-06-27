@@ -433,6 +433,55 @@ pub(super) fn sync_execution_policies(
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// sql_review_policies (ValidatedInBatch, deterministic ID)
+// ─────────────────────────────────────────────────────────────────────────
+
+pub(super) fn sync_sql_review_policies(
+    scope: &dyn SyncScope,
+    inputs: Vec<super::SqlReviewInput>,
+) -> Result<(u64, u64), AppError> {
+    use dbward_domain::policies::SqlReviewPolicy;
+
+    let mut active_ids = Vec::with_capacity(inputs.len());
+    for (i, input) in inputs.iter().enumerate() {
+        let database = if input.database == "*" {
+            DatabaseName::wildcard()
+        } else {
+            DatabaseName::new(&input.database)
+                .map_err(|e| AppError::Validation(format!("sql_review[{i}] db: {e}")))?
+        };
+        let environment = if input.environment == "*" {
+            Environment::wildcard()
+        } else {
+            Environment::new(&input.environment)
+                .map_err(|e| AppError::Validation(format!("sql_review[{i}] env: {e}")))?
+        };
+        let db_part = if input.database == "*" {
+            "any"
+        } else {
+            &input.database
+        };
+        let env_part = if input.environment == "*" {
+            "any"
+        } else {
+            &input.environment
+        };
+        let id = format!("srp:{db_part}:{env_part}");
+        let policy = SqlReviewPolicy {
+            id: id.clone(),
+            database,
+            environment,
+            rules: input.rules.clone(),
+            source: "config".into(),
+        };
+        scope.create_sql_review_policy(&policy)?;
+        active_ids.push(id);
+    }
+    let deleted = scope.delete_stale_sql_review_policies(&active_ids)?;
+    Ok((deleted, inputs.len() as u64))
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // result_policies (ValidatedInBatch)
 // ─────────────────────────────────────────────────────────────────────────
 

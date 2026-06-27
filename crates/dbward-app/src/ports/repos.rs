@@ -577,6 +577,14 @@ pub trait PolicyRepo: Send + Sync {
     ) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError>;
     fn delete_execution_policy(&self, id: &str) -> Result<bool, AppError>;
 
+    /// List all active sql_review_policies. Default returns empty (no policies configured).
+    /// This is accurate for list endpoints: PolicyEvaluator still applies builtin defaults.
+    fn list_sql_review_policies(
+        &self,
+    ) -> Result<Vec<dbward_domain::policies::SqlReviewPolicy>, AppError> {
+        Ok(vec![])
+    }
+
     fn find_result_policy(
         &self,
         db: &DatabaseName,

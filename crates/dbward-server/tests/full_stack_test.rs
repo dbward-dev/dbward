@@ -93,7 +93,6 @@ fn real_state() -> AppState {
         reloadable: Arc::new(arc_swap::ArcSwap::from_pointee(
             dbward_server::state::ReloadableConfig {
                 role_resolver: Arc::new(NoopRoleResolver),
-                sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
                 default_approval_ttl_secs: Some(3600),
             },
         )),
