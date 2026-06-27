@@ -1,9 +1,5 @@
 use dbward_app::ports::{IdGenerator, Notifier, WebhookDeliveryRepo, WebhookEvent, WebhookRepo};
 use dbward_domain::entities::{DeliveryStatus, WebhookDelivery, WebhookStatus};
-use sqlparser::ast::{Value, VisitMut, VisitorMut};
-use sqlparser::dialect::GenericDialect;
-use sqlparser::parser::Parser;
-use std::ops::ControlFlow;
 use std::sync::{Arc, RwLock};
 
 #[derive(Clone, Copy, Default)]
@@ -24,49 +20,8 @@ pub(super) fn compute_webhook_signature(secret: &str, body: &str) -> String {
     format!("sha256={sig}")
 }
 
-struct LiteralRedactor;
-
-impl VisitorMut for LiteralRedactor {
-    type Break = ();
-
-    fn pre_visit_value(&mut self, value: &mut Value) -> ControlFlow<Self::Break> {
-        match value {
-            Value::Null | Value::Placeholder(_) => {}
-            _ => *value = Value::Placeholder("?".into()),
-        }
-        ControlFlow::Continue(())
-    }
-
-    fn pre_visit_expr(&mut self, expr: &mut sqlparser::ast::Expr) -> ControlFlow<Self::Break> {
-        use sqlparser::ast::Expr;
-        match expr {
-            Expr::TypedString { .. } | Expr::Interval(_) => {
-                *expr = Expr::Value(Value::Placeholder("?".into()).with_empty_span());
-            }
-            _ => {}
-        }
-        ControlFlow::Continue(())
-    }
-}
-
 pub fn redact_sql_literals(sql: &str) -> String {
-    match Parser::parse_sql(&GenericDialect {}, sql) {
-        Ok(mut stmts) => {
-            let _ = stmts.visit(&mut LiteralRedactor);
-            stmts
-                .iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
-                .join("; ")
-        }
-        Err(_) => {
-            use sha2::{Digest, Sha256};
-            format!(
-                "parse-failed:{}",
-                hex::encode(Sha256::digest(sql.as_bytes()))
-            )
-        }
-    }
+    dbward_domain::services::sql_redactor::redact_literals(sql)
 }
 
 /// Webhook dispatcher — sends webhook notifications via HTTP.
@@ -426,14 +381,13 @@ mod redaction_tests {
     }
 
     #[test]
-    fn parse_failure_returns_hash() {
+    fn parse_failure_returns_placeholder() {
         let sql = "NOT VALID SQL {{{{";
         let result = redact_sql_literals(sql);
         assert!(
-            result.starts_with("parse-failed:"),
+            result.contains("redaction-failed"),
             "should fallback: {result}"
         );
-        assert_eq!(result.len(), "parse-failed:".len() + 64); // sha256 hex
     }
 
     #[test]

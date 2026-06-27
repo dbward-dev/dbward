@@ -4,6 +4,7 @@ pub mod classification;
 pub mod risk_scorer;
 pub mod sql_classifier;
 pub mod sql_parser;
+pub mod sql_redactor;
 pub mod sql_reviewer;
 pub mod status_constants;
 pub mod status_machine;

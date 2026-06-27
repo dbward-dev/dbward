@@ -62,6 +62,11 @@ pub trait SyncPolicyOps {
     fn count_workflows(&self) -> Result<u32, AppError>;
     fn create_execution_policy(&self, policy: &ExecutionPolicy) -> Result<(), AppError>;
     fn delete_stale_execution_policies(&self, active_ids: &[String]) -> Result<u64, AppError>;
+    fn create_sql_review_policy(
+        &self,
+        policy: &dbward_domain::policies::SqlReviewPolicy,
+    ) -> Result<(), AppError>;
+    fn delete_stale_sql_review_policies(&self, active_ids: &[String]) -> Result<u64, AppError>;
     fn create_notification_policy(&self, policy: &NotificationPolicy) -> Result<(), AppError>;
     fn delete_stale_notification_policies(&self, active_ids: &[String]) -> Result<u64, AppError>;
     fn create_result_policy(&self, policy: &ResultPolicy) -> Result<(), AppError>;

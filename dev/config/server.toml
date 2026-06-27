@@ -37,8 +37,8 @@ name = "default"
 environments = ["development", "staging", "production"]
 
 [[databases]]
-name = "mysql_dev"
-environments = ["development"]
+name = "billing"
+environments = ["development", "production"]
 
 # Workflow definitions (synced to SQLite on startup)
 
@@ -128,9 +128,33 @@ approval_ttl_secs = 600
 
 
 
-[sql_review]
+# Catchall (*,*)
+[[sql_review]]
+database = "*"
+environment = "*"
+drop_table = "warn"
 no_where_delete = "block"
 no_where_update = "block"
+
+# Env-specific (*,production)
+[[sql_review]]
+database = "*"
+environment = "production"
+drop_table = "block"
+drop_column = "block"
+
+# DB-specific (billing,*)
+[[sql_review]]
+database = "billing"
+environment = "*"
+truncate = "block"
+alter_column_type = "block"
+
+# Exact (billing,production)
+[[sql_review]]
+database = "billing"
+environment = "production"
+no_where_update = "off"
 
 [[result_policies]]
 database = "app"

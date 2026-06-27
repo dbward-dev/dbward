@@ -225,6 +225,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::delete(config_only_405),
         )
         .route(
+            "/api/sql-review-policies",
+            axum::routing::post(config_only_405).get(policies::list_sql_review_policies),
+        )
+        .route(
             "/api/roles",
             axum::routing::post(config_only_405).get(policies::list_roles),
         )

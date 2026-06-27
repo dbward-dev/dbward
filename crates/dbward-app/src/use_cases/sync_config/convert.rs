@@ -315,6 +315,57 @@ pub fn execution_policies_from_config(
         .collect()
 }
 
+pub fn sql_review_from_config(
+    entries: &[server::SqlReviewEntry],
+) -> Result<Vec<super::SqlReviewInput>, String> {
+    use dbward_domain::services::sql_reviewer::{ReviewRules, RuleAction};
+
+    fn parse_action(s: &str) -> Result<RuleAction, String> {
+        match s {
+            "block" => Ok(RuleAction::Block),
+            "warn" => Ok(RuleAction::Warn),
+            "off" => Ok(RuleAction::Off),
+            _ => Err(format!("invalid rule action '{s}'")),
+        }
+    }
+
+    entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            Ok(super::SqlReviewInput {
+                database: e.database.clone(),
+                environment: e.environment.clone(),
+                rules: ReviewRules {
+                    no_where_delete: parse_action(&e.no_where_delete)
+                        .map_err(|err| format!("sql_review[{i}].no_where_delete: {err}"))?,
+                    no_where_update: parse_action(&e.no_where_update)
+                        .map_err(|err| format!("sql_review[{i}].no_where_update: {err}"))?,
+                    drop_table: parse_action(&e.drop_table)
+                        .map_err(|err| format!("sql_review[{i}].drop_table: {err}"))?,
+                    drop_column: parse_action(&e.drop_column)
+                        .map_err(|err| format!("sql_review[{i}].drop_column: {err}"))?,
+                    not_null_without_default: parse_action(&e.not_null_without_default).map_err(
+                        |err| format!("sql_review[{i}].not_null_without_default: {err}"),
+                    )?,
+                    create_index_not_concurrently: parse_action(&e.create_index_not_concurrently)
+                        .map_err(|err| {
+                        format!("sql_review[{i}].create_index_not_concurrently: {err}")
+                    })?,
+                    alter_column_type: parse_action(&e.alter_column_type)
+                        .map_err(|err| format!("sql_review[{i}].alter_column_type: {err}"))?,
+                    truncate: parse_action(&e.truncate)
+                        .map_err(|err| format!("sql_review[{i}].truncate: {err}"))?,
+                    mixed_ddl_dml: parse_action(&e.mixed_ddl_dml)
+                        .map_err(|err| format!("sql_review[{i}].mixed_ddl_dml: {err}"))?,
+                    large_in_list: parse_action(&e.large_in_list)
+                        .map_err(|err| format!("sql_review[{i}].large_in_list: {err}"))?,
+                },
+            })
+        })
+        .collect()
+}
+
 pub fn result_policies_from_config(defs: &[server::ResultPolicyDef]) -> Vec<ResultPolicyInput> {
     defs.iter()
         .map(|rp| ResultPolicyInput {

@@ -1,16 +1,19 @@
 use crate::services::classification::Dialect;
 use crate::services::sql_parser;
+use serde::{Deserialize, Serialize};
 use sqlparser::ast::*;
 use std::ops::ControlFlow;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RuleAction {
     Block,
     Warn,
     Off,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RuleId {
     NoWhereDelete,
     NoWhereUpdate,
@@ -22,6 +25,7 @@ pub enum RuleId {
     Truncate,
     MixedDdlDml,
     LargeInList,
+    ParseFailure,
 }
 
 impl RuleId {
@@ -39,6 +43,7 @@ impl RuleId {
             Self::NoWhereUpdate => false,
             Self::LargeInList => false,
             Self::MixedDdlDml => false,
+            Self::ParseFailure => false,
         }
     }
 }
@@ -57,7 +62,7 @@ pub struct ReviewResult {
     pub blocked: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewRules {
     pub no_where_delete: RuleAction,
     pub no_where_update: RuleAction,
@@ -94,10 +99,15 @@ pub fn review(sql: &str, dialect: Option<Dialect>, rules: &ReviewRules) -> Revie
     match sql_parser::parse_statements(sql, d) {
         Ok(statements) => review_statements(&statements, dialect, rules),
         Err(_) => {
-            // Parse failure → cannot review. Return empty (classifier handles rejection).
+            // Fail-closed: unparseable SQL is blocked (cannot verify safety)
             ReviewResult {
-                findings: vec![],
-                blocked: false,
+                findings: vec![Finding {
+                    rule: RuleId::ParseFailure,
+                    action: RuleAction::Block,
+                    message: "SQL could not be parsed; cannot verify safety rules".into(),
+                    statement_index: 0,
+                }],
+                blocked: true,
             }
         }
     }

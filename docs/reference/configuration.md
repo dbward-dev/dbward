@@ -243,22 +243,33 @@ risk = "low"
 | `allow_safe_ddl` | bool | | `true` | CREATE TABLE/INDEX/VIEW counts as Low risk. |
 | `max_estimated_rows` | i64 | | `1000` | Threshold for large-table risk increase. |
 
-### [sql_review]
+### [[sql_review]]
 
-Static SQL analysis rules. Typos in field names cause startup error (`deny_unknown_fields`).
+Scoped SQL analysis rules. Each entry targets a specific database×environment combination. The most specific matching entry wins (exact > db-only > env-only > catchall). Typos in field names cause startup error (`deny_unknown_fields`).
 
-By default, high-risk destructive operations are **blocked** (rejected immediately). To relax rules for development environments, override them in your TOML config:
+By default, high-risk destructive operations are **blocked** (rejected immediately). Use multiple entries to vary strictness by environment:
 
 ```toml
-[sql_review]
-no_where_delete = "warn"   # or "off" to disable entirely
-no_where_update = "warn"
-drop_table = "off"
-truncate = "off"
+# Catchall: applies to all databases/environments unless overridden
+[[sql_review]]
+database = "*"
+environment = "*"
+no_where_delete = "block"
+no_where_update = "block"
+drop_table = "block"
+
+# Development: relax for iteration speed
+[[sql_review]]
+database = "*"
+environment = "development"
+drop_table = "warn"
+truncate = "warn"
 ```
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
+| `database` | String | | `"*"` | Database scope (`"*"` = all). |
+| `environment` | String | | `"*"` | Environment scope (`"*"` = all). |
 | `no_where_delete` | String | | `"block"` | DELETE without WHERE. Values: `"block"`, `"warn"`, `"off"`. |
 | `no_where_update` | String | | `"block"` | UPDATE without WHERE. |
 | `drop_table` | String | | `"block"` | DROP TABLE. |
@@ -269,6 +280,10 @@ truncate = "off"
 | `truncate` | String | | `"block"` | TRUNCATE. |
 | `mixed_ddl_dml` | String | | `"warn"` | DDL and DML in same request. |
 | `large_in_list` | String | | `"warn"` | IN clause with excessive values. |
+
+**Specificity:** exact (db+env) > env-only (`*`+env) > db-only (db+`*`) > catchall (`*`+`*`) > builtin default.
+
+**Validation:** `database = "any"` is reserved (use `"*"`). Duplicate (database, environment) pairs are rejected at startup.
 
 ### [[webhooks]]
 

@@ -70,12 +70,14 @@ Every statement is classified into one of three categories:
 
 Each rule has a configurable severity: `warn`, `block`, or `off`.
 
-- `warn` (default) — adds a finding to the risk assessment
-- `block` — rejects the request regardless of workflow (DDL rules ² can be bypassed with `--emergency --allow-ddl`)
+- `block` (default for `no_where_delete`, `no_where_update`, `drop_table`, `truncate`) — rejects the request regardless of workflow (DDL rules ² can be bypassed with `--emergency --allow-ddl`)
+- `warn` (default for other rules) — adds a finding to the risk assessment
 - `off` — rule is disabled
 
 ```toml
-[sql_review]
+[[sql_review]]
+database = "*"
+environment = "development"
 no_where_delete = "warn"
 no_where_update = "warn"
 drop_table = "warn"
