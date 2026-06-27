@@ -16,6 +16,7 @@ description: All dbward CLI commands and options
 | `-e, --environment <ENV>` | `-e` | `DBWARD_ENV` | | Target environment |
 | `--format <FMT>` | | | human | Output format: `human`, `json` |
 | `--allow-insecure` | | `DBWARD_ALLOW_INSECURE` | false | Allow HTTP connections to non-local servers. Suppresses transport security warnings. Does not bypass OIDC+HTTP rejection. |
+| `--yes` | `-y` | `DBWARD_YES` | false | Skip interactive confirmation prompts. Env accepts `1`, `true`, or `yes`. |
 
 ---
 
@@ -324,6 +325,8 @@ dbward whoami             # Show current identity
 | Option | Description |
 |--------|-------------|
 | `--device` | Use device code flow (login only) |
+
+`whoami` shows Subject, Roles, and Groups when connected to the server. Falls back to local OIDC credentials if the server is unreachable.
 
 ---
 

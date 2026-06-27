@@ -31,7 +31,7 @@ TOML"
 
 # Helper
 migrate_cli() {
-  docker compose exec -T dbward-server dbward --config /tmp/migrate-test.toml migrate "$@" 2>&1
+  docker compose exec -T dbward-server dbward --config /tmp/migrate-test.toml --yes migrate "$@" 2>&1
 }
 
 # --- 1. migrate status ---

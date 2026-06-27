@@ -479,7 +479,7 @@ fn api_to_cli(e: ApiError, context: &str) -> CliError {
         ApiError::Http { status, body } => {
             ServerError::from_response(status, body).into_cli_error(context)
         }
-        ApiError::Network(e) => CliError::Server(format!("{context}: {e}")),
+        ApiError::Network(e) => CliError::Transport(format!("{context}: {e}")),
         ApiError::Deserialize(msg) => CliError::Server(format!("{context}: invalid JSON: {msg}")),
     }
 }
@@ -528,5 +528,27 @@ mod tests {
             }
             other => panic!("unexpected error variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn network_error_maps_to_transport_variant() {
+        // Build a reqwest::Error by making a request to an invalid URL
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let err = rt.block_on(async {
+            reqwest::Client::new()
+                .get("http://[::0]:1/unreachable")
+                .send()
+                .await
+                .unwrap_err()
+        });
+        let api_err = ApiError::Network(err);
+        let cli_err = api_to_cli(api_err, "whoami");
+        assert!(
+            matches!(cli_err, CliError::Transport(ref msg) if msg.contains("whoami")),
+            "expected Transport variant, got: {cli_err:?}"
+        );
     }
 }
