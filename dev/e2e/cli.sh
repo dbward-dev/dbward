@@ -36,7 +36,7 @@ TOML"
 cli() {
   local token="$1"; shift
   write_cli_config "$token"
-  docker compose exec -T dbward-server dbward --config /tmp/cli-test.toml "$@" 2>&1
+  docker compose exec -T dbward-server dbward --config /tmp/cli-test.toml --yes "$@" 2>&1
 }
 
 # --- 1. dbward execute (auto-approve in development) ---

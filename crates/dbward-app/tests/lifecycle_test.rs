@@ -61,7 +61,11 @@ impl RequestReader for SharedRepo {
         let total = reqs.len() as u32;
         Ok((reqs, total))
     }
-    fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {
+    fn find_by_idempotency_key(
+        &self,
+        _requester: &str,
+        key: &str,
+    ) -> Result<Option<Request>, AppError> {
         Ok(self
             .requests
             .lock()
@@ -433,6 +437,7 @@ fn single_step_workflow() -> Workflow {
         database: DatabaseName::new("app").unwrap(),
         environment: Environment::new("production").unwrap(),
         operations: vec![],
+        auto_approve: None,
         steps: vec![WorkflowStep {
             approvers: vec![ApproverGroup {
                 selector: Selector::Role("dba".into()),
@@ -458,6 +463,7 @@ fn two_step_workflow() -> Workflow {
         database: DatabaseName::new("app").unwrap(),
         environment: Environment::new("production").unwrap(),
         operations: vec![],
+        auto_approve: None,
         steps: vec![
             WorkflowStep {
                 approvers: vec![ApproverGroup {
@@ -679,6 +685,23 @@ mod common {
             _: &[dbward_domain::entities::ResultAccess],
         ) -> Result<(), AppError> {
             Ok(())
+        }
+    }
+    impl ApprovalReaderOps for NoopTx {
+        fn get_approvals(
+            &self,
+            _: &str,
+        ) -> Result<Vec<dbward_domain::entities::Approval>, AppError> {
+            Ok(vec![])
+        }
+        fn get_request_state(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_app::ports::transaction::RequestState>, AppError> {
+            Ok(Some((
+                dbward_domain::entities::RequestStatus::Pending,
+                None,
+            )))
         }
     }
     impl TxScope for NoopTx {}
@@ -994,7 +1017,6 @@ impl TestHarness {
             id_gen: self.id_gen.clone(),
             default_approval_ttl_secs: Some(3600),
             review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
-            auto_approve_entries: vec![],
         }
     }
 
@@ -1087,12 +1109,19 @@ fn emergency_request_skips_approval() {
 
 #[test]
 fn auto_approved_request_dispatches_directly() {
-    // Workflow with empty steps → auto_approved
+    // Workflow with auto_approve=always → auto_approved
     let auto_wf = Workflow {
         id: "wf-auto".into(),
         database: DatabaseName::new("*").unwrap(),
         environment: Environment::new("*").unwrap(),
         operations: vec![],
+        auto_approve: Some(dbward_domain::policies::AutoApproveSettings {
+            mode: dbward_domain::policies::AutoApproveMode::Always,
+            max_risk_level: None,
+            allow_read_only: true,
+            allow_safe_ddl: true,
+            max_estimated_rows: 1000,
+        }),
         steps: vec![],
         require_reason: false,
         allow_self_approve: false,
@@ -1377,6 +1406,13 @@ fn event_dispatcher_records_auto_approved_two_events() {
         database: DatabaseName::new("*").unwrap(),
         environment: Environment::new("*").unwrap(),
         operations: vec![],
+        auto_approve: Some(dbward_domain::policies::AutoApproveSettings {
+            mode: dbward_domain::policies::AutoApproveMode::Always,
+            max_risk_level: None,
+            allow_read_only: true,
+            allow_safe_ddl: true,
+            max_estimated_rows: 1000,
+        }),
         steps: vec![],
         require_reason: false,
         allow_self_approve: false,

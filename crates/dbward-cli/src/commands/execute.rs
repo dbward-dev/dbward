@@ -4,7 +4,7 @@ use crate::display::*;
 use crate::error::CliError;
 use crate::server_client::{CreateRequest, ServerClient};
 
-use super::helpers::{build_request_metadata, save_result};
+use super::helpers::{self, build_request_metadata, save_result};
 use super::workflow::{self, Outcome};
 
 #[allow(clippy::too_many_arguments)]
@@ -26,6 +26,7 @@ pub async fn run_execute(
     no_result_store: bool,
     result_format: ResultFormat,
     timeout: Option<u64>,
+    yes: bool,
 ) -> Result<(), CliError> {
     if emergency && reason.is_none() {
         return Err(CliError::Config("--emergency requires --reason".into()));
@@ -36,6 +37,17 @@ pub async fn run_execute(
   Note: request metadata and SQL text are always retained for audit/approval."
         );
     }
+
+    helpers::confirm_submission(
+        &helpers::SubmissionSummary {
+            operation: "execute_query",
+            database: db_name,
+            environment: env_str,
+            detail: sql,
+            emergency,
+        },
+        yes || json_output,
+    )?;
 
     let metadata = build_request_metadata(ticket, repo);
     let sw = if share_with.is_empty() {

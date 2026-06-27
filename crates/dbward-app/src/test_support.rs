@@ -143,7 +143,7 @@ impl RequestReader for FakeRequestReader {
         let total = reqs.len() as u32;
         Ok((reqs, total))
     }
-    fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
+    fn find_by_idempotency_key(&self, _: &str, _: &str) -> Result<Option<Request>, AppError> {
         Ok(None)
     }
     fn list_visible_to_user(
@@ -354,6 +354,13 @@ impl PolicyEvaluator for FakePolicyEvaluator {
             database: DatabaseName::wildcard(),
             environment: Environment::wildcard(),
             operations: vec![],
+            auto_approve: Some(dbward_domain::policies::AutoApproveSettings {
+                mode: dbward_domain::policies::AutoApproveMode::Always,
+                max_risk_level: None,
+                allow_read_only: true,
+                allow_safe_ddl: true,
+                max_estimated_rows: 1000,
+            }),
             steps: vec![],
             require_reason: false,
             allow_self_approve: false,
@@ -702,6 +709,24 @@ impl crate::ports::transaction::ResultWriterOps for NoopTxScope {
         _access: &[dbward_domain::entities::ResultAccess],
     ) -> Result<(), crate::error::AppError> {
         Ok(())
+    }
+}
+
+impl crate::ports::transaction::ApprovalReaderOps for NoopTxScope {
+    fn get_approvals(
+        &self,
+        _: &str,
+    ) -> Result<Vec<dbward_domain::entities::Approval>, crate::error::AppError> {
+        Ok(vec![])
+    }
+    fn get_request_state(
+        &self,
+        _: &str,
+    ) -> Result<Option<crate::ports::transaction::RequestState>, crate::error::AppError> {
+        Ok(Some((
+            dbward_domain::entities::RequestStatus::Pending,
+            None,
+        )))
     }
 }
 

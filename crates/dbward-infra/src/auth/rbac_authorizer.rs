@@ -85,13 +85,6 @@ impl RbacAuthorizer {
                 allow_same_approver_across_steps,
                 previous_approver_ids,
             } => {
-                if user.has_permission(Permission::All) {
-                    // Admin still subject to self-approve rule
-                    if !allow_self_approve && user.subject_id == *requester_id {
-                        return Err(denied(permission, "self-approve not allowed"));
-                    }
-                    return Ok(());
-                }
                 if approval_checker::is_approvable_by(
                     user,
                     approvers,

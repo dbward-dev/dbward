@@ -88,13 +88,17 @@ impl RequestReader for SqliteRequestRepo {
             .map_err(db_err("request: list"))?;
         Ok((items, total))
     }
-    fn find_by_idempotency_key(&self, key: &str) -> Result<Option<Request>, AppError> {
+    fn find_by_idempotency_key(
+        &self,
+        requester: &str,
+        key: &str,
+    ) -> Result<Option<Request>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT * FROM requests WHERE idempotency_key = ?1")
+            .prepare("SELECT * FROM requests WHERE idempotency_key = ?1 AND requester = ?2")
             .map_err(db_err("request: find_by_idempotency_key"))?;
         let mut rows = stmt
-            .query_and_then(params![key], row_to_request)
+            .query_and_then(params![key, requester], row_to_request)
             .map_err(db_err("request: find_by_idempotency_key"))?;
         match rows.next() {
             Some(r) => Ok(Some(r.map_err(db_err("request: find_by_idempotency_key"))?)),

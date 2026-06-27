@@ -62,7 +62,6 @@ fn state_with_license(license: License) -> AppState {
         reloadable: Arc::new(arc_swap::ArcSwap::from_pointee(
             dbward_server::state::ReloadableConfig {
                 role_resolver: Arc::new(NoopRoleResolver),
-                auto_approve_entries: vec![],
                 sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
                 default_approval_ttl_secs: Some(3600),
             },
@@ -115,6 +114,15 @@ fn state_with_license(license: License) -> AppState {
         auth_mode: "token".into(),
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),
+        mcp_enabled: false,
+        mcp_allowed_origins: vec![],
+        mcp_default_database: String::new(),
+        mcp_default_environment: "development".into(),
+        mcp_elicitation_timeout_secs: 300,
+        mcp_replay_buffer_size: 100,
+        session_store: std::sync::Arc::new(dbward_server::session_store::SessionStore::new(
+            3600, 100,
+        )),
     }
     .build()
 }

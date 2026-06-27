@@ -37,7 +37,7 @@ pub(crate) fn database_id(db: &DatabaseName, env: &Environment) -> String {
     format!("{}:{}", db.as_str(), env.as_str())
 }
 
-fn populate_pending_approvers(
+pub(crate) fn populate_pending_approvers(
     conn: &rusqlite::Connection,
     request_id: &str,
     workflow_snapshot_json: &Option<String>,
@@ -76,7 +76,7 @@ fn parse_database_id(id: &str) -> Result<(DatabaseName, Environment), AppError> 
     Ok((db, env))
 }
 
-fn parse_status(s: &str) -> Result<RequestStatus, AppError> {
+pub(crate) fn parse_status(s: &str) -> Result<RequestStatus, AppError> {
     match s {
         "pending" => Ok(RequestStatus::Pending),
         "approved" => Ok(RequestStatus::Approved),
@@ -94,7 +94,7 @@ fn parse_status(s: &str) -> Result<RequestStatus, AppError> {
     }
 }
 
-fn parse_approval_action(s: &str) -> Result<ApprovalAction, AppError> {
+pub(crate) fn parse_approval_action(s: &str) -> Result<ApprovalAction, AppError> {
     match s {
         "approve" => Ok(ApprovalAction::Approve),
         "reject" => Ok(ApprovalAction::Reject),
@@ -109,7 +109,7 @@ pub(crate) fn approval_action_str(a: &ApprovalAction) -> &'static str {
     }
 }
 
-fn parse_ts(s: &str) -> Result<DateTime<Utc>, AppError> {
+pub(crate) fn parse_ts(s: &str) -> Result<DateTime<Utc>, AppError> {
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
         .map_err(|e| AppError::Internal(format!("invalid timestamp '{s}': {e}")))
@@ -173,6 +173,7 @@ fn row_to_request(row: &rusqlite::Row<'_>) -> Result<Request, rusqlite::Error> {
         emergency: row.get::<_, i64>("emergency")? != 0,
         reason: row.get("reason")?,
         idempotency_key: row.get("idempotency_key")?,
+        idempotency_fingerprint: row.get("idempotency_fingerprint")?,
         metadata_json: row.get("metadata_json")?,
         share_with,
         // SQLite column kept as "no_store" to avoid ALTER TABLE migration risk.
@@ -210,6 +211,7 @@ mod tests {
             emergency: false,
             reason: Some("deploy fix".to_string()),
             idempotency_key: Some("idem-1".to_string()),
+            idempotency_fingerprint: Some("abc123".to_string()),
             metadata_json: "{}".to_string(),
             share_with: vec!["user-2".to_string()],
             no_result_store: false,
@@ -257,10 +259,13 @@ mod tests {
         let req = make_request();
         repo.insert(&req).unwrap();
 
-        let found = repo.find_by_idempotency_key("idem-1").unwrap().unwrap();
+        let found = repo
+            .find_by_idempotency_key("user-1", "idem-1")
+            .unwrap()
+            .unwrap();
         assert_eq!(found.id, "req-1");
         assert!(
-            repo.find_by_idempotency_key("nonexistent")
+            repo.find_by_idempotency_key("user-1", "nonexistent")
                 .unwrap()
                 .is_none()
         );

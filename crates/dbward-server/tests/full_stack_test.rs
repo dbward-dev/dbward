@@ -81,8 +81,8 @@ fn real_state() -> AppState {
     // Insert auto-approve workflow (empty steps)
     conn.lock()
         .execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps) VALUES (?1, ?2, ?3, ?4, ?5, 0, 0, 0)",
-            rusqlite::params!["wf-auto", "app", "production", "[]", "[]"],
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, auto_approve_json, require_reason, allow_self_approve, allow_same_approver_across_steps) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 0, 0)",
+            rusqlite::params!["wf-auto", "app", "production", "[]", "[]", r#"{"mode":"always","max_risk_level":null,"allow_read_only":true,"allow_safe_ddl":true,"max_estimated_rows":1000}"#],
         )
         .unwrap();
 
@@ -93,7 +93,6 @@ fn real_state() -> AppState {
         reloadable: Arc::new(arc_swap::ArcSwap::from_pointee(
             dbward_server::state::ReloadableConfig {
                 role_resolver: Arc::new(NoopRoleResolver),
-                auto_approve_entries: vec![],
                 sql_review_rules: dbward_domain::services::sql_reviewer::ReviewRules::default(),
                 default_approval_ttl_secs: Some(3600),
             },
@@ -139,6 +138,15 @@ fn real_state() -> AppState {
         auth_mode: "token".into(),
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),
+        mcp_enabled: false,
+        mcp_allowed_origins: vec![],
+        mcp_default_database: String::new(),
+        mcp_default_environment: "development".into(),
+        mcp_elicitation_timeout_secs: 300,
+        mcp_replay_buffer_size: 100,
+        session_store: std::sync::Arc::new(dbward_server::session_store::SessionStore::new(
+            3600, 100,
+        )),
     }
     .build()
 }
@@ -352,7 +360,7 @@ async fn get_request_includes_decision_trace() {
         trace["decision"]["reasons"]
             .as_array()
             .unwrap()
-            .contains(&serde_json::json!("empty_steps"))
+            .contains(&serde_json::json!("explicit_always"))
     );
     assert!(trace["workflow"]["matched"].is_object());
 }

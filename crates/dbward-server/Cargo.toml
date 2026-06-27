@@ -17,9 +17,11 @@ dbward-api-types = { path = "../dbward-api-types" }
 dbward-config = { path = "../dbward-config" }
 dbward-domain = { path = "../dbward-domain" }
 dbward-infra = { path = "../dbward-infra" }
+dbward-mcp = { path = "../dbward-mcp" }
 dbward-commercial-license = { path = "../../commercial/license", optional = true }
 dbward-commercial-oidc = { path = "../../commercial/oidc", optional = true }
 clap = { version = "4", features = ["derive", "env"] }
+async-trait = "0.1"
 axum = "0.8"
 chrono.workspace = true
 tokio.workspace = true
@@ -28,6 +30,9 @@ serde_json.workspace = true
 toml = { workspace = true }
 tower-http = { version = "0.6", features = ["cors"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+tokio-stream = "0.1"
+dashmap = "6"
+parking_lot = "0.12"
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { workspace = true }

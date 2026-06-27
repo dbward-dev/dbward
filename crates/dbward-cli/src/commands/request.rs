@@ -28,6 +28,9 @@ pub enum RequestAction {
         id: String,
         #[arg(long)]
         comment: Option<String>,
+        /// Approve as a specific selector (e.g. role:dba). Required when you match multiple groups.
+        #[arg(long = "as")]
+        selector: Option<String>,
     },
     Reject {
         id: String,
@@ -72,6 +75,7 @@ pub enum RequestAction {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_request(
     sc: &ServerClient,
     json_output: bool,
@@ -80,11 +84,23 @@ pub async fn run_request(
     environment: Option<&str>,
     config_results_dir: Option<&Path>,
     default_format: ResultFormat,
+    yes: bool,
 ) -> Result<(), CliError> {
     match action {
-        RequestAction::Approve { id, comment } => {
+        RequestAction::Approve {
+            id,
+            comment,
+            selector,
+        } => {
             let resolved = resolve_request_id(sc, &id).await?;
-            run_approve(sc, json_output, &resolved, comment.as_deref()).await
+            run_approve(
+                sc,
+                json_output,
+                &resolved,
+                comment.as_deref(),
+                selector.as_deref(),
+            )
+            .await
         }
         RequestAction::Reject { id, reason } => {
             let resolved = resolve_request_id(sc, &id).await?;
@@ -92,7 +108,7 @@ pub async fn run_request(
         }
         RequestAction::Cancel { id, reason } => {
             let resolved = resolve_request_id(sc, &id).await?;
-            run_cancel(sc, json_output, &resolved, reason.as_deref()).await
+            run_cancel(sc, json_output, &resolved, reason.as_deref(), yes).await
         }
         RequestAction::List {
             limit,
@@ -129,6 +145,7 @@ pub async fn run_request(
                 output.as_deref(),
                 config_results_dir,
                 result_format.unwrap_or(default_format),
+                yes,
             )
             .await
         }
@@ -165,8 +182,9 @@ async fn run_approve(
     json_output: bool,
     id: &str,
     comment: Option<&str>,
+    selector: Option<&str>,
 ) -> Result<(), CliError> {
-    match sc.approve(id, comment).await {
+    match sc.approve(id, comment, selector).await {
         Ok(body) => {
             if json_output {
                 println!("{}", serde_json::to_string_pretty(&body)?);
@@ -229,13 +247,19 @@ async fn run_cancel(
     json_output: bool,
     id: &str,
     reason: Option<&str>,
+    yes: bool,
 ) -> Result<(), CliError> {
     let req_info = sc.get_json(&format!("/api/requests/{id}")).await;
-    if !json_output {
+    if !json_output && !yes {
         if let Ok(info) = &req_info {
             if dbward_api_types::requests::RequestStatus::from_json(&info["status"])
                 == dbward_api_types::requests::RequestStatus::Running
             {
+                if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                    return Err(CliError::Other(
+                        "interactive confirmation required but stdin is not a terminal. Use --yes to skip.".into(),
+                    ));
+                }
                 eprintln!("⚠ Query is currently executing on the database.");
                 eprintln!("  Cancelling will kill the running query and roll back any changes.");
                 eprint!("  Continue? [y/N] ");
@@ -320,15 +344,23 @@ async fn run_resume(
     output: Option<&std::path::Path>,
     config_results_dir: Option<&Path>,
     result_format: ResultFormat,
+    yes: bool,
 ) -> Result<(), CliError> {
     // DML re-resume warning
     let req = sc.get_request(id).await?;
     let status = dbward_api_types::requests::RequestStatus::from_json(&req["status"]);
     let operation = req["operation"].as_str().unwrap_or("");
     if !json_output
+        && !yes
         && status == dbward_api_types::requests::RequestStatus::ExecutionLost
         && operation == "execute_query"
     {
+        if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            return Err(CliError::Other(
+                "interactive confirmation required but stdin is not a terminal. Use --yes to skip."
+                    .into(),
+            ));
+        }
         let detail = req["detail"].as_str().unwrap_or("");
         eprintln!("⚠️  WARNING: This request previously failed with execution_lost.");
         eprintln!("   The previous execution may have partially completed.");

@@ -11,7 +11,9 @@ environments = ["development"]
 [[workflows]]
 database = "*"
 environment = "development"
-steps = []
+
+[workflows.auto_approve]
+mode = "always"
 
 [result_storage]
 backend = "local"

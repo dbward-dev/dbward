@@ -79,12 +79,14 @@ impl ResumeRequest {
         // 4. Approval TTL check (based on resolved_at = when approval was granted)
         if let Some(resolved_at) = request.resolved_at
             && let Some(wf_json) = &request.workflow_snapshot_json
-            && let Ok(wf) = serde_json::from_str::<dbward_domain::policies::Workflow>(wf_json)
-            && let Some(ttl) = wf.approval_ttl_secs
         {
-            let elapsed = (self.clock.now() - resolved_at).num_seconds() as u64;
-            if elapsed > ttl {
-                return Err(AppError::Gone("approval expired".into()));
+            let wf: dbward_domain::policies::Workflow = serde_json::from_str(wf_json)
+                .map_err(|e| AppError::Internal(format!("corrupt workflow snapshot: {e}")))?;
+            if let Some(ttl) = wf.approval_ttl_secs {
+                let elapsed = (self.clock.now() - resolved_at).num_seconds().max(0) as u64;
+                if elapsed > ttl {
+                    return Err(AppError::Gone("approval expired".into()));
+                }
             }
         }
 
@@ -106,7 +108,7 @@ impl ResumeRequest {
             RequestStatus::Executed | RequestStatus::Failed | RequestStatus::ExecutionLost
         ) {
             if let Some(resolved_at) = request.resolved_at {
-                let elapsed = (self.clock.now() - resolved_at).num_seconds() as u64;
+                let elapsed = (self.clock.now() - resolved_at).num_seconds().max(0) as u64;
                 if elapsed > exec_policy.execution_window_secs {
                     return Err(AppError::Gone("execution window expired".into()));
                 }
@@ -343,7 +345,7 @@ mod tests {
         ) -> Result<(Vec<Request>, u32), AppError> {
             Ok((vec![], 0))
         }
-        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
+        fn find_by_idempotency_key(&self, _: &str, _: &str) -> Result<Option<Request>, AppError> {
             Ok(None)
         }
         fn list_visible_to_user(
@@ -470,6 +472,7 @@ mod tests {
             emergency: false,
             reason: None,
             idempotency_key: None,
+            idempotency_fingerprint: None,
             metadata_json: "{}".into(),
             share_with: vec![],
             no_result_store: false,
@@ -604,7 +607,7 @@ mod tests {
         ) -> Result<(Vec<Request>, u32), AppError> {
             Ok((vec![], 0))
         }
-        fn find_by_idempotency_key(&self, _: &str) -> Result<Option<Request>, AppError> {
+        fn find_by_idempotency_key(&self, _: &str, _: &str) -> Result<Option<Request>, AppError> {
             Ok(None)
         }
         fn list_visible_to_user(
@@ -715,6 +718,7 @@ mod tests {
             database: DatabaseName::wildcard(),
             environment: Environment::wildcard(),
             operations: vec![],
+            auto_approve: None,
             steps: vec![],
             require_reason: false,
             allow_self_approve: false,

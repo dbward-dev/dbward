@@ -37,6 +37,7 @@ pub(super) async fn submit_and_wait(
             reason,
             metadata: None,
             idempotency_key: None,
+
             share_with: None,
             no_result_store: false,
         },
@@ -274,7 +275,8 @@ pub(super) async fn handle_explain_policy(
                 format!(
                     "Request {req_id} status: {status}\n\
                      Workflow: {}\n\
-                     To approve: dbward request approve {req_id}",
+                     To approve: dbward request approve {req_id}\n\
+                     If you match multiple approver groups, specify: dbward request approve {req_id} --as <selector>",
                     workflow
                 )
             })

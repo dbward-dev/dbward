@@ -281,6 +281,7 @@ pub async fn approve(
     let input = dbward_app::use_cases::approve_request::ApproveRequestInput {
         request_id: id,
         comment: body["comment"].as_str().map(String::from),
+        selector: body["selector"].as_str().map(String::from),
     };
 
     match uc.execute(input, &user, &audit_ctx) {
@@ -290,6 +291,7 @@ pub async fn approve(
                 "id": out.id,
                 "status": out.status.as_str(),
                 "approved_by": out.approved_by,
+                "matched_selector": out.matched_selector,
                 "step_completed": out.step_completed,
                 "current_step": out.current_step,
                 "total_steps": out.total_steps,

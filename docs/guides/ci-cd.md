@@ -133,7 +133,9 @@ Configure workflows to auto-approve non-production environments:
 [[workflows]]
 database = "*"
 environment = "staging"
-# No steps = auto-approve
+
+[workflows.auto_approve]
+mode = "always"
 ```
 
 This lets CI deploy to staging without waiting, while production still requires human approval.

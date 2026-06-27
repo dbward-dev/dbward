@@ -97,10 +97,9 @@ pub enum Outcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionReason {
-    EmptySteps,
+    ExplicitAlways,
     RiskBelowThreshold,
     BreakGlass,
-    AutoApproveDisabled,
     RiskAboveThreshold,
     NoAutoApproveRule,
     RiskUnavailable,
@@ -136,7 +135,7 @@ mod tests {
             },
             decision: Decision {
                 outcome: Outcome::AutoApproved,
-                reasons: vec![DecisionReason::EmptySteps],
+                reasons: vec![DecisionReason::ExplicitAlways],
                 auto_approve_threshold: None,
             },
         };

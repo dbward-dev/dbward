@@ -338,9 +338,15 @@ impl SyncPolicyOps for SqliteTxScope<'_> {
             .map_err(|e| AppError::Internal(format!("json: {e}")))?;
         let ops_json = serde_json::to_string(&wf.operations)
             .map_err(|e| AppError::Internal(format!("json: {e}")))?;
+        let aa_json: Option<String> = wf
+            .auto_approve
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| AppError::Internal(format!("json: {e}")))?;
         self.conn.execute(
-            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs, source, lifecycle_state) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'config','active') ON CONFLICT(id) DO UPDATE SET operations_json=excluded.operations_json, steps_json=excluded.steps_json, require_reason=excluded.require_reason, allow_self_approve=excluded.allow_self_approve, allow_same_approver_across_steps=excluded.allow_same_approver_across_steps, explain=excluded.explain, pending_ttl_secs=excluded.pending_ttl_secs, approval_ttl_secs=excluded.approval_ttl_secs, statement_timeout_secs=excluded.statement_timeout_secs, lifecycle_state='active'",
-            params![wf.id, wf.database.as_str(), wf.environment.as_str(), ops_json, steps_json, wf.require_reason, wf.allow_self_approve, wf.allow_same_approver_across_steps, wf.explain, wf.pending_ttl_secs.map(|v| v as i64), wf.approval_ttl_secs.map(|v| v as i64), wf.statement_timeout_secs.map(|v| v as i64)],
+            "INSERT INTO workflows (id, database_name, environment, operations_json, steps_json, auto_approve_json, require_reason, allow_self_approve, allow_same_approver_across_steps, explain, pending_ttl_secs, approval_ttl_secs, statement_timeout_secs, source, lifecycle_state) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,'config','active') ON CONFLICT(id) DO UPDATE SET operations_json=excluded.operations_json, steps_json=excluded.steps_json, auto_approve_json=excluded.auto_approve_json, require_reason=excluded.require_reason, allow_self_approve=excluded.allow_self_approve, allow_same_approver_across_steps=excluded.allow_same_approver_across_steps, explain=excluded.explain, pending_ttl_secs=excluded.pending_ttl_secs, approval_ttl_secs=excluded.approval_ttl_secs, statement_timeout_secs=excluded.statement_timeout_secs, lifecycle_state='active'",
+            params![wf.id, wf.database.as_str(), wf.environment.as_str(), ops_json, steps_json, aa_json, wf.require_reason, wf.allow_self_approve, wf.allow_same_approver_across_steps, wf.explain, wf.pending_ttl_secs.map(|v| v as i64), wf.approval_ttl_secs.map(|v| v as i64), wf.statement_timeout_secs.map(|v| v as i64)],
         ).map_err(db_err("sync: create_workflow"))?;
         Ok(())
     }

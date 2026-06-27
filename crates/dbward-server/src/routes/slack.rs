@@ -442,12 +442,56 @@ async fn handle_block_actions(
     let review_detail = get_output.detail;
     let review_context = get_output.context;
 
+    // Compute selector options for ambiguous users (unsatisfied groups only)
+    let selector_options: Option<Vec<String>> = get_output
+        .request
+        .workflow_snapshot_json
+        .as_deref()
+        .and_then(|json| {
+            let wf: dbward_domain::policies::Workflow = serde_json::from_str(json).ok()?;
+            let current_step = get_output
+                .approval_progress
+                .as_ref()
+                .map(|p| p.current_step)
+                .unwrap_or(0);
+            let step = wf.steps.get(current_step as usize)?;
+            let role_names: Vec<String> = auth_user.roles.iter().map(|r| r.name.clone()).collect();
+            let matched = dbward_domain::services::approval_checker::matched_selectors_by_attrs(
+                &role_names,
+                &auth_user.groups,
+                &auth_user.subject_id,
+                &step.approvers,
+            );
+            // Filter to unsatisfied selectors only
+            let unsatisfied: Vec<String> = if let Some(progress) = &get_output.approval_progress
+                && let Some(step_prog) = progress.steps.get(current_step as usize)
+            {
+                matched
+                    .into_iter()
+                    .filter(|sel| {
+                        step_prog
+                            .approvers_required
+                            .iter()
+                            .any(|r| r.selector.to_string() == *sel && r.current < r.min)
+                    })
+                    .collect()
+            } else {
+                matched
+            };
+            if unsatisfied.len() >= 2 {
+                Some(unsatisfied)
+            } else {
+                None
+            }
+        });
+
     // Open modal + hydrate async (return 200 immediately for Slack retry safety)
     let state_clone = state.clone();
     tokio::spawn(async move {
         let loading_view = dbward_infra::slack::block_kit::build_review_modal(
             &request_id,
             Some("Loading..."),
+            None,
             None,
         );
         let view_id = if let Some(ref slack_client) = state_clone.slack_client {
@@ -465,6 +509,7 @@ async fn handle_block_actions(
             &request_id,
             Some(&review_detail),
             review_context.as_ref(),
+            selector_options.as_deref(),
         );
         if let Some(ref slack_client) = state_clone.slack_client
             && let Err(e) = slack_client.update_modal(&view_id, &full_view).await
@@ -513,6 +558,12 @@ async fn handle_view_submission(
         .filter(|s| !s.trim().is_empty())
         .map(|s| s.trim().to_string());
 
+    // Selector (present only for ambiguous users)
+    let selector = values
+        .get("selector_block")
+        .and_then(|b| b["selector_input"]["selected_option"]["value"].as_str())
+        .map(|s| s.to_string());
+
     if decision == "reject" && comment.is_none() {
         return modal_error("comment_block", "Comment is required for rejection");
     }
@@ -543,8 +594,9 @@ async fn handle_view_submission(
             let uc = state.requests().approve();
             uc.execute(
                 dbward_app::use_cases::approve_request::ApproveRequestInput {
-                    request_id,
-                    comment,
+                    request_id: request_id.clone(),
+                    comment: comment.clone(),
+                    selector,
                 },
                 &auth_user,
                 &ctx,
@@ -555,8 +607,8 @@ async fn handle_view_submission(
             let uc = state.requests().reject();
             uc.execute(
                 dbward_app::use_cases::reject_request::RejectRequestInput {
-                    request_id,
-                    comment,
+                    request_id: request_id.clone(),
+                    comment: comment.clone(),
                 },
                 &auth_user,
                 &ctx,
@@ -576,6 +628,7 @@ async fn handle_view_submission(
                 dbward_app::error::AppError::Forbidden(_) => {
                     "Not eligible to approve/reject this request"
                 }
+                dbward_app::error::AppError::Validation(m) => m.as_str(),
                 _ => "An error occurred. Please try again.",
             };
             tracing::info!(error = %e, "slack review action failed");

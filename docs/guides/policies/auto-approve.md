@@ -13,26 +13,36 @@ Auto-approve lets safe queries bypass the approval step while still recording th
 Request arrives
     │
     ▼
-Workflow matched → has steps?
-    │                   │
-    No                  Yes
-    ▼                   ▼
-AutoApproved       Check auto_approve config
-                        │
-                   Risk ≤ threshold?
-                   ┌────┼────┐
-                   Yes       No
-                   ▼         ▼
-              AutoApproved   Pending (needs human)
+Workflow matched
+    │
+    ▼
+Has [workflows.auto_approve]?
+    │              │
+    No             Yes
+    ▼              ▼
+Pending       mode = "always"?
+(needs human)  ┌────┼────┐
+               Yes       No (risk_based)
+               ▼         ▼
+          AutoApproved  Risk ≤ threshold?
+                        ┌────┼────┐
+                        Yes       No
+                        ▼         ▼
+                   AutoApproved   Pending
 ```
 
 ## Configuration
 
+Auto-approve is configured as a sub-table within each workflow:
+
 ```toml
-[[auto_approve]]
+[[workflows]]
 database = "*"
 environment = "staging"
-risk = "low"                 # Maximum risk level to auto-approve
+
+[workflows.auto_approve]
+mode = "risk_based"          # "always" or "risk_based"
+risk = "low"                 # Maximum risk level (risk_based only)
 allow_read_only = true       # SELECT always counts as Low
 allow_safe_ddl = true        # CREATE TABLE/INDEX counts as Low
 max_estimated_rows = 1000    # Row threshold for large-table risk
@@ -40,14 +50,51 @@ max_estimated_rows = 1000    # Row threshold for large-table risk
 
 ## Fields
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `database` | String | `"*"` | Database scope |
-| `environment` | String | `"*"` | Environment scope |
-| `risk` | String | `"none"` | Max risk to auto-approve: `low`, `medium`, `high`, or `none` (disabled) |
-| `allow_read_only` | Boolean | `true` | If true, SELECT is always Low risk |
-| `allow_safe_ddl` | Boolean | `true` | If true, CREATE TABLE/VIEW/INDEX is always Low risk |
-| `max_estimated_rows` | Integer | `1000` | Tables above this row count trigger higher risk |
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `mode` | String | Yes | — | `"always"` (unconditional) or `"risk_based"` (conditional) |
+| `risk` | String | risk_based only | — | Max risk: `low`, `medium`, or `high` |
+| `allow_read_only` | Boolean | No | `true` | If true, SELECT is always Low risk |
+| `allow_safe_ddl` | Boolean | No | `true` | If true, CREATE TABLE/VIEW/INDEX is always Low risk |
+| `max_estimated_rows` | Integer | No | `1000` | Tables above this row count trigger higher risk |
+
+## Modes
+
+### `mode = "always"`
+
+All requests matching this workflow are auto-approved unconditionally. No steps are needed.
+
+```toml
+[[workflows]]
+database = "*"
+environment = "development"
+
+[workflows.auto_approve]
+mode = "always"
+```
+
+### `mode = "risk_based"`
+
+Requests are auto-approved only if the assessed risk level is at or below the threshold. If risk exceeds the threshold, the request falls through to approval steps.
+
+```toml
+[[workflows]]
+database = "*"
+environment = "staging"
+
+[workflows.auto_approve]
+mode = "risk_based"
+risk = "low"
+
+[[workflows.steps]]
+type = "approval"
+
+[[workflows.steps.approvers]]
+role = "dba"
+min = 1
+```
+
+> **Important:** `risk_based` mode requires `[[workflows.steps]]` — without steps, there's no fallback when risk exceeds the threshold.
 
 ## Risk levels
 
@@ -79,35 +126,53 @@ max_estimated_rows = 1000    # Row threshold for large-table risk
 
 ## Examples
 
-### Auto-approve all reads on staging
+### Auto-approve everything on development
 
 ```toml
-[[auto_approve]]
+[[workflows]]
+database = "*"
+environment = "development"
+
+[workflows.auto_approve]
+mode = "always"
+```
+
+### Auto-approve reads + safe operations on staging
+
+```toml
+[[workflows]]
+database = "*"
 environment = "staging"
+
+[workflows.auto_approve]
+mode = "risk_based"
 risk = "low"
 allow_read_only = true
+
+[[workflows.steps]]
+type = "approval"
+
+[[workflows.steps.approvers]]
+role = "team-lead"
+min = 1
 ```
 
-Result: All SELECT queries on staging auto-approve. DML still needs human approval.
+### No auto-approve on production
 
-### Auto-approve reads + small writes on development
-
-```toml
-[[auto_approve]]
-environment = "development"
-risk = "high"
-```
-
-Result: Everything except DROP/TRUNCATE/multi-DML auto-approves on development.
-
-### Disable auto-approve on production
+Simply omit `[workflows.auto_approve]` from the production workflow:
 
 ```toml
-# Simply don't add an [[auto_approve]] entry for production.
-# Or explicitly:
-[[auto_approve]]
+[[workflows]]
+database = "*"
 environment = "production"
-risk = "none"
+require_reason = true
+
+[[workflows.steps]]
+type = "approval"
+
+[[workflows.steps.approvers]]
+role = "dba"
+min = 1
 ```
 
 ## Debugging
@@ -115,11 +180,8 @@ risk = "none"
 Use `dbward policy resolve` to see why a query was or wasn't auto-approved:
 
 ```bash
-dbward policy resolve --database app --environment production \
-  --sql "DELETE FROM sessions WHERE expired_at < now()"
+dbward policy resolve --database app --environment staging
 ```
-
-The MCP tool `dbward_explain_policy_failure` provides the same information for AI assistants.
 
 ## See also
 

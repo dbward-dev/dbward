@@ -9,3 +9,4 @@ pub mod status_constants;
 pub mod status_machine;
 pub mod table_extractor;
 pub mod workflow_matcher;
+pub mod workflow_validator;

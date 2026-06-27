@@ -12,13 +12,14 @@ pub(super) async fn handle_migrate_status(
     client_supports_elicitation: bool,
 ) -> Result<String, String> {
     let db = args["database"].as_str().unwrap_or(db_name);
+    let reason = args["reason"].as_str();
     submit_and_wait(
         client,
         "migrate_status",
         env,
         db,
         "",
-        None,
+        reason,
         elicit,
         client_supports_elicitation,
     )

@@ -332,6 +332,7 @@ pub(super) fn emit_webhook(state: &AppState, event_type: &str, request_id: &str)
         total_steps: None,
         expires_at: None,
         approvers: None,
+        matched_selector: None,
     };
 
     bg.notifier().dispatch(event);

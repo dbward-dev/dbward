@@ -146,10 +146,12 @@ alice (developer)          bob (admin)              agent
 The server config (`server.toml`) defines the rules:
 
 ```toml
-# Development: no approval needed
+# Development: auto-approve all
 [[workflows]]
 environment = "development"
-steps = []
+
+[workflows.auto_approve]
+mode = "always"
 
 # Staging: 1 admin must approve
 [[workflows]]

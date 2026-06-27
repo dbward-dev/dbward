@@ -18,7 +18,9 @@ dbward-api-types = { path = "../dbward-api-types" }
 dbward-api-client = { path = "../dbward-api-client" }
 dbward-config = { path = "../dbward-config" }
 dbward-domain = { path = "../dbward-domain" }
+dbward-mcp = { path = "../dbward-mcp" }
 dbward-migrate = { path = "../dbward-migrate", version = "0.1.1" }
+async-trait = "0.1"
 libc = "0.2"
 clap = { version = "4", features = ["derive", "env"] }
 tokio.workspace = true

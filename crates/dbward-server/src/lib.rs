@@ -1,9 +1,13 @@
 pub mod background;
 pub mod bootstrap;
 pub mod config;
+pub mod http_elicitation;
+pub mod mcp_backend;
 pub mod metrics;
 pub mod middleware;
 pub mod routes;
+pub mod session;
+pub mod session_store;
 pub mod state;
 pub mod util;
 
@@ -30,7 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use arc_swap::ArcSwap;
 use axum::Router;
-use config::{AutoApproveExt, SqlReviewExt};
+use config::SqlReviewExt;
 use dbward_app::ports::ResultStore;
 use dbward_app::use_cases::sync_config::SyncConfig;
 use dbward_domain::values::{DatabaseName, Environment};
@@ -524,6 +528,20 @@ pub async fn run_from_args(
         draining: draining.clone(),
         slack_config,
         slack_client: slack_client_for_state,
+        mcp_enabled: cfg.mcp.enabled,
+        mcp_allowed_origins: cfg.mcp.allowed_origins.clone(),
+        mcp_default_database: cfg
+            .databases
+            .first()
+            .map(|d| d.name.clone())
+            .unwrap_or_default(),
+        mcp_default_environment: cfg.mcp.default_environment.clone(),
+        mcp_elicitation_timeout_secs: cfg.mcp.elicitation_timeout_secs.unwrap_or(300).max(10),
+        mcp_replay_buffer_size: cfg.mcp.replay_buffer_size.unwrap_or(100).max(1),
+        session_store: Arc::new(session_store::SessionStore::new(
+            cfg.mcp.session_ttl_secs.unwrap_or(3600).max(10), // minimum 10s
+            cfg.mcp.max_sessions.unwrap_or(1000).max(1),      // minimum 1
+        )),
     }
     .build();
 
@@ -860,6 +878,9 @@ pub async fn start(
     let (bg_shutdown, bg_handle) =
         background::spawn_background_tasks(state.clone(), draining.clone(), retention);
 
+    // Spawn MCP session cleanup (uses same shutdown token)
+    state.session_store().spawn_cleanup(bg_shutdown.clone());
+
     let app = build_app(state, trusted);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "server started");
@@ -957,7 +978,7 @@ fn build_sync_inputs_and_run(
     let roles = convert::roles_from_config(&cfg.auth.roles);
     let role_bindings = convert::role_bindings_from_config(&cfg.auth.role_bindings);
     let webhooks = convert::webhooks_from_config(&cfg.webhooks);
-    let workflows = convert::workflows_from_config(&cfg.workflows);
+    let workflows = convert::workflows_from_config(&cfg.workflows)?;
     let execution_policies = convert::execution_policies_from_config(&cfg.execution_policies);
     let result_policies = convert::result_policies_from_config(&cfg.result_policies);
     let notification_policies =
@@ -1032,17 +1053,8 @@ fn build_reloadable_config_with(
     );
     let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new(resolver);
 
-    let mut auto_approve_entries = Vec::new();
-    for (i, a) in cfg.auto_approve.iter().enumerate() {
-        auto_approve_entries.push(
-            a.to_entry()
-                .map_err(|e| format!("auto_approve[{i}]: {e}"))?,
-        );
-    }
-
     Ok(state::ReloadableConfig {
         role_resolver,
-        auto_approve_entries,
         sql_review_rules: cfg
             .sql_review
             .to_review_rules()
@@ -1118,7 +1130,9 @@ mod safety_guard_tests {
             database = "db"
             environment = "prod"
             operations = ["execute_select"]
-            steps = []
+
+            [workflows.auto_approve]
+            mode = "always"
             "#,
         )
         .unwrap();
