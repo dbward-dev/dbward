@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
+pub(super) async fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
     if !ctx.json_output {
         eprintln!("dbward doctor — Server configuration\n");
     }
@@ -65,6 +65,9 @@ pub(super) fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::Path) {
 
     // S10: role_binding_empty
     check_role_binding_empty(ctx, &cfg);
+
+    // S11: slack connectivity
+    check_slack(ctx, &cfg).await;
 }
 
 fn check_workflow_validity(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
@@ -512,6 +515,255 @@ fn check_role_binding_empty(ctx: &mut DoctorContext, cfg: &dbward_config::Server
     }
 }
 
+/// Slack connectivity checks (only runs if [slack] is configured).
+async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
+    let Some(ref slack) = cfg.slack else {
+        return;
+    };
+
+    // S-slack1: config fields non-empty
+    if slack.bot_token.is_empty() || slack.signing_secret.is_empty() {
+        let missing = if slack.bot_token.is_empty() && slack.signing_secret.is_empty() {
+            "bot_token and signing_secret are empty"
+        } else if slack.bot_token.is_empty() {
+            "bot_token is empty"
+        } else {
+            "signing_secret is empty"
+        };
+        ctx.record(CheckResult {
+            id: "slack_config",
+            status: Status::Fail,
+            message: missing.into(),
+            hint: Some("Set values in [slack] section of server.toml".into()),
+        });
+        return;
+    }
+    ctx.record(CheckResult {
+        id: "slack_config",
+        status: Status::Pass,
+        message: "bot_token + signing_secret present".into(),
+        hint: None,
+    });
+
+    // S-slack2: bot_token format
+    if !slack.bot_token.starts_with("xoxb-") || slack.bot_token.len() < 10 {
+        ctx.record(CheckResult {
+            id: "slack_bot_token",
+            status: Status::Fail,
+            message: "invalid prefix (expected xoxb-)".into(),
+            hint: Some("Copy the Bot User OAuth Token from Slack App settings".into()),
+        });
+        return;
+    }
+    ctx.record(CheckResult {
+        id: "slack_bot_token",
+        status: Status::Pass,
+        message: "xoxb-... (valid prefix)".into(),
+        hint: None,
+    });
+
+    // S-slack3: signing_secret format (32 lowercase alphanumeric chars)
+    let valid_secret = slack.signing_secret.len() == 32
+        && slack
+            .signing_secret
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    if !valid_secret {
+        ctx.record(CheckResult {
+            id: "slack_signing_secret",
+            status: Status::Fail,
+            message: "invalid format (expected 32 alphanumeric chars)".into(),
+            hint: Some("Copy from Basic Information → App Credentials → Signing Secret".into()),
+        });
+        return;
+    }
+    ctx.record(CheckResult {
+        id: "slack_signing_secret",
+        status: Status::Pass,
+        message: "32-char alphanumeric".into(),
+        hint: None,
+    });
+
+    // S-slack4: auth.test API call
+    let client = match reqwest::Client::builder()
+        .timeout(ctx.timeout)
+        .connect_timeout(ctx.timeout)
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            ctx.record(CheckResult {
+                id: "slack_auth_test",
+                status: Status::Fail,
+                message: format!("failed to create HTTP client: {e}"),
+                hint: None,
+            });
+            return;
+        }
+    };
+
+    let auth_resp = client
+        .post("https://slack.com/api/auth.test")
+        .bearer_auth(&slack.bot_token)
+        .send()
+        .await;
+
+    match auth_resp {
+        Err(e) => {
+            let msg = if e.is_timeout() {
+                "connection timed out".to_string()
+            } else if e.is_connect() {
+                "connection refused".to_string()
+            } else {
+                e.to_string()
+            };
+            ctx.record(CheckResult {
+                id: "slack_auth_test",
+                status: Status::Fail,
+                message: format!("connection failed ({msg})"),
+                hint: Some("Check network/firewall settings".into()),
+            });
+            return;
+        }
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Err(e) => {
+                ctx.record(CheckResult {
+                    id: "slack_auth_test",
+                    status: Status::Fail,
+                    message: format!("invalid response: {e}"),
+                    hint: None,
+                });
+                return;
+            }
+            Ok(body) => {
+                if body["ok"].as_bool() != Some(true) {
+                    let error = body["error"].as_str().unwrap_or("unknown");
+                    ctx.record(CheckResult {
+                        id: "slack_auth_test",
+                        status: Status::Fail,
+                        message: format!("Slack API returned: {error}"),
+                        hint: Some("Verify bot_token is correct and app is installed".into()),
+                    });
+                    return;
+                }
+                let team = body["team"].as_str().unwrap_or("?");
+                let team_id = body["team_id"].as_str().unwrap_or("?");
+                let bot = body["user"].as_str().unwrap_or("?");
+                let bot_id = body["user_id"].as_str().unwrap_or("?");
+                ctx.record(CheckResult {
+                    id: "slack_auth_test",
+                    status: Status::Pass,
+                    message: format!("team={team} ({team_id}), bot={bot} ({bot_id})"),
+                    hint: None,
+                });
+            }
+        },
+    }
+
+    // S-slack5: channel existence + bot membership
+    let all_channels = std::iter::once(("default", slack.channel.as_str()))
+        .chain(slack.channels.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+
+    for (label, channel_id) in all_channels {
+        // Skip empty channel
+        if channel_id.is_empty() {
+            ctx.record(CheckResult {
+                id: "slack_channel",
+                status: Status::Skip,
+                message: format!("({label}): not configured"),
+                hint: None,
+            });
+            continue;
+        }
+
+        // Skip #name format channels
+        if channel_id.starts_with('#') {
+            ctx.record(CheckResult {
+                id: "slack_channel",
+                status: Status::Skip,
+                message: format!(
+                    "{channel_id} ({label}): use channel ID (C.../G...) for full validation"
+                ),
+                hint: None,
+            });
+            continue;
+        }
+
+        // Validate ID format: C or G followed by alphanumeric
+        if !(channel_id.starts_with('C') || channel_id.starts_with('G'))
+            || channel_id.len() < 2
+            || !channel_id[1..].chars().all(|c| c.is_ascii_alphanumeric())
+        {
+            ctx.record(CheckResult {
+                id: "slack_channel",
+                status: Status::Fail,
+                message: format!("{channel_id} ({label}): invalid channel ID format"),
+                hint: Some(
+                    "Channel IDs start with C (public) or G (private) followed by alphanumeric"
+                        .into(),
+                ),
+            });
+            continue;
+        }
+
+        let conv_resp = client
+            .get("https://slack.com/api/conversations.info")
+            .bearer_auth(&slack.bot_token)
+            .query(&[("channel", channel_id)])
+            .send()
+            .await;
+
+        match conv_resp {
+            Err(_) => {
+                ctx.record(CheckResult {
+                    id: "slack_channel",
+                    status: Status::Fail,
+                    message: format!("{channel_id} ({label}): connection failed"),
+                    hint: None,
+                });
+            }
+            Ok(resp) => match resp.json::<serde_json::Value>().await {
+                Err(_) => {
+                    ctx.record(CheckResult {
+                        id: "slack_channel",
+                        status: Status::Fail,
+                        message: format!("{channel_id} ({label}): invalid response"),
+                        hint: None,
+                    });
+                }
+                Ok(body) => {
+                    if body["ok"].as_bool() != Some(true) {
+                        let error = body["error"].as_str().unwrap_or("unknown");
+                        ctx.record(CheckResult {
+                            id: "slack_channel",
+                            status: Status::Fail,
+                            message: format!("{channel_id} ({label}): {error}"),
+                            hint: Some("Verify the channel ID exists".into()),
+                        });
+                    } else {
+                        let is_member = body["channel"]["is_member"].as_bool().unwrap_or(false);
+                        if is_member {
+                            ctx.record(CheckResult {
+                                id: "slack_channel",
+                                status: Status::Pass,
+                                message: format!("{channel_id} ({label}) — bot is member"),
+                                hint: None,
+                            });
+                        } else {
+                            ctx.record(CheckResult {
+                                id: "slack_channel",
+                                status: Status::Warn,
+                                message: format!("{channel_id} ({label}) — bot not a member"),
+                                hint: Some("Run: /invite @dbward in the channel".into()),
+                            });
+                        }
+                    }
+                }
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,5 +901,134 @@ subjects = ["bob"]
         check_role_resolution(&mut ctx, &cfg);
         // With the role defined, doctor no longer warns about it being undefined.
         assert!(ctx.results.is_empty() || ctx.results.iter().all(|r| r.status != Status::Warn));
+    }
+
+    #[tokio::test]
+    async fn slack_checks_skip_when_unconfigured() {
+        let mut ctx = DoctorContext {
+            results: Vec::new(),
+            json_output: false,
+            timeout: Duration::from_secs(5),
+        };
+        let cfg = server_cfg("");
+        check_slack(&mut ctx, &cfg).await;
+        // No results when [slack] is absent
+        assert!(ctx.results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn slack_bot_token_format_validation() {
+        let mut ctx = DoctorContext {
+            results: Vec::new(),
+            json_output: false,
+            timeout: Duration::from_secs(5),
+        };
+        let cfg = server_cfg(
+            r#"
+[slack]
+bot_token = "invalid-token"
+signing_secret = "abcdef1234567890abcdef1234567890"
+"#,
+        );
+        check_slack(&mut ctx, &cfg).await;
+        assert!(
+            ctx.results
+                .iter()
+                .any(|r| r.id == "slack_bot_token" && r.status == Status::Fail)
+        );
+    }
+
+    #[tokio::test]
+    async fn slack_signing_secret_format_validation() {
+        let mut ctx = DoctorContext {
+            results: Vec::new(),
+            json_output: false,
+            timeout: Duration::from_secs(5),
+        };
+        let cfg = server_cfg(
+            r#"
+[slack]
+bot_token = "xoxb-1234567890-abcdefgh"
+signing_secret = "too_short"
+"#,
+        );
+        check_slack(&mut ctx, &cfg).await;
+        assert!(
+            ctx.results
+                .iter()
+                .any(|r| r.id == "slack_signing_secret" && r.status == Status::Fail)
+        );
+    }
+
+    #[tokio::test]
+    async fn slack_format_checks_pass_with_valid_config() {
+        let mut ctx = DoctorContext {
+            results: Vec::new(),
+            json_output: false,
+            timeout: Duration::from_secs(5),
+        };
+        let cfg = server_cfg(
+            r##"
+[slack]
+bot_token = "xoxb-1234567890-abcdefgh"
+signing_secret = "abcdef1234567890abcdef1234567890"
+channel = "#general"
+"##,
+        );
+        check_slack(&mut ctx, &cfg).await;
+        // signing_secret passes (auth_test will fail due to no network)
+        assert!(
+            ctx.results
+                .iter()
+                .any(|r| r.id == "slack_signing_secret" && r.status == Status::Pass)
+        );
+    }
+
+    #[tokio::test]
+    async fn slack_signing_secret_rejects_uppercase() {
+        let mut ctx = DoctorContext {
+            results: Vec::new(),
+            json_output: false,
+            timeout: Duration::from_secs(5),
+        };
+        let cfg = server_cfg(
+            r#"
+[slack]
+bot_token = "xoxb-1234567890-abcdefgh"
+signing_secret = "ABCDEF1234567890abcdef1234567890"
+"#,
+        );
+        check_slack(&mut ctx, &cfg).await;
+        assert!(
+            ctx.results
+                .iter()
+                .any(|r| r.id == "slack_signing_secret" && r.status == Status::Fail)
+        );
+    }
+
+    /// Verifies that #name channels produce Status::Skip. Requires network (auth.test must pass first).
+    #[tokio::test]
+    #[ignore]
+    async fn slack_channel_name_produces_skip() {
+        let mut ctx = DoctorContext {
+            results: Vec::new(),
+            json_output: false,
+            timeout: Duration::from_secs(5),
+        };
+        // This test requires a real bot_token + signing_secret to pass auth.test
+        let cfg = server_cfg(
+            r##"
+[slack]
+bot_token = "xoxb-REAL-TOKEN-HERE"
+signing_secret = "real32charsigningsecretgoeshere00"
+channel = "#nonexistent"
+"##,
+        );
+        check_slack(&mut ctx, &cfg).await;
+        assert!(
+            ctx.results
+                .iter()
+                .any(|r| r.id == "slack_channel" && r.status == Status::Skip)
+        );
     }
 }

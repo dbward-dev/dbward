@@ -10,6 +10,7 @@ mod misc;
 mod policy;
 mod request;
 mod server;
+mod slack;
 mod token;
 mod user;
 pub(crate) mod workflow;
@@ -223,6 +224,11 @@ pub enum Command {
         #[command(subcommand)]
         action: PolicyAction,
     },
+    /// Manage Slack App setup
+    Slack {
+        #[command(subcommand)]
+        action: slack::SlackAction,
+    },
 }
 
 #[derive(clap::Subcommand)]
@@ -409,6 +415,9 @@ pub async fn run(mut cli: Cli) -> Result<(), CliError> {
                 *timeout,
             )
             .await;
+        }
+        Command::Slack { action } => {
+            return slack::run(action.clone(), cli.format == "json").await;
         }
         _ => {}
     }
@@ -615,7 +624,8 @@ pub async fn run(mut cli: Cli) -> Result<(), CliError> {
         | Command::Agent { .. }
         | Command::Dev { .. }
         | Command::SelfUpdate
-        | Command::Doctor { .. } => unreachable!(),
+        | Command::Doctor { .. }
+        | Command::Slack { .. } => unreachable!(),
     }
 }
 

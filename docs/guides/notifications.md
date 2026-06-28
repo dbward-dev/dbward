@@ -15,14 +15,16 @@ dbward can notify external systems when events occur — new requests, approvals
 
 ```toml
 [[webhooks]]
+id = "my-receiver"
 url = "https://your-service.com/dbward-events"
 format = "generic"
 secret = "${WEBHOOK_SECRET}"
-events = ["request_created", "request_completed", "break_glass"]
+events = ["request.created", "request.approved", "execution.completed", "request.break_glass"]
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `id` | String | — | Unique identifier for the webhook |
 | `url` | String | — | Delivery endpoint (HTTPS required in production) |
 | `format` | String | `"generic"` | Payload format: `generic` or `slack` |
 | `secret` | String | — | HMAC-SHA256 signing key |
@@ -32,16 +34,15 @@ events = ["request_created", "request_completed", "break_glass"]
 
 ```json
 {
-  "event": "request_created",
-  "timestamp": "2025-01-15T10:30:00Z",
-  "request": {
-    "id": "req_abc123",
-    "operation": "execute_dml",
-    "database": "app",
-    "environment": "production",
-    "requester": "alice",
-    "risk_level": "medium"
-  }
+  "event": "request.created",
+  "request_id": "c22932a6-ebc6-4eea-93cb-f2215c8c48eb",
+  "database": "app",
+  "environment": "production",
+  "operation": "execute_select",
+  "actor": "alice",
+  "requester": "alice",
+  "detail": "SELECT * FROM users WHERE ...",
+  "matched_selector": "role:dba"
 }
 ```
 
@@ -50,7 +51,7 @@ events = ["request_created", "request_completed", "break_glass"]
 When `secret` is set, every delivery includes:
 
 ```
-X-Webhook-Signature: sha256=<hex-encoded HMAC-SHA256 of body>
+x-dbward-signature: sha256=<hex-encoded HMAC-SHA256 of body>
 ```
 
 Verify in your receiver:
@@ -59,7 +60,7 @@ Verify in your receiver:
 import hmac, hashlib
 
 expected = hmac.new(secret.encode(), request.body, hashlib.sha256).hexdigest()
-actual = request.headers["X-Webhook-Signature"].removeprefix("sha256=")
+actual = request.headers["x-dbward-signature"].removeprefix("sha256=")
 assert hmac.compare_digest(expected, actual)
 ```
 
@@ -90,29 +91,55 @@ Slack integration uses a dedicated `[slack]` config section for richer formattin
 
 ### 1. Create a Slack App
 
+```bash
+dbward slack init --server-url https://your-server.com
+```
+
+This generates a Slack App Manifest with all required scopes, Interactivity URL, and Slash Command pre-configured. Open the output URL to create the app in one click.
+
+<details>
+<summary>Manual setup (without CLI)</summary>
+
 1. Go to [https://api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**
-2. Add **Bot Token Scopes**: `chat:write`, `channels:join` (recommended)
-3. **Install to Workspace** → copy Bot Token (`xoxb-...`)
-4. Copy **Signing Secret** from Basic Information
+2. Add **Bot Token Scopes**: `chat:write`, `channels:join`, `channels:read`, `groups:read`, `commands`, `users:read`, `users:read.email`
+3. Enable **Interactivity** → Request URL: `https://your-server.com/api/slack/interactions`
+4. Add **Slash Command** `/dbward` → URL: `https://your-server.com/api/slack/commands`
+5. **Install to Workspace** → copy Bot Token (`xoxb-...`)
+6. Copy **Signing Secret** from Basic Information
+</details>
 
 ### 2. Configure server
 
 ```toml
 [slack]
-bot_token = "${SLACK_BOT_TOKEN}"
-signing_secret = "${SLACK_SIGNING_SECRET}"
-channel = "C02C1EUJ0EN"   # Default channel ID
+bot_token = "xoxb-..."       # Bot User OAuth Token
+signing_secret = "abc123..."  # Signing Secret from Basic Information
+channel = "C0123ABC456"      # Default channel ID
 ```
 
 Per-environment channels (optional):
 
 ```toml
 [slack.channels]
-production = "C02C1EUJ0EN"
-staging = "C03D2FKJ1FO"
+production = "C0123ABC456"
+staging = "C0456DEF789"
 ```
 
-### 3. Message format
+### 3. Invite the bot and verify
+
+```
+/invite @dbward
+```
+
+Then run:
+
+```bash
+dbward doctor --server server.toml
+```
+
+This checks token validity, signing secret format, channel existence, and bot membership. Channel validation requires channel IDs (`C...` / `G...`); channels configured by name (e.g. `#general`) are skipped with a hint.
+
+### Message format
 
 Slack messages include:
 - Requester, database, environment, operation
@@ -128,17 +155,9 @@ Messages update in-place as the request progresses through its lifecycle.
 
 ## Inbound: Slack Interactions
 
-Slack buttons enable one-click approve/reject directly from Slack.
+Slack buttons and slash commands are configured automatically by `dbward slack init`. No additional setup is required if you created the app via Manifest.
 
-### Setup
-
-1. In your Slack App → **Interactivity & Shortcuts** → toggle **On**
-2. Set **Request URL**: `https://your-server.com/api/slack/interactions`
-3. Save
-
-See [Slack: Handling user interaction](https://api.slack.com/interactivity/handling-user-interaction) for details.
-
-### Flow
+### Approval flow
 
 1. Approver clicks **Review Request**
 2. Modal opens with: full SQL, risk details, EXPLAIN output
@@ -151,29 +170,14 @@ See [Slack: Handling user interaction](https://api.slack.com/interactivity/handl
 
 > The demo above shows the requester's perspective (create → approve → resume → result). Approvers follow the same flow via the **Review Request** button in their notifications.
 
-### Slash Command
-
-Create requests directly from Slack without CLI.
-
-**Setup:**
-
-1. In your Slack App → **Slash Commands** → **Create New Command**
-2. Command: `/dbward`
-3. Request URL: `https://your-server.com/api/slack/commands`
-4. Short Description: `Execute SQL via approval workflow`
-5. Usage Hint: `execute | help`
-6. Save (reinstall app if prompted)
-
-See [Slack: Implementing slash commands](https://api.slack.com/interactivity/implementing-slash-commands) for details.
-
-**Commands:**
+### Slash command
 
 | Command | Action |
 |---|---|
 | `/dbward execute` | Open SQL submission modal |
 | `/dbward help` | Show usage |
 
-**Authentication:** No Bearer token required — both `/api/slack/commands` and `/api/slack/interactions` are verified using the [Slack Signing Secret](https://api.slack.com/authentication/verifying-requests-from-slack) (HMAC-SHA256). Only requests signed by Slack are accepted.
+**Authentication:** Both `/api/slack/commands` and `/api/slack/interactions` are verified using the [Slack Signing Secret](https://api.slack.com/authentication/verifying-requests-from-slack) (HMAC-SHA256). Only requests signed by Slack are accepted.
 
 ### Account linking
 

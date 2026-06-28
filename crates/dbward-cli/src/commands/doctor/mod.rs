@@ -70,7 +70,7 @@ pub async fn run(
     if let Some(path) = agent_config {
         agent_checks::run_agent_mode(&mut ctx, &path).await;
     } else if let Some(path) = server_config {
-        server_checks::run_server_mode(&mut ctx, &path);
+        server_checks::run_server_mode(&mut ctx, &path).await;
     } else {
         cli_checks::run_cli_mode(&mut ctx, config_path).await;
     }

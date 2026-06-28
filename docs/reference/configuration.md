@@ -397,7 +397,7 @@ Slack integration for notifications and interactive approve/reject.
 [slack]
 bot_token = "${SLACK_BOT_TOKEN}"
 signing_secret = "${SLACK_SIGNING_SECRET}"
-channel = "C02C1EUJ0EN"
+channel = "C0123ABC456"
 ```
 
 | Field | Type | Required | Default | Description |
