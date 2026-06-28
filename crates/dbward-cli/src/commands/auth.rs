@@ -158,10 +158,11 @@ fn run_preset_small_team(
     eprintln!();
     eprintln!("━━ Next steps ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     eprintln!("  1. dbward-server --config server.toml");
-    eprintln!("     → First run auto-creates tokens in ./data/admin-token");
-    eprintln!("  2. DBWARD_AGENT_TOKEN=$(cat ./data/agent-token) dbward-agent --config agent.toml");
-    eprintln!("  3. dbward doctor        # verify connectivity + config");
-    eprintln!("  4. dbward execute \"SELECT 1\"");
+    eprintln!("     → First run auto-creates tokens in /data/");
+    eprintln!("  2. Set CLI token in dbward.toml: token = \"$(cat /data/admin-token)\"");
+    eprintln!("  3. DBWARD_AGENT_TOKEN=$(cat /data/agent-token) dbward-agent --config agent.toml");
+    eprintln!("  4. dbward doctor        # verify connectivity + config");
+    eprintln!("  5. dbward execute \"SELECT 1\"");
     eprintln!();
     eprintln!("━━ Optional tuning ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     eprintln!("  server.toml: team roles, approval rules, auto-approve thresholds");
@@ -185,7 +186,7 @@ migrations_dir = "migrations"
 
 [server]
 url = "{server_url}"
-# token = "dbw_..."  # Set from: cat ./data/admin-token (after first server start)
+# token = "dbw_..."  # Set from: cat /data/admin-token (after first server start)
 
 [databases.{db_name}]
 "#
@@ -195,7 +196,7 @@ url = "{server_url}"
 fn gen_server_toml(db_name: &str) -> String {
     format!(
         r#"# dbward server configuration — small-team preset
-state_dir = "./data"
+state_dir = "/data"
 
 [[databases]]
 name = "{db_name}"

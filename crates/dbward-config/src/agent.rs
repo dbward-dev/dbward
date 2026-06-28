@@ -14,7 +14,6 @@ pub struct AgentConfig {
     pub max_concurrent_tasks: Option<u32>,
     pub drain_timeout_secs: Option<u64>,
     pub statement_timeout_secs: Option<u64>,
-    pub lease_duration_secs: Option<u64>,
     pub operations: Option<Vec<String>>,
     pub startup_retry_initial_ms: Option<u64>,
     pub startup_retry_max_ms: Option<u64>,
@@ -81,11 +80,7 @@ impl AgentConfig {
     }
 
     pub fn statement_timeout_secs(&self) -> u64 {
-        self.statement_timeout_secs.unwrap_or(30)
-    }
-
-    pub fn lease_duration_secs(&self) -> u64 {
-        self.lease_duration_secs.unwrap_or(300)
+        self.statement_timeout_secs.unwrap_or(60)
     }
 
     pub fn operations(&self) -> Vec<String> {
@@ -121,7 +116,6 @@ impl fmt::Debug for AgentConfig {
             .field("max_concurrent_tasks", &self.max_concurrent_tasks)
             .field("drain_timeout_secs", &self.drain_timeout_secs)
             .field("statement_timeout_secs", &self.statement_timeout_secs)
-            .field("lease_duration_secs", &self.lease_duration_secs)
             .field("operations", &self.operations)
             .field("server", &self.server)
             .field("databases", &self.databases)

@@ -279,7 +279,6 @@ JWKS cache: 1-hour TTL, re-fetch on unknown kid (min 60s interval).
 ```toml
 agent_id = "agent-prod"
 poll_interval_ms = 1000
-lease_duration_secs = 300
 max_concurrent_tasks = 2
 
 [server]

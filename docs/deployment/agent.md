@@ -23,7 +23,7 @@ Multiple agents can connect to the same server simultaneously. When two agents p
 
 ### Lease and heartbeat
 
-After claiming a job, the agent has `lease_duration_secs` to complete it. During execution, the agent sends periodic heartbeats to extend the lease. If the agent crashes or loses connectivity, the lease expires and the job is marked `execution_lost`.
+After claiming a job, the agent has a lease period to complete it (configured via server-side `[[execution_policies]]`). During execution, the agent sends periodic heartbeats to extend the lease. If the agent crashes or loses connectivity, the lease expires and the job is marked `execution_lost`.
 
 ### Schema sync
 
@@ -46,10 +46,9 @@ If a database connection is lost, the agent skips jobs targeting that database b
 ```toml
 agent_id = "prod-agent-1"        # Unique identifier (shown in audit logs)
 poll_interval_ms = 1000           # How often to poll for jobs (default: 1000)
-lease_duration_secs = 300         # Job lease timeout (default: 300)
 drain_timeout_secs = 60           # Graceful shutdown timeout (default: 60)
 max_concurrent_tasks = 2          # Parallel job execution (default: 2)
-statement_timeout_secs = 30       # Default SQL statement timeout (default: 30)
+statement_timeout_secs = 30       # Default SQL statement timeout (default: 60)
 ```
 
 > **Note**: `statement_timeout_secs` is the agent-level default. If a server-side `[[execution_policies]]` is configured for the target database/environment, the policy's `statement_timeout_secs` takes precedence.
