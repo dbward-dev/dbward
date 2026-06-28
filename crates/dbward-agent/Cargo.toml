@@ -28,9 +28,9 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 tracing-appender = { workspace = true }
 hex = "0.4"
 chrono = { workspace = true }
-sha2 = "0.10"
+sha2 = "0.11"
 hostname = "0.4"
 
 [dev-dependencies]
-rand = "0.8"
+rand = "0.10"
 async-trait = "0.1"
