@@ -741,7 +741,7 @@ impl BreakGlassMetrics for NoopBreakGlassMetrics {
 struct FakeLicenseChecker;
 impl LicenseChecker for FakeLicenseChecker {
     fn max_users(&self) -> u32 {
-        10
+        20
     }
     fn max_databases(&self) -> u32 {
         u32::MAX

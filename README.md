@@ -495,7 +495,7 @@ output = "stderr"              # "stderr" (default) or "file"
 | | Free | Team ($149/mo) |
 |---|---|---|
 | Database connections | 3 | 20 |
-| Active users | 10 | 50 |
+| Active users | 20 | 50 |
 | Workflow rules | Unlimited | Unlimited |
 | Webhooks | Unlimited | Unlimited |
 | Agents | Unlimited | Unlimited |

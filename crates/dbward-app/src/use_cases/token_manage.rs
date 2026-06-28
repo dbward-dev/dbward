@@ -469,7 +469,7 @@ mod tests {
     struct FakeLicense;
     impl LicenseChecker for FakeLicense {
         fn max_users(&self) -> u32 {
-            10
+            20
         }
         fn max_databases(&self) -> u32 {
             u32::MAX

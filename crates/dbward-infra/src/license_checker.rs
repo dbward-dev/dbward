@@ -48,7 +48,7 @@ mod tests {
         assert_eq!(checker.max_databases(), 3);
         assert_eq!(checker.max_workflows(), u32::MAX);
         assert_eq!(checker.max_webhooks(), u32::MAX);
-        assert_eq!(checker.max_users(), 10);
+        assert_eq!(checker.max_users(), 20);
         assert_eq!(checker.max_roles(), u32::MAX);
     }
 
@@ -73,7 +73,7 @@ mod tests {
         assert_eq!(checker.max_databases(), 3);
         assert_eq!(checker.max_workflows(), u32::MAX);
         assert_eq!(checker.max_webhooks(), u32::MAX);
-        assert_eq!(checker.max_users(), 10);
+        assert_eq!(checker.max_users(), 20);
         assert_eq!(checker.max_roles(), u32::MAX);
     }
 }
