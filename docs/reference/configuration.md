@@ -438,8 +438,7 @@ url = "${DATABASE_URL}"
 | `poll_interval_ms` | u64 | | `1000` | Milliseconds between poll requests. |
 | `max_concurrent_tasks` | u32 | | `2` | Max parallel executions. |
 | `drain_timeout_secs` | u64 | | `60` | Graceful shutdown wait. |
-| `statement_timeout_secs` | u64 | | `30` | Default SQL timeout. |
-| `lease_duration_secs` | u64 | | `300` | Job lease before server reclaims. |
+| `statement_timeout_secs` | u64 | | `60` | Default SQL timeout. |
 | `operations` | String[] | | all | Operation types to handle. Unset = all. |
 | `startup_retry_initial_ms` | u64 | | `1000` | Initial retry backoff. |
 | `startup_retry_max_ms` | u64 | | `15000` | Max retry backoff. |
