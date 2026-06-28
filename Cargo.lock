@@ -632,6 +632,7 @@ dependencies = [
  "flate2",
  "libc",
  "open",
+ "percent-encoding",
  "rand 0.9.4",
  "regex",
  "reqwest",
