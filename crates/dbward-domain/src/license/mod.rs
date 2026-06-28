@@ -23,7 +23,7 @@ impl PlanLimits {
         max_workflows: u32::MAX,
         max_databases: 3,
         max_webhooks: u32::MAX,
-        max_users: 10,
+        max_users: 20,
         max_roles: u32::MAX,
     };
 }
