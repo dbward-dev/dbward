@@ -28,20 +28,20 @@ mode = "token"   # "token" | "oidc" | "both"
 
 ```bash
 # Via CLI
-dbward token create --subject alice --role admin
-dbward token create --subject bob --role developer --groups "backend-team" --expires 90d
-dbward token create --subject prod-agent --role agent-default --subject-type agent
+dbward token create --subject alice --scope-roles developer
+dbward token create --subject bob --scope-roles developer,dba --expires 90d
+dbward token create --subject prod-agent --subject-type agent --no-scope-ceiling
 ```
 
 ```bash
-# Via REST API (requires token.manage permission)
+# Via REST API (requires token.write permission)
 curl -X POST http://localhost:3000/api/tokens \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "subject_id": "bob",
-    "roles": ["developer"],
-    "groups": ["backend-team"],
+    "subject_type": "user",
+    "scope_ceiling": {"roles": ["developer", "dba"]},
     "name": "Bob CI token",
     "expires_at": "2026-09-01T00:00:00Z"
   }'
@@ -52,10 +52,9 @@ curl -X POST http://localhost:3000/api/tokens \
 | Field | Type | Description |
 |-------|------|-------------|
 | `subject_id` | string | **Required.** User or service identifier. |
-| `roles` | string[] | Roles to assign. Default: `[]` (uses `default_role`). |
 | `subject_type` | string | `user` or `agent`. Default: `user`. |
+| `scope_ceiling` | object | Max roles this token can activate. Format: `{"roles": ["role1", "role2"]}`. Effective roles = intersection of `scope_ceiling.roles` and role bindings. Set `null` for agent tokens (`--no-scope-ceiling`) to inherit all bound roles. **Required** for `user` tokens. |
 | `name` | string | Human-readable label. |
-| `groups` | string[] | Group memberships (for workflow approver matching). |
 | `expires_at` | datetime | Absolute expiry (RFC 3339). Unset = no expiration. |
 
 ### Token lifecycle
@@ -96,6 +95,26 @@ Or via environment variable:
 [server]
 url = "https://dbward.internal:3000"
 token = "${DBWARD_TOKEN}"
+```
+
+### Role resolution
+
+Tokens do not embed roles directly. The server resolves roles dynamically at request time using `[[auth.role_bindings]]` and intersects with the token's `scope_ceiling`.
+
+For details on role bindings and permissions, see [Authorization Reference](../reference/authorization.md).
+
+### Inspecting tokens
+
+Check a token's current effective permissions:
+
+```bash
+dbward token inspect <ID>
+```
+
+```bash
+# Via REST API (owner or token.write permission)
+curl http://localhost:3000/api/tokens/$TOKEN_ID/inspect \
+  -H "Authorization: Bearer $MY_TOKEN"
 ```
 
 ---
@@ -202,7 +221,7 @@ This is the recommended way to offboard users in token-only deployments.
 
 ### OIDC users
 
-OIDC users are created with `source = "token"` and cannot be managed via `[[users]]` config (the source guard skips them). To disable an OIDC user:
+OIDC users are created with `source = "oidc"` and cannot be managed via `[[users]]` config (the source guard skips them). To disable an OIDC user:
 
 1. **API suspend**: `POST /api/users/{id}/suspend` — immediately blocks all requests (the server checks `is_suspended` on every request, even with a valid JWT).
 2. **IdP-side disable**: Prevents new JWT issuance. Existing JWTs are still checked against `is_suspended` per-request, so API suspend is effective regardless of JWT lifetime.
@@ -278,30 +297,19 @@ min = 1
 
 Both are extracted from the JWT on every request. Neither is stored in dbward's database.
 
-### API tokens with groups
-
-Admin can assign groups to API tokens (for CI/CD or service accounts that need to act as approvers):
-
-```bash
-curl -X POST http://localhost:3000/api/tokens \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "subject_id": "ci-bot",
-    "roles": ["developer"],
-    "groups": ["backend-team"]
-  }'
-```
-
 ---
 
 ## Agent authentication
 
-Agents use API tokens with `subject_type = "agent"`:
+Agents use API tokens with `subject_type = "agent"` and typically `--no-scope-ceiling` to inherit all bound roles:
 
 ```bash
-dbward token create --subject prod-agent --role agent-default --subject-type agent
+dbward token create --subject prod-agent --subject-type agent --no-scope-ceiling
 ```
+
+The `--no-scope-ceiling` flag removes the scope ceiling restriction, allowing the agent token to activate all roles assigned via role bindings. This is the recommended setup for agents since their permissions are fully controlled via `[[auth.role_bindings]]`.
+
+> **Note:** `--no-scope-ceiling` conflicts with `--scope-roles` — they cannot be used together.
 
 In OIDC mode (`mode = "oidc"`), agents are the only entities allowed to use API tokens. Human users must authenticate via OIDC.
 

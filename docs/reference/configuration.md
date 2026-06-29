@@ -64,7 +64,7 @@ default_role = "readonly"
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `mode` | String | | `"token"` if `[auth.oidc]` absent; `"both"` if `[auth.oidc]` present | Authentication mode: `"token"`, `"oidc"`, `"both"`. Requires Team license for `"oidc"`/`"both"`. |
-| `default_role` | String | | — | Role assigned when no binding matches. Unset = reject unmatched users. |
+| `default_role` | String | | — | Role assigned when no binding matches. Unset = reject unmatched users (fail-closed). Required if not all token subjects have explicit `[[auth.role_bindings]]`. |
 
 ### [auth.oidc]
 
@@ -103,7 +103,7 @@ role = "admin"
 
 ### [[auth.role_bindings]]
 
-Binds API token subjects or groups to roles.
+Binds API token subjects or groups to roles. **Required** when using API token authentication — at least one binding (or `default_role`) must exist for token subjects to be authorized.
 
 ```toml
 [[auth.role_bindings]]

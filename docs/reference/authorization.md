@@ -54,7 +54,7 @@ min = 1
 
 ## Role bindings
 
-Bind roles to users or groups:
+Bind roles to users or groups. **Required** for API token authentication — tokens without a matching binding (and no `default_role`) are rejected.
 
 ```toml
 [[auth.role_bindings]]
@@ -111,7 +111,7 @@ default_role = "developer"
 | `role.manage` | Create/delete custom roles via API |
 | `webhook.manage` | Create/update/delete webhooks |
 | `user.manage` | Suspend/activate users |
-| `token.manage` | Create/revoke any token |
+| `token.write` | Create/revoke any token |
 | `token.revoke_own` | Revoke own tokens |
 | `metrics.view` | Access /metrics endpoint |
 

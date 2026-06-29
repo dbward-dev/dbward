@@ -151,19 +151,98 @@ Permission: `user.manage`
 
 Create a new API token. The token value is returned only once in the response — store it securely.
 
-Permission: `token.manage`
+**Request body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `subject_id` | string | ✓ | User or service identifier. |
+| `subject_type` | string | | `user` (default) or `agent`. |
+| `scope_ceiling` | object | ✓ (user) | `{"roles": [...]}` — roles the token is allowed to activate. Required for `user` tokens. Set `null` for agent tokens to inherit all bound roles. |
+| `name` | string | | Human-readable label. |
+| `expires_at` | datetime | | Absolute expiry (RFC 3339). Unset = no expiration. |
+
+> **Removed fields:** `roles` (deprecated — converted to `scope_ceiling` if sent alone, rejected if sent with `scope_ceiling`) and `groups` (abolished — rejected if non-empty).
+
+**Response (201):**
+
+```json
+{
+  "id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+  "token": "dbw_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+  "prefix": "a1b2c3d4",
+  "subject_id": "bob",
+  "scope_ceiling": {"roles": ["developer", "dba"]},
+  "effective_roles": ["developer"],
+  "effective_permissions": ["request.create", "request.view"],
+  "expires_at": "2026-09-01T00:00:00Z"
+}
+```
+
+Permission: `token.write`
+
 
 ### GET /api/tokens
 
 List all tokens with their metadata, status, and expiration.
 
-Permission: `token.manage`
+**Response (200):**
+
+```json
+{
+  "tokens": [
+    {
+      "id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+      "subject_id": "bob",
+      "subject_type": "user",
+      "token_prefix": "a1b2c3d4",
+      "scope_ceiling": {"roles": ["developer"]},
+      "name": "Bob CI token",
+      "status": "active",
+      "expires_at": "2026-09-01T00:00:00Z",
+      "created_at": "2026-06-29T12:00:00Z",
+      "revoked_at": null
+    }
+  ]
+}
+```
+
+Permission: `token.write`
+
+### GET /api/tokens/{id}/inspect
+
+Inspect a token's resolved authorization state: scope ceiling, resolved roles (from `[[auth.role_bindings]]`), effective roles (intersection), and effective permissions.
+
+**Response (200):**
+
+```json
+{
+  "id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+  "subject_id": "bob",
+  "subject_type": "user",
+  "scope_ceiling": {"roles": ["developer", "dba"]},
+  "resolved_roles": ["developer", "admin"],
+  "effective_roles": ["developer"],
+  "effective_permissions": ["request.create", "request.view", "result.view"],
+  "status": "active"
+}
+```
+
+Permission: Owner (token's `subject_id` matches caller) **or** `token.write`
 
 ### DELETE /api/tokens/{id}
 
 Revoke a token immediately. The token becomes invalid for all future requests.
 
-Permission: `token.manage` or `token.revoke_own` (for own tokens)
+**Response (200):**
+
+```json
+{
+  "id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+  "revoked_at": "2026-06-29T15:00:00Z"
+}
+```
+
+Permission: `token.write` or `token.revoke_own` (for own tokens)
 
 ---
 
@@ -214,14 +293,6 @@ Permission: `metrics.view`
 ### GET /api/roles
 
 List all roles (built-in and custom) with their permissions.
-
-Permission: `role.manage`
-
-### DELETE /api/roles/{name}
-
-Delete a custom role. Built-in roles (`admin`, `developer`, `readonly`, `agent-default`) cannot be deleted.
-
-Response: 204
 
 Permission: `role.manage`
 
@@ -449,14 +520,17 @@ Permission: Agent token required
 All errors return:
 
 ```json
-{"error": {"code": "validation_error", "message": "subject_id is required"}}
+{"error": "subject_id is required", "code": "validation.failed", "hint": "subject_id is required"}
 ```
 
-| HTTP Status | Meaning |
-|-------------|---------|
-| 400 | Validation error |
-| 401 | Not authenticated |
-| 403 | Not authorized |
-| 404 | Resource not found |
-| 409 | Conflict (idempotency key race) |
-| 422 | Business logic error |
+| HTTP Status | Code | Meaning |
+|-------------|------|---------|
+| 400 | `validation.failed` | Validation error |
+| 401 | (varies) | Not authenticated |
+| 403 | `forbidden` | Not authorized |
+| 404 | `request.not_found` | Resource not found |
+| 409 | `request.conflict` | Conflict (idempotency key race) |
+| 410 | `request.gone` | Resource gone |
+| 413 | `payload.too_large` | Payload too large |
+| 422 | `policy.limit_exceeded` | Plan limit exceeded |
+
