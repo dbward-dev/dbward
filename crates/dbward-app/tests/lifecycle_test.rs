@@ -614,6 +614,13 @@ mod common {
         ) -> Result<bool, AppError> {
             Ok(true)
         }
+        fn mark_approved_from_dispatched(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(true)
+        }
     }
     impl ApprovalWriterOps for NoopTx {
         fn insert_approval(&self, _: &dbward_domain::entities::Approval) -> Result<(), AppError> {

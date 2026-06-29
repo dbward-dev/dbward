@@ -18,6 +18,7 @@ mod policies;
 mod requests;
 mod schemas;
 pub(crate) mod slack;
+pub(crate) mod slack_messages;
 mod tokens;
 mod users;
 mod webhooks;

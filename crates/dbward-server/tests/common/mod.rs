@@ -278,6 +278,13 @@ impl dbward_app::ports::transaction::RequestWriterOps for NoopTxScope {
     ) -> Result<bool, dbward_app::error::AppError> {
         Ok(true)
     }
+    fn mark_approved_from_dispatched(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, dbward_app::error::AppError> {
+        Ok(true)
+    }
     fn cancel_all_for_user(
         &self,
         _: &str,

@@ -281,7 +281,7 @@ fn build_slack_body(event: &WebhookEvent) -> String {
     // CLI command hint
     let action = match event.event_type.as_str() {
         "request.created" => Some(format!("`dbward request approve {req_id}`")),
-        "request.break_glass" | "request.auto_approved" => {
+        "request.break_glass" | "request.auto_approved" | "request.dispatch_timeout" => {
             Some(format!("`dbward request resume {req_id}`"))
         }
         _ => None,
@@ -539,5 +539,17 @@ mod slack_body_tests {
                 .unwrap_or(false)
         });
         assert!(!has_sql_block);
+    }
+
+    #[test]
+    fn slack_body_dispatch_timeout_has_resume_hint() {
+        let mut event = sample_event();
+        event.event_type = "request.dispatch_timeout".into();
+        event.redacted_detail = None;
+        let body = build_slack_body(&event);
+        assert!(
+            body.contains("dbward request resume 96cead2e-86f4-4a1b-b3c7-abcdef123456"),
+            "expected resume CLI hint in: {body}"
+        );
     }
 }

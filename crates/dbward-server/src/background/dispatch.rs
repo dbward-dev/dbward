@@ -44,22 +44,27 @@ pub(crate) async fn run_dispatch_timeout_once(state: &AppState) -> TickResult {
         );
         audit_event.request_id = Some(id.clone());
         let id_owned = id.clone();
-        match bg.uow().execute(Box::new(move |tx| {
-            // Revert dispatched → approved
-            let updated = tx.mark_approved(&id_owned, now)?;
-            if !updated {
-                return Ok(()); // already transitioned, skip audit
-            }
-            tx.record(&audit_event)?;
-            Ok(())
-        })) {
-            Ok(()) => {
-                result.processed += 1;
-            }
+        let updated = match dbward_app::ports::transaction::uow_execute(
+            bg.uow().as_ref(),
+            move |tx| {
+                let updated = tx.mark_approved_from_dispatched(&id_owned, now)?;
+                if updated {
+                    tx.record(&audit_event)?;
+                }
+                Ok(updated)
+            },
+        ) {
+            Ok(v) => v,
             Err(e) => {
                 result.failed += 1;
                 error!(task = "request.dispatch_timeout", request_id = %id, error = %e, "failed to revert to approved");
+                continue;
             }
+        };
+
+        if updated {
+            result.processed += 1;
+            emit_webhook(state, "request.dispatch_timeout", &id);
         }
     }
     result

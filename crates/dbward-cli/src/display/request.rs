@@ -285,11 +285,9 @@ pub(crate) fn print_request_detail(body: &serde_json::Value) {
                             .filter_map(|a| {
                                 let target = a["selector"].as_str()?;
                                 let min = a["min"].as_u64().unwrap_or(1);
-                                Some(if min > 1 {
-                                    format!("{target} x{min}")
-                                } else {
-                                    target.to_string()
-                                })
+                                let current = a["current"].as_u64().unwrap_or(0);
+                                let status = if current >= min { "✓" } else { "⏳" };
+                                Some(format!("{target} {status} {current}/{min}"))
                             })
                             .collect()
                     })

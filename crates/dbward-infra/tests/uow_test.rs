@@ -375,3 +375,40 @@ fn purge_authenticated_maintains_chain_integrity() {
     );
     assert!(post.total_events < pre.total_events);
 }
+
+#[test]
+fn mark_approved_from_dispatched_only_affects_dispatched() {
+    let conn = sqlite::open_memory().unwrap();
+    common::register_db(&conn);
+    let uow = SqliteUnitOfWork::new(conn.clone());
+    let now = Utc::now();
+
+    // Insert requests in different states
+    {
+        let c = conn.lock();
+        for (id, status) in [("d1", "dispatched"), ("p1", "pending"), ("a1", "approved")] {
+            c.execute(
+                "INSERT INTO requests (id, requester, operation, database_id, detail, status, created_at, updated_at) VALUES (?1, 'alice', 'execute_query', 'app:production', 'SELECT 1', ?2, ?3, ?3)",
+                rusqlite::params![id, status, now.to_rfc3339()],
+            ).unwrap();
+        }
+    }
+
+    // mark_approved_from_dispatched should only affect 'dispatched'
+    let d1_updated = uow_execute(&uow, |tx| tx.mark_approved_from_dispatched("d1", now)).unwrap();
+    let p1_updated = uow_execute(&uow, |tx| tx.mark_approved_from_dispatched("p1", now)).unwrap();
+    let a1_updated = uow_execute(&uow, |tx| tx.mark_approved_from_dispatched("a1", now)).unwrap();
+
+    assert!(d1_updated, "dispatched → approved should return true");
+    assert!(!p1_updated, "pending should not be affected");
+    assert!(!a1_updated, "already approved should not be affected");
+
+    // Verify final states
+    let guard = conn.lock();
+    let status_d1: String = guard
+        .query_row("SELECT status FROM requests WHERE id = 'd1'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(status_d1, "approved");
+}

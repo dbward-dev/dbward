@@ -539,11 +539,8 @@ pub(crate) fn format_approval_progress(
                         .filter_map(|a| {
                             let target = a["selector"].as_str()?;
                             let min = a["min"].as_u64().unwrap_or(1);
-                            Some(if min > 1 {
-                                format!("{target} x{min}")
-                            } else {
-                                target.to_string()
-                            })
+                            let current = a["current"].as_u64().unwrap_or(0);
+                            Some(format!("{target} ({current}/{min})"))
                         })
                         .collect::<Vec<_>>()
                 })
@@ -766,7 +763,30 @@ mod tests {
             }),
         );
         assert!(text.contains("Request req_123 status: pending"));
-        assert!(text.contains("Step 1 [all]: role:admin"));
+        assert!(text.contains("Step 1 [all]: role:admin (0/1)"));
+    }
+
+    #[test]
+    fn format_approval_progress_partial_current() {
+        let text = format_approval_progress(
+            "req_456",
+            &json!("pending"),
+            &json!({
+                "current_step": 0,
+                "total_steps": 1,
+                "steps": [{
+                    "index": 0,
+                    "mode": "all",
+                    "satisfied": false,
+                    "approvers_required": [
+                        {"selector": "role:dba", "min": 1, "current": 1},
+                        {"selector": "role:cto", "min": 2, "current": 1}
+                    ]
+                }]
+            }),
+        );
+        assert!(text.contains("role:dba (1/1)"));
+        assert!(text.contains("role:cto (1/2)"));
     }
 
     #[test]

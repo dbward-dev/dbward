@@ -6,6 +6,7 @@ use axum::response::{IntoResponse, Response};
 use dbward_domain::auth::{AuthUser, SubjectType};
 use dbward_domain::entities::AuditContext;
 
+use super::slack_messages as msg;
 use crate::state::AppState;
 
 /// Resolve a Slack user into a fully-populated AuthUser with suspended check.
@@ -171,7 +172,7 @@ async fn handle_block_actions(
                                 "⚠️ Your Slack account is not linked to dbward.\nRun: `dbward user link-slack {slack_user_id}`"
                             )
                         } else {
-                            "⚠️ Authentication failed.".to_string()
+                            format!("⚠️ {}", msg::AUTH_FAILED)
                         };
                         let _ = sc.post_ephemeral(&channel_id, &slack_user_id, &msg).await;
                     }
@@ -192,7 +193,31 @@ async fn handle_block_actions(
                             .post_ephemeral(
                                 &channel_id,
                                 &slack_user_id,
-                                "⚠️ You don't have permission to view this request.",
+                                &format!("⚠️ {}", msg::PERMISSION_DENIED_ACCESS),
+                            )
+                            .await;
+                    }
+                    return;
+                }
+                Err(dbward_app::error::AppError::NotFound(_)) => {
+                    if let Some(ref sc) = state_clone.slack_client {
+                        let _ = sc
+                            .post_ephemeral(
+                                &channel_id,
+                                &slack_user_id,
+                                &format!("⚠️ {}", msg::REQUEST_NOT_FOUND),
+                            )
+                            .await;
+                    }
+                    return;
+                }
+                Err(dbward_app::error::AppError::Gone(_)) => {
+                    if let Some(ref sc) = state_clone.slack_client {
+                        let _ = sc
+                            .post_ephemeral(
+                                &channel_id,
+                                &slack_user_id,
+                                &format!("⚠️ {}", msg::REQUEST_EXPIRED),
                             )
                             .await;
                     }
@@ -204,7 +229,7 @@ async fn handle_block_actions(
                             .post_ephemeral(
                                 &channel_id,
                                 &slack_user_id,
-                                "⚠️ Request not found or expired.",
+                                &format!("⚠️ {}", msg::GENERIC_ERROR),
                             )
                             .await;
                     }
@@ -232,7 +257,7 @@ async fn handle_block_actions(
                         .post_ephemeral(
                             &channel_id,
                             &slack_user_id,
-                            "⚠️ You don't have permission to resume this request.",
+                            &format!("⚠️ {}", msg::PERMISSION_DENIED_RESUME),
                         )
                         .await;
                 }
@@ -282,7 +307,7 @@ async fn handle_block_actions(
                         let err_modal =
                             dbward_infra::slack::block_kit::build_result_modal_unavailable(
                                 &request_id,
-                                "Authentication failed.",
+                                msg::AUTH_FAILED,
                             );
                         if let Err(e) = sc.update_modal(&view_id, &err_modal).await {
                             tracing::debug!(error = %e, "slack modal update failed");
@@ -349,7 +374,7 @@ async fn handle_block_actions(
                     if let Some(ref sc) = state_clone.slack_client {
                         let modal = dbward_infra::slack::block_kit::build_result_modal_unavailable(
                             &request_id,
-                            "You don't have permission to view this result.",
+                            msg::PERMISSION_DENIED_VIEW_RESULT,
                         );
                         if let Err(e) = sc.update_modal(&view_id, &modal).await {
                             tracing::debug!(error = %e, "slack modal update failed");
@@ -358,15 +383,15 @@ async fn handle_block_actions(
                 }
                 Err(e) => {
                     if let Some(ref sc) = state_clone.slack_client {
-                        let msg = match &e {
+                        let m = match &e {
                             dbward_app::error::AppError::NotFound(m) => m.as_str(),
                             dbward_app::error::AppError::Conflict(m) => m.as_str(),
                             dbward_app::error::AppError::Gone(m) => m.as_str(),
-                            _ => "Failed to load result.",
+                            _ => msg::RESULT_LOAD_FAILED,
                         };
                         let modal = dbward_infra::slack::block_kit::build_result_modal_unavailable(
                             &request_id,
-                            msg,
+                            m,
                         );
                         if let Err(e) = sc.update_modal(&view_id, &modal).await {
                             tracing::debug!(error = %e, "slack modal update failed");
@@ -389,15 +414,15 @@ async fn handle_block_actions(
         Err(e) => {
             tracing::warn!(slack_user_id = %slack_user_id, error = %e, "slack auth resolution failed");
             if let Some(ref slack_client) = state.slack_client {
-                let msg = if e == "not_linked" {
+                let m = if e == "not_linked" {
                     format!(
                         "⚠️ Your Slack account is not linked to dbward.\nRun: `dbward user link-slack {slack_user_id}`"
                     )
                 } else {
-                    "⚠️ Account suspended or not found".to_string()
+                    format!("⚠️ {}", msg::AUTH_FAILED)
                 };
                 if let Err(e) = slack_client
-                    .post_ephemeral(&channel_id, &slack_user_id, &msg)
+                    .post_ephemeral(&channel_id, &slack_user_id, &m)
                     .await
                 {
                     tracing::warn!(error = %e, "slack notification failed");
@@ -416,7 +441,35 @@ async fn handle_block_actions(
                     .post_ephemeral(
                         &channel_id,
                         &slack_user_id,
-                        "⚠️ You are not authorized to view this request",
+                        &format!("⚠️ {}", msg::PERMISSION_DENIED_VIEW),
+                    )
+                    .await
+            {
+                tracing::warn!(error = %e, "slack notification failed");
+            }
+            return StatusCode::OK;
+        }
+        Err(dbward_app::error::AppError::NotFound(_)) => {
+            if let Some(ref slack_client) = state.slack_client
+                && let Err(e) = slack_client
+                    .post_ephemeral(
+                        &channel_id,
+                        &slack_user_id,
+                        &format!("⚠️ {}", msg::REQUEST_NOT_FOUND),
+                    )
+                    .await
+            {
+                tracing::warn!(error = %e, "slack notification failed");
+            }
+            return StatusCode::OK;
+        }
+        Err(dbward_app::error::AppError::Gone(_)) => {
+            if let Some(ref slack_client) = state.slack_client
+                && let Err(e) = slack_client
+                    .post_ephemeral(
+                        &channel_id,
+                        &slack_user_id,
+                        &format!("⚠️ {}", msg::REQUEST_EXPIRED),
                     )
                     .await
             {
@@ -430,7 +483,7 @@ async fn handle_block_actions(
                     .post_ephemeral(
                         &channel_id,
                         &slack_user_id,
-                        "⚠️ Request not found or expired",
+                        &format!("⚠️ {}", msg::GENERIC_ERROR),
                     )
                     .await
             {
@@ -549,7 +602,7 @@ async fn handle_view_submission(
         .as_str()
         .unwrap_or("");
     if decision.is_empty() {
-        return modal_error("decision_block", "Please select Approve or Reject");
+        return modal_error("decision_block", msg::DECISION_REQUIRED);
     }
 
     // Comment
@@ -565,21 +618,19 @@ async fn handle_view_submission(
         .map(|s| s.to_string());
 
     if decision == "reject" && comment.is_none() {
-        return modal_error("comment_block", "Comment is required for rejection");
+        return modal_error("comment_block", msg::COMMENT_REQUIRED);
     }
 
     // Resolve user with suspended check
     let auth_user = match resolve_slack_auth_user(state, slack_user_id).await {
         Ok(u) => u,
         Err(e) => {
-            let msg = if e == "not_linked" {
-                "Slack account not linked"
-            } else if e == "suspended" {
-                "Account suspended"
-            } else {
-                "Permission denied or account suspended"
+            let m = match e.as_str() {
+                "not_linked" => msg::ACCOUNT_NOT_LINKED,
+                "suspended" => msg::ACCOUNT_SUSPENDED,
+                _ => msg::AUTH_FAILED,
             };
-            return modal_error("decision_block", msg);
+            return modal_error("decision_block", m);
         }
     };
 
@@ -615,24 +666,22 @@ async fn handle_view_submission(
             )
             .map(|_| ())
         }
-        _ => return modal_error("decision_block", "Invalid decision"),
+        _ => return modal_error("decision_block", msg::INVALID_DECISION),
     };
 
     match result {
         Ok(()) => StatusCode::OK.into_response(),
         Err(e) => {
-            let msg = match &e {
+            let m = match &e {
                 dbward_app::error::AppError::Conflict(m) => m.as_str(),
-                dbward_app::error::AppError::Gone(_) => "Request has expired",
-                dbward_app::error::AppError::NotFound(_) => "Request not found",
-                dbward_app::error::AppError::Forbidden(_) => {
-                    "Not eligible to approve/reject this request"
-                }
+                dbward_app::error::AppError::Gone(_) => msg::REQUEST_EXPIRED,
+                dbward_app::error::AppError::NotFound(_) => msg::REQUEST_NOT_FOUND,
+                dbward_app::error::AppError::Forbidden(_) => msg::PERMISSION_DENIED_APPROVE,
                 dbward_app::error::AppError::Validation(m) => m.as_str(),
-                _ => "An error occurred. Please try again.",
+                _ => msg::GENERIC_ERROR,
             };
             tracing::info!(error = %e, "slack review action failed");
-            modal_error("decision_block", msg)
+            modal_error("decision_block", m)
         }
     }
 }
@@ -694,7 +743,7 @@ pub async fn commands(State(state): State<AppState>, headers: HeaderMap, body: B
         Ok(a) => a,
         Err(e) => {
             tracing::warn!(error = %e, "slack command: failed to list databases");
-            return ephemeral_response("⚠️ Failed to load databases.");
+            return ephemeral_response(&format!("⚠️ {}", msg::DB_LOAD_FAILED));
         }
     };
     let accessible = state.authorizer.filter_accessible(&auth_user, &all);
@@ -735,36 +784,36 @@ async fn handle_create_submission(state: &AppState, payload: &serde_json::Value)
         .filter(|s| !s.trim().is_empty());
 
     if db_env.is_none() {
-        return modal_error("db_env_block", "Database/Environment is required");
+        return modal_error("db_env_block", msg::DB_ENV_REQUIRED);
     }
     if sql.is_none() || sql.unwrap().trim().is_empty() {
-        return modal_error("sql_block", "SQL is required");
+        return modal_error("sql_block", msg::SQL_REQUIRED);
     }
 
     let (db_str, env_str) = match db_env.unwrap().split_once('/') {
         Some((d, e)) => (d, e),
-        None => return modal_error("db_env_block", "Invalid selection"),
+        None => return modal_error("db_env_block", msg::INVALID_SELECTION),
     };
 
     let auth_user = match resolve_slack_auth_user(state, slack_user_id).await {
         Ok(u) => u,
         Err(e) => {
-            let msg = match e.as_str() {
-                "not_linked" => "Slack account not linked to dbward",
-                "suspended" => "Account suspended",
-                _ => "Authentication failed",
+            let m = match e.as_str() {
+                "not_linked" => msg::ACCOUNT_NOT_LINKED,
+                "suspended" => msg::ACCOUNT_SUSPENDED,
+                _ => msg::AUTH_FAILED,
             };
-            return modal_error("db_env_block", msg);
+            return modal_error("db_env_block", m);
         }
     };
 
     let db = match DatabaseName::new(db_str) {
         Ok(d) => d,
-        Err(_) => return modal_error("db_env_block", "Invalid database name"),
+        Err(_) => return modal_error("db_env_block", msg::INVALID_DB_NAME),
     };
     let env = match Environment::new(env_str) {
         Ok(e) => e,
-        Err(_) => return modal_error("db_env_block", "Invalid environment"),
+        Err(_) => return modal_error("db_env_block", msg::INVALID_ENVIRONMENT),
     };
 
     let input = CreateRequestInput {
@@ -796,15 +845,15 @@ async fn handle_create_submission(state: &AppState, payload: &serde_json::Value)
     match uc.execute(input, &auth_user, &audit_ctx) {
         Ok(_) => StatusCode::OK.into_response(),
         Err(e) => {
-            let msg = match &e {
+            let m = match &e {
                 dbward_app::error::AppError::Validation(m) => m.as_str(),
-                dbward_app::error::AppError::Forbidden(_) => "Permission denied",
-                dbward_app::error::AppError::NotFound(_) => "Database not found or not registered",
-                dbward_app::error::AppError::Conflict(_) => "Duplicate request (already submitted)",
+                dbward_app::error::AppError::Forbidden(_) => msg::PERMISSION_DENIED_GENERIC,
+                dbward_app::error::AppError::NotFound(_) => msg::DB_NOT_FOUND,
+                dbward_app::error::AppError::Conflict(_) => msg::DUPLICATE_REQUEST,
                 dbward_app::error::AppError::PlanLimit(m) => m.as_str(),
-                _ => "Request creation failed. Try again or use CLI.",
+                _ => msg::CREATE_FAILED,
             };
-            modal_error("sql_block", msg)
+            modal_error("sql_block", m)
         }
     }
 }
@@ -824,12 +873,12 @@ async fn handle_resume_submission(state: &AppState, payload: &serde_json::Value)
     let auth_user = match resolve_slack_auth_user(state, slack_user_id).await {
         Ok(u) => u,
         Err(e) => {
-            let msg = match e.as_str() {
-                "not_linked" => "Slack account not linked to dbward",
-                "suspended" => "Account suspended",
-                _ => "Authentication failed",
+            let m = match e.as_str() {
+                "not_linked" => msg::ACCOUNT_NOT_LINKED,
+                "suspended" => msg::ACCOUNT_SUSPENDED,
+                _ => msg::AUTH_FAILED,
             };
-            return modal_update_error(msg);
+            return modal_update_error(m);
         }
     };
 
@@ -847,16 +896,14 @@ async fn handle_resume_submission(state: &AppState, payload: &serde_json::Value)
     match uc.execute(input, &auth_user, &audit_ctx) {
         Ok(_) => StatusCode::OK.into_response(),
         Err(e) => {
-            let msg = match &e {
-                dbward_app::error::AppError::Forbidden(_) => {
-                    "You don't have permission to resume this request."
-                }
+            let m = match &e {
+                dbward_app::error::AppError::Forbidden(_) => msg::PERMISSION_DENIED_RESUME,
                 dbward_app::error::AppError::Conflict(m) => m.as_str(),
-                dbward_app::error::AppError::NotFound(_) => "Request not found.",
-                dbward_app::error::AppError::Gone(_) => "Request has expired.",
-                _ => "Resume failed. Please try again or use the CLI.",
+                dbward_app::error::AppError::NotFound(_) => msg::REQUEST_NOT_FOUND,
+                dbward_app::error::AppError::Gone(_) => msg::REQUEST_EXPIRED,
+                _ => msg::RESUME_FAILED,
             };
-            modal_update_error(msg)
+            modal_update_error(m)
         }
     }
 }

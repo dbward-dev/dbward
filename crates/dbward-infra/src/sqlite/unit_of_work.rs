@@ -288,6 +288,21 @@ impl RequestWriterOps for SqliteTxScope<'_> {
         Ok(n > 0)
     }
 
+    fn mark_approved_from_dispatched(
+        &self,
+        id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<bool, AppError> {
+        let n = self
+            .conn
+            .execute(
+                "UPDATE requests SET status = 'approved', updated_at = ?1 WHERE id = ?2 AND status = 'dispatched'",
+                params![now.to_rfc3339(), id],
+            )
+            .map_err(db_err("tx: mark_approved_from_dispatched"))?;
+        Ok(n > 0)
+    }
+
     fn cancel_all_for_user(
         &self,
         user_id: &str,
