@@ -126,7 +126,7 @@ create_token() {
   local extra_args=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --groups) extra_args="$extra_args --groups $2"; shift 2 ;;
+      --groups) shift 2 ;; # groups abolished — ignored
       --agent) extra_args="$extra_args --agent"; shift ;;
       *) shift ;;
     esac
@@ -139,10 +139,25 @@ create_token() {
   case "$extra_args" in *--agent*) is_agent="agent" ;; esac
   local subject_type="${is_agent:-user}"
   local result
-  result=$(curl -sf -X POST "${SERVER_URL}/api/tokens" \
-    -H "Authorization: Bearer $admin_token" \
-    -H "Content-Type: application/json" \
-    -d "{\"subject_id\":\"$user\",\"roles\":[\"$role\"],\"subject_type\":\"$subject_type\"}" 2>&1) || true
+  if [ "$subject_type" = "agent" ]; then
+    # Agent tokens: no scope_ceiling (unrestricted)
+    result=$(curl -sf -X POST "${SERVER_URL}/api/tokens" \
+      -H "Authorization: Bearer $admin_token" \
+      -H "Content-Type: application/json" \
+      -d "{\"subject_id\":\"$user\",\"subject_type\":\"agent\"}" 2>&1) || true
+  else
+    # Build scope_ceiling: include requested role + readonly (default_role) to ensure resolve ∩ ceiling is non-empty
+    local ceiling_roles="\"$role\""
+    if [ "$role" = "admin" ]; then
+      ceiling_roles="\"admin\",\"slack-user\",\"developer\",\"readonly\""
+    elif [ "$role" != "readonly" ]; then
+      ceiling_roles="\"$role\",\"readonly\""
+    fi
+    result=$(curl -sf -X POST "${SERVER_URL}/api/tokens" \
+      -H "Authorization: Bearer $admin_token" \
+      -H "Content-Type: application/json" \
+      -d "{\"subject_id\":\"$user\",\"scope_ceiling\":{\"roles\":[$ceiling_roles]},\"subject_type\":\"$subject_type\"}" 2>&1) || true
+  fi
   local token
   token=$(echo "$result" | grep -o '"token":"[^"]*"' | sed 's/"token":"//;s/"//')
   if [ -n "$token" ]; then

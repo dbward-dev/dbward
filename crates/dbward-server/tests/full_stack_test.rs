@@ -11,7 +11,6 @@ use tower::ServiceExt;
 use dbward_app::error::AuthError;
 use dbward_app::ports::*;
 use dbward_domain::auth::*;
-use dbward_domain::values::*;
 use dbward_infra::auth::RbacAuthorizer;
 use dbward_infra::sqlite::{self, *};
 use dbward_server::build_app;
@@ -25,33 +24,26 @@ use common::*;
 struct TestTokenVerifier;
 #[async_trait]
 impl TokenVerifier for TestTokenVerifier {
-    async fn verify_api_token(&self, token: &str) -> Result<AuthUser, AuthError> {
+    async fn verify_api_token(
+        &self,
+        token: &str,
+    ) -> Result<dbward_app::ports::VerifiedToken, AuthError> {
         match token {
-            "admin-token" => Ok(AuthUser {
+            "admin-token" => Ok(dbward_app::ports::VerifiedToken {
+                id: "tok-admin".into(),
                 subject_id: "admin".into(),
                 subject_type: SubjectType::User,
-                roles: vec![ResolvedRole {
-                    name: "admin".into(),
-                    permissions: [Permission::All].into(),
-                    databases: vec![DatabaseName::new("*").unwrap()],
-                    environments: vec![Environment::new("*").unwrap()],
-                }],
-                groups: vec![],
-                token_id: Some("tok-admin".into()),
+                scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
+                    roles: vec!["admin".into()],
+                }),
             }),
-            "dev-token" => Ok(AuthUser {
+            "dev-token" => Ok(dbward_app::ports::VerifiedToken {
+                id: "tok-dev".into(),
                 subject_id: "alice".into(),
                 subject_type: SubjectType::User,
-                roles: vec![ResolvedRole {
-                    name: "developer".into(),
-                    permissions: [Permission::RequestExecute, Permission::ResultView]
-                        .into_iter()
-                        .collect(),
-                    databases: vec![DatabaseName::new("*").unwrap()],
-                    environments: vec![Environment::new("*").unwrap()],
-                }],
-                groups: vec![],
-                token_id: Some("tok-dev".into()),
+                scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
+                    roles: vec!["admin".into()],
+                }),
             }),
             _ => Err(AuthError::InvalidToken),
         }

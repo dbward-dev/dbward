@@ -76,6 +76,8 @@ pub struct TransitionContext {
     pub metadata: EventMetadata,
     pub requester_id: String,
     pub audit_context: crate::entities::AuditContext,
+    /// Token ID used for authentication (for audit correlation).
+    pub auth_token_id: Option<String>,
 }
 
 /// Event emitted after a successful state transition.
@@ -93,6 +95,7 @@ pub struct TransitionEvent {
     pub metadata: EventMetadata,
     pub requester_id: String,
     pub audit_context: crate::entities::AuditContext,
+    pub auth_token_id: Option<String>,
 }
 
 /// Result of a state transition. Must be committed via .commit().
@@ -142,6 +145,7 @@ pub fn transition(
         metadata: context.metadata,
         requester_id: context.requester_id,
         audit_context: context.audit_context,
+        auth_token_id: context.auth_token_id,
     };
 
     Ok(TransitionResult { new_status, event })
@@ -171,6 +175,7 @@ pub fn create_event(new_status: RequestStatus, context: TransitionContext) -> Tr
         metadata: context.metadata,
         requester_id: context.requester_id,
         audit_context: context.audit_context,
+        auth_token_id: context.auth_token_id,
     };
     TransitionResult { new_status, event }
 }

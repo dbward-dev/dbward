@@ -32,14 +32,28 @@ pub fn create_bootstrap_token(
     let uc = state.tokens().manage();
 
     let subject_type = if is_agent { "agent" } else { "user" };
+
+    // Bootstrap ceiling: admin→["admin"], developer→["developer"], agent→None
+    // NOTE: Token creation passes Validation 6 (subject must resolve ≥1 role).
+    // This requires config to have role_bindings for bootstrap subjects
+    // (e.g. [[auth.role_bindings]] role="admin" subjects=["admin"]).
+    let scope_ceiling = if is_agent {
+        None
+    } else {
+        Some(dbward_domain::entities::ScopeCeiling {
+            roles: vec![role.to_string()],
+        })
+    };
+
     let output = uc.create(
         TokenCreateInput {
             subject_id: subject_id.to_string(),
             subject_type: subject_type.to_string(),
             name: Some(format!("bootstrap-{subject_id}")),
-            roles: vec![role.to_string()],
-            groups: vec![],
+            scope_ceiling,
             expires_at: None,
+            issued_by: Some("system".to_string()),
+            groups: vec![],
         },
         &system_user(),
         &dbward_domain::entities::AuditContext::System,
@@ -98,19 +112,25 @@ pub fn auto_bootstrap(
             )
             .into());
         }
-        // Warn about legacy agent tokens with overprivileged roles
+        // Warn about legacy agent tokens with unexpected scope_ceiling
         let bad_agents: Vec<_> = existing
             .iter()
             .filter(|t| {
-                t.subject_type == dbward_domain::auth::SubjectType::Agent
-                    && t.roles != vec!["agent-default".to_string()]
+                if t.subject_type != dbward_domain::auth::SubjectType::Agent {
+                    return false;
+                }
+                match &t.scope_ceiling {
+                    None => false,                                                      // valid
+                    Some(sc) if sc.roles == vec!["agent-default".to_string()] => false, // valid
+                    _ => true, // unexpected
+                }
             })
             .collect();
         for t in &bad_agents {
             eprintln!(
-                "[security] WARNING: agent token prefix={} subject_id={} has roles {:?} (expected [\"agent-default\"]). \
+                "[security] WARNING: agent token prefix={} subject_id={} has unexpected scope_ceiling {:?} (expected None or [\"agent-default\"]). \
                  Revoke with --force-bootstrap or DELETE /api/tokens/{}",
-                t.token_prefix, t.subject_id, t.roles, t.id
+                t.token_prefix, t.subject_id, t.scope_ceiling, t.id
             );
         }
         return Ok(());

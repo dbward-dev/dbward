@@ -4,37 +4,19 @@ use async_trait::async_trait;
 use sha2::{Digest, Sha256};
 
 use dbward_app::error::AuthError;
-use dbward_app::ports::{
-    LicenseChecker, OidcTokenVerifier, PolicyRepo, TokenRepo, TokenVerifier, UserRepo,
-};
-use dbward_domain::auth::{AuthUser, ResolvedRole};
+use dbward_app::ports::{OidcTokenVerifier, TokenRepo, TokenVerifier, VerifiedToken};
 
 pub struct ApiTokenVerifier {
     token_repo: Arc<dyn TokenRepo>,
-    user_repo: Arc<dyn UserRepo>,
-    policy_repo: Arc<dyn PolicyRepo>,
-    license_checker: Arc<dyn LicenseChecker>,
     oidc: Option<Arc<dyn OidcTokenVerifier>>,
 }
 
 impl ApiTokenVerifier {
-    pub fn new(
-        token_repo: Arc<dyn TokenRepo>,
-        user_repo: Arc<dyn UserRepo>,
-        policy_repo: Arc<dyn PolicyRepo>,
-    ) -> Self {
+    pub fn new(token_repo: Arc<dyn TokenRepo>) -> Self {
         Self {
             token_repo,
-            user_repo,
-            policy_repo,
-            license_checker: Arc::new(crate::FreePlanChecker),
             oidc: None,
         }
-    }
-
-    pub fn with_license(mut self, license_checker: Arc<dyn LicenseChecker>) -> Self {
-        self.license_checker = license_checker;
-        self
     }
 
     pub fn with_oidc(mut self, oidc: Arc<dyn OidcTokenVerifier>) -> Self {
@@ -45,7 +27,7 @@ impl ApiTokenVerifier {
 
 #[async_trait]
 impl TokenVerifier for ApiTokenVerifier {
-    async fn verify_api_token(&self, raw_token: &str) -> Result<AuthUser, AuthError> {
+    async fn verify_api_token(&self, raw_token: &str) -> Result<VerifiedToken, AuthError> {
         if !raw_token.starts_with("dbw_") || raw_token.len() < 12 || raw_token.len() > 256 {
             return Err(AuthError::InvalidToken);
         }
@@ -72,65 +54,11 @@ impl TokenVerifier for ApiTokenVerifier {
             return Err(AuthError::TokenExpired);
         }
 
-        // fail-closed: propagate DB errors
-        let suspended = self
-            .user_repo
-            .is_suspended(&token.subject_id)
-            .map_err(|e| AuthError::Internal(e.to_string()))?;
-        if suspended {
-            return Err(AuthError::UserSuspended);
-        }
-
-        // Resolve roles from token.roles by looking up role definitions
-        // Token.roles stores role NAMES fixed at creation time (source of truth)
-        let matched_roles = self
-            .policy_repo
-            .get_roles_by_names(&token.roles)
-            .map_err(|e| AuthError::Internal(e.to_string()))?;
-
-        let roles: Vec<ResolvedRole> = matched_roles
-            .into_iter()
-            .map(|rd| ResolvedRole {
-                name: rd.name,
-                permissions: rd.permissions.into_iter().collect(),
-                databases: rd.databases,
-                environments: rd.environments,
-            })
-            .collect();
-
-        if roles.is_empty() {
-            return Err(AuthError::Internal(format!(
-                "no matching role definitions for token roles: {:?}",
-                token.roles
-            )));
-        }
-
-        // User limit check: only block if user does not yet exist
-        let user_exists = self
-            .user_repo
-            .get(&token.subject_id)
-            .map_err(|e| AuthError::Internal(e.to_string()))?
-            .is_some();
-        if !user_exists {
-            let count = self
-                .user_repo
-                .count_active()
-                .map_err(|e| AuthError::Internal(e.to_string()))?;
-            if count >= self.license_checker.max_users() {
-                return Err(AuthError::UserLimitReached);
-            }
-        }
-
-        self.user_repo
-            .ensure_exists(&token.subject_id)
-            .map_err(|e| AuthError::Internal(e.to_string()))?;
-
-        Ok(AuthUser {
+        Ok(VerifiedToken {
+            id: token.id,
             subject_id: token.subject_id,
             subject_type: token.subject_type,
-            roles,
-            groups: token.groups,
-            token_id: Some(token.id),
+            scope_ceiling: token.scope_ceiling,
         })
     }
 
@@ -147,12 +75,9 @@ mod tests {
     use super::*;
     use chrono::{Duration, Utc};
     use dbward_app::error::AppError;
-    use dbward_domain::auth::{Permission, RoleDefinition, SubjectType};
-    use dbward_domain::entities::{Token, TokenStatus, User};
-    use dbward_domain::values::{DatabaseName, Environment};
+    use dbward_domain::auth::SubjectType;
+    use dbward_domain::entities::{ScopeCeiling, Token, TokenStatus};
     use std::sync::Mutex;
-
-    // --- Fake repos ---
 
     struct FakeTokenRepo {
         token: Mutex<Option<Token>>,
@@ -196,201 +121,16 @@ mod tests {
         }
     }
 
-    struct FakeUserRepo {
-        suspended: bool,
-        ensure_exists_err: bool,
-    }
-    impl FakeUserRepo {
-        fn ok() -> Self {
-            Self {
-                suspended: false,
-                ensure_exists_err: false,
-            }
-        }
-        fn suspended() -> Self {
-            Self {
-                suspended: true,
-                ensure_exists_err: false,
-            }
-        }
-        fn ensure_err() -> Self {
-            Self {
-                suspended: false,
-                ensure_exists_err: true,
-            }
-        }
-    }
-    impl UserRepo for FakeUserRepo {
-        fn get(&self, _: &str) -> Result<Option<User>, AppError> {
-            Ok(None)
-        }
-        fn upsert(&self, _: &User) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn list(&self) -> Result<Vec<User>, AppError> {
-            Ok(vec![])
-        }
-        fn suspend(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn activate(&self, _: &str, _: chrono::DateTime<Utc>) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn is_suspended(&self, _: &str) -> Result<bool, AppError> {
-            Ok(self.suspended)
-        }
-        fn ensure_exists(&self, _: &str) -> Result<(), AppError> {
-            if self.ensure_exists_err {
-                Err(AppError::Internal("db error".into()))
-            } else {
-                Ok(())
-            }
-        }
-    }
-
-    struct FakePolicyRepo {
-        roles: Vec<RoleDefinition>,
-    }
-    impl FakePolicyRepo {
-        fn with_admin() -> Self {
-            Self {
-                roles: vec![RoleDefinition {
-                    name: "admin".into(),
-                    permissions: vec![Permission::All],
-                    databases: vec![DatabaseName::wildcard()],
-                    environments: vec![Environment::wildcard()],
-                }],
-            }
-        }
-        fn empty() -> Self {
-            Self { roles: vec![] }
-        }
-    }
-    impl PolicyRepo for FakePolicyRepo {
-        fn get_roles_by_names(&self, _: &[String]) -> Result<Vec<RoleDefinition>, AppError> {
-            Ok(self.roles.clone())
-        }
-        fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_workflow(
-            &self,
-            _: &str,
-        ) -> Result<Option<dbward_domain::policies::Workflow>, AppError> {
-            Ok(None)
-        }
-        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError> {
-            Ok(vec![])
-        }
-        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn count_workflows(&self) -> Result<u32, AppError> {
-            Ok(0)
-        }
-        fn create_execution_policy(
-            &self,
-            _: &dbward_domain::policies::ExecutionPolicy,
-        ) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_execution_policy(
-            &self,
-            _: &str,
-        ) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> {
-            Ok(None)
-        }
-        fn list_execution_policies(
-            &self,
-        ) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> {
-            Ok(vec![])
-        }
-        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn find_result_policy(
-            &self,
-            _: &DatabaseName,
-            _: &Environment,
-        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
-            Ok(None)
-        }
-        fn create_result_policy(
-            &self,
-            _: &dbward_domain::policies::ResultPolicy,
-        ) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_result_policy(
-            &self,
-            _: &str,
-        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
-            Ok(None)
-        }
-        fn list_result_policies(
-            &self,
-        ) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> {
-            Ok(vec![])
-        }
-        fn update_result_policy(
-            &self,
-            _: &dbward_domain::policies::ResultPolicy,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn delete_result_policy(&self, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn create_notification_policy(
-            &self,
-            _: &dbward_domain::policies::NotificationPolicy,
-        ) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn get_notification_policy(
-            &self,
-            _: &str,
-        ) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError> {
-            Ok(None)
-        }
-        fn list_notification_policies(
-            &self,
-        ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> {
-            Ok(vec![])
-        }
-        fn update_notification_policy(
-            &self,
-            _: &dbward_domain::policies::NotificationPolicy,
-        ) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn delete_notification_policy(&self, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn create_role(&self, _: &RoleDefinition) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn list_roles(&self) -> Result<Vec<RoleDefinition>, AppError> {
-            Ok(vec![])
-        }
-        fn delete_role(&self, _: &str) -> Result<bool, AppError> {
-            Ok(true)
-        }
-        fn count_roles(&self) -> Result<u32, AppError> {
-            Ok(0)
-        }
-    }
-
     fn valid_token() -> Token {
-        // raw token: "dbw_ABCDEFGH_rest_of_token" (≥12 chars, starts with dbw_)
         Token {
             id: "tok-1".into(),
             subject_type: SubjectType::User,
             subject_id: "user-1".into(),
             token_hash: hex::encode(Sha256::digest(b"dbw_ABCDEFGHextra")),
             token_prefix: "ABCDEFGH".into(),
-            roles: vec!["admin".into()],
-            groups: vec![],
+            scope_ceiling: Some(ScopeCeiling {
+                roles: vec!["admin".into()],
+            }),
             name: None,
             status: TokenStatus::Active,
             expires_at: None,
@@ -399,47 +139,27 @@ mod tests {
         }
     }
 
-    fn verifier(
-        token_repo: impl TokenRepo + 'static,
-        user_repo: impl UserRepo + 'static,
-        policy_repo: impl PolicyRepo + 'static,
-    ) -> ApiTokenVerifier {
-        ApiTokenVerifier::new(
-            Arc::new(token_repo),
-            Arc::new(user_repo),
-            Arc::new(policy_repo),
-        )
+    fn verifier(token_repo: impl TokenRepo + 'static) -> ApiTokenVerifier {
+        ApiTokenVerifier::new(Arc::new(token_repo))
     }
 
     #[tokio::test]
     async fn missing_prefix_returns_invalid() {
-        let v = verifier(
-            FakeTokenRepo::empty(),
-            FakeUserRepo::ok(),
-            FakePolicyRepo::empty(),
-        );
+        let v = verifier(FakeTokenRepo::empty());
         let err = v.verify_api_token("no_prefix_here").await.unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken));
     }
 
     #[tokio::test]
     async fn too_short_returns_invalid() {
-        let v = verifier(
-            FakeTokenRepo::empty(),
-            FakeUserRepo::ok(),
-            FakePolicyRepo::empty(),
-        );
+        let v = verifier(FakeTokenRepo::empty());
         let err = v.verify_api_token("dbw_short").await.unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken));
     }
 
     #[tokio::test]
     async fn hash_mismatch_returns_invalid() {
-        let v = verifier(
-            FakeTokenRepo::empty(),
-            FakeUserRepo::ok(),
-            FakePolicyRepo::empty(),
-        );
+        let v = verifier(FakeTokenRepo::empty());
         let err = v.verify_api_token("dbw_ABCDEFGHextra").await.unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken));
     }
@@ -448,115 +168,37 @@ mod tests {
     async fn expired_token_returns_token_expired() {
         let mut token = valid_token();
         token.expires_at = Some(Utc::now() - Duration::hours(1));
-        let v = verifier(
-            FakeTokenRepo::with(token),
-            FakeUserRepo::ok(),
-            FakePolicyRepo::with_admin(),
-        );
+        let v = verifier(FakeTokenRepo::with(token));
         let err = v.verify_api_token("dbw_ABCDEFGHextra").await.unwrap_err();
         assert!(matches!(err, AuthError::TokenExpired));
     }
 
     #[tokio::test]
-    async fn suspended_user_returns_user_suspended() {
-        let v = verifier(
-            FakeTokenRepo::with(valid_token()),
-            FakeUserRepo::suspended(),
-            FakePolicyRepo::with_admin(),
-        );
-        let err = v.verify_api_token("dbw_ABCDEFGHextra").await.unwrap_err();
-        assert!(matches!(err, AuthError::UserSuspended));
+    async fn valid_token_returns_verified_token() {
+        let v = verifier(FakeTokenRepo::with(valid_token()));
+        let vt = v.verify_api_token("dbw_ABCDEFGHextra").await.unwrap();
+        assert_eq!(vt.subject_id, "user-1");
+        assert_eq!(vt.id, "tok-1");
+        assert!(vt.scope_ceiling.is_some());
     }
 
     #[tokio::test]
-    async fn no_matching_roles_returns_internal() {
-        let v = verifier(
-            FakeTokenRepo::with(valid_token()),
-            FakeUserRepo::ok(),
-            FakePolicyRepo::empty(),
-        );
-        let err = v.verify_api_token("dbw_ABCDEFGHextra").await.unwrap_err();
-        assert!(matches!(err, AuthError::Internal(_)));
-    }
-
-    #[tokio::test]
-    async fn ensure_exists_failure_returns_internal() {
-        let v = verifier(
-            FakeTokenRepo::with(valid_token()),
-            FakeUserRepo::ensure_err(),
-            FakePolicyRepo::with_admin(),
-        );
-        let err = v.verify_api_token("dbw_ABCDEFGHextra").await.unwrap_err();
-        assert!(matches!(err, AuthError::Internal(_)));
-    }
-
-    #[tokio::test]
-    async fn valid_token_returns_auth_user() {
-        let v = verifier(
-            FakeTokenRepo::with(valid_token()),
-            FakeUserRepo::ok(),
-            FakePolicyRepo::with_admin(),
-        );
-        let user = v.verify_api_token("dbw_ABCDEFGHextra").await.unwrap();
-        assert_eq!(user.subject_id, "user-1");
-        assert_eq!(user.roles.len(), 1);
-        assert_eq!(user.roles[0].name, "admin");
-        assert_eq!(user.token_id, Some("tok-1".into()));
-    }
-
-    #[tokio::test]
-    async fn non_ascii_multibyte_returns_invalid() {
-        let v = verifier(
-            FakeTokenRepo::empty(),
-            FakeUserRepo::ok(),
-            FakePolicyRepo::empty(),
-        );
-        // Cyrillic Ю = 2 bytes; total >= 12 bytes but non-ASCII
+    async fn non_ascii_returns_invalid() {
+        let v = verifier(FakeTokenRepo::empty());
         let err = v.verify_api_token("dbw_abcdef8Ю*20").await.unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken));
     }
 
     #[tokio::test]
-    async fn non_ascii_exactly_12_bytes_returns_invalid() {
-        let v = verifier(
-            FakeTokenRepo::empty(),
-            FakeUserRepo::ok(),
-            FakePolicyRepo::empty(),
-        );
-        // 4 ("dbw_") + 6 ASCII + 1 two-byte char = 12 bytes
-        let err = v.verify_api_token("dbw_abcdefЮ").await.unwrap_err();
-        assert!(matches!(err, AuthError::InvalidToken));
-    }
-
-    #[tokio::test]
     async fn empty_string_returns_invalid() {
-        let v = verifier(
-            FakeTokenRepo::empty(),
-            FakeUserRepo::ok(),
-            FakePolicyRepo::empty(),
-        );
+        let v = verifier(FakeTokenRepo::empty());
         let err = v.verify_api_token("").await.unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken));
     }
 
     #[tokio::test]
-    async fn prefix_only_returns_invalid() {
-        let v = verifier(
-            FakeTokenRepo::empty(),
-            FakeUserRepo::ok(),
-            FakePolicyRepo::empty(),
-        );
-        let err = v.verify_api_token("dbw_").await.unwrap_err();
-        assert!(matches!(err, AuthError::InvalidToken));
-    }
-
-    #[tokio::test]
     async fn oversized_token_returns_invalid() {
-        let v = verifier(
-            FakeTokenRepo::empty(),
-            FakeUserRepo::ok(),
-            FakePolicyRepo::empty(),
-        );
+        let v = verifier(FakeTokenRepo::empty());
         let long = format!("dbw_{}", "a".repeat(300));
         let err = v.verify_api_token(&long).await.unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken));

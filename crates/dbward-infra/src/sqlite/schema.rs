@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 22;
+const SCHEMA_VERSION: u32 = 23;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -294,6 +294,32 @@ CREATE TABLE IF NOT EXISTS sql_review_policies (
 );
 ";
 
+const MIGRATION_V23: &str = "
+-- Token auth redesign: remove roles_json/groups_json, add scope_ceiling_json.
+-- BREAKING: existing user tokens will have scope_ceiling_json=NULL after migration.
+-- The auth middleware rejects user tokens with NULL ceiling (fail-closed → 403).
+-- This is intentional (design decision D4: no backward compatibility, pre-GA).
+-- Users must run --force-bootstrap to regenerate tokens after upgrade.
+CREATE TABLE tokens_new (
+    id TEXT PRIMARY KEY,
+    subject_type TEXT NOT NULL,
+    subject_id TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    token_prefix TEXT NOT NULL,
+    scope_ceiling_json TEXT,
+    name TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    expires_at TEXT,
+    created_at TEXT NOT NULL,
+    revoked_at TEXT
+);
+INSERT INTO tokens_new (id, subject_type, subject_id, token_hash, token_prefix, name, status, expires_at, created_at, revoked_at)
+    SELECT id, subject_type, subject_id, token_hash, token_prefix, name, status, expires_at, created_at, revoked_at FROM tokens;
+DROP TABLE tokens;
+ALTER TABLE tokens_new RENAME TO tokens;
+CREATE INDEX IF NOT EXISTS idx_tokens_prefix ON tokens(token_prefix);
+";
+
 /// Apply V14 source-column additions idempotently.
 fn apply_migration_v14(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(MIGRATION_V14)?;
@@ -449,6 +475,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         if current < 22 {
             conn.execute_batch(MIGRATION_V22)?;
         }
+        if current < 23 {
+            conn.execute_batch(MIGRATION_V23)?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())
@@ -483,8 +512,7 @@ CREATE TABLE IF NOT EXISTS tokens (
     subject_id TEXT NOT NULL,
     token_hash TEXT NOT NULL,
     token_prefix TEXT NOT NULL,
-    roles_json TEXT NOT NULL DEFAULT '[]',
-    groups_json TEXT NOT NULL DEFAULT '[]',
+    scope_ceiling_json TEXT,
     name TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     expires_at TEXT,

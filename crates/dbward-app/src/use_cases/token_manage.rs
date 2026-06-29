@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
 use dbward_domain::auth::{AuthUser, Permission};
+use dbward_domain::entities::ScopeCeiling;
 
 use crate::error::AppError;
 use crate::ports::*;
@@ -13,6 +14,7 @@ pub struct TokenManage {
     pub token_repo: Arc<dyn TokenRepo>,
     pub user_repo: Arc<dyn UserRepo>,
     pub policy_repo: Arc<dyn PolicyRepo>,
+    pub role_resolver: Arc<dyn RoleResolver>,
     pub license: Arc<dyn LicenseChecker>,
     pub uow: Arc<dyn UnitOfWork>,
     pub clock: Arc<dyn Clock>,
@@ -26,9 +28,12 @@ pub struct TokenCreateInput {
     pub subject_id: String,
     pub subject_type: String,
     pub name: Option<String>,
-    pub roles: Vec<String>,
-    pub groups: Vec<String>,
+    pub scope_ceiling: Option<ScopeCeiling>,
     pub expires_at: Option<DateTime<Utc>>,
+    /// Caller identity for audit (issued_by)
+    pub issued_by: Option<String>,
+    /// Must be empty — token.groups is abolished. Checked for defense in depth.
+    pub groups: Vec<String>,
 }
 
 pub struct TokenCreateOutput {
@@ -36,8 +41,10 @@ pub struct TokenCreateOutput {
     pub token: String, // plaintext, shown only once
     pub prefix: String,
     pub subject_id: String,
+    pub scope_ceiling: Option<ScopeCeiling>,
+    pub effective_roles: Vec<String>,
+    pub effective_permissions: Vec<String>,
     pub expires_at: Option<DateTime<Utc>>,
-    pub permissions: Vec<String>,
 }
 
 // --- List ---
@@ -68,43 +75,61 @@ impl TokenManage {
             .authorize_global(user, Permission::TokenWrite)
             .map_err(AppError::Forbidden)?;
 
-        // Validation
+        // Validation 1: subject_id required
         if input.subject_id.is_empty() {
             return Err(AppError::Validation("subject_id is required".into()));
         }
+
+        // Validation 2: subject_type
         if !matches!(input.subject_type.as_str(), "user" | "agent") {
             return Err(AppError::Validation(
                 "subject_type must be 'user' or 'agent'".into(),
             ));
         }
-        // Agent tokens must have exactly ["agent-default"] role
-        if input.subject_type == "agent"
-            && (input.roles.len() != 1 || input.roles[0] != "agent-default")
-        {
+
+        // Validation 8: groups field must be empty (token.groups abolished)
+        if !input.groups.is_empty() {
             return Err(AppError::Validation(
-                "agent tokens must have exactly the 'agent-default' role".into(),
-            ));
-        }
-        if let Some(ref exp) = input.expires_at
-            && *exp <= self.clock.now()
-        {
-            return Err(AppError::Validation(
-                "expires_at must be in the future".into(),
+                "groups field is not allowed; use Config [[auth.groups]] instead".into(),
             ));
         }
 
-        // Suspended user check
-        if self.user_repo.is_suspended(&input.subject_id)? {
-            return Err(AppError::Conflict(
-                "cannot create token for suspended user".into(),
+        let subject_type = match input.subject_type.as_str() {
+            "agent" => dbward_domain::auth::SubjectType::Agent,
+            _ => dbward_domain::auth::SubjectType::User,
+        };
+
+        // Validation 3: Agent ceiling constraints
+        if subject_type == dbward_domain::auth::SubjectType::Agent {
+            match &input.scope_ceiling {
+                None => {}                                    // allowed
+                Some(c) if c.roles == ["agent-default"] => {} // allowed
+                _ => {
+                    return Err(AppError::Validation(
+                        "agent tokens must have scope_ceiling=None or {roles:[\"agent-default\"]}"
+                            .into(),
+                    ));
+                }
+            }
+        }
+
+        // Validation 4: User ceiling required
+        if subject_type == dbward_domain::auth::SubjectType::User && input.scope_ceiling.is_none() {
+            return Err(AppError::Validation(
+                "scope_ceiling is required for user tokens".into(),
             ));
         }
 
-        // Validate roles exist
-        if !input.roles.is_empty() {
+        // Validation 5: ceiling roles non-empty and exist
+        if let Some(ref ceiling) = input.scope_ceiling {
+            if ceiling.roles.is_empty() {
+                return Err(AppError::Validation(
+                    "scope_ceiling.roles must not be empty".into(),
+                ));
+            }
             let known_roles = self.policy_repo.list_roles()?;
             let known_names: Vec<&str> = known_roles.iter().map(|r| r.name.as_str()).collect();
-            for role in &input.roles {
+            for role in &ceiling.roles {
                 if !known_names.contains(&role.as_str())
                     && !matches!(
                         role.as_str(),
@@ -115,6 +140,72 @@ impl TokenManage {
                 }
             }
         }
+
+        // Validation: expires_at in future
+        if let Some(ref exp) = input.expires_at
+            && *exp <= self.clock.now()
+        {
+            return Err(AppError::Validation(
+                "expires_at must be in the future".into(),
+            ));
+        }
+
+        // Suspended user check (agents have no user record)
+        if subject_type == dbward_domain::auth::SubjectType::User
+            && self.user_repo.is_suspended(&input.subject_id)?
+        {
+            return Err(AppError::Conflict(
+                "cannot create token for suspended user".into(),
+            ));
+        }
+
+        // Validation 6: subject must resolve to at least one role
+        let resolved_roles = self
+            .role_resolver
+            .resolve(&input.subject_id, subject_type, &[])
+            .map_err(|e| AppError::Internal(format!("role resolution: {e}")))?;
+        if resolved_roles.is_empty() {
+            return Err(AppError::Validation(format!(
+                "subject '{}' resolves to no roles; add to [[auth.role_bindings]] or set default_role",
+                input.subject_id
+            )));
+        }
+
+        // Validation 7: resolved ∩ ceiling must be non-empty
+        let effective_roles: Vec<String> = if let Some(ref ceiling) = input.scope_ceiling {
+            let filtered: Vec<String> = resolved_roles
+                .iter()
+                .filter(|r| ceiling.roles.contains(&r.name))
+                .map(|r| r.name.clone())
+                .collect();
+            if filtered.is_empty() {
+                return Err(AppError::Validation(format!(
+                    "scope_ceiling {:?} has no overlap with resolved roles {:?}; token would always fail",
+                    ceiling.roles,
+                    resolved_roles.iter().map(|r| &r.name).collect::<Vec<_>>()
+                )));
+            }
+            filtered
+        } else {
+            resolved_roles.iter().map(|r| r.name.clone()).collect()
+        };
+
+        // Compute effective permissions
+        let effective_permissions: Vec<String> = {
+            let matching: Vec<_> = resolved_roles
+                .iter()
+                .filter(|r| effective_roles.contains(&r.name))
+                .collect();
+            let mut perms = std::collections::HashSet::new();
+            for r in &matching {
+                for p in &r.permissions {
+                    perms.insert(p.as_str().to_string());
+                }
+            }
+            let mut sorted: Vec<String> = perms.into_iter().collect();
+            sorted.sort();
+            sorted
+        };
 
         // Generate token
         let raw = self.token_gen.generate_token_value();
@@ -131,24 +222,25 @@ impl TokenManage {
         let token = dbward_domain::entities::Token {
             id: id.clone(),
             subject_id: input.subject_id.clone(),
-            subject_type: match input.subject_type.as_str() {
-                "agent" => dbward_domain::auth::SubjectType::Agent,
-                _ => dbward_domain::auth::SubjectType::User,
-            },
+            subject_type,
             token_hash: hash,
             token_prefix: prefix.clone(),
+            scope_ceiling: input.scope_ceiling.clone(),
             name: input.name,
-            roles: input.roles,
-            groups: input.groups,
             status: dbward_domain::entities::TokenStatus::Active,
             expires_at: input.expires_at,
             revoked_at: None,
             created_at: now,
         };
 
-        // Audit (atomic with token creation via UoW)
-        let token_roles = token.roles.clone();
-        let audit_event = dbward_domain::entities::AuditEvent::simple(
+        // Build audit metadata
+        let metadata = serde_json::json!({
+            "issued_by": input.issued_by.as_deref().unwrap_or(&user.subject_id),
+            "issued_for": input.subject_id,
+            "scope_ceiling": input.scope_ceiling,
+        });
+
+        let mut audit_event = dbward_domain::entities::AuditEvent::simple(
             "token.created",
             "token",
             &user.subject_id,
@@ -156,33 +248,22 @@ impl TokenManage {
             self.clock.now(),
             ctx,
         );
+        audit_event.metadata_json = metadata.to_string();
         self.uow.execute(Box::new(move |tx| {
             tx.create_token(&token)?;
             tx.record(&audit_event)?;
             Ok(())
         }))?;
 
-        // Resolve permissions from assigned roles
-        let permissions: Vec<String> = if !token_roles.is_empty() {
-            self.policy_repo
-                .get_roles_by_names(&token_roles)?
-                .iter()
-                .flat_map(|r| r.permissions.iter())
-                .map(|p| p.as_str().to_string())
-                .collect::<std::collections::HashSet<_>>()
-                .into_iter()
-                .collect()
-        } else {
-            vec![]
-        };
-
         Ok(TokenCreateOutput {
             id,
             token: raw,
             prefix,
             subject_id: input.subject_id,
+            scope_ceiling: input.scope_ceiling,
+            effective_roles,
+            effective_permissions,
             expires_at: input.expires_at,
-            permissions,
         })
     }
 
@@ -205,8 +286,8 @@ impl TokenManage {
             .get(&input.token_id)?
             .ok_or_else(|| AppError::NotFound("token not found".into()))?;
 
-        // Owner can revoke own token with token.revoke_own; otherwise need TokenManage
-        if token.subject_id == user.subject_id {
+        // Owner can revoke own token with token.revoke_own; otherwise need TokenWrite
+        if token.subject_id == user.subject_id && token.subject_type == user.subject_type {
             self.authorizer
                 .authorize_global(user, Permission::TokenRevokeOwn)
                 .map_err(AppError::Forbidden)?;
@@ -245,7 +326,7 @@ mod tests {
     use super::*;
     use crate::error::AuthzError;
     use crate::test_support::NoopUnitOfWork;
-    use dbward_domain::auth::{Permission, RoleDefinition, SubjectType};
+    use dbward_domain::auth::{Permission, ResolvedRole, RoleDefinition, SubjectType};
     use dbward_domain::entities::Token;
 
     struct AllowAll;
@@ -497,6 +578,43 @@ mod tests {
         }
         fn check_expiry(&self, _now: chrono::DateTime<chrono::Utc>) {}
     }
+
+    struct FakeRoleResolver;
+    impl RoleResolver for FakeRoleResolver {
+        fn resolve(
+            &self,
+            subject_id: &str,
+            subject_type: SubjectType,
+            _groups: &[String],
+        ) -> Result<Vec<ResolvedRole>, crate::error::AuthError> {
+            if subject_type == SubjectType::Agent {
+                return Ok(vec![ResolvedRole {
+                    name: "agent-default".into(),
+                    permissions: std::collections::HashSet::new(),
+                    databases: vec![],
+                    environments: vec![],
+                }]);
+            }
+            if subject_id == "no-roles" {
+                return Ok(vec![]);
+            }
+            Ok(vec![
+                ResolvedRole {
+                    name: "admin".into(),
+                    permissions: [Permission::All].into_iter().collect(),
+                    databases: vec![],
+                    environments: vec![],
+                },
+                ResolvedRole {
+                    name: "developer".into(),
+                    permissions: [Permission::RequestExecute].into_iter().collect(),
+                    databases: vec![],
+                    environments: vec![],
+                },
+            ])
+        }
+    }
+
     fn make_user() -> dbward_domain::auth::AuthUser {
         dbward_domain::auth::AuthUser {
             subject_id: "alice".into(),
@@ -507,12 +625,13 @@ mod tests {
         }
     }
 
-    fn make_uc(roles: Vec<RoleDefinition>, token_count: u32) -> TokenManage {
+    fn make_uc(roles: Vec<RoleDefinition>) -> TokenManage {
         TokenManage {
             authorizer: Arc::new(AllowAll),
-            token_repo: Arc::new(FakeTokenRepo { count: token_count }),
+            token_repo: Arc::new(FakeTokenRepo { count: 0 }),
             user_repo: Arc::new(FakeUserRepo),
             policy_repo: Arc::new(FakePolicyRepo { roles }),
+            role_resolver: Arc::new(FakeRoleResolver),
             license: Arc::new(FakeLicense),
             uow: Arc::new(NoopUnitOfWork),
             clock: Arc::new(FakeClock),
@@ -522,50 +641,127 @@ mod tests {
     }
 
     #[test]
-    fn create_rejects_unknown_role() {
-        let uc = make_uc(
-            vec![RoleDefinition {
-                name: "dba".into(),
-                permissions: vec![],
-                databases: vec![],
-                environments: vec![],
-            }],
-            0,
-        );
+    fn create_user_token_requires_scope_ceiling() {
+        let uc = make_uc(vec![]);
         let result = uc.create(
             TokenCreateInput {
                 subject_id: "bob".into(),
                 subject_type: "user".into(),
                 name: None,
-                roles: vec!["nonexistent".into()],
-                groups: vec![],
+                scope_ceiling: None,
                 expires_at: None,
+                issued_by: None,
+                groups: vec![],
             },
             &make_user(),
             &dbward_domain::entities::AuditContext::System,
         );
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("scope_ceiling is required"))
+        );
+    }
+
+    #[test]
+    fn create_rejects_empty_ceiling_roles() {
+        let uc = make_uc(vec![]);
+        let result = uc.create(
+            TokenCreateInput {
+                subject_id: "bob".into(),
+                subject_type: "user".into(),
+                name: None,
+                scope_ceiling: Some(ScopeCeiling { roles: vec![] }),
+                expires_at: None,
+                issued_by: None,
+                groups: vec![],
+            },
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("must not be empty"))
+        );
+    }
+
+    #[test]
+    fn create_rejects_no_roles_resolved() {
+        let uc = make_uc(vec![]);
+        let result = uc.create(
+            TokenCreateInput {
+                subject_id: "no-roles".into(),
+                subject_type: "user".into(),
+                name: None,
+                scope_ceiling: Some(ScopeCeiling {
+                    roles: vec!["admin".into()],
+                }),
+                expires_at: None,
+                issued_by: None,
+                groups: vec![],
+            },
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(
+            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("resolves to no roles"))
+        );
+    }
+
+    #[test]
+    fn create_rejects_no_overlap() {
+        let uc = make_uc(vec![]);
+        let result = uc.create(
+            TokenCreateInput {
+                subject_id: "bob".into(),
+                subject_type: "user".into(),
+                name: None,
+                scope_ceiling: Some(ScopeCeiling {
+                    roles: vec!["nonexistent".into()],
+                }),
+                expires_at: None,
+                issued_by: None,
+                groups: vec![],
+            },
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        // Should fail on validation 5 (unknown role) before reaching validation 7
         assert!(matches!(result, Err(AppError::Validation(_))));
     }
 
     #[test]
-    fn create_accepts_known_role() {
-        let uc = make_uc(
-            vec![RoleDefinition {
-                name: "dba".into(),
-                permissions: vec![],
-                databases: vec![],
-                environments: vec![],
-            }],
-            0,
-        );
+    fn create_accepts_valid_user_token() {
+        let uc = make_uc(vec![]);
         let result = uc.create(
             TokenCreateInput {
                 subject_id: "bob".into(),
                 subject_type: "user".into(),
                 name: None,
-                roles: vec!["dba".into()],
-                groups: vec![],
+                scope_ceiling: Some(ScopeCeiling {
+                    roles: vec!["admin".into()],
+                }),
                 expires_at: None,
+                issued_by: None,
+                groups: vec![],
+            },
+            &make_user(),
+            &dbward_domain::entities::AuditContext::System,
+        );
+        assert!(result.is_ok());
+        let out = result.unwrap();
+        assert_eq!(out.effective_roles, vec!["admin"]);
+    }
+
+    #[test]
+    fn create_accepts_agent_with_no_ceiling() {
+        let uc = make_uc(vec![]);
+        let result = uc.create(
+            TokenCreateInput {
+                subject_id: "my-agent".into(),
+                subject_type: "agent".into(),
+                name: None,
+                scope_ceiling: None,
+                expires_at: None,
+                issued_by: None,
+                groups: vec![],
             },
             &make_user(),
             &dbward_domain::entities::AuditContext::System,
@@ -574,60 +770,46 @@ mod tests {
     }
 
     #[test]
-    fn create_rejects_agent_with_admin_role() {
-        let uc = make_uc(vec![], 0);
+    fn create_rejects_agent_with_admin_ceiling() {
+        let uc = make_uc(vec![]);
         let result = uc.create(
             TokenCreateInput {
                 subject_id: "my-agent".into(),
                 subject_type: "agent".into(),
                 name: None,
-                roles: vec!["admin".into()],
-                groups: vec![],
+                scope_ceiling: Some(ScopeCeiling {
+                    roles: vec!["admin".into()],
+                }),
                 expires_at: None,
+                issued_by: None,
+                groups: vec![],
             },
             &make_user(),
             &dbward_domain::entities::AuditContext::System,
         );
-        assert!(
-            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("agent-default"))
-        );
+        assert!(matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("agent")));
     }
 
     #[test]
-    fn create_rejects_agent_with_empty_roles() {
-        let uc = make_uc(vec![], 0);
+    fn create_rejects_ceiling_with_no_overlap_validation7() {
+        // Validation 7: ceiling roles exist (builtin "readonly") but resolver returns
+        // only ["admin","developer"] → intersection is empty
+        let uc = make_uc(vec![]);
         let result = uc.create(
             TokenCreateInput {
-                subject_id: "my-agent".into(),
-                subject_type: "agent".into(),
+                subject_id: "bob".into(),
+                subject_type: "user".into(),
                 name: None,
-                roles: vec![],
-                groups: vec![],
+                scope_ceiling: Some(ScopeCeiling {
+                    roles: vec!["readonly".into()],
+                }),
                 expires_at: None,
+                issued_by: None,
+                groups: vec![],
             },
             &make_user(),
             &dbward_domain::entities::AuditContext::System,
         );
-        assert!(
-            matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("agent-default"))
-        );
-    }
-
-    #[test]
-    fn create_accepts_agent_with_agent_default_role() {
-        let uc = make_uc(vec![], 0);
-        let result = uc.create(
-            TokenCreateInput {
-                subject_id: "my-agent".into(),
-                subject_type: "agent".into(),
-                name: None,
-                roles: vec!["agent-default".into()],
-                groups: vec![],
-                expires_at: None,
-            },
-            &make_user(),
-            &dbward_domain::entities::AuditContext::System,
-        );
-        assert!(result.is_ok());
+        assert!(matches!(result, Err(AppError::Validation(ref msg)) if msg.contains("no overlap")));
     }
 }

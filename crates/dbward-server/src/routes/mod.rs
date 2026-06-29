@@ -182,6 +182,10 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::post(tokens::create).get(tokens::list),
         )
         .route("/api/tokens/{id}", axum::routing::delete(tokens::revoke))
+        .route(
+            "/api/tokens/{id}/inspect",
+            axum::routing::get(tokens::inspect),
+        )
         // Users
         .route("/api/me", axum::routing::get(users::me))
         .route("/api/users", axum::routing::get(users::list))

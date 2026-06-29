@@ -72,6 +72,7 @@ impl ResumeRequest {
                 metadata: EventMetadata::Dispatched,
                 requester_id: request.requester.clone(),
                 audit_context: ctx.clone(),
+                auth_token_id: None,
             },
         )
         .map_err(|e| AppError::Conflict(e.to_string()))?;

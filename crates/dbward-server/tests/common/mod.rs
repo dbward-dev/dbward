@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use dbward_app::error::{AppError, AuthError};
 use dbward_app::ports::*;
 use dbward_domain::auth::*;
-use dbward_domain::values::ResultSummary;
+use dbward_domain::values::{DatabaseName, Environment, ResultSummary};
 
 // --- RoleResolver ---
 
@@ -19,10 +19,55 @@ impl RoleResolver for NoopRoleResolver {
     fn resolve(
         &self,
         _: &str,
-        _: SubjectType,
+        subject_type: SubjectType,
         _: &[String],
     ) -> Result<Vec<ResolvedRole>, AuthError> {
-        Ok(vec![])
+        // Test helper: return admin for users, agent-default for agents
+        if subject_type == SubjectType::Agent {
+            Ok(vec![ResolvedRole {
+                name: "agent-default".into(),
+                permissions: [Permission::AgentOperate].into_iter().collect(),
+                databases: vec![DatabaseName::new("*").unwrap()],
+                environments: vec![Environment::new("*").unwrap()],
+            }])
+        } else {
+            Ok(vec![
+                ResolvedRole {
+                    name: "admin".into(),
+                    permissions: [Permission::All].into_iter().collect(),
+                    databases: vec![DatabaseName::new("*").unwrap()],
+                    environments: vec![Environment::new("*").unwrap()],
+                },
+                ResolvedRole {
+                    name: "developer".into(),
+                    permissions: [
+                        Permission::RequestExecute,
+                        Permission::RequestQuery,
+                        Permission::RequestView,
+                        Permission::RequestCancel,
+                        Permission::RequestResume,
+                        Permission::RequestApprove,
+                        Permission::ResultView,
+                        Permission::WorkflowRead,
+                        Permission::TokenRevokeOwn,
+                    ]
+                    .into_iter()
+                    .collect(),
+                    databases: vec![DatabaseName::new("*").unwrap()],
+                    environments: vec![Environment::new("*").unwrap()],
+                },
+            ])
+        }
+    }
+
+    fn config_groups_for(&self, subject_id: &str) -> Option<&Vec<String>> {
+        // Test helper: all users belong to backend-team and dba-team for workflow tests
+        static GROUPS: std::sync::LazyLock<Vec<String>> =
+            std::sync::LazyLock::new(|| vec!["backend-team".into(), "dba-team".into()]);
+        match subject_id {
+            "agent-01" => None,
+            _ => Some(&GROUPS),
+        }
     }
 }
 

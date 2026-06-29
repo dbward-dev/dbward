@@ -9,8 +9,7 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use dbward_app::error::AuthError;
-use dbward_app::ports::TokenVerifier;
-use dbward_domain::auth::AuthUser;
+use dbward_app::ports::{TokenVerifier, VerifiedToken};
 
 pub struct OidcVerifier {
     issuer: String,
@@ -178,7 +177,7 @@ impl OidcVerifier {
 
 #[async_trait]
 impl TokenVerifier for OidcVerifier {
-    async fn verify_api_token(&self, _token: &str) -> Result<AuthUser, AuthError> {
+    async fn verify_api_token(&self, _token: &str) -> Result<VerifiedToken, AuthError> {
         Err(AuthError::InvalidToken)
     }
 

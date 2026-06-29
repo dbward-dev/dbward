@@ -89,6 +89,12 @@ pub enum AuthError {
 
     #[error("user limit reached")]
     UserLimitReached,
+
+    #[error("no roles resolved for subject")]
+    NoRolesResolved,
+
+    #[error("scope ceiling blocks all resolved roles")]
+    InsufficientScope,
 }
 
 impl AuthError {
@@ -103,6 +109,8 @@ impl AuthError {
             AuthError::OidcVerificationFailed(_) => "auth.oidc_failed",
             AuthError::Internal(_) => "internal_error",
             AuthError::UserLimitReached => "policy.limit_exceeded",
+            AuthError::NoRolesResolved => "auth.no_roles_resolved",
+            AuthError::InsufficientScope => "auth.insufficient_scope",
         }
     }
 }

@@ -11,7 +11,6 @@ use tower::Service;
 use dbward_app::error::AuthError;
 use dbward_app::ports::*;
 use dbward_domain::auth::*;
-use dbward_domain::values::*;
 use dbward_infra::auth::RbacAuthorizer;
 use dbward_infra::sqlite::{self, *};
 use dbward_server::build_app;
@@ -26,68 +25,42 @@ struct MultiUserVerifier;
 
 #[async_trait]
 impl TokenVerifier for MultiUserVerifier {
-    async fn verify_api_token(&self, token: &str) -> Result<AuthUser, AuthError> {
+    async fn verify_api_token(
+        &self,
+        token: &str,
+    ) -> Result<dbward_app::ports::VerifiedToken, AuthError> {
         match token {
-            "admin-token" => Ok(AuthUser {
+            "admin-token" => Ok(dbward_app::ports::VerifiedToken {
+                id: "tok-admin".into(),
                 subject_id: "admin".into(),
                 subject_type: SubjectType::User,
-                roles: vec![ResolvedRole {
-                    name: "admin".into(),
-                    permissions: std::collections::HashSet::from([Permission::All]),
-                    databases: vec![DatabaseName::new("*").unwrap()],
-                    environments: vec![Environment::new("*").unwrap()],
-                }],
-                groups: vec!["backend-team".into()],
-                token_id: Some("tok-admin".into()),
+                scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
+                    roles: vec!["admin".into()],
+                }),
             }),
-            "dev-token" => Ok(AuthUser {
+            "dev-token" => Ok(dbward_app::ports::VerifiedToken {
+                id: "tok-dev".into(),
                 subject_id: "developer".into(),
                 subject_type: SubjectType::User,
-                roles: vec![ResolvedRole {
-                    name: "developer".into(),
-                    permissions: std::collections::HashSet::from([
-                        Permission::RequestExecute,
-                        Permission::RequestQuery,
-                        Permission::RequestView,
-                        Permission::RequestCancel,
-                        Permission::RequestResume,
-                        Permission::ResultView,
-                    ]),
-                    databases: vec![DatabaseName::new("*").unwrap()],
-                    environments: vec![Environment::new("*").unwrap()],
-                }],
-                groups: vec![],
-                token_id: Some("tok-dev".into()),
+                scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
+                    roles: vec!["developer".into()],
+                }),
             }),
-            "approver-token" => Ok(AuthUser {
+            "approver-token" => Ok(dbward_app::ports::VerifiedToken {
+                id: "tok-approver".into(),
                 subject_id: "approver".into(),
                 subject_type: SubjectType::User,
-                roles: vec![ResolvedRole {
-                    name: "developer".into(),
-                    permissions: std::collections::HashSet::from([
-                        Permission::RequestApprove,
-                        Permission::RequestView,
-                    ]),
-                    databases: vec![DatabaseName::new("*").unwrap()],
-                    environments: vec![Environment::new("*").unwrap()],
-                }],
-                groups: vec!["backend-team".into()],
-                token_id: Some("tok-approver".into()),
+                scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
+                    roles: vec!["developer".into()],
+                }),
             }),
-            "dba-token" => Ok(AuthUser {
+            "dba-token" => Ok(dbward_app::ports::VerifiedToken {
+                id: "tok-dba".into(),
                 subject_id: "dba".into(),
                 subject_type: SubjectType::User,
-                roles: vec![ResolvedRole {
-                    name: "developer".into(),
-                    permissions: std::collections::HashSet::from([
-                        Permission::RequestApprove,
-                        Permission::RequestView,
-                    ]),
-                    databases: vec![DatabaseName::new("*").unwrap()],
-                    environments: vec![Environment::new("*").unwrap()],
-                }],
-                groups: vec!["dba-team".into()],
-                token_id: Some("tok-dba".into()),
+                scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
+                    roles: vec!["developer".into()],
+                }),
             }),
             _ => Err(AuthError::InvalidToken),
         }

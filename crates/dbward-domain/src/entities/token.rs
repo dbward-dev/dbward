@@ -10,6 +10,11 @@ pub enum TokenStatus {
     Revoked,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeCeiling {
+    pub roles: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Token {
     pub id: String,
@@ -19,8 +24,7 @@ pub struct Token {
     pub token_hash: String,
     #[serde(skip_serializing)]
     pub token_prefix: String,
-    pub roles: Vec<String>,
-    pub groups: Vec<String>,
+    pub scope_ceiling: Option<ScopeCeiling>,
     pub name: Option<String>,
     pub status: TokenStatus,
     pub expires_at: Option<DateTime<Utc>>,

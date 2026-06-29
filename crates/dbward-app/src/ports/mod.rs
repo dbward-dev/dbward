@@ -6,7 +6,9 @@ mod services;
 pub mod sync_scope;
 pub mod transaction;
 
-pub use authorizer::{Authorizer, OidcTokenVerifier, PolicyEvaluator, RoleResolver, TokenVerifier};
+pub use authorizer::{
+    Authorizer, OidcTokenVerifier, PolicyEvaluator, RoleResolver, TokenVerifier, VerifiedToken,
+};
 pub use clock::{Clock, IdGenerator, TokenValueGenerator};
 pub use crypto::{AuditSigner, AuditVerifier};
 pub use repos::{

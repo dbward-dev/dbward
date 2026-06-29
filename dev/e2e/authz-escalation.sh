@@ -11,7 +11,7 @@ echo ""
 echo "=== Authorization Escalation Tests ==="
 echo ""
 
-ADMIN_TOKEN=$(create_token e2e-authz-admin admin)
+ADMIN_TOKEN=$(docker compose exec -T dbward-server cat /data/admin-token 2>/dev/null || echo "")
 DEV_TOKEN=$(create_token e2e-authz-dev developer)
 AGENT_TOKEN=$(create_token e2e-authz-agent agent-default --agent)
 [ -z "$ADMIN_TOKEN" ] && { echo "Failed to create tokens"; exit 1; }

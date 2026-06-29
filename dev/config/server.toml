@@ -8,6 +8,8 @@ allow_private_networks = true
 
 [auth]
 mode = "token"
+# E2E: subjects without explicit bindings resolve to readonly (minimum privilege)
+default_role = "readonly"
 
 [[auth.roles]]
 name = "slack-user"
@@ -17,15 +19,33 @@ environments = ["*"]
 
 [[auth.role_bindings]]
 role = "slack-user"
-subjects = ["alice", "bob"]
+subjects = ["alice", "bob", "carol"]
+
+# Bootstrap subjects (required for token auth to resolve roles)
+[[auth.role_bindings]]
+role = "admin"
+subjects = ["admin"]
+
+[[auth.role_bindings]]
+role = "developer"
+subjects = ["developer"]
+
+# E2E test subjects
+[[auth.role_bindings]]
+role = "admin"
+subjects = ["alice", "carol"]
+
+[[auth.role_bindings]]
+role = "developer"
+subjects = ["bob"]
 
 [[auth.groups]]
 name = "backend-team"
-members = ["bob"]
+members = ["bob", "alice"]
 
 [[auth.groups]]
 name = "dba-team"
-members = ["bob"]
+members = ["bob", "carol"]
 
 # Database registry
 [[databases]]
@@ -71,7 +91,7 @@ min = 1
 role = "dba"
 min = 1
 
-# Production: 1-step approval
+# Production: 2-step approval (backend-team then dba-team)
 [[workflows]]
 database = "*"
 environment = "production"
@@ -79,9 +99,18 @@ require_reason = true
 
 [[workflows.steps]]
 type = "approval"
+mode = "any"
 
 [[workflows.steps.approvers]]
-role = "slack-user"
+group = "backend-team"
+min = 1
+
+[[workflows.steps]]
+type = "approval"
+mode = "any"
+
+[[workflows.steps.approvers]]
+group = "dba-team"
 min = 1
 
 # Global webhooks (all events, all environments)

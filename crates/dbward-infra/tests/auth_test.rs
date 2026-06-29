@@ -207,8 +207,9 @@ fn token_create_verify_revoke() {
         subject_id: "alice".into(),
         token_hash: "abc123hash".into(),
         token_prefix: "dbw_".into(),
-        roles: vec!["admin".into()],
-        groups: vec![],
+        scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
+            roles: vec!["admin".into()],
+        }),
         name: Some("my-token".into()),
         status: TokenStatus::Active,
         expires_at: None,
@@ -297,8 +298,9 @@ fn token_list_revoke_all_purge() {
         subject_id: "alice".into(),
         token_hash: "h1".into(),
         token_prefix: "dbw_a".into(),
-        roles: vec!["dev".into()],
-        groups: vec![],
+        scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
+            roles: vec!["dev".into()],
+        }),
         name: None,
         status: TokenStatus::Active,
         expires_at: None,
