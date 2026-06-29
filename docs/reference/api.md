@@ -18,18 +18,24 @@ All responses include the `x-dbward-version` header.
 All errors return:
 
 ```json
-{"error": {"code": "validation_error", "message": "subject_id is required"}}
+{"error": "subject_id is required", "code": "validation.failed", "hint": "subject_id is required"}
 ```
+
+`hint` is null when no additional context is available.
 
 | HTTP Status | Meaning |
 |-------------|---------|
 | 400 | Validation error |
 | 401 | Not authenticated |
+| 402 | Plan limit exceeded |
 | 403 | Not authorized |
 | 404 | Resource not found |
 | 405 | Method not allowed (config-managed resource) |
 | 409 | Conflict (idempotency key race) |
-| 422 | Business logic error |
+| 410 | Gone (expired or TTL'd resource) |
+| 413 | Payload too large |
+| 500 | Internal server error |
+| 503 | Service unavailable (draining) |
 
 ---
 
@@ -280,7 +286,7 @@ Permission: `metrics.view`
 
 | Param | Default | Description |
 |-------|---------|-------------|
-| `status` | | Filter: `pending`, `in_progress`, `delivered`, `dead` |
+| `status` | | Filter: `pending`, `in_progress`, `delivered`, `dead`, `cancelled` |
 | `limit` | 50 | Max results (max: 100) |
 | `offset` | 0 | Pagination offset |
 
