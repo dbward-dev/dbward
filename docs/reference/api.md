@@ -9,19 +9,57 @@ Base URL: `http://localhost:3000` (or your server address)
 
 Authentication: `Authorization: Bearer <token>` (API token or OIDC JWT), unless noted otherwise.
 
+All responses include the `x-dbward-version` header.
+
+---
+
+## Error Format
+
+All errors return:
+
+```json
+{"error": {"code": "validation_error", "message": "subject_id is required"}}
+```
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| 400 | Validation error |
+| 401 | Not authenticated |
+| 403 | Not authorized |
+| 404 | Resource not found |
+| 405 | Method not allowed (config-managed resource) |
+| 409 | Conflict (idempotency key race) |
+| 422 | Business logic error |
+
 ---
 
 ## Requests
 
 ### POST /api/requests
 
-Create a new SQL execution or migration request. The server classifies the SQL, resolves the applicable workflow, and determines approval requirements.
+Create a new SQL execution or migration request.
 
-Permission: `request.create` or `request.create_select`
+Permission: `request.execute` | `request.query` | `request.break_glass` (scoped by database/environment)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `database` | string | ✓ | Target database name |
+| `environment` | string | ✓ | Target environment |
+| `operation` | string | | Operation type (default: `execute_select`) |
+| `detail` | string | ✓ | SQL statement or migration detail |
+| `reason` | string | | Reason for the request |
+| `idempotency_key` | string | | Idempotency key to prevent duplicates |
+| `metadata` | object | | Arbitrary JSON metadata |
+| `emergency` | bool | | Break-glass mode (default: false) |
+| `allow_ddl` | bool | | Allow DDL in execute operations (default: false) |
+| `no_result_store` | bool | | Skip persisting result to storage (default: false) |
+| `share_with` | string[] | | Subject IDs to share the result with |
 
 ### GET /api/requests
 
-List requests with optional filtering by status, user, or pending-for-me.
+List requests with optional filtering.
+
+Permission: `request.view`
 
 | Param | Default | Description |
 |-------|---------|-------------|
@@ -31,49 +69,78 @@ List requests with optional filtering by status, user, or pending-for-me.
 | `user` | | Filter by requester subject ID |
 | `pending_for_me` | | Only show requests the caller can approve |
 
-Permission: `request.view`
-
 ### GET /api/requests/{id}
 
-Get full request details including approval progress, decision trace, and context. Supports long-polling with `?wait=<seconds>` (max 120s) to wait for status changes.
+Get full request details. Supports long-polling with `?wait=<seconds>` (max 120s).
 
-Permission: `request.view`
+Permission: `request.view` (scoped)
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `wait` | | Long-poll timeout in seconds (max 120) |
 
 ### POST /api/requests/{id}/approve
 
-Approve a pending request. If multi-step, advances to the next step. Accepts an optional comment.
+Approve a pending request. If multi-step, advances to the next step.
 
-Permission: `request.approve`
+Permission: `request.approve` (scoped)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `comment` | string | | Approval comment |
+| `selector` | string | | Step selector for multi-step workflows |
 
 ### POST /api/requests/{id}/reject
 
-Reject a pending request. Accepts an optional comment or reason.
+Reject a pending request.
 
-Permission: `request.approve`
+Permission: `request.approve` (scoped)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `comment` | string | | Rejection reason |
 
 ### POST /api/requests/{id}/cancel
 
-Cancel a request. Only the requester or an admin can cancel. Accepts an optional reason.
+Cancel a request. The requester can always cancel their own requests.
 
-Permission: `request.cancel`
+Permission: `request.cancel` (scoped)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `reason` | string | | Cancellation reason |
 
 ### POST /api/requests/{id}/resume
 
-Resume an approved request, triggering agent dispatch. The client should then call the stream endpoint to receive the result.
+Resume an approved request, triggering agent dispatch.
 
-Permission: `request.resume`
+Permission: `request.resume` (scoped; requester can always resume own)
 
 ### GET /api/requests/{id}/result/stream
 
-Long-poll for execution result. Returns the result when the agent completes, or 204 if not yet available.
+Long-poll for execution result. Returns the result when the agent completes.
 
-Permission: `result.view`
+Permission: `result.view` (scoped)
 
 ### GET /api/requests/{id}/result/content
 
-Download the stored result as binary content. Only available if the result was persisted to storage.
+Download the stored result as binary content.
 
-Permission: `result.view` + result policy access check
+Permission: `result.view` (scoped)
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `execution_id` | | Specific execution ID (defaults to latest) |
+
+### GET /api/requests/{id}/executions
+
+List execution history for a request.
+
+Permission: `request.view` (scoped)
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `limit` | 20 | Max results (max: 100) |
 
 ---
 
@@ -81,9 +148,13 @@ Permission: `result.view` + result policy access check
 
 ### GET /api/results
 
-List stored results accessible to the current user (filtered by result policy access rules).
+List stored results accessible to the current user (filtered by result policy).
 
-Permission: Any authenticated user
+Permission: `result.view`
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `limit` | 50 | Max results (max: 100) |
 
 ---
 
@@ -91,15 +162,15 @@ Permission: Any authenticated user
 
 ### GET /api/schemas/{db}
 
-Get the agent-collected schema snapshot for a database. The server auto-resolves the best available environment unless explicitly specified.
+Get the agent-collected schema snapshot for a database.
+
+Permission: `request.view` (scoped)
 
 | Param | Default | Description |
 |-------|---------|-------------|
-| `summary` | true | When true, returns table names and row counts only |
-| `table` | | Filter to a single table (supports `schema.table` format) |
+| `summary` | true | Table names and row counts only |
+| `table` | | Filter to a single table (supports `schema.table`) |
 | `environment` | | Explicit environment (auto-resolved if omitted) |
-
-Permission: `request.view` (scoped to the resolved database/environment)
 
 ---
 
@@ -107,7 +178,7 @@ Permission: `request.view` (scoped to the resolved database/environment)
 
 ### GET /api/me
 
-Get the current authenticated user's profile, resolved roles, and group memberships.
+Get the current user's profile, resolved roles, and group memberships.
 
 Permission: Any authenticated user
 
@@ -117,31 +188,31 @@ Permission: Any authenticated user
 
 ### GET /api/users
 
-List all registered users with their status and roles.
+List all registered users.
 
-Permission: `user.manage`
+Permission: `user.write`
 
 ### PATCH /api/users/{id}
 
-Update a user's profile fields. Currently only `slack_user_id` can be set or cleared.
+Update a user's profile fields.
 
-Permission: Self-update allowed; otherwise `user.manage`
+Permission: `user.write` (or self-update for own profile)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `slack_user_id` | string \| null | ✓ | Set or clear Slack user ID |
 
 ### POST /api/users/{id}/suspend
 
-Suspend a user. Revokes all active tokens and cancels pending requests.
+Suspend a user. Revokes all active tokens and cancels pending requests. For config-managed users, status reverts on server restart.
 
-For config-managed users (`[[users]]` in server.toml), the response includes a `warning` field: status will revert to the config value on next server restart or reload. To permanently suspend, set `status = "suspended"` in server.toml.
-
-Permission: `user.manage`
+Permission: `user.write`
 
 ### POST /api/users/{id}/activate
 
-Reactivate a previously suspended user.
+Reactivate a previously suspended user. For config-managed users, status reverts on server restart.
 
-For config-managed users, same caveat applies: status reverts to config on restart.
-
-Permission: `user.manage`
+Permission: `user.write`
 
 ---
 
@@ -149,128 +220,63 @@ Permission: `user.manage`
 
 ### POST /api/tokens
 
-Create a new API token. The token value is returned only once in the response — store it securely.
+Create a new API token. The raw token value is returned only once — store it securely.
 
-**Request body:**
+Permission: `token.write`
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `subject_id` | string | ✓ | User or service identifier. |
-| `subject_type` | string | | `user` (default) or `agent`. |
-| `scope_ceiling` | object | ✓ (user) | `{"roles": [...]}` — roles the token is allowed to activate. Required for `user` tokens. Set `null` for agent tokens to inherit all bound roles. |
-| `name` | string | | Human-readable label. |
-| `expires_at` | datetime | | Absolute expiry (RFC 3339). Unset = no expiration. |
+| `subject_id` | string | ✓ | Subject the token authenticates as |
+| `subject_type` | string | ✓ | `user` or `agent` |
+| `name` | string | | Human-readable label |
+| `scope_ceiling` | object | user: ✓ | Max effective roles: `{"roles": ["developer"]}` |
+| `expires_at` | DateTime | | Expiration time (ISO 8601) |
 
-> **Removed fields:** `roles` (deprecated — converted to `scope_ceiling` if sent alone, rejected if sent with `scope_ceiling`) and `groups` (abolished — rejected if non-empty).
-
-**Response (201):**
-
-```json
-{
-  "id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
-  "token": "dbw_a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
-  "prefix": "a1b2c3d4",
-  "subject_id": "bob",
-  "scope_ceiling": {"roles": ["developer", "dba"]},
-  "effective_roles": ["developer"],
-  "effective_permissions": ["request.create", "request.view"],
-  "expires_at": "2026-09-01T00:00:00Z"
-}
-```
-
-Permission: `token.write`
-
+Notes:
+- `scope_ceiling` is required for user tokens. Agent tokens may omit it (unrestricted).
+- Effective permissions = resolved roles ∩ scope_ceiling.
 
 ### GET /api/tokens
 
-List all tokens with their metadata, status, and expiration.
-
-**Response (200):**
-
-```json
-{
-  "tokens": [
-    {
-      "id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
-      "subject_id": "bob",
-      "subject_type": "user",
-      "token_prefix": "a1b2c3d4",
-      "scope_ceiling": {"roles": ["developer"]},
-      "name": "Bob CI token",
-      "status": "active",
-      "expires_at": "2026-09-01T00:00:00Z",
-      "created_at": "2026-06-29T12:00:00Z",
-      "revoked_at": null
-    }
-  ]
-}
-```
+List all tokens with metadata and status.
 
 Permission: `token.write`
 
-### GET /api/tokens/{id}/inspect
-
-Inspect a token's resolved authorization state: scope ceiling, resolved roles (from `[[auth.role_bindings]]`), effective roles (intersection), and effective permissions.
-
-**Response (200):**
-
-```json
-{
-  "id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
-  "subject_id": "bob",
-  "subject_type": "user",
-  "scope_ceiling": {"roles": ["developer", "dba"]},
-  "resolved_roles": ["developer", "admin"],
-  "effective_roles": ["developer"],
-  "effective_permissions": ["request.create", "request.view", "result.view"],
-  "status": "active"
-}
-```
-
-Permission: Owner (token's `subject_id` matches caller) **or** `token.write`
-
 ### DELETE /api/tokens/{id}
 
-Revoke a token immediately. The token becomes invalid for all future requests.
-
-**Response (200):**
-
-```json
-{
-  "id": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
-  "revoked_at": "2026-06-29T15:00:00Z"
-}
-```
+Revoke a token immediately.
 
 Permission: `token.write` or `token.revoke_own` (for own tokens)
+
+### GET /api/tokens/{id}/inspect
+
+Show the token's effective roles and permissions after ceiling application.
+
+Permission: Token owner or `token.write`
 
 ---
 
 ## Webhooks
 
-> Webhooks are config-managed. Define webhooks in `[[webhooks]]` in server.toml.
-
-### ~~POST /api/webhooks~~ → 405
-
-### ~~PUT /api/webhooks/{id}~~ → 405
-
-### ~~DELETE /api/webhooks/{id}~~ → 405
+Config-managed resource. Define webhooks in `[[webhooks]]` in server.toml. Mutation endpoints return `405`.
 
 ### GET /api/webhooks
 
 List all registered webhooks.
 
-Permission: `webhook.manage`
+Permission: `workflow.read`
 
 ### GET /api/webhooks/{id}
 
 Get a webhook's configuration and delivery statistics.
 
-Permission: `webhook.manage`
+Permission: `workflow.read`
 
 ### GET /api/webhook-deliveries
 
-List webhook delivery attempts with status and retry information.
+List webhook delivery attempts.
+
+Permission: `metrics.view`
 
 | Param | Default | Description |
 |-------|---------|-------------|
@@ -278,99 +284,71 @@ List webhook delivery attempts with status and retry information.
 | `limit` | 50 | Max results (max: 100) |
 | `offset` | 0 | Pagination offset |
 
-Permission: `metrics.view`
-
 ---
 
 ## Roles
 
-> Custom roles are config-managed. Define roles in `[[auth.roles]]` in server.toml.
-
-### ~~POST /api/roles~~ → 405
-
-### ~~DELETE /api/roles/{name}~~ → 405
+Config-managed resource. Define roles in `[[auth.roles]]` in server.toml. Mutation endpoints return `405`.
 
 ### GET /api/roles
 
 List all roles (built-in and custom) with their permissions.
 
-Permission: `role.manage`
+Permission: `workflow.read`
 
 ---
 
 ## Policies
 
-> Policies are config-managed. Define policies in `[[workflows]]`, `[[execution_policies]]`, `[[result_policies]]`, `[[notification_policies]]` in server.toml.
-
-### ~~POST /api/workflows~~ → 405
-
-### ~~DELETE /api/workflows/{id}~~ → 405
+Config-managed resources. Define in server.toml (`[[workflows]]`, `[[execution_policies]]`, `[[result_policies]]`, `[[notification_policies]]`, `[[sql_review]]`). Mutation endpoints return `405`.
 
 ### GET /api/workflows
 
 List all configured workflows.
 
-Permission: `workflow.manage`
-
-### ~~POST /api/execution-policies~~ → 405
-
-### ~~DELETE /api/execution-policies/{id}~~ → 405
+Permission: `workflow.read`
 
 ### GET /api/execution-policies
 
 List all execution policies.
 
-Permission: `policy.manage`
-
-### ~~POST /api/result-policies~~ → 405
-
-### ~~PUT /api/result-policies/{id}~~ → 405
-
-### ~~DELETE /api/result-policies/{id}~~ → 405
+Permission: `workflow.read`
 
 ### GET /api/result-policies
 
 List all result policies.
 
-Permission: `policy.manage`
+Permission: `workflow.read`
 
 ### GET /api/result-policies/{id}
 
 Get a specific result policy.
 
-Permission: `policy.manage`
-
-### ~~POST /api/notification-policies~~ → 405
-
-### ~~PUT /api/notification-policies/{id}~~ → 405
-
-### ~~DELETE /api/notification-policies/{id}~~ → 405
+Permission: `workflow.read`
 
 ### GET /api/notification-policies
 
 List all notification policies.
 
-Permission: `policy.manage`
+Permission: `workflow.read`
 
 ### GET /api/notification-policies/{id}
 
 Get a specific notification policy.
 
-Permission: `policy.manage`
-
-### ~~POST /api/sql-review-policies~~ → 405
+Permission: `workflow.read`
 
 ### GET /api/sql-review-policies
 
-List all active SQL review policies (config-managed).
-
-Response: `{"sql_review_policies": [{"id", "database", "environment", "rules", "source"}]}`
+List all active SQL review policies.
 
 Permission: `workflow.read`
 
 ### GET /api/policy-resolution
 
-Resolve the effective policy for a database/environment. Shows which workflow matches, auto-approve rules, execution policy, SQL review policy, and the predicted decision.
+Resolve the effective policy for a database/environment combination.
+
+Permission: `request.view` (scoped)
 
 | Param | Required | Description |
 |-------|----------|-------------|
@@ -378,17 +356,15 @@ Resolve the effective policy for a database/environment. Shows which workflow ma
 | `environment` | ✓ | Environment name |
 | `operation` | | Specific operation (omit for all) |
 
-Response includes `sql_review_policy` field showing the best-matching policy by specificity.
-
-Permission: `request.view` (scoped)
-
 ---
 
 ## Audit
 
 ### GET /api/audit/events
 
-Search audit log events with filtering.
+Search audit log events.
+
+Permission: `audit.read`
 
 | Param | Default | Description |
 |-------|---------|-------------|
@@ -403,13 +379,11 @@ Search audit log events with filtering.
 | `limit` | 50 | Max results (max: 200) |
 | `offset` | 0 | Pagination offset |
 
-Permission: `audit.view`
-
 ### GET /api/audit/verify
 
-Verify the audit log hash chain integrity. Returns whether the chain is valid and the first broken event ID if not.
+Verify the audit log hash chain integrity.
 
-Permission: `audit.view`
+Permission: `audit.read`
 
 ---
 
@@ -417,55 +391,83 @@ Permission: `audit.view`
 
 ### POST /api/agent/poll
 
-Agent reports capabilities and polls for pending jobs. Returns available jobs and dry-run requests.
+Agent reports capabilities and polls for pending jobs.
 
-Permission: `agent.poll`
+Permission: `agent.operate` (agent token required)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `capabilities` | object | ✓ | `{databases: string[], environments?: string[], operations?: string[]}` |
+| `limit` | u32 | | Max jobs to return |
+| `status` | object | | Agent status report (in_flight, max_concurrent, draining, etc.) |
+| `agent_version` | string | | Agent binary version |
 
 ### POST /api/agent/jobs/{id}/claim
 
-Agent claims a specific job for execution. Returns the execution token, SQL, timeout, and lease expiry.
+Agent claims a specific job for execution.
 
-Permission: `agent.claim`
+Permission: `agent.operate` (agent token required)
 
 ### POST /api/agent/jobs/{id}/heartbeat
 
-Agent extends its lease on a running job. Returns whether the job has been cancelled.
+Agent extends its lease on a running job.
 
-Permission: `agent.heartbeat`
+Permission: `agent.operate` (agent token required)
 
 ### POST /api/agent/jobs/{id}/result
 
-Agent submits execution result (success/failure, data, rows affected, duration).
+Agent submits execution result.
 
-Body limit: ~12 MB
+Permission: `agent.operate` (agent token required)
 
-Permission: `agent.submit_result`
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `success` | bool | ✓ | Whether execution succeeded |
+| `result_data` | string | | Query result data |
+| `error_message` | string | | Error message on failure |
+| `rows_affected` | u64 | | Number of rows affected |
+| `duration_ms` | u64 | | Execution duration |
 
 ### GET /api/agents
 
-List connected agents with their status, capabilities, and active jobs.
+List connected agents with status and capabilities.
 
 Permission: `metrics.view`
 
 ### POST /api/agent/schema-sync
 
-Agent reports a database schema snapshot (tables, columns, row estimates) used for risk scoring.
+Agent reports a database schema snapshot.
+
+Permission: `agent.operate` (agent token required)
 
 Body limit: 10 MB
 
-Permission: Agent token required
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `database` | string | ✓ | Database name |
+| `environment` | string | ✓ | Environment name |
+| `dialect` | string | ✓ | Database dialect |
+| `status` | string | ✓ | Sync status |
+| `snapshot` | object | | Schema snapshot JSON |
+| `error_message` | string | | Error on failure |
 
 ### POST /api/agent/dry-run/{id}/claim
 
-Agent claims a dry-run job to execute EXPLAIN for impact preview.
+Agent claims a dry-run job for EXPLAIN execution.
 
-Permission: Agent token required
+Permission: `agent.operate` (agent token required)
 
 ### POST /api/agent/dry-run/{id}/result
 
-Agent submits EXPLAIN output for a dry-run job.
+Agent submits EXPLAIN output.
 
-Permission: Agent token required
+Permission: `agent.operate` (agent token required)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `claim_token` | string | ✓ | Claim token from claim response |
+| `result` | object | | EXPLAIN output |
+| `error` | string | | Error message |
 
 ---
 
@@ -479,23 +481,49 @@ Permission: `request.view`
 
 ---
 
+## MCP (Streamable HTTP)
+
+JSON-RPC over HTTP with SSE streaming. Each tool invocation checks its own permission.
+
+### POST /mcp
+
+Send a JSON-RPC message (initialize, tool call, etc.).
+
+Permission: Any authenticated user (tool-level checks apply)
+
+Headers: `Content-Type: application/json`, `Accept: application/json, text/event-stream`
+
+### GET /mcp
+
+Resume or replay SSE stream for an existing session.
+
+Headers: `Accept: text/event-stream`, `Mcp-Session-Id` (required), `Last-Event-Id` (required)
+
+### DELETE /mcp
+
+Terminate an MCP session.
+
+Headers: `Mcp-Session-Id` (required)
+
+---
+
 ## Infrastructure (Public)
 
 ### GET /health
 
-Health check. Always returns 200 if the server process is running.
+Health check. Always returns 200 if the server is running.
 
 ### GET /ready
 
-Readiness check. Returns 200 when all subsystems (SQLite, result store) are operational, 503 otherwise.
+Readiness check. Returns 200 when all subsystems are operational, 503 otherwise.
 
 ### POST /api/slack/interactions
 
-Receives Slack interaction payloads (button clicks, modal submissions). Verified by Slack signing secret — no Bearer token required.
+Slack interaction payloads (button clicks, modal submissions). Verified by Slack signing secret — no Bearer token required.
 
 ### POST /api/slack/commands
 
-Receives Slack Slash Command payloads (`/dbward execute`, `/dbward help`). Verified by Slack signing secret — no Bearer token required.
+Slack slash command payloads. Verified by Slack signing secret — no Bearer token required.
 
 ---
 
@@ -505,32 +533,10 @@ Receives Slack Slash Command payloads (`/dbward execute`, `/dbward help`). Verif
 
 Prometheus metrics in text format.
 
-Permission: `*` (admin only)
+Permission: `metrics.view`
 
 ### GET /api/public-key
 
-Ed25519 public key used by agents to verify execution tokens.
+Ed25519 public key for execution token verification.
 
 Permission: Agent token required
-
----
-
-## Error Format
-
-All errors return:
-
-```json
-{"error": "subject_id is required", "code": "validation.failed", "hint": "subject_id is required"}
-```
-
-| HTTP Status | Code | Meaning |
-|-------------|------|---------|
-| 400 | `validation.failed` | Validation error |
-| 401 | (varies) | Not authenticated |
-| 403 | `forbidden` | Not authorized |
-| 404 | `request.not_found` | Resource not found |
-| 409 | `request.conflict` | Conflict (idempotency key race) |
-| 410 | `request.gone` | Resource gone |
-| 413 | `payload.too_large` | Payload too large |
-| 422 | `policy.limit_exceeded` | Plan limit exceeded |
-
