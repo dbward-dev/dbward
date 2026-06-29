@@ -66,6 +66,12 @@ pub(super) async fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::P
     // S10: role_binding_empty
     check_role_binding_empty(ctx, &cfg);
 
+    // S12: token_binding_check (bootstrap subjects must have role_bindings)
+    check_token_binding(ctx, &cfg);
+
+    // S13: active token scan (read DB directly if state_dir is accessible)
+    check_active_tokens(ctx, &cfg);
+
     // S11: slack connectivity
     check_slack(ctx, &cfg).await;
 }
@@ -516,6 +522,214 @@ fn check_role_binding_empty(ctx: &mut DoctorContext, cfg: &dbward_config::Server
 }
 
 /// Slack connectivity checks (only runs if [slack] is configured).
+fn check_token_binding(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
+    let has_default_role = cfg.auth.default_role.is_some();
+
+    let all_bound_subjects: Vec<&str> = cfg
+        .auth
+        .role_bindings
+        .iter()
+        .flat_map(|b| b.subjects.iter().map(|s| s.as_str()))
+        .collect();
+
+    let mut warnings = Vec::new();
+
+    // Check 1: bootstrap subjects must resolve
+    let bootstrap_subjects = ["admin", "developer"];
+    for subj in &bootstrap_subjects {
+        if !all_bound_subjects.contains(subj) && !has_default_role {
+            warnings.push(format!(
+                "bootstrap subject '{}' has no role_bindings — token auth will fail (403)",
+                subj
+            ));
+        }
+    }
+
+    // Check 2: warn if no default_role and no bindings at all (all dynamic tokens will 403)
+    if !has_default_role && cfg.auth.role_bindings.is_empty() {
+        warnings.push(
+            "no role_bindings and no default_role — all API tokens will fail (403). \
+             User tokens with scope_ceiling=NULL are always rejected."
+                .into(),
+        );
+    }
+
+    // Check 3: warn about scope_ceiling upgrade impact
+    if !has_default_role {
+        warnings.push(
+            "no default_role set — existing tokens for subjects without explicit bindings \
+             will fail after upgrade. Run `dbward token inspect <id>` to check."
+                .into(),
+        );
+    }
+
+    if warnings.is_empty() {
+        ctx.record(CheckResult {
+            id: "token_binding",
+            status: Status::Pass,
+            message: "token auth config OK (role_bindings + default_role cover bootstrap subjects)"
+                .into(),
+            hint: None,
+        });
+    } else {
+        for w in &warnings {
+            ctx.record(CheckResult {
+                id: "token_binding",
+                status: Status::Warn,
+                message: w.clone(),
+                hint: Some(
+                    "Add subject to [[auth.role_bindings]] or set [auth] default_role".into(),
+                ),
+            });
+        }
+    }
+}
+
+fn check_active_tokens(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
+    let db_path = std::path::Path::new(&cfg.state_dir).join("dbward.db");
+    if !db_path.exists() {
+        ctx.record(CheckResult {
+            id: "active_tokens",
+            status: Status::Skip,
+            message: format!("DB not found at {} (first startup?)", db_path.display()),
+            hint: None,
+        });
+        return;
+    }
+
+    let conn = match rusqlite::Connection::open_with_flags(
+        &db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(c) => c,
+        Err(e) => {
+            ctx.record(CheckResult {
+                id: "active_tokens",
+                status: Status::Skip,
+                message: format!("cannot open DB: {e}"),
+                hint: None,
+            });
+            return;
+        }
+    };
+
+    // Query active tokens
+    let mut stmt = match conn.prepare(
+        "SELECT id, subject_type, subject_id, token_prefix, scope_ceiling_json FROM tokens WHERE status = 'active'",
+    ) {
+        Ok(s) => s,
+        Err(_) => {
+            ctx.record(CheckResult {
+                id: "active_tokens",
+                status: Status::Skip,
+                message: "tokens table not found (pre-migration?)".into(),
+                hint: None,
+            });
+            return;
+        }
+    };
+
+    let mut warnings = Vec::new();
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })
+        .unwrap_or_else(|_| panic!("query failed"));
+
+    for row in rows.flatten() {
+        let (_id, subject_type, subject_id, prefix, ceiling_json) = row;
+
+        // Check: user token with NULL ceiling → always 403
+        if subject_type == "user" && ceiling_json.is_none() {
+            warnings.push(format!(
+                "prefix={} subject='{}' (user) has scope_ceiling=NULL → will be rejected (403)",
+                prefix, subject_id
+            ));
+            continue;
+        }
+
+        // Resolve roles from Config (subjects + group membership + default_role)
+        let subject_groups: Vec<&str> = cfg
+            .auth
+            .groups
+            .iter()
+            .filter(|g| g.members.iter().any(|m| m == &subject_id))
+            .map(|g| g.name.as_str())
+            .collect();
+        let mut resolved_roles: Vec<String> = cfg
+            .auth
+            .role_bindings
+            .iter()
+            .filter(|b| {
+                b.subjects.iter().any(|s| s == &subject_id)
+                    || b.groups
+                        .iter()
+                        .any(|g| subject_groups.contains(&g.as_str()))
+            })
+            .map(|b| b.role.clone())
+            .collect();
+        if let Some(ref default) = cfg.auth.default_role
+            && !resolved_roles.contains(default)
+        {
+            resolved_roles.push(default.clone());
+        }
+
+        // Check: subject has no bindings and no default_role → 403
+        if subject_type == "user" && resolved_roles.is_empty() {
+            warnings.push(format!(
+                "prefix={} subject='{}' has no role_bindings → will fail (403)",
+                prefix, subject_id
+            ));
+            continue;
+        }
+
+        // Check: scope_ceiling ∩ resolved_roles = empty → 403
+        if let Some(ref json_str) = ceiling_json {
+            let ceiling_roles = serde_json::from_str::<serde_json::Value>(json_str)
+                .ok()
+                .and_then(|v| v.get("roles")?.as_array().cloned());
+            if let Some(roles_arr) = ceiling_roles {
+                let ceiling_strs: Vec<&str> = roles_arr.iter().filter_map(|v| v.as_str()).collect();
+                let has_overlap = resolved_roles
+                    .iter()
+                    .any(|r| ceiling_strs.contains(&r.as_str()));
+                if !has_overlap {
+                    warnings.push(format!(
+                        "prefix={} subject='{}' scope_ceiling={:?} has no overlap with resolved roles {:?} → will fail (403)",
+                        prefix, subject_id, ceiling_strs, resolved_roles
+                    ));
+                }
+            }
+        }
+    }
+
+    if warnings.is_empty() {
+        ctx.record(CheckResult {
+            id: "active_tokens",
+            status: Status::Pass,
+            message: "all active tokens will authenticate successfully after upgrade".into(),
+            hint: None,
+        });
+    } else {
+        for w in &warnings {
+            ctx.record(CheckResult {
+                id: "active_tokens",
+                status: Status::Warn,
+                message: w.clone(),
+                hint: Some(
+                    "Revoke and recreate with --scope-roles, or run --force-bootstrap".into(),
+                ),
+            });
+        }
+    }
+}
+
 async fn check_slack(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
     let Some(ref slack) = cfg.slack else {
         return;

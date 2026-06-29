@@ -61,6 +61,9 @@ pub fn build_audit_event(
                 meta["approval_comment"] = serde_json::Value::String(c.clone());
             }
             meta["matched_selector"] = serde_json::Value::String(matched_selector.clone());
+            if let Some(ref tid) = event.auth_token_id {
+                meta["auth_token_id"] = serde_json::Value::String(tid.clone());
+            }
             audit_event.metadata_json = meta.to_string();
         }
         EventMetadata::StepApproved {
@@ -76,9 +79,19 @@ pub fn build_audit_event(
             meta["step_number"] = (*step_index + 1).into();
             meta["total_steps"] = (*total_steps).into();
             meta["matched_selector"] = serde_json::Value::String(matched_selector.clone());
+            if let Some(ref tid) = event.auth_token_id {
+                meta["auth_token_id"] = serde_json::Value::String(tid.clone());
+            }
             audit_event.metadata_json = meta.to_string();
         }
-        _ => {}
+        _ => {
+            // For all other events, still record auth_token_id if present
+            if let Some(ref tid) = event.auth_token_id {
+                let mut meta = parse_metadata_object(&audit_event.metadata_json);
+                meta["auth_token_id"] = serde_json::Value::String(tid.clone());
+                audit_event.metadata_json = meta.to_string();
+            }
+        }
     }
 
     audit_event

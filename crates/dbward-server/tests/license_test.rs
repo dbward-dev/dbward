@@ -30,19 +30,18 @@ struct AdminVerifier;
 
 #[async_trait]
 impl TokenVerifier for AdminVerifier {
-    async fn verify_api_token(&self, token: &str) -> Result<AuthUser, AuthError> {
+    async fn verify_api_token(
+        &self,
+        token: &str,
+    ) -> Result<dbward_app::ports::VerifiedToken, AuthError> {
         if token == "admin" {
-            Ok(AuthUser {
+            Ok(dbward_app::ports::VerifiedToken {
+                id: "tok-1".into(),
                 subject_id: "admin".into(),
                 subject_type: SubjectType::User,
-                roles: vec![ResolvedRole {
-                    name: "admin".into(),
-                    permissions: [Permission::All].into(),
-                    databases: vec![DatabaseName::new("*").unwrap()],
-                    environments: vec![Environment::new("*").unwrap()],
-                }],
-                groups: vec![],
-                token_id: Some("tok-1".into()),
+                scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
+                    roles: vec!["admin".into()],
+                }),
             })
         } else {
             Err(AuthError::InvalidToken)

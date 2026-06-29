@@ -1,16 +1,26 @@
 use async_trait::async_trait;
 
 use dbward_domain::auth::{AuthUser, Permission, ResolvedRole, ResourceContext, SubjectType};
+use dbward_domain::entities::ScopeCeiling;
 use dbward_domain::policies::Workflow;
 use dbward_domain::values::{DatabaseName, Environment, Operation};
 
 use crate::error::{AppError, AuthError, AuthzError};
 
+/// Verified API token (no role resolution — that happens in auth middleware).
+#[derive(Debug)]
+pub struct VerifiedToken {
+    pub id: String,
+    pub subject_id: String,
+    pub subject_type: SubjectType,
+    pub scope_ceiling: Option<ScopeCeiling>,
+}
+
 /// Authentication: verifies tokens and OIDC JWTs.
 #[async_trait]
 pub trait TokenVerifier: Send + Sync {
-    /// API Token → AuthUser (roles already resolved from token record).
-    async fn verify_api_token(&self, token: &str) -> Result<AuthUser, AuthError>;
+    /// API Token → VerifiedToken (no role resolution).
+    async fn verify_api_token(&self, token: &str) -> Result<VerifiedToken, AuthError>;
     /// OIDC JWT → (subject_id, groups). Roles resolved separately by RoleResolver.
     async fn verify_oidc_token(&self, token: &str) -> Result<(String, Vec<String>), AuthError>;
 }

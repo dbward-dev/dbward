@@ -1680,12 +1680,30 @@ fn token_prefix_is_raw_4_to_12() {
         }
     }
 
+    struct FakeRoleResolverAdmin;
+    impl dbward_app::ports::RoleResolver for FakeRoleResolverAdmin {
+        fn resolve(
+            &self,
+            _subject_id: &str,
+            _subject_type: dbward_domain::auth::SubjectType,
+            _groups: &[String],
+        ) -> Result<Vec<dbward_domain::auth::ResolvedRole>, dbward_app::error::AuthError> {
+            Ok(vec![dbward_domain::auth::ResolvedRole {
+                name: "admin".into(),
+                permissions: [dbward_domain::auth::Permission::All].into_iter().collect(),
+                databases: vec![],
+                environments: vec![],
+            }])
+        }
+    }
+
     let token_repo = Arc::new(FakeTokenRepo(std::sync::Mutex::new(vec![])));
     let uc = TokenManage {
         authorizer: Arc::new(AllowAll),
         token_repo: token_repo.clone(),
         user_repo: Arc::new(FakeUserRepoNotSuspended),
         policy_repo: Arc::new(FakePolicyRepoForToken),
+        role_resolver: Arc::new(FakeRoleResolverAdmin),
         license: Arc::new(FakeLicenseChecker),
         uow: Arc::new(common::NoopUnitOfWork),
         clock: Arc::new(FakeClock::new()),
@@ -1700,9 +1718,12 @@ fn token_prefix_is_raw_4_to_12() {
                 subject_id: "bob".into(),
                 subject_type: "user".into(),
                 name: Some("test-token".into()),
-                roles: vec![],
-                groups: vec![],
+                scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
+                    roles: vec!["admin".into()],
+                }),
                 expires_at: None,
+                issued_by: None,
+                groups: vec![],
             },
             &admin,
             &dbward_domain::entities::AuditContext::System,

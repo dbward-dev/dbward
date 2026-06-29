@@ -21,31 +21,40 @@ struct MockTokenVerifier;
 
 #[async_trait]
 impl TokenVerifier for MockTokenVerifier {
-    async fn verify_api_token(&self, token: &str) -> Result<AuthUser, AuthError> {
+    async fn verify_api_token(
+        &self,
+        token: &str,
+    ) -> Result<dbward_app::ports::VerifiedToken, AuthError> {
         match token {
-            "valid-test-token" => Ok(AuthUser {
+            "valid-test-token" => Ok(dbward_app::ports::VerifiedToken {
+                id: "tok-1".into(),
                 subject_id: "test-user".into(),
                 subject_type: SubjectType::User,
-                roles: vec![ResolvedRole {
-                    name: "admin".into(),
-                    permissions: [Permission::All].into(),
-                    databases: vec![DatabaseName::new("*").unwrap()],
-                    environments: vec![Environment::new("*").unwrap()],
-                }],
-                groups: vec![],
-                token_id: Some("tok-1".into()),
+                scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
+                    roles: vec!["admin".into()],
+                }),
             }),
-            "agent-token" => Ok(AuthUser {
+            "agent-token" => Ok(dbward_app::ports::VerifiedToken {
+                id: "tok-agent".into(),
                 subject_id: "agent-01".into(),
                 subject_type: SubjectType::Agent,
-                roles: vec![ResolvedRole {
-                    name: "agent-default".into(),
-                    permissions: [Permission::AgentOperate].into(),
-                    databases: vec![DatabaseName::new("*").unwrap()],
-                    environments: vec![Environment::new("*").unwrap()],
-                }],
-                groups: vec![],
-                token_id: Some("tok-agent".into()),
+                scope_ceiling: None,
+            }),
+            // Token with NULL ceiling (legacy user token → 403)
+            "null-ceiling-token" => Ok(dbward_app::ports::VerifiedToken {
+                id: "tok-null".into(),
+                subject_id: "legacy-user".into(),
+                subject_type: SubjectType::User,
+                scope_ceiling: None,
+            }),
+            // Token with ceiling that doesn't match resolved roles → 403
+            "mismatch-ceiling-token" => Ok(dbward_app::ports::VerifiedToken {
+                id: "tok-mismatch".into(),
+                subject_id: "test-user".into(),
+                subject_type: SubjectType::User,
+                scope_ceiling: Some(dbward_domain::entities::ScopeCeiling {
+                    roles: vec!["nonexistent".into()],
+                }),
             }),
             _ => Err(AuthError::InvalidToken),
         }
@@ -1067,4 +1076,30 @@ async fn policy_resolution_missing_params_returns_400() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn user_token_with_null_ceiling_returns_403() {
+    let app = build_app(test_state(), vec![]);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/requests")
+        .header("authorization", "Bearer null-ceiling-token")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn user_token_with_mismatched_ceiling_returns_403() {
+    let app = build_app(test_state(), vec![]);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/requests")
+        .header("authorization", "Bearer mismatch-ceiling-token")
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }

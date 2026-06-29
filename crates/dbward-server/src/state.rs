@@ -363,6 +363,7 @@ impl<'a> TokenUseCases<'a> {
             token_repo: s.token_repo.clone(),
             user_repo: s.user_repo.clone(),
             policy_repo: s.policy_repo.clone(),
+            role_resolver: s.reloadable.load().role_resolver.clone(),
             license: s.license_checker.clone(),
             uow: s.uow.clone(),
             clock: s.clock.clone(),
@@ -622,6 +623,9 @@ impl<'a> BackgroundAccess<'a> {
 impl AppState {
     pub(crate) fn token_repo(&self) -> &Arc<dyn TokenRepo> {
         &self.token_repo
+    }
+    pub(crate) fn authorizer(&self) -> &Arc<dyn Authorizer> {
+        &self.authorizer
     }
     #[allow(dead_code)] // Used in hot reload (Phase 4)
     pub(crate) fn notifier(&self) -> &Arc<dyn Notifier> {

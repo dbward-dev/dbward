@@ -472,6 +472,21 @@ impl ServerClient {
             Err(ServerError::from_response(status, text).into_cli_error("token revoke"))
         }
     }
+
+    pub async fn inspect_token(&self, id: &str) -> Result<Value, CliError> {
+        let path = format!("/api/tokens/{id}/inspect");
+        let (status, text) = self
+            .api
+            .get_with_status(&path)
+            .await
+            .map_err(|e| api_to_cli(e, "token inspect"))?;
+        if status == 200 {
+            serde_json::from_str(&text)
+                .map_err(|e| CliError::Server(format!("invalid response: {e}")))
+        } else {
+            Err(ServerError::from_response(status, text).into_cli_error("token inspect"))
+        }
+    }
 }
 
 fn api_to_cli(e: ApiError, context: &str) -> CliError {

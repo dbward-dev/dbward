@@ -19,16 +19,19 @@ impl SqliteTokenRepo {
 impl TokenRepo for SqliteTokenRepo {
     fn create(&self, token: &Token) -> Result<(), AppError> {
         let conn = self.conn.lock();
+        let scope_ceiling_json = token
+            .scope_ceiling
+            .as_ref()
+            .map(|sc| serde_json::to_string(sc).unwrap());
         conn.execute(
-            "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+            "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at, revoked_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
             rusqlite::params![
                 token.id,
                 subject_type_str(token.subject_type),
                 token.subject_id,
                 token.token_hash,
                 token.token_prefix,
-                serde_json::to_string(&token.roles).map_err(|e| AppError::Internal(format!("json: {e}")))?,
-                serde_json::to_string(&token.groups).map_err(|e| AppError::Internal(format!("json: {e}")))?,
+                scope_ceiling_json,
                 token.name,
                 token_status_str(token.status),
                 token.expires_at.map(|t| t.to_rfc3339()),
@@ -42,7 +45,7 @@ impl TokenRepo for SqliteTokenRepo {
     fn verify(&self, prefix: &str, hash: &str) -> Result<Option<Token>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE token_prefix = ?1 AND status = 'active'",
+            "SELECT id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE token_prefix = ?1 AND status = 'active'",
         ).map_err(db_err("token: verify"))?;
         let rows = stmt
             .query_map(rusqlite::params![prefix], row_to_token)
@@ -61,7 +64,7 @@ impl TokenRepo for SqliteTokenRepo {
     fn list(&self) -> Result<Vec<Token>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens",
+            "SELECT id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at, revoked_at FROM tokens",
         ).map_err(db_err("token: list"))?;
         let rows = stmt
             .query_map([], row_to_token)
@@ -73,7 +76,7 @@ impl TokenRepo for SqliteTokenRepo {
     fn get(&self, token_id: &str) -> Result<Option<Token>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE id = ?1",
+            "SELECT id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at, revoked_at FROM tokens WHERE id = ?1",
         ).map_err(db_err("token: get"))?;
         let result = stmt.query_row(rusqlite::params![token_id], row_to_token);
         match result {
@@ -155,12 +158,19 @@ fn parse_token_status(s: &str) -> TokenStatus {
 
 fn row_to_token(row: &rusqlite::Row) -> rusqlite::Result<Token> {
     let subject_type_s: String = row.get(1)?;
-    let roles_json: String = row.get(5)?;
-    let groups_json: String = row.get(6)?;
-    let status_s: String = row.get(8)?;
-    let expires_str: Option<String> = row.get(9)?;
-    let created_str: String = row.get(10)?;
-    let revoked_str: Option<String> = row.get(11)?;
+    let scope_ceiling_json: Option<String> = row.get(5)?;
+    let status_s: String = row.get(7)?;
+    let expires_str: Option<String> = row.get(8)?;
+    let created_str: String = row.get(9)?;
+    let revoked_str: Option<String> = row.get(10)?;
+
+    let scope_ceiling = scope_ceiling_json
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
+        })?;
 
     Ok(Token {
         id: row.get(0)?,
@@ -168,19 +178,23 @@ fn row_to_token(row: &rusqlite::Row) -> rusqlite::Result<Token> {
         subject_id: row.get(2)?,
         token_hash: row.get(3)?,
         token_prefix: row.get(4)?,
-        roles: serde_json::from_str(&roles_json).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
-        })?,
-        groups: serde_json::from_str(&groups_json).map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
-        })?,
-        name: row.get(7)?,
+        scope_ceiling,
+        name: row.get(6)?,
         status: parse_token_status(&status_s),
-        expires_at: expires_str.and_then(|s| {
-            DateTime::parse_from_rfc3339(&s)
-                .ok()
-                .map(|d| d.with_timezone(&Utc))
-        }),
+        expires_at: match expires_str {
+            Some(s) => Some(
+                DateTime::parse_from_rfc3339(&s)
+                    .map(|d| d.with_timezone(&Utc))
+                    .map_err(|e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            8,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    })?,
+            ),
+            None => None,
+        },
         created_at: super::parse_datetime(&created_str)?,
         revoked_at: revoked_str.and_then(|s| {
             DateTime::parse_from_rfc3339(&s)

@@ -56,7 +56,7 @@ if [ "$APPROVE_STATUS" = "approved" ]; then
 fi
 
 # Wait for agent execution
-sleep 4
+sleep 8
 FINAL_STATUS=$(api GET "/api/requests/$REQ_ID" "$DEV_TOKEN" | json_field status)
 [ "$FINAL_STATUS" = "executed" ] && pass "Agent executed successfully" || fail "Agent execution" "status=$FINAL_STATUS"
 
@@ -72,7 +72,7 @@ REQ_ID=$(echo "$REQ" | json_field id)
 if [ "$STATUS" = "auto_approved" ] || [ "$STATUS" = "dispatched" ]; then
   pass "Development auto-approves: $STATUS"
   # Wait for execution
-  sleep 3
+  sleep 8
   FINAL=$(api GET "/api/requests/$REQ_ID" "$DEV_TOKEN" | json_field status)
   [ "$FINAL" = "executed" ] && pass "Auto-approved request executed" || fail "Auto-approve exec" "status=$FINAL"
 else

@@ -156,11 +156,7 @@ pub async fn run_from_args(
     ));
 
     // Auth
-    let mut token_verifier_impl = dbward_infra::auth::ApiTokenVerifier::new(
-        token_repo.clone(),
-        user_repo.clone(),
-        policy_repo.clone(),
-    );
+    let mut token_verifier_impl = dbward_infra::auth::ApiTokenVerifier::new(token_repo.clone());
 
     // token_verifier is finalized after OIDC injection below
     // initial_reloadable is built after OIDC injection determines final effective_auth_mode
@@ -462,7 +458,6 @@ pub async fn run_from_args(
             .map_err(|e| format!("config: {e}"))?
     };
 
-    let token_verifier_impl = token_verifier_impl.with_license(license_checker.clone());
     let token_verifier: Arc<dyn dbward_app::ports::TokenVerifier> = Arc::new(token_verifier_impl);
 
     let token_value_generator: Arc<dyn dbward_app::ports::TokenValueGenerator> =
@@ -549,6 +544,49 @@ pub async fn run_from_args(
 
     // Auto-bootstrap: create tokens on first startup
     bootstrap::auto_bootstrap(&state, &state_dir, force_bootstrap)?;
+
+    // D4: Scan active tokens and warn about those that will fail auth under new logic
+    {
+        let tokens = state.token_repo().list()?;
+        let resolver = state.reloadable.load();
+        for t in tokens
+            .iter()
+            .filter(|t| t.status == dbward_domain::entities::TokenStatus::Active)
+        {
+            let resolved = resolver
+                .role_resolver
+                .resolve(&t.subject_id, t.subject_type, &[]);
+            let warn_reason = match resolved {
+                Err(_) => Some("role resolution error"),
+                Ok(ref roles) if roles.is_empty() => Some("no role bindings found"),
+                Ok(ref roles) => {
+                    if t.subject_type == dbward_domain::auth::SubjectType::User
+                        && t.scope_ceiling.is_none()
+                    {
+                        Some("user token with scope_ceiling=NULL (will be rejected)")
+                    } else if let Some(ref ceiling) = t.scope_ceiling {
+                        let overlap = roles.iter().any(|r| ceiling.roles.contains(&r.name));
+                        if !overlap {
+                            Some("scope_ceiling has no overlap with resolved roles")
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+            };
+            if let Some(reason) = warn_reason {
+                tracing::warn!(
+                    token_prefix = %t.token_prefix,
+                    subject_id = %t.subject_id,
+                    subject_type = ?t.subject_type,
+                    reason = reason,
+                    "active token will fail authentication after upgrade"
+                );
+            }
+        }
+    }
 
     // Safety guard: reject if DB has config records but TOML key is absent
     safety_guard(&conn, &cfg)?;

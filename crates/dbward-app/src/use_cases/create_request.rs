@@ -835,6 +835,7 @@ impl CreateRequest {
                         },
                         requester_id: user.subject_id.clone(),
                         audit_context: ctx.clone(),
+                        auth_token_id: None,
                     },
                 );
                 let create_event = create_result.into_event();
@@ -852,6 +853,7 @@ impl CreateRequest {
                         metadata: EventMetadata::Dispatched,
                         requester_id: user.subject_id.clone(),
                         audit_context: ctx.clone(),
+                        auth_token_id: None,
                     },
                 )
                 .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -980,6 +982,7 @@ impl CreateRequest {
                     },
                     requester_id: user.subject_id.clone(),
                     audit_context: ctx.clone(),
+                    auth_token_id: None,
                 },
             );
             let create_event = create_result.into_event();
@@ -998,6 +1001,7 @@ impl CreateRequest {
                     metadata: EventMetadata::Dispatched,
                     requester_id: user.subject_id.clone(),
                     audit_context: ctx.clone(),
+                    auth_token_id: None,
                 },
             )
             .map_err(|e| AppError::Internal(e.to_string()))?;
@@ -1078,6 +1082,7 @@ impl CreateRequest {
                     },
                     requester_id: user.subject_id.clone(),
                     audit_context: ctx.clone(),
+                    auth_token_id: None,
                 },
             );
             let create_event = create_result.into_event();

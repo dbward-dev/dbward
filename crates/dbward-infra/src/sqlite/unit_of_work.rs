@@ -606,17 +606,20 @@ impl TxScope for SqliteTxScope<'_> {}
 impl TokenWriterOps for SqliteTxScope<'_> {
     fn create_token(&self, token: &Token) -> Result<(), AppError> {
         use super::token_repo::{subject_type_str, token_status_str};
+        let scope_ceiling_json = token
+            .scope_ceiling
+            .as_ref()
+            .map(|sc| serde_json::to_string(sc).unwrap());
         self.conn
             .execute(
-                "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, roles_json, groups_json, name, status, expires_at, created_at, revoked_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+                "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at, revoked_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
                 params![
                     token.id,
                     subject_type_str(token.subject_type),
                     token.subject_id,
                     token.token_hash,
                     token.token_prefix,
-                    serde_json::to_string(&token.roles).map_err(|e| AppError::Internal(format!("json: {e}")))?,
-                    serde_json::to_string(&token.groups).map_err(|e| AppError::Internal(format!("json: {e}")))?,
+                    scope_ceiling_json,
                     token.name,
                     token_status_str(token.status),
                     token.expires_at.map(|t| t.to_rfc3339()),

@@ -392,6 +392,7 @@ impl ApproveRequest {
                     },
                     requester_id: request_requester.clone(),
                     audit_context: audit_ctx,
+                    auth_token_id: None,
                 },
             )
             .map_err(|e| AppError::Conflict(e.to_string()))?;

@@ -26,6 +26,11 @@ fn auth_error_response(e: AuthError) -> (StatusCode, String) {
             serde_json::json!({"error": "user limit reached", "code": "policy.limit_exceeded", "hint": "contact your administrator or upgrade to Team"})
                 .to_string(),
         ),
+        AuthError::NoRolesResolved | AuthError::InsufficientScope => (
+            StatusCode::FORBIDDEN,
+            serde_json::json!({"error": "insufficient permissions", "code": e.code()})
+                .to_string(),
+        ),
         _ => (
             StatusCode::UNAUTHORIZED,
             serde_json::json!({"error": "authentication failed", "code": "unauthorized"})
@@ -63,7 +68,8 @@ fn log_auth_failure(state: &AppState, e: &AuthError, req: &Request) {
         detail_fingerprint: None,
         detail_raw: Some(e.to_string()),
         reason: Some(e.to_string()),
-        metadata_json: "{}".to_string(),
+        metadata_json: serde_json::json!({"failure_reason": e.to_string(), "code": e.code()})
+            .to_string(),
         prev_hash: None,
         event_hash: String::new(),
         created_at: chrono::Utc::now(),
@@ -179,6 +185,12 @@ pub async fn auth_middleware(
                 auth_error_response(e)
             })?;
 
+        if roles.is_empty() {
+            let e = AuthError::NoRolesResolved;
+            log_auth_failure(&state, &e, &req);
+            return Err(auth_error_response(e));
+        }
+
         // Emit login_success audit (cached for 1 hour per subject)
         {
             let should_emit = {
@@ -240,7 +252,8 @@ pub async fn auth_middleware(
             token_id: None,
         }
     } else {
-        let auth_user = state
+        // API Token path (NEW: VerifiedToken → role resolution → ceiling → AuthUser)
+        let verified = state
             .token_verifier
             .verify_api_token(token)
             .await
@@ -248,12 +261,122 @@ pub async fn auth_middleware(
                 log_auth_failure(&state, &e, &req);
                 auth_error_response(e)
             })?;
-        // F-3: auto-create user record on first API token auth
-        if let Err(e) = state.user_repo().ensure_exists(&auth_user.subject_id) {
-            tracing::error!("user ensure_exists failed: {e}");
+
+        // Suspended check (user only; agents have no user record)
+        if verified.subject_type == SubjectType::User {
+            match state.user_repo().is_suspended(&verified.subject_id) {
+                Ok(true) => {
+                    let e = AuthError::UserSuspended;
+                    log_auth_failure(&state, &e, &req);
+                    return Err(auth_error_response(e));
+                }
+                Err(_) => {
+                    return Err(auth_error_response(AuthError::Internal(
+                        "suspended check failed".into(),
+                    )));
+                }
+                Ok(false) => {}
+            }
         }
-        auth_user
+
+        // Role resolution (empty groups — Config membership is resolved internally)
+        let resolved_roles = state
+            .reloadable
+            .load()
+            .role_resolver
+            .resolve(&verified.subject_id, verified.subject_type, &[])
+            .map_err(|e| {
+                log_auth_failure(&state, &e, &req);
+                auth_error_response(e)
+            })?;
+
+        // Groups for AuthUser (approval matching): Config groups only
+        let groups = state
+            .reloadable
+            .load()
+            .role_resolver
+            .config_groups_for(&verified.subject_id)
+            .cloned()
+            .unwrap_or_default();
+
+        // scope_ceiling application
+        let effective_roles = match &verified.scope_ceiling {
+            Some(ceiling) if ceiling.roles.is_empty() => {
+                let e = AuthError::InsufficientScope;
+                log_auth_failure(&state, &e, &req);
+                return Err(auth_error_response(e));
+            }
+            Some(ceiling) => {
+                let filtered: Vec<_> = resolved_roles
+                    .into_iter()
+                    .filter(|r| ceiling.roles.contains(&r.name))
+                    .collect();
+                if filtered.is_empty() {
+                    let e = AuthError::InsufficientScope;
+                    log_auth_failure(&state, &e, &req);
+                    return Err(auth_error_response(e));
+                }
+                filtered
+            }
+            None => {
+                // scope_ceiling=None: agent only. User tokens with NULL ceiling are fail-closed.
+                if verified.subject_type == SubjectType::User {
+                    let e = AuthError::InsufficientScope;
+                    log_auth_failure(&state, &e, &req);
+                    return Err(auth_error_response(e));
+                }
+                if resolved_roles.is_empty() {
+                    let e = AuthError::NoRolesResolved;
+                    log_auth_failure(&state, &e, &req);
+                    return Err(auth_error_response(e));
+                }
+                resolved_roles
+            }
+        };
+
+        AuthUser {
+            subject_id: verified.subject_id,
+            subject_type: verified.subject_type,
+            roles: effective_roles,
+            groups,
+            token_id: Some(verified.id),
+        }
     };
+
+    // Post-auth: user limit + ensure_exists (only after successful auth)
+    if user.subject_type == SubjectType::User && user.token_id.is_some() {
+        let user_exists = match state.user_repo().get(&user.subject_id) {
+            Ok(u) => u.is_some(),
+            Err(e) => {
+                tracing::error!("user_repo.get failed: {e}");
+                return Err(auth_error_response(AuthError::Internal(
+                    "user lookup failed".into(),
+                )));
+            }
+        };
+        if !user_exists {
+            let count = match state.user_repo().count_active() {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("user_repo.count_active failed: {e}");
+                    return Err(auth_error_response(AuthError::Internal(
+                        "user count failed".into(),
+                    )));
+                }
+            };
+            if count >= state.license_checker().max_users() {
+                let e = AuthError::UserLimitReached;
+                log_auth_failure(&state, &e, &req);
+                return Err(auth_error_response(e));
+            }
+        }
+        if let Err(e) = state.user_repo().ensure_exists(&user.subject_id) {
+            tracing::error!("user ensure_exists failed: {e}");
+            return Err(auth_error_response(AuthError::Internal(
+                "user record creation failed".into(),
+            )));
+        }
+    }
 
     // Augment AuthUser.groups with TOML [[auth.groups]] membership
     if let Some(config_groups) = state

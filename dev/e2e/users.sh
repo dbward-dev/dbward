@@ -14,7 +14,7 @@ echo "=== User Management E2E ==="
 echo ""
 wait_for_server
 
-ADMIN_TOKEN=$(create_token "e2e-admin-$TS" admin)
+ADMIN_TOKEN=$(docker compose exec -T dbward-server cat /data/admin-token 2>/dev/null || echo "")
 
 # --- 1. Create readonly user ---
 echo "--- Readonly user ---"
