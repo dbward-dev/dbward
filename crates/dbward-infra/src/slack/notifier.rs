@@ -84,7 +84,8 @@ impl SlackNotifier {
             && let Some(ref wf_json) = req.workflow_snapshot_json
         {
             let current_step = event.step_index.unwrap_or(0);
-            if let Some(formatted) = block_kit::format_approvers_field(wf_json, current_step) {
+            if let Some(formatted) = block_kit::format_approvers_field(wf_json, current_step, None)
+            {
                 event.approvers = Some(vec![formatted]);
             }
             // Enrich step progress from workflow snapshot
@@ -155,15 +156,16 @@ impl SlackNotifier {
         };
 
         // PRIMARY: Update original message from canonical state
+        let approvals = self
+            .approval_repo
+            .get_approvals(request_id)
+            .unwrap_or_default();
+
         if let Ok(Some(req)) = self.request_reader.get(request_id) {
             let workflow_json = req.workflow_snapshot_json.as_deref();
             let context = self.context_repo.get(request_id).ok().flatten();
 
             // Compute current_step from approvals
-            let approvals = self
-                .approval_repo
-                .get_approvals(request_id)
-                .unwrap_or_default();
             let current_step = workflow_json
                 .and_then(|wj| {
                     serde_json::from_str::<dbward_domain::policies::workflow::Workflow>(wj).ok()
@@ -196,6 +198,7 @@ impl SlackNotifier {
                 current_step,
                 reject_reason.as_deref(),
                 requester_mention.as_deref(),
+                &approvals,
             );
             let text = block_kit::fallback_text(event);
             if let Err(e) = self
@@ -213,7 +216,7 @@ impl SlackNotifier {
         }
 
         // SECONDARY: Thread reply (always attempt, best-effort)
-        let mention_suffix = self.resolve_reply_mentions(event).await;
+        let mention_suffix = self.resolve_reply_mentions(event, &approvals).await;
         let reply_blocks = block_kit::build_thread_reply(event, &mention_suffix);
         let reply_text = if mention_suffix.is_empty() {
             block_kit::fallback_text(event)
@@ -271,23 +274,44 @@ impl SlackNotifier {
     }
 
     /// Resolve mention target for thread replies.
-    async fn resolve_reply_mentions(&self, event: &WebhookEvent) -> String {
+    async fn resolve_reply_mentions(
+        &self,
+        event: &WebhookEvent,
+        approvals: &[dbward_domain::entities::Approval],
+    ) -> String {
         let actor = event.actor.as_deref().unwrap_or("");
 
         match event.event_type.as_str() {
             "step.approved" => {
-                let subjects = self.resolve_next_step_subjects(event);
-                if subjects.is_empty() {
-                    return String::new();
+                // Use canonical step satisfaction check (respects mode=all/any)
+                match self.is_current_step_satisfied(event, approvals) {
+                    Some(true) => {
+                        // Step satisfied → notify next step approvers
+                        let subjects = self.resolve_next_step_subjects(event);
+                        if subjects.is_empty() {
+                            return String::new();
+                        }
+                        let mentions = self.user_resolver.mentions_for(&subjects).await;
+                        format!("👉 Next Approver: {}", mentions.join(" "))
+                    }
+                    Some(false) => {
+                        // Step NOT satisfied (mode=all partial) → notify remaining
+                        let remaining = self.resolve_remaining_step_subjects(event, approvals);
+                        if remaining.is_empty() {
+                            return String::new();
+                        }
+                        let mentions = self.user_resolver.mentions_for(&remaining).await;
+                        format!("👉 Remaining Approver: {}", mentions.join(" "))
+                    }
+                    None => String::new(),
                 }
-                let mentions = self.user_resolver.mentions_for(&subjects).await;
-                format!("👉 Next Approver: {}", mentions.join(" "))
             }
             "request.approved"
             | "request.rejected"
             | "execution.completed"
             | "execution.failed"
-            | "execution.lost" => {
+            | "execution.lost"
+            | "request.dispatch_timeout" => {
                 if let Some(ref r) = event.requester {
                     let mention = self.user_resolver.mention_for(r).await;
                     format!("📋 Requester: {mention}")
@@ -353,7 +377,7 @@ impl SlackNotifier {
             None => return vec![],
         };
         let step = event.step_index.unwrap_or(0);
-        self.extract_subjects_from_step(wf_json, step)
+        self.extract_subjects_from_step(wf_json, step, Some(&req.requester))
     }
 
     /// Extract subjects for the NEXT step (after current approval).
@@ -371,11 +395,16 @@ impl SlackNotifier {
             None => return vec![],
         };
         let next_step = event.step_index.unwrap_or(0) + 1;
-        self.extract_subjects_from_step(wf_json, next_step)
+        self.extract_subjects_from_step(wf_json, next_step, Some(&req.requester))
     }
 
     /// Parse workflow JSON and resolve selectors for a given step index.
-    fn extract_subjects_from_step(&self, wf_json: &str, step_index: u32) -> Vec<String> {
+    fn extract_subjects_from_step(
+        &self,
+        wf_json: &str,
+        step_index: u32,
+        requester: Option<&str>,
+    ) -> Vec<String> {
         let wf: serde_json::Value = match serde_json::from_str(wf_json) {
             Ok(v) => v,
             Err(_) => return vec![],
@@ -409,7 +438,90 @@ impl SlackNotifier {
                 {
                     subjects.insert(s);
                 }
+            } else if selector == "requester"
+                && let Some(r) = requester
+            {
+                subjects.insert(r.to_string());
             }
+        }
+        subjects.into_iter().collect()
+    }
+
+    /// Check if the current step is fully satisfied using canonical logic.
+    fn is_current_step_satisfied(
+        &self,
+        event: &WebhookEvent,
+        approvals: &[dbward_domain::entities::Approval],
+    ) -> Option<bool> {
+        let req_id = event.request_id.as_deref()?;
+        let req = self.request_reader.get(req_id).ok()??;
+        let wf_json = req.workflow_snapshot_json.as_deref()?;
+        let wf: dbward_domain::policies::Workflow = serde_json::from_str(wf_json).ok()?;
+        let step_index = event.step_index.unwrap_or(0);
+        let step = wf.steps.get(step_index as usize)?;
+        Some(
+            dbward_domain::services::workflow_matcher::is_step_satisfied(
+                step, step_index, approvals,
+            ),
+        )
+    }
+
+    /// Extract subjects for unsatisfied approver groups in the current step.
+    fn resolve_remaining_step_subjects(
+        &self,
+        event: &WebhookEvent,
+        approvals: &[dbward_domain::entities::Approval],
+    ) -> Vec<String> {
+        let req_id = match event.request_id.as_deref() {
+            Some(id) => id,
+            None => return vec![],
+        };
+        let req = match self.request_reader.get(req_id) {
+            Ok(Some(r)) => r,
+            _ => return vec![],
+        };
+        let wf_json = match req.workflow_snapshot_json.as_deref() {
+            Some(j) => j,
+            None => return vec![],
+        };
+        let wf: dbward_domain::policies::Workflow = match serde_json::from_str(wf_json) {
+            Ok(v) => v,
+            Err(_) => return vec![],
+        };
+        let step_index = event.step_index.unwrap_or(0) as usize;
+        let step = match wf.steps.get(step_index) {
+            Some(s) => s,
+            None => return vec![],
+        };
+
+        let unsatisfied = dbward_domain::services::workflow_matcher::unsatisfied_groups(
+            step,
+            step_index as u32,
+            approvals,
+        );
+        let mut subjects = std::collections::HashSet::new();
+        for (ag, _remaining) in &unsatisfied {
+            let sel_str = ag.selector.to_string();
+            if let Some(user) = sel_str.strip_prefix("user:") {
+                subjects.insert(user.to_string());
+            } else if let Some(role) = sel_str.strip_prefix("role:") {
+                for s in self.role_resolver.subjects_for_role(role) {
+                    subjects.insert(s);
+                }
+            } else if let Some(group) = sel_str.strip_prefix("group:") {
+                for s in self
+                    .role_resolver
+                    .subjects_for_selector(&format!("group:{group}"))
+                {
+                    subjects.insert(s);
+                }
+            } else if sel_str == "requester" {
+                subjects.insert(req.requester.clone());
+            }
+        }
+        // Exclude the actor who just approved
+        if let Some(ref actor) = event.actor {
+            subjects.remove(actor);
         }
         subjects.into_iter().collect()
     }

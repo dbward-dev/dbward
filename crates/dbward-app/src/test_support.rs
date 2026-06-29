@@ -611,6 +611,13 @@ impl crate::ports::transaction::RequestWriterOps for NoopTxScope {
     ) -> Result<bool, crate::error::AppError> {
         Ok(true)
     }
+    fn mark_approved_from_dispatched(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(true)
+    }
     fn cancel_all_for_user(
         &self,
         _: &str,
@@ -1006,6 +1013,13 @@ impl crate::ports::transaction::RequestWriterOps for NoopSyncScope {
         Ok(false)
     }
     fn mark_execution_lost(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, crate::error::AppError> {
+        Ok(false)
+    }
+    fn mark_approved_from_dispatched(
         &self,
         _: &str,
         _: chrono::DateTime<chrono::Utc>,

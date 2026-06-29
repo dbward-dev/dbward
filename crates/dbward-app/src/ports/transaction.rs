@@ -43,6 +43,12 @@ pub trait RequestWriterOps {
         id: &str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError>;
+    /// Revert dispatched → approved (dispatch_timeout recovery).
+    fn mark_approved_from_dispatched(
+        &self,
+        id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError>;
     /// Cancel all pending/dispatched requests for a user. Returns cancelled IDs.
     fn cancel_all_for_user(
         &self,

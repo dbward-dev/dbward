@@ -349,6 +349,10 @@ pub fn build_thread_reply(event: &WebhookEvent, mention_suffix: &str) -> Vec<Val
             (default_emoji, format!("Cancelled{reason}"))
         }
         "request.dispatched" => (default_emoji, format!("Dispatched by {actor}")),
+        "request.dispatch_timeout" => (
+            default_emoji,
+            "Dispatch timed out — reverted to approved, ready for retry".into(),
+        ),
         _ => (default_emoji, format!("{}: {actor}", event.event_type)),
     };
 
@@ -382,6 +386,7 @@ pub fn build_message_from_state(
     current_step: u32,
     reject_reason: Option<&str>,
     requester_mention: Option<&str>,
+    approvals: &[dbward_domain::entities::Approval],
 ) -> Vec<Value> {
     let requester = requester_mention.unwrap_or(&req.requester);
     let db = req.database.as_str();
@@ -414,7 +419,15 @@ pub fn build_message_from_state(
         json!({"type": "mrkdwn", "text": format!("*Operation:*\n{operation}")}),
     ];
     if let Some(wf_json) = workflow_json
-        && let Some(approvers_text) = format_approvers_field(wf_json, current_step)
+        && let Some(approvers_text) = format_approvers_field(
+            wf_json,
+            current_step,
+            if approvals.is_empty() {
+                None
+            } else {
+                Some(approvals)
+            },
+        )
     {
         fields.push(json!({"type": "mrkdwn", "text": format!("*Approvers:*\n{approvers_text}")}));
     }
@@ -459,7 +472,45 @@ pub fn build_message_from_state(
         && steps.len() > 1
         && (current_step as usize) < steps.len()
     {
-        ctx_parts.push(format!("📋 Step {}/{}", current_step + 1, steps.len()));
+        // Check if current step has partial group satisfaction (mode=all)
+        let step = &steps[current_step as usize];
+        let mode = step["mode"].as_str().unwrap_or("any");
+        let groups_suffix = if mode == "all" && !approvals.is_empty() {
+            if let Some(approver_arr) = step["approvers"].as_array() {
+                let total_groups = approver_arr.len();
+                let satisfied = approver_arr
+                    .iter()
+                    .filter(|a| {
+                        let sel = a["selector"].as_str().unwrap_or("");
+                        let min = a["min"].as_u64().unwrap_or(1);
+                        let count = approvals
+                            .iter()
+                            .filter(|ap| {
+                                ap.step_index == current_step
+                                    && ap.action == dbward_domain::entities::ApprovalAction::Approve
+                                    && ap.matched_selector == sel
+                            })
+                            .count() as u64;
+                        count >= min
+                    })
+                    .count();
+                if satisfied > 0 && satisfied < total_groups {
+                    format!(" ({satisfied}/{total_groups} groups approved)")
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+        ctx_parts.push(format!(
+            "📋 Step {}/{}{}",
+            current_step + 1,
+            steps.len(),
+            groups_suffix
+        ));
     }
     if !ctx_parts.is_empty() {
         blocks.push(json!({
@@ -670,20 +721,27 @@ pub fn fallback_text(event: &WebhookEvent) -> String {
         "execution.failed" => format!("{emoji} Request {req_id} failed"),
         "request.expired" => format!("{emoji} Request {req_id} expired"),
         "execution.lost" => format!("{emoji} Execution lost for {req_id}"),
+        "request.dispatch_timeout" => format!("{emoji} Dispatch timeout for {req_id}"),
         _ => format!("{emoji} {}: {req_id}", event.event_type),
     }
 }
 
 /// Format workflow approvers for Slack field display.
 /// Parses workflow_snapshot_json and produces human-readable text.
-pub fn format_approvers_field(workflow_json: &str, current_step: u32) -> Option<String> {
+pub fn format_approvers_field(
+    workflow_json: &str,
+    current_step: u32,
+    approvals: Option<&[dbward_domain::entities::Approval]>,
+) -> Option<String> {
     let wf: Value = serde_json::from_str(workflow_json).ok()?;
     let steps = wf["steps"].as_array()?;
     if steps.is_empty() {
         return None;
     }
 
-    let format_step = |step: &Value| -> String {
+    let single_step = steps.len() == 1;
+
+    let format_step = |step: &Value, step_idx: usize| -> String {
         let mode = step["mode"].as_str().unwrap_or("any");
         let approvers = step["approvers"].as_array();
         let parts: Vec<String> = approvers
@@ -692,10 +750,33 @@ pub fn format_approvers_field(workflow_json: &str, current_step: u32) -> Option<
                     .map(|a| {
                         let sel = a["selector"].as_str().unwrap_or("?");
                         let min = a["min"].as_u64().unwrap_or(1);
-                        if min > 1 {
+                        let label = if min > 1 {
                             format!("{min}× {sel}")
                         } else {
                             sel.to_string()
+                        };
+                        // Show progress for current step when approvals available
+                        if let Some(appr) = approvals
+                            && (step_idx == current_step as usize || single_step)
+                        {
+                            let count = appr
+                                .iter()
+                                .filter(|ap| {
+                                    ap.step_index == step_idx as u32
+                                        && ap.action
+                                            == dbward_domain::entities::ApprovalAction::Approve
+                                        && ap.matched_selector == sel
+                                })
+                                .count() as u64;
+                            if count >= min {
+                                format!("{label} ✓")
+                            } else if count > 0 {
+                                format!("{label} ({count}/{min})")
+                            } else {
+                                format!("{label} ⏳")
+                            }
+                        } else {
+                            label
                         }
                     })
                     .collect()
@@ -705,8 +786,8 @@ pub fn format_approvers_field(workflow_json: &str, current_step: u32) -> Option<
         parts.join(joiner)
     };
 
-    if steps.len() == 1 {
-        Some(format_step(&steps[0]))
+    if single_step {
+        Some(format_step(&steps[0], 0))
     } else {
         let mut lines: Vec<String> = Vec::new();
         for (i, step) in steps.iter().enumerate() {
@@ -717,7 +798,7 @@ pub fn format_approvers_field(workflow_json: &str, current_step: u32) -> Option<
             } else {
                 " "
             };
-            lines.push(format!("{prefix} Step {}: {}", i + 1, format_step(step)));
+            lines.push(format!("{prefix} Step {}: {}", i + 1, format_step(step, i)));
         }
         Some(lines.join("\n"))
     }
@@ -1001,6 +1082,56 @@ mod tests {
         let blocks_str = serde_json::to_string(&modal["blocks"]).unwrap();
         assert!(blocks_str.contains("Execution Plan"));
     }
+
+    #[test]
+    fn format_approvers_field_mode_all_partial_shows_progress() {
+        let wf_json = r#"{"steps":[{"mode":"all","approvers":[{"selector":"role:dba","min":1},{"selector":"role:cto","min":1}]}]}"#;
+        let approvals = vec![dbward_domain::entities::Approval {
+            id: "a1".into(),
+            request_id: "r1".into(),
+            action: dbward_domain::entities::ApprovalAction::Approve,
+            actor_id: "bob".into(),
+            matched_selector: "role:dba".into(),
+            step_index: 0,
+            comment: None,
+            created_at: chrono::Utc::now(),
+        }];
+        let result = format_approvers_field(wf_json, 0, Some(&approvals)).unwrap();
+        assert!(result.contains("role:dba ✓"), "dba should show ✓: {result}");
+        assert!(
+            result.contains("role:cto ⏳"),
+            "cto should show ⏳: {result}"
+        );
+        assert!(result.contains("AND"), "mode=all uses AND: {result}");
+    }
+
+    #[test]
+    fn format_approvers_field_mode_any_shows_or() {
+        let wf_json = r#"{"steps":[{"mode":"any","approvers":[{"selector":"role:dba","min":1},{"selector":"role:cto","min":1}]}]}"#;
+        let result = format_approvers_field(wf_json, 0, None).unwrap();
+        assert!(result.contains("OR"), "mode=any uses OR: {result}");
+        // No progress markers without approvals
+        assert!(!result.contains("✓"), "no ✓ without approvals: {result}");
+        assert!(!result.contains("⏳"), "no ⏳ without approvals: {result}");
+    }
+
+    #[test]
+    fn format_approvers_field_mode_any_with_approvals() {
+        let wf_json = r#"{"steps":[{"mode":"any","approvers":[{"selector":"role:dba","min":1},{"selector":"role:cto","min":1}]}]}"#;
+        let approvals = vec![dbward_domain::entities::Approval {
+            id: "a1".into(),
+            request_id: "r1".into(),
+            action: dbward_domain::entities::ApprovalAction::Approve,
+            actor_id: "bob".into(),
+            matched_selector: "role:dba".into(),
+            step_index: 0,
+            comment: None,
+            created_at: chrono::Utc::now(),
+        }];
+        let result = format_approvers_field(wf_json, 0, Some(&approvals)).unwrap();
+        assert!(result.contains("role:dba ✓"), "dba satisfied: {result}");
+        assert!(result.contains("role:cto ⏳"), "cto unsatisfied: {result}");
+    }
 }
 
 #[cfg(test)]
@@ -1084,5 +1215,62 @@ mod view_result_tests {
         };
         let text = fallback_text(&event);
         assert!(text.contains("☑️"), "expected ☑️ in: {text}");
+    }
+
+    #[test]
+    fn thread_reply_dispatch_timeout() {
+        let event = WebhookEvent {
+            event_type: "request.dispatch_timeout".into(),
+            request_id: Some("req-1".into()),
+            database: None,
+            environment: None,
+            actor: Some("system".into()),
+            detail: None,
+            requester: None,
+            reason: None,
+            redacted_detail: None,
+            error_summary: None,
+            approval_hint: None,
+            operation: None,
+            step_index: None,
+            total_steps: None,
+            expires_at: None,
+            approvers: None,
+            matched_selector: None,
+        };
+        let blocks = build_thread_reply(&event, "");
+        let text = blocks[0]["text"]["text"].as_str().unwrap();
+        assert!(
+            text.contains("Dispatch timed out"),
+            "expected dispatch timeout text in: {text}"
+        );
+    }
+
+    #[test]
+    fn fallback_text_dispatch_timeout() {
+        let event = WebhookEvent {
+            event_type: "request.dispatch_timeout".into(),
+            request_id: Some("req-42".into()),
+            database: None,
+            environment: None,
+            actor: None,
+            detail: None,
+            requester: None,
+            reason: None,
+            redacted_detail: None,
+            error_summary: None,
+            approval_hint: None,
+            operation: None,
+            step_index: None,
+            total_steps: None,
+            expires_at: None,
+            approvers: None,
+            matched_selector: None,
+        };
+        let text = fallback_text(&event);
+        assert!(
+            text.contains("🔄") && text.contains("Dispatch timeout for req-42"),
+            "expected dispatch timeout fallback in: {text}"
+        );
     }
 }

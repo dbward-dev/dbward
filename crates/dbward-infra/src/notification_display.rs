@@ -13,6 +13,7 @@ pub fn event_display(event_type: &str) -> (&'static str, &'static str) {
         "request.expired" => ("⏰", "Expired"),
         "request.cancelled" => ("🚫", "Cancelled"),
         "execution.lost" => ("💀", "Execution Lost"),
+        "request.dispatch_timeout" => ("🔄", "Dispatch Timeout"),
         "license_grace_warning" => ("⚠️", "License Grace Warning"),
         "license_downgraded" => ("🔒", "License Downgraded"),
         _ => ("🔔", "Notification"),
@@ -37,6 +38,7 @@ mod tests {
             ("request.expired", "⏰", "Expired"),
             ("request.cancelled", "🚫", "Cancelled"),
             ("execution.lost", "💀", "Execution Lost"),
+            ("request.dispatch_timeout", "🔄", "Dispatch Timeout"),
             ("license_grace_warning", "⚠️", "License Grace Warning"),
             ("license_downgraded", "🔒", "License Downgraded"),
         ];

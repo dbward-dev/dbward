@@ -290,7 +290,7 @@ mod tests {
 // --- Step progression logic ---
 
 use crate::entities::{Approval, ApprovalAction};
-use crate::policies::workflow::{WorkflowStep, WorkflowStepMode};
+use crate::policies::workflow::{ApproverGroup, WorkflowStep, WorkflowStepMode};
 
 /// Find the first step that is not yet fully satisfied.
 pub fn find_current_step(steps: &[WorkflowStep], approvals: &[Approval]) -> u32 {
@@ -333,6 +333,61 @@ pub fn all_steps_satisfied(steps: &[WorkflowStep], approvals: &[Approval]) -> bo
         .iter()
         .enumerate()
         .all(|(i, step)| is_step_satisfied(step, i as u32, approvals))
+}
+
+/// Return unsatisfied approver groups with their remaining count.
+/// For mode=all: groups where current < min.
+/// For mode=any: all groups if none are satisfied, empty if any is satisfied.
+pub fn unsatisfied_groups<'a>(
+    step: &'a WorkflowStep,
+    step_index: u32,
+    approvals: &[Approval],
+) -> Vec<(&'a ApproverGroup, u32)> {
+    let step_approvals: Vec<&Approval> = approvals
+        .iter()
+        .filter(|a| a.step_index == step_index && a.action == ApprovalAction::Approve)
+        .collect();
+
+    match step.mode {
+        WorkflowStepMode::All => step
+            .approvers
+            .iter()
+            .filter_map(|ag| {
+                let count = step_approvals
+                    .iter()
+                    .filter(|a| a.matched_selector == ag.selector.to_string())
+                    .count() as u32;
+                if count < ag.min {
+                    Some((ag, ag.min - count))
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        WorkflowStepMode::Any => {
+            let any_satisfied = step.approvers.iter().any(|ag| {
+                let count = step_approvals
+                    .iter()
+                    .filter(|a| a.matched_selector == ag.selector.to_string())
+                    .count() as u32;
+                count >= ag.min
+            });
+            if any_satisfied {
+                vec![]
+            } else {
+                step.approvers
+                    .iter()
+                    .map(|ag| {
+                        let count = step_approvals
+                            .iter()
+                            .filter(|a| a.matched_selector == ag.selector.to_string())
+                            .count() as u32;
+                        (ag, ag.min - count)
+                    })
+                    .collect()
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -432,5 +487,78 @@ mod step_tests {
             make_approval(0, "role:security"),
         ];
         assert!(is_step_satisfied(&steps[0], 0, &full));
+    }
+
+    #[test]
+    fn unsatisfied_groups_mode_all_partial() {
+        let step = WorkflowStep {
+            approvers: vec![
+                ApproverGroup {
+                    selector: Selector::Role("dba".into()),
+                    min: 1,
+                },
+                ApproverGroup {
+                    selector: Selector::Role("cto".into()),
+                    min: 1,
+                },
+            ],
+            mode: WorkflowStepMode::All,
+        };
+        let partial = vec![make_approval(0, "role:dba")];
+        let result = unsatisfied_groups(&step, 0, &partial);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0.selector.to_string(), "role:cto");
+        assert_eq!(result[0].1, 1);
+    }
+
+    #[test]
+    fn unsatisfied_groups_mode_all_fully_satisfied() {
+        let step = WorkflowStep {
+            approvers: vec![ApproverGroup {
+                selector: Selector::Role("dba".into()),
+                min: 1,
+            }],
+            mode: WorkflowStepMode::All,
+        };
+        let approvals = vec![make_approval(0, "role:dba")];
+        assert!(unsatisfied_groups(&step, 0, &approvals).is_empty());
+    }
+
+    #[test]
+    fn unsatisfied_groups_mode_any_one_satisfied() {
+        let step = WorkflowStep {
+            approvers: vec![
+                ApproverGroup {
+                    selector: Selector::Role("dba".into()),
+                    min: 1,
+                },
+                ApproverGroup {
+                    selector: Selector::Role("cto".into()),
+                    min: 1,
+                },
+            ],
+            mode: WorkflowStepMode::Any,
+        };
+        let approvals = vec![make_approval(0, "role:dba")];
+        assert!(unsatisfied_groups(&step, 0, &approvals).is_empty());
+    }
+
+    #[test]
+    fn unsatisfied_groups_mode_any_none_satisfied() {
+        let step = WorkflowStep {
+            approvers: vec![
+                ApproverGroup {
+                    selector: Selector::Role("dba".into()),
+                    min: 1,
+                },
+                ApproverGroup {
+                    selector: Selector::Role("cto".into()),
+                    min: 1,
+                },
+            ],
+            mode: WorkflowStepMode::Any,
+        };
+        let result = unsatisfied_groups(&step, 0, &[]);
+        assert_eq!(result.len(), 2);
     }
 }

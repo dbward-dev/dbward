@@ -449,6 +449,13 @@ mod tests {
         ) -> Result<bool, AppError> {
             Ok(false)
         }
+        fn mark_approved_from_dispatched(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
         fn cancel_all_for_user(
             &self,
             uid: &str,
@@ -1375,6 +1382,13 @@ mod tests {
                 Ok(false)
             }
             fn mark_execution_lost(
+                &self,
+                _: &str,
+                _: chrono::DateTime<chrono::Utc>,
+            ) -> Result<bool, AppError> {
+                Ok(false)
+            }
+            fn mark_approved_from_dispatched(
                 &self,
                 _: &str,
                 _: chrono::DateTime<chrono::Utc>,
