@@ -430,23 +430,17 @@ migrations_dir = "db/migrations"
 ```toml
 agent_id = "agent-prod"
 poll_interval_ms = 1000
-lease_duration_secs = 300
 max_concurrent_tasks = 2
 
 [server]
 url = "https://dbward.internal:3000"
-agent_token = "dbw_agent_xxx"
+agent_token = "${DBWARD_AGENT_TOKEN}"
 
-[capabilities]
-environments = ["development", "staging", "production"]
-databases = ["primary", "analytics"]
-operations = ["execute_select", "migrate_up", "migrate_down", "migrate_status"]
+[databases.primary.production]
+url = "${DATABASE_URL_PRIMARY}"
 
-[databases.primary]
-url = "postgres://user:pass@db-primary:5432/app"
-
-[databases.analytics]
-url = "mysql://user:pass@db-analytics:3306/warehouse"
+[databases.analytics.production]
+url = "${DATABASE_URL_ANALYTICS}"
 ```
 
 ### Server (`dbward-server.toml`)
