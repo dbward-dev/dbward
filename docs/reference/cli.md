@@ -260,19 +260,20 @@ Manage API tokens.
 ### dbward token create
 
 ```bash
-dbward token create --subject alice --role developer
-dbward token create --subject agent-1 --role agent-default --subject-type agent
-dbward token create --subject bob --role developer --groups "backend,dba" --expires 90d
+dbward token create --subject alice --scope-roles developer
+dbward token create --subject agent-1 --subject-type agent --no-scope-ceiling
+dbward token create --subject bob --scope-roles developer,dba --expires 90d
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--subject <ID>` | — | **Required.** Subject ID |
-| `--role <ROLE>` | — | **Required.** Role to assign |
+| `--scope-roles <ROLES>` | — | Comma-separated roles for scope ceiling. **Required** for user tokens. Conflicts with `--no-scope-ceiling`. |
 | `--subject-type <TYPE>` | user | `user` or `agent` |
 | `--name <NAME>` | | Token display name |
-| `--groups <LIST>` | | Comma-separated groups |
+| `--no-scope-ceiling` | false | Remove scope ceiling (agent tokens only). Token inherits all bound roles. Conflicts with `--scope-roles`. |
 | `--expires <DURATION>` | | Expiry: `90d`, `24h`, `30m`, ISO date, or datetime |
+| `--role <ROLE>` | | **Deprecated.** Alias for `--scope-roles`. Will be removed in a future release. |
 
 ### dbward token list
 
@@ -291,6 +292,14 @@ dbward token list --subject alice --status active
 
 ```bash
 dbward token revoke <ID>
+```
+
+### dbward token inspect
+
+Show a token's current effective permissions. Token owners can inspect their own tokens; otherwise requires `token.write` permission.
+
+```bash
+dbward token inspect <ID>
 ```
 
 ---
@@ -371,7 +380,7 @@ dbward policy resolve app production --operation execute_dml
 
 ## dbward doctor
 
-Diagnose configuration and connectivity.
+Diagnose configuration and connectivity. Checks include server reachability, OIDC discovery, agent polling, and **token binding validation** (verifies that all token subjects have at least one matching `[[auth.role_bindings]]` entry or `default_role`).
 
 ```bash
 dbward doctor
