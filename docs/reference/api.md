@@ -15,13 +15,13 @@ All responses include the `x-dbward-version` header.
 
 ## Error Format
 
-All errors return:
+Most error responses follow this structure:
 
 ```json
 {"error": "subject_id is required", "code": "validation.failed", "hint": "subject_id is required"}
 ```
 
-`hint` is null when no additional context is available.
+`code` and `hint` may be absent in some edge cases (e.g. 405, 501 responses).
 
 | HTTP Status | Meaning |
 |-------------|---------|
@@ -87,7 +87,7 @@ Permission: `request.view` (scoped)
 
 ### POST /api/requests/{id}/approve
 
-Approve a pending request. The caller must match an approver selector in the current workflow step. If matching multiple groups, the `selector` parameter is required (422 if ambiguous). Self-approval is blocked unless `allow_self_approve` is enabled. Duplicate approval returns 409. Expired requests return 410.
+Approve a pending request. The caller must match an approver selector in the current workflow step. If matching multiple groups, the `selector` parameter is required (400 if ambiguous). Self-approval is blocked unless `allow_self_approve` is enabled. Duplicate approval returns 409. Expired requests return 410.
 
 Permission: Current workflow step approver (scoped)
 
@@ -241,6 +241,8 @@ Permission: `token.write`
 Notes:
 - `scope_ceiling` is required for user tokens. Agent tokens may omit it (unrestricted).
 - Effective permissions = resolved roles ∩ scope_ceiling.
+- `roles` (deprecated): accepted for backward compatibility and converted to `scope_ceiling`. Will be removed.
+- `groups`: must be empty or absent. Non-empty value returns 400.
 
 ### GET /api/tokens
 
