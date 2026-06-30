@@ -20,12 +20,6 @@ pub struct CreateBody {
     pub subject_type: String,
     pub name: Option<String>,
     pub scope_ceiling: Option<ScopeCeilingBody>,
-    /// Legacy field: converted to scope_ceiling internally (deprecated)
-    #[serde(default)]
-    pub roles: Option<Vec<String>>,
-    /// Rejected if non-empty (token.groups is abolished)
-    #[serde(default)]
-    pub groups: Vec<String>,
     pub expires_at: Option<DateTime<Utc>>,
 }
 
@@ -41,46 +35,9 @@ pub async fn create(
     connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Json(body): Json<CreateBody>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
-    // Validation 8: groups field must be empty
-    if !body.groups.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(
-                serde_json::json!({"error": "token.groups is abolished; use Config [[auth.groups]] instead", "code": "validation.failed"}),
-            ),
-        ));
-    }
-
-    // Convert legacy roles field to scope_ceiling
-    let scope_ceiling = if let Some(sc) = body.scope_ceiling {
-        // Reject ambiguous input: both scope_ceiling and legacy roles specified
-        if body.roles.is_some() {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(
-                    serde_json::json!({"error": "cannot specify both 'scope_ceiling' and 'roles'; use 'scope_ceiling' only", "code": "validation.failed"}),
-                ),
-            ));
-        }
-        Some(ScopeCeiling { roles: sc.roles })
-    } else if let Some(roles) = body.roles {
-        if roles.is_empty() {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(
-                    serde_json::json!({"error": "roles must not be empty (use scope_ceiling instead)", "code": "validation.failed"}),
-                ),
-            ));
-        }
-        // Legacy: roles → scope_ceiling conversion (deprecated)
-        tracing::warn!(
-            subject_id = %body.subject_id,
-            "deprecated 'roles' field used; convert to 'scope_ceiling'"
-        );
-        Some(ScopeCeiling { roles })
-    } else {
-        None
-    };
+    let scope_ceiling = body
+        .scope_ceiling
+        .map(|sc| ScopeCeiling { roles: sc.roles });
 
     let ctx = super::extract_audit_context(
         client_ip.as_ref().map(|e| &e.0),

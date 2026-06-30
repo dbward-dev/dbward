@@ -241,8 +241,6 @@ Permission: `token.write`
 Notes:
 - `scope_ceiling` is required for user tokens. Agent tokens may omit it (unrestricted).
 - Effective permissions = resolved roles ∩ scope_ceiling.
-- `roles` (deprecated): accepted for backward compatibility and converted to `scope_ceiling`. Will be removed.
-- `groups`: must be empty or absent. Non-empty value returns 400.
 
 ### GET /api/tokens
 
