@@ -179,6 +179,12 @@ Both read their token from files that the server creates on first startup.
 
 ## Troubleshooting
 
+**First, run the doctor:**
+```bash
+docker compose run --rm alice doctor
+```
+This checks server connectivity, token validity, and agent status in one command.
+
 **`docker compose ps` shows "unhealthy":**
 ```bash
 docker compose logs server  # check for startup errors

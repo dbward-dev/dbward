@@ -111,7 +111,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                 id: "server_reachable",
                 status: Status::Fail,
                 message: e,
-                hint: Some("Is the server running? Check server.url in your config.".into()),
+                hint: Some("Is the server running? Verify server.url in your config and check that the process is up.".into()),
             });
             ctx.record(CheckResult {
                 id: "version_info",
@@ -174,7 +174,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                     id: "auth_valid",
                     status: Status::Fail,
                     message: format!("authentication failed: {e}"),
-                    hint: Some("Check your token or run 'dbward login'".into()),
+                    hint: Some("Check your token or run 'dbward login'. On first server start, tokens are in /data/admin-token and /data/developer-token.".into()),
                 });
             }
         }

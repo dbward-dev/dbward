@@ -194,6 +194,16 @@ Result policies are managed via the REST API, not TOML. See [Result Policies](..
 
 Notification policies are managed via the REST API, not TOML. See [Notification Policies](../guides/policies/notification-policies.md).
 
+## Validate before starting
+
+After writing your configuration, validate it before starting the server:
+
+```bash
+dbward doctor --server /path/to/server.toml
+```
+
+This checks workflow validity, role resolution, Slack connectivity, and webhook references — catching misconfigurations before they cause runtime failures.
+
 ## Running with systemd
 
 ```ini

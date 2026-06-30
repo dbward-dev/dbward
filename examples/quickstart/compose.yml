@@ -47,6 +47,7 @@ services:
     entrypoint: ["/bin/sh", "/config/cli-entrypoint.sh"]
     environment:
       TOKEN_FILE: /data/developer-token
+      DBWARD_YES: "true"
     volumes:
       - ./cli.toml:/config/cli.toml:ro
       - ./cli-entrypoint.sh:/config/cli-entrypoint.sh:ro
@@ -61,6 +62,7 @@ services:
     entrypoint: ["/bin/sh", "/config/cli-entrypoint.sh"]
     environment:
       TOKEN_FILE: /data/admin-token
+      DBWARD_YES: "true"
     volumes:
       - ./cli.toml:/config/cli.toml:ro
       - ./cli-entrypoint.sh:/config/cli-entrypoint.sh:ro

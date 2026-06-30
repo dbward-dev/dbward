@@ -216,5 +216,20 @@ If none is set, tools that require environment return an error.
 
 ## See also
 
-- [MCP Integration Guide](../guides/mcp-integration.md) — IDE setup and usage
+- [MCP Integration Guide](../guides/mcp-integration.md) — IDE setup (stdio and remote), usage examples
 - [Executing Queries](../guides/executing-queries.md) — the approval flow
+
+---
+
+## Transport
+
+dbward MCP is available over two transports:
+
+| Transport | Endpoint | Tools | Prompts | Use case |
+|---|---|---|---|---|
+| **stdio** | `dbward mcp` (local process) | 12 | 6 | Individual developer, IDE-native |
+| **Remote HTTP** | `POST /mcp` on the server | 9 | 4 | Team setup, no local binary needed |
+
+Remote HTTP excludes tools/prompts that require local filesystem access (`migrate_up`, `migrate_down`, `migrate_create`, `review_migration`, `draft_rollback`). Authentication uses the same token or OIDC as the REST API.
+
+For IDE-specific setup instructions and configuration examples, see the [MCP Integration Guide](../guides/mcp-integration.md).

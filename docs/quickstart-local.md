@@ -127,3 +127,4 @@ In production, you run the server and agent as separate processes (or containers
 - [Try with Docker](quickstart-docker.md) — full approval flow demo with submit → approve → execute
 - [Deploy to production](deployment/overview.md) — choose a deployment method for your team
 - [MCP Integration](guides/mcp-integration.md) — connect AI agents (Claude, Cursor)
+- **Something not working?** Run `dbward doctor` to check connectivity, token validity, and agent health

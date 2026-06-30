@@ -2,6 +2,15 @@ state_dir = "/data"
 
 [auth]
 mode = "token"
+default_role = "developer"
+
+[[auth.role_bindings]]
+role = "admin"
+subjects = ["admin"]
+
+[[auth.role_bindings]]
+role = "agent-default"
+subjects = ["agent"]
 
 [[databases]]
 name = "app"
