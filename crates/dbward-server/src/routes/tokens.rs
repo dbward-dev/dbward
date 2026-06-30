@@ -15,6 +15,7 @@ use crate::state::AppState;
 use super::map_error;
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreateBody {
     pub subject_id: String,
     pub subject_type: String,
@@ -24,6 +25,7 @@ pub struct CreateBody {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScopeCeilingBody {
     pub roles: Vec<String>,
 }
