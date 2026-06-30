@@ -17,7 +17,9 @@ Use dbward from AI-powered IDEs (Cursor, GitHub Copilot, Kiro) via the [Model Co
 
 ### 1. Configure dbward client
 
-Ensure you have a working `dbward.toml`:
+Ensure you have a working client configuration. For stdio mode, the CLI needs to know your server URL and credentials:
+
+**Global config** (`~/.config/dbward/config.toml`):
 
 ```toml
 [server]
@@ -25,9 +27,15 @@ url = "https://dbward.internal:3000"
 token = "dbw_..."
 ```
 
+Or use OIDC: `dbward login`
+
 ### 2. Add to your IDE
 
-#### Cursor
+dbward supports two transports: **stdio** (local binary) and **Remote HTTP** (server-hosted, no local install needed).
+
+#### Option A: stdio (local binary)
+
+##### Cursor
 
 Add to `.cursor/mcp.json`:
 
@@ -43,7 +51,7 @@ Add to `.cursor/mcp.json`:
 }
 ```
 
-#### GitHub Copilot (VS Code)
+##### GitHub Copilot (VS Code)
 
 Add to `.vscode/mcp.json`:
 
@@ -58,7 +66,7 @@ Add to `.vscode/mcp.json`:
 }
 ```
 
-#### Kiro
+##### Kiro
 
 Add to `.kiro/settings/mcp.json`:
 
@@ -74,11 +82,69 @@ Add to `.kiro/settings/mcp.json`:
 }
 ```
 
+#### Option B: Remote HTTP (no local binary)
+
+The dbward server exposes MCP at `/mcp`. Team members don't need the CLI installed — just point their IDE at the server:
+
+##### Cursor
+
+```json
+{
+  "mcpServers": {
+    "dbward": {
+      "type": "streamable-http",
+      "url": "https://your-server.example.com/mcp"
+    }
+  }
+}
+```
+
+##### GitHub Copilot (VS Code)
+
+```json
+{
+  "servers": {
+    "dbward": {
+      "type": "http",
+      "url": "https://your-server.example.com/mcp"
+    }
+  }
+}
+```
+
+##### Kiro
+
+```json
+{
+  "mcpServers": {
+    "dbward": {
+      "transportType": "streamable-http",
+      "url": "https://your-server.example.com/mcp"
+    }
+  }
+}
+```
+
+> **Authentication:** Remote HTTP uses the same token or OIDC as the REST API. The IDE passes credentials via the `Authorization` header. Ensure your `dbward.toml` has a valid token or that you've run `dbward login`.
+
+#### Transport comparison
+
+| | stdio | Remote HTTP |
+|---|---|---|
+| Requires local `dbward` binary | ✅ | ❌ |
+| Works offline (local dev) | ✅ | ❌ |
+| Centralized for teams | ❌ | ✅ |
+| Tools available | 12 | 9 (excludes local-only migration tools) |
+| Prompts available | 6 | 4 (excludes file-dependent prompts) |
+| Elicitation support | IDE-dependent | IDE-dependent |
+
 ### 3. Verify
 
 Ask your AI assistant: "What tables are in the database?" — it should use `dbward_inspect_schema` to answer.
 
 ## Available tools (12)
+
+> Full parameter reference: [MCP Reference](../reference/mcp.md)
 
 ### Database operations
 
@@ -168,16 +234,11 @@ Pre-built prompts for common AI workflows:
 > **You:** "Add an index on users.email for faster lookups"
 >
 > **AI:** I'll create a migration for that.
-> *[calls `dbward_migrate_create` with name "add_user_preferences"]*
+> *[calls `dbward_migrate_create` with name "add_users_email_index"]*
 >
-> Created `db/migrations/20260508_add_user_preferences/up.sql`. Here's the SQL:
+> Created `db/migrations/20260508_add_users_email_index/up.sql`. Here's the SQL:
 > ```sql
-> CREATE TABLE IF NOT EXISTS user_preferences (
->   user_id INTEGER REFERENCES users(id),
->   key TEXT NOT NULL,
->   value TEXT,
->   PRIMARY KEY (user_id, key)
-> );
+> CREATE INDEX CONCURRENTLY idx_users_email ON users (email);
 > ```
 >
 > **You:** "Apply it to staging"

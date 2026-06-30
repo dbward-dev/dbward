@@ -14,10 +14,13 @@ Stop accidents before they hit production. Add approval gates, audit trails, and
 
 - 🔐 **Approval workflows** — multi-step, conditional auto-approve, TOML policy engine
 - 📋 **Audit logs** — tamper-evident hash chain, 24 event types, SQL redaction
-- 🤖 **MCP-native** — 12 tools, 6 prompts, elicitation support. AI agents operate safely
+- 🤖 **MCP-native** — 12 tools, 6 prompts, elicitation support. AI agents operate safely. Remote HTTP transport for team setups
 - ⚡ **Standalone binaries** — CLI, server, and agent ship as self-contained Rust binaries with embedded SQLite. No external control-plane DB
 - 🔒 **Agent isolation** — DB credentials never leave the agent. CLI/AI never touch your database directly
-- 🆓 **Core features free** — approval, audit, MCP, break-glass all included under [Apache-2.0](LICENSE-APACHE). Team features (OIDC, group auth) require a [commercial license](LICENSE-COMMERCIAL)
+- 🛡️ **SQL safety review** — risk classification, DDL detection, `DROP` blocking. Auto-approve safe queries, require approval for risky ones
+- 💬 **Slack approvals** — approve/reject from Slack with one click. `dbward slack init` generates the app manifest
+- 🚨 **Break-glass** — emergency bypass with mandatory reason and audit. Admin-only, not available via MCP
+- 🆓 **Core features free** — approval, audit, MCP, Slack, break-glass all included under [Apache-2.0](LICENSE-APACHE). Team features (OIDC, group auth) require a [commercial license](LICENSE-COMMERCIAL)
 
 ## Architecture
 
@@ -107,6 +110,19 @@ Dev mode auto-approves everything for fast iteration. See [Connect Your Database
 
 **Elicitation:** On production operations, dbward asks the AI client for a reason before proceeding (if the client supports MCP elicitation).
 
+**Remote MCP (HTTP):** For team setups, the server exposes MCP over HTTP — no local binary needed (9 tools, excludes local-only migration tools):
+
+```json
+{
+  "mcpServers": {
+    "dbward": {
+      "type": "streamable-http",
+      "url": "https://your-server.example.com/mcp"
+    }
+  }
+}
+```
+
 ## On-Demand Execution
 
 dbward uses **on-demand execution**: the agent does not execute on approval. Instead, the client explicitly resumes the request when ready to receive the result.
@@ -135,6 +151,22 @@ Control whether operations require approval:
 database = "*"
 environment = "production"
 operations = ["execute_select", "migrate_up", "migrate_down"]
+
+[[workflows.steps]]
+type = "approval"
+
+[[workflows.steps.approvers]]
+role = "admin"
+min = 1
+
+# Auto-approve low-risk queries in staging; risky ones still need approval
+[[workflows]]
+database = "*"
+environment = "staging"
+
+[workflows.auto_approve]
+mode = "risk_based"
+risk = "low"
 
 [[workflows.steps]]
 type = "approval"
@@ -211,6 +243,12 @@ Commands:
     reject        Reject a pending request
     resume        Resume and wait for result
     cancel        Cancel a pending request
+  token         Manage API tokens (create/list/revoke)
+  user          Manage users (list/suspend/activate)
+  slack         Slack integration:
+    init          Generate app manifest and creation URL
+  policy        Policy tools:
+    resolve       Resolve effective policy for a request
 
 Global Options:
   --version, -v            Show version and exit
@@ -221,90 +259,22 @@ Global Options:
 
 ## REST API
 
-> Full reference with parameters, permissions, and response formats: [docs/reference/api.md](docs/reference/api.md)
-
-### Core
+> Full reference: [docs/reference/api.md](docs/reference/api.md)
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/health` | Health check |
-| GET | `/ready` | Readiness check |
-| GET | `/metrics` | Prometheus metrics (admin auth required) |
-| GET | `/api/public-key` | Ed25519 public key (for execution token verification) |
-
-### Requests
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/requests` | List requests (filter by status/database/environment/user) |
 | POST | `/api/requests` | Create request |
-| GET | `/api/requests/:id` | Get request detail |
-| POST | `/api/requests/:id/approve` | Approve (requester ≠ approver) |
-| POST | `/api/requests/:id/reject` | Reject |
+| POST | `/api/requests/:id/approve` | Approve |
 | POST | `/api/requests/:id/resume` | Resume for on-demand execution |
-| POST | `/api/requests/:id/cancel` | Cancel a pending request |
 | GET | `/api/requests/:id/result/stream` | Long-poll for result |
-| GET | `/api/requests/:id/result/content` | Get stored result content |
-| GET | `/api/requests/:id/executions` | List execution attempts |
-
-### Tokens & Users
-
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/tokens` | Create API token |
-| GET | `/api/tokens` | List tokens |
-| DELETE | `/api/tokens/:id` | Revoke token |
-| GET | `/api/me` | Current user info |
-| GET | `/api/users` | List users |
-| POST | `/api/users/:id/suspend` | Suspend user |
-| POST | `/api/users/:id/activate` | Activate user |
-
-### Agent
-
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/agent/poll` | Poll for dispatched jobs |
-| POST | `/api/agent/jobs/:id/claim` | Claim a job (lease) |
-| POST | `/api/agent/jobs/:id/heartbeat` | Extend lease |
-| POST | `/api/agent/jobs/:id/result` | Submit execution result |
-| GET | `/api/agents` | List connected agents |
-
-### Policies (read-only)
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/workflows` | List workflows |
-| GET | `/api/execution-policies` | List execution policies |
-| GET | `/api/result-policies` | List result policies |
-| GET | `/api/result-policies/:id` | Get result policy detail |
-| GET | `/api/notification-policies` | List notification policies |
-| GET | `/api/notification-policies/:id` | Get notification policy detail |
-| GET | `/api/roles` | List roles |
-| GET | `/api/webhooks` | List webhooks |
-| GET | `/api/webhooks/:id` | Get webhook detail |
-| GET | `/api/webhook-deliveries` | List webhook delivery history |
-| GET | `/api/policy-resolution` | Resolve effective policy for a request |
-
-### Databases & Schemas
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/databases` | List configured databases |
-| GET | `/api/schemas/:db` | Get schema for a database |
-
-### Audit
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/audit/events` | Audit events (category/type/outcome filters) |
+| GET | `/api/audit/events` | Audit events |
 | GET | `/api/audit/verify` | Verify hash chain integrity |
+| POST | `/api/tokens` | Create API token |
+| GET | `/api/databases` | List configured databases |
+| GET | `/api/agents` | List connected agents |
+| POST | `/mcp` | Remote MCP (HTTP) |
 
-### Results
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/results` | List stored results |
-| GET | `/api/storage-config` | Get result storage configuration |
+See [full API reference](docs/reference/api.md) for all endpoints, parameters, permissions, and response formats.
 
 ## Security
 
@@ -368,14 +338,31 @@ dbward whoami             # Check identity
 dbward logout             # Revoke + delete tokens
 ```
 
-## Webhook Notifications
+## Notifications
+
+### Slack Approvals
+
+Approve and reject requests directly from Slack with interactive buttons:
+
+```bash
+dbward slack init --server-url https://your-server.example.com
+# → generates Slack App Manifest, opens creation URL
+```
+
+Configure in `server.toml`:
 
 ```toml
-# dbward-server.toml
-[[webhooks]]
-url = "https://hooks.slack.com/services/T.../B.../xxx"
-format = "slack"
+[slack]
+bot_token = "${SLACK_BOT_TOKEN}"
+signing_secret = "${SLACK_SIGNING_SECRET}"
+channel = "C0123ABC456"
+```
 
+See [Notifications Guide](docs/guides/notifications.md) for setup details.
+
+### Webhooks
+
+```toml
 [[webhooks]]
 url = "https://internal.example.com/dbward"
 format = "generic"
@@ -384,7 +371,7 @@ secret = "whsec_xxxx"  # HMAC-SHA256 in X-Dbward-Signature header
 
 Events: `request_created`, `request_approved`, `request_rejected`, `request_completed`, `break_glass`.
 
-Free: unlimited webhook destinations. Team: adds OIDC/SSO, group authorization, and audit export.
+Free: unlimited webhook destinations.
 
 ## Break-Glass (Emergency Bypass)
 
