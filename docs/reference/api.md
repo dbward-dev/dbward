@@ -45,15 +45,15 @@ All errors return:
 
 Create a new SQL execution or migration request.
 
-Permission: `request.execute` | `request.query` | `request.break_glass` (scoped by database/environment)
+Permission: `request.execute` | `request.query` | `request.break_glass` (scoped by database/environment). `allow_ddl=true` additionally requires `request.break_glass_ddl`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `database` | string | ✓ | Target database name |
 | `environment` | string | ✓ | Target environment |
-| `operation` | string | | Operation type (default: `execute_select`) |
+| `operation` | string | | Operation type (default: `execute_select`). `migrate_repair` requires `emergency=true`. |
 | `detail` | string | ✓ | SQL statement or migration detail |
-| `reason` | string | | Reason for the request |
+| `reason` | string | | Reason for the request. Required when `emergency=true`. |
 | `idempotency_key` | string | | Idempotency key to prevent duplicates |
 | `metadata` | object | | Arbitrary JSON metadata |
 | `emergency` | bool | | Break-glass mode (default: false) |
@@ -63,21 +63,21 @@ Permission: `request.execute` | `request.query` | `request.break_glass` (scoped 
 
 ### GET /api/requests
 
-List requests with optional filtering.
+List requests with optional filtering. Non-admins see only: own requests, requests where they are a designated approver, and requests matching their `share_with` selectors.
 
-Permission: `request.view`
+Permission: `request.view` or `request.approve` (when `pending_for_me=true`)
 
 | Param | Default | Description |
 |-------|---------|-------------|
-| `limit` | 50 | Max results |
+| `limit` | 50 | Max results (max: 100) |
 | `offset` | 0 | Pagination offset |
 | `status` | | Filter by request status |
 | `user` | | Filter by requester subject ID |
-| `pending_for_me` | | Only show requests the caller can approve |
+| `pending_for_me` | | Only show requests where the caller matches an approver selector in the current step |
 
 ### GET /api/requests/{id}
 
-Get full request details. Supports long-polling with `?wait=<seconds>` (max 120s).
+Get full request details. Supports long-polling with `?wait=<seconds>` (max 120s). Accessible by: the requester, admins, or designated approvers of the current step (approvers can only view `pending` requests).
 
 Permission: `request.view` (scoped)
 
@@ -87,20 +87,20 @@ Permission: `request.view` (scoped)
 
 ### POST /api/requests/{id}/approve
 
-Approve a pending request. If multi-step, advances to the next step.
+Approve a pending request. The caller must match an approver selector in the current workflow step. If matching multiple groups, the `selector` parameter is required (422 if ambiguous). Self-approval is blocked unless `allow_self_approve` is enabled. Duplicate approval returns 409. Expired requests return 410.
 
-Permission: `request.approve` (scoped)
+Permission: Current workflow step approver (scoped)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `comment` | string | | Approval comment |
-| `selector` | string | | Step selector for multi-step workflows |
+| `selector` | string | | Approver group selector (required when matching multiple groups) |
 
 ### POST /api/requests/{id}/reject
 
-Reject a pending request.
+Reject a pending request. The requester can always reject their own request (self-reject). Other users must match an approver selector in the current workflow step. Expired requests return 410.
 
-Permission: `request.approve` (scoped)
+Permission: Requester (self-reject) or current workflow step approver
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -108,9 +108,9 @@ Permission: `request.approve` (scoped)
 
 ### POST /api/requests/{id}/cancel
 
-Cancel a request. The requester can always cancel their own requests.
+Cancel a request. Only the requester or admins can cancel.
 
-Permission: `request.cancel` (scoped)
+Permission: `request.cancel` (scoped; requester or admin)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -118,19 +118,19 @@ Permission: `request.cancel` (scoped)
 
 ### POST /api/requests/{id}/resume
 
-Resume an approved request, triggering agent dispatch.
+Resume an approved request, triggering agent dispatch. Only the requester or admins can resume.
 
-Permission: `request.resume` (scoped; requester can always resume own)
+Permission: `request.resume` (scoped; requester or admin)
 
 ### GET /api/requests/{id}/result/stream
 
-Long-poll for execution result. Returns the result when the agent completes.
+Long-poll for execution result (timeout: 300s). Returns the result envelope on completion, or 204 No Content on timeout.
 
 Permission: `result.view` (scoped)
 
 ### GET /api/requests/{id}/result/content
 
-Download the stored result as binary content.
+Get the stored execution result as a JSON envelope containing `success`, `result_data`, `rows_affected`, `truncated`, and `error_message`.
 
 Permission: `result.view` (scoped)
 
@@ -404,7 +404,7 @@ Permission: `agent.operate` (agent token required)
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `capabilities` | object | ✓ | `{databases: string[], environments?: string[], operations?: string[]}` |
-| `limit` | u32 | | Max jobs to return |
+| `limit` | u32 | | Max jobs to return (default: 10, max: 20) |
 | `status` | object | | Agent status report (in_flight, max_concurrent, draining, etc.) |
 | `agent_version` | string | | Agent binary version |
 
