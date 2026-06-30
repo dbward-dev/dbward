@@ -151,6 +151,16 @@ The server automatically routes jobs based on each agent's `[databases]` keys.
 
 The agent sends periodic heartbeats during execution to extend the lease. If the agent crashes, the lease expires and the job is marked `execution_lost`.
 
+## Validate before starting
+
+After writing your configuration, validate it before starting the agent:
+
+```bash
+dbward doctor --agent /path/to/agent.toml
+```
+
+This checks config parsing, environment variables, server reachability, token validity, and database URL scheme — catching issues before the agent attempts to connect.
+
 ## Running with systemd
 
 ```ini
@@ -225,16 +235,6 @@ On SIGTERM/SIGINT:
 1. Stops accepting new jobs
 2. Waits for in-flight jobs to complete (up to `drain_timeout_secs`)
 3. Exits cleanly
-
-## Validate before starting
-
-Before starting the agent, validate your configuration and connectivity:
-
-```bash
-dbward doctor --agent /path/to/agent.toml
-```
-
-This checks config parsing, environment variables, server reachability, token validity, and database URL scheme — catching issues before the agent attempts to connect.
 
 ## Security considerations
 
