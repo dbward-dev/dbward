@@ -292,6 +292,14 @@ Each agent has a `status` field:
 
 This is the best available fleet-level view. Local probe files (`/tmp/dbward-agent-alive`, `/tmp/dbward-agent-ready`) are for the container runtime only.
 
+### Verify with doctor
+
+To check the full configuration (workflows, roles, Slack, webhooks) in one pass:
+
+```bash
+dbward doctor --server /path/to/server.toml
+```
+
 ## Metrics
 
 ```bash

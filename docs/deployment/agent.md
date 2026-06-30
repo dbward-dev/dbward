@@ -226,6 +226,16 @@ On SIGTERM/SIGINT:
 2. Waits for in-flight jobs to complete (up to `drain_timeout_secs`)
 3. Exits cleanly
 
+## Verifying agent health
+
+After deployment, verify the agent configuration and connectivity:
+
+```bash
+dbward doctor --agent /path/to/agent.toml
+```
+
+This checks config parsing, server reachability, token validity, and database URL scheme.
+
 ## Security considerations
 
 - **Least privilege:** Create a dedicated database user for the agent with only the permissions needed (e.g., SELECT + DML, no DDL for production)

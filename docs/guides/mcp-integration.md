@@ -142,6 +142,8 @@ The dbward server exposes MCP at `/mcp`. Team members don't need the CLI install
 
 Ask your AI assistant: "What tables are in the database?" — it should use `dbward_inspect_schema` to answer.
 
+If the AI can't connect, run `dbward doctor` to check that the server URL and token are correctly configured.
+
 ## Available tools (12)
 
 > Full parameter reference: [MCP Reference](../reference/mcp.md)

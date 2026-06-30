@@ -195,6 +195,8 @@ Users without linked accounts can still approve via CLI/API.
 
 ## Troubleshooting
 
+Run `dbward doctor --server server.toml` first — it validates Slack bot token, signing secret, channel access, and webhook URLs in one pass.
+
 | Issue | Solution |
 |---|---|
 | No notifications sent | Check `[[webhooks]]` or `[slack]` config + env vars |

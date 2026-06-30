@@ -5,6 +5,20 @@ description: Common deployment issues and fixes
 
 # Deployment Troubleshooting
 
+## Start here: run `dbward doctor`
+
+Before diving into individual issues, run the built-in diagnostic:
+
+```bash
+dbward doctor                          # CLI mode — checks server connectivity + auth
+dbward doctor --server server.toml     # Server mode — checks config, workflows, Slack, roles
+dbward doctor --agent agent.toml       # Agent mode — checks config, server, DB connectivity
+```
+
+If doctor reports a specific failure, follow its hint. If everything passes but you still have issues, continue with the sections below.
+
+---
+
 ## Agent not picking up jobs
 
 **Symptoms:** Requests stay in `dispatched` status; agent logs show no activity.
