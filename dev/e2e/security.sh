@@ -60,7 +60,7 @@ if [ -n "$ADMIN_TOKEN" ]; then
   [ "$STATUS" = "200" ] && pass "Admin can list workflows" || fail "Admin workflows" "got $STATUS"
 
   # Admin cannot use agent endpoints
-  STATUS=$(api_status POST /api/agent/poll "$ADMIN_TOKEN" -d '{"capabilities":{"databases":["app"],"environments":["development"]}}')
+  STATUS=$(api_status POST /api/agent/poll "$ADMIN_TOKEN" -d '{"capabilities":{"scopes":[{"database":"app","environment":"development"}]}}')
   [ "$STATUS" = "403" ] && pass "Admin (user) cannot poll agent endpoint" || fail "Admin agent poll" "got $STATUS"
 fi
 
@@ -89,7 +89,7 @@ fi
 
 if [ -n "${AGENT_TOKEN:-}" ]; then
   # Agent can poll
-  STATUS=$(api_status POST /api/agent/poll "$AGENT_TOKEN" -d '{"capabilities":{"databases":["app"],"environments":["development"]}}')
+  STATUS=$(api_status POST /api/agent/poll "$AGENT_TOKEN" -d '{"capabilities":{"scopes":[{"database":"app","environment":"development"}]}}')
   [ "$STATUS" = "200" ] && pass "Agent can poll" || fail "Agent poll" "got $STATUS"
 
   # Agent cannot create request

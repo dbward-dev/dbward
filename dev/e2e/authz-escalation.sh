@@ -102,7 +102,7 @@ if [ -n "$BOOTSTRAP_AGENT_TOKEN" ]; then
 
   # Agent endpoint should still work (poll returns 200 even with empty capabilities)
   STATUS=$(api_status POST /api/agent/poll "$BOOTSTRAP_AGENT_TOKEN" \
-    -d '{"capabilities":{"databases":["app"],"environments":["development"]},"limit":1}')
+    -d '{"capabilities":{"scopes":[{"database":"app","environment":"development"}]},"limit":1}')
   [ "$STATUS" = "200" ] && pass "Bootstrap agent token can still poll" || fail "Agent poll" "got $STATUS"
 
   # Public key endpoint should work for agents
@@ -112,16 +112,18 @@ else
   skip "Bootstrap agent token not found (skipping agent isolation tests)"
 fi
 
-# --- Agent token creation rejects non-agent-default roles ---
+# --- Agent token creation with scope_ceiling ---
 echo ""
-echo "--- Agent token role enforcement ---"
+echo "--- Agent token scope enforcement ---"
 
+# Agent token with admin scope_ceiling should be rejected (agents cannot have user-level scope)
 STATUS=$(api_status POST /api/tokens "$ADMIN_TOKEN" \
-  -d '{"subject_id":"evil-agent","roles":["admin"],"subject_type":"agent"}')
-[ "$STATUS" = "400" ] && pass "Cannot create agent token with admin role" || fail "Agent admin role" "got $STATUS"
+  -d '{"subject_id":"evil-agent","scope_ceiling":{"roles":["admin"]},"subject_type":"agent"}')
+[ "$STATUS" = "400" ] && pass "Cannot create agent token with scope_ceiling" || fail "Agent scope_ceiling rejected" "got $STATUS"
 
+# Agent token without scope_ceiling should succeed (agents don't need scope_ceiling)
 STATUS=$(api_status POST /api/tokens "$ADMIN_TOKEN" \
-  -d '{"subject_id":"good-agent","roles":["agent-default"],"subject_type":"agent"}')
-[ "$STATUS" = "200" ] || [ "$STATUS" = "201" ] && pass "Can create agent token with agent-default role" || fail "Agent agent-default role" "got $STATUS"
+  -d '{"subject_id":"good-agent","subject_type":"agent"}')
+[ "$STATUS" = "200" ] || [ "$STATUS" = "201" ] && pass "Can create agent token without scope_ceiling" || fail "Agent token creation" "got $STATUS"
 
 summary

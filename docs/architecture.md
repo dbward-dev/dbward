@@ -297,7 +297,7 @@ url = "mysql://user:pass@db-analytics:3306/warehouse"
 
 ### Capabilities Matching
 
-Agent registers which databases, environments, and operations it supports. Server filters poll results to match. Multiple agents can run simultaneously (e.g., one per DB or network zone).
+Agent registers which scopes (database/environment pairs) and operations it supports. Server filters poll results to match. Multiple agents can run simultaneously (e.g., one per DB or network zone).
 
 ### Lease/Claim
 

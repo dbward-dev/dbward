@@ -32,7 +32,7 @@ If doctor reports a specific failure, follow its hint. If everything passes but 
    # Compare with server's agent-token file
    ```
 
-2. **Capabilities mismatch** — The agent's `[databases.<name>.<env>]` keys don't match the request's `database` + `environment`.
+2. **Capabilities mismatch** — The agent's configured scopes (database/environment pairs) don't match the request's `database` + `environment`.
    ```bash
    # Check agent logs for registered capabilities
    grep "capabilities" /var/log/dbward-agent.log

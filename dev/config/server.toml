@@ -33,11 +33,11 @@ subjects = ["developer"]
 # E2E test subjects
 [[auth.role_bindings]]
 role = "admin"
-subjects = ["alice", "carol"]
+subjects = ["alice", "carol", "e2e-admin"]
 
 [[auth.role_bindings]]
 role = "developer"
-subjects = ["bob"]
+subjects = ["bob", "e2e-dev"]
 
 [[auth.groups]]
 name = "backend-team"

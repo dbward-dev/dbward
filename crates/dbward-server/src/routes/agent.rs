@@ -37,11 +37,15 @@ pub struct PollBody {
 
 #[derive(Deserialize)]
 pub struct PollBodyCapabilities {
-    pub databases: Vec<String>,
-    #[serde(default)]
-    pub environments: Vec<String>,
+    pub scopes: Vec<PollScopeBody>,
     #[serde(default)]
     pub operations: Vec<dbward_domain::values::Operation>,
+}
+
+#[derive(Deserialize)]
+pub struct PollScopeBody {
+    pub database: String,
+    pub environment: String,
 }
 
 pub async fn poll(
@@ -57,42 +61,47 @@ pub async fn poll(
 
     use dbward_domain::entities::DatabaseCapability;
     use dbward_domain::values::{DatabaseName, Environment};
-    let envs = if body.capabilities.environments.is_empty() {
-        vec![Environment::wildcard()]
-    } else {
+
+    // Validate: reject wildcards
+    for s in &body.capabilities.scopes {
+        if s.database == "*" || s.environment == "*" {
+            return Err(map_error(dbward_app::error::AppError::Validation(
+                "wildcard '*' is not allowed in scopes".into(),
+            )));
+        }
+    }
+
+    // Dedup at string level
+    let unique_scopes: Vec<&PollScopeBody> = {
+        let mut seen = std::collections::HashSet::new();
         body.capabilities
-            .environments
+            .scopes
             .iter()
-            .map(|e| {
-                Environment::new(e).map_err(|_| {
-                    map_error(dbward_app::error::AppError::Validation(format!(
-                        "invalid environment: {e}"
-                    )))
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?
+            .filter(|s| seen.insert((&s.database, &s.environment)))
+            .collect()
     };
-    let databases: Vec<DatabaseName> = body
-        .capabilities
-        .databases
+
+    let capabilities: Vec<DatabaseCapability> = unique_scopes
         .iter()
-        .map(|d| {
-            DatabaseName::new(d).map_err(|_| {
+        .map(|s| {
+            let db = DatabaseName::new(&s.database).map_err(|_| {
                 map_error(dbward_app::error::AppError::Validation(format!(
-                    "invalid database: {d}"
+                    "invalid database in scope: {}",
+                    s.database
                 )))
+            })?;
+            let env = Environment::new(&s.environment).map_err(|_| {
+                map_error(dbward_app::error::AppError::Validation(format!(
+                    "invalid environment in scope: {}",
+                    s.environment
+                )))
+            })?;
+            Ok(DatabaseCapability {
+                database: db,
+                environment: env,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let capabilities: Vec<DatabaseCapability> = databases
-        .iter()
-        .flat_map(|db| {
-            envs.iter().map(move |env| DatabaseCapability {
-                database: db.clone(),
-                environment: env.clone(),
-            })
-        })
-        .collect();
 
     let (in_flight, max_concurrent, uptime_secs, draining, active_jobs) = match body.status {
         Some(ref s) => {
@@ -159,13 +168,9 @@ pub async fn poll(
     };
 
     // Fetch pending dry-run jobs
-    let db_pairs: Vec<(String, String)> = databases
+    let db_pairs: Vec<(String, String)> = unique_scopes
         .iter()
-        .flat_map(|db| {
-            envs.iter()
-                .filter(|env| env.as_str() != "*")
-                .map(move |env| (db.as_str().to_string(), env.as_str().to_string()))
-        })
+        .map(|s| (s.database.clone(), s.environment.clone()))
         .collect();
     let dry_run_jobs: Vec<serde_json::Value> = if upgrade_required || db_pairs.is_empty() {
         vec![]
@@ -389,7 +394,7 @@ pub async fn list_agents(
                 "max_concurrent": a.max_concurrent,
                 "uptime_secs": uptime,
                 "active_jobs": active_jobs,
-                "capabilities": { "databases": a.databases },
+                "capabilities": { "scopes": a.databases },
             })
         })
         .collect();

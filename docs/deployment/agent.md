@@ -15,7 +15,7 @@ The agent uses **outbound HTTP only**. It periodically polls the server for disp
 
 ### Capabilities matching
 
-Each agent advertises its capabilities: `databases`, `environments`, and `operations`. The server uses these to route jobs to the correct agent. Only agents whose capabilities match a job will receive it during polling.
+Each agent advertises its capabilities: `scopes` (database/environment pairs) and `operations`. The server uses these to route jobs to the correct agent. Only agents whose capabilities match a job will receive it during polling.
 
 ### Multi-agent
 
@@ -71,14 +71,14 @@ dbward token create --subject prod-agent-1 --subject-type agent --role agent-def
 
 ### Capabilities
 
-Capabilities determine which jobs this agent can handle. **Databases and environments are derived automatically** from the `[databases]` section keys. Only `operations` is configurable:
+Capabilities determine which jobs this agent can handle. **Scopes (database/environment pairs) are derived automatically** from the `[databases]` section keys. Only `operations` is configurable:
 
 ```toml
 # Optional: limit which operations this agent handles (default: all)
 # operations = ["execute_select", "execute_dml", "migrate_up", "migrate_down", "migrate_status"]
 ```
 
-For example, if the config has `[databases.app.production]` and `[databases.app.staging]`, the agent advertises capabilities for database `app`, environments `production` and `staging`.
+For example, if the config has `[databases.app.production]` and `[databases.app.staging]`, the agent advertises scopes `(app, production)` and `(app, staging)`.
 
 ### Database connections
 
