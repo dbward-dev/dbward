@@ -26,6 +26,18 @@ pub async fn run_dev(database_url: &str, port: u16) -> Result<(), CliError> {
     let server_config = format!(
         r#"state_dir = "{state_dir}"
 
+[auth]
+mode = "token"
+default_role = "developer"
+
+[[auth.role_bindings]]
+role = "admin"
+subjects = ["admin"]
+
+[[auth.role_bindings]]
+role = "agent-default"
+subjects = ["agent"]
+
 [result_storage]
 backend = "local"
 root_dir = "{results}"
@@ -37,6 +49,9 @@ environments = ["development"]
 [[workflows]]
 database = "*"
 environment = "*"
+
+[workflows.auto_approve]
+mode = "always"
 "#,
         state_dir = dev_dir.display(),
         results = results_dir.display()

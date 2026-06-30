@@ -8,6 +8,10 @@ default_role = "developer"
 role = "admin"
 subjects = ["admin"]
 
+[[auth.role_bindings]]
+role = "agent-default"
+subjects = ["agent"]
+
 [[databases]]
 name = "app"
 environments = ["development", "staging"]
