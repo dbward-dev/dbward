@@ -15,13 +15,19 @@ pub struct PollRequest {
 }
 
 /// Capabilities declared by the agent.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PollCapabilities {
-    pub databases: Vec<String>,
-    #[serde(default)]
-    pub environments: Vec<String>,
+    /// Explicit (database, environment) pairs the agent can serve.
+    pub scopes: Vec<PollScope>,
     #[serde(default)]
     pub operations: Vec<String>,
+}
+
+/// A specific (database, environment) pair the agent can serve.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PollScope {
+    pub database: String,
+    pub environment: String,
 }
 
 fn default_limit() -> u32 {
@@ -154,5 +160,50 @@ mod tests {
         assert_eq!(resp.dry_run_jobs.len(), 1);
         assert_eq!(resp.dry_run_jobs[0].id, "j1");
         assert_eq!(resp.dry_run_jobs[0].sql, "SELECT 1");
+    }
+
+    #[test]
+    fn poll_capabilities_with_scopes() {
+        let json = r#"{"scopes":[{"database":"app","environment":"production"}],"operations":["execute_select"]}"#;
+        let caps: PollCapabilities = serde_json::from_str(json).unwrap();
+        assert_eq!(caps.scopes.len(), 1);
+        assert_eq!(caps.scopes[0].database, "app");
+        assert_eq!(caps.scopes[0].environment, "production");
+        assert_eq!(caps.operations, vec!["execute_select"]);
+    }
+
+    #[test]
+    fn poll_capabilities_operations_default_to_empty() {
+        let json = r#"{"scopes":[{"database":"db1","environment":"dev"}]}"#;
+        let caps: PollCapabilities = serde_json::from_str(json).unwrap();
+        assert_eq!(caps.scopes.len(), 1);
+        assert!(caps.operations.is_empty());
+    }
+
+    #[test]
+    fn poll_request_serialization_roundtrip() {
+        let req = PollRequest {
+            agent_id: None,
+            capabilities: PollCapabilities {
+                scopes: vec![
+                    PollScope {
+                        database: "app".into(),
+                        environment: "prod".into(),
+                    },
+                    PollScope {
+                        database: "analytics".into(),
+                        environment: "prod".into(),
+                    },
+                ],
+                operations: vec!["migrate_up".into()],
+            },
+            limit: 5,
+            status: None,
+            agent_version: Some("0.2.0".into()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: PollRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.capabilities.scopes.len(), 2);
+        assert_eq!(parsed.limit, 5);
     }
 }

@@ -22,8 +22,7 @@ pub(super) async fn poll_loop(
     tracker: &Arc<JobTracker>,
     draining: &Arc<AtomicBool>,
     probes: &ProbeGuard,
-    databases: &[String],
-    environments: &[String],
+    scopes: &[(String, String)],
     operations: &[String],
     max_concurrent: u32,
     poll_interval: Duration,
@@ -121,8 +120,7 @@ pub(super) async fn poll_loop(
             // Notify server we're draining, then exit loop
             let (in_flight, active_jobs) = tracker.snapshot();
             let req = build_poll_request(
-                databases,
-                environments,
+                scopes,
                 operations,
                 0,
                 max_concurrent,
@@ -146,8 +144,7 @@ pub(super) async fn poll_loop(
         };
 
         let req = build_poll_request(
-            databases,
-            environments,
+            scopes,
             operations,
             available,
             max_concurrent,

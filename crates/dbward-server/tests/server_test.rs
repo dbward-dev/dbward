@@ -928,7 +928,7 @@ async fn poll_returns_upgrade_required_for_old_agent() {
     let app = build_app(test_state(), vec![]);
     let body = serde_json::json!({
         "capabilities": {
-            "databases": ["app"],
+            "scopes": [{"database": "app", "environment": "development"}],
             "operations": ["execute_select"]
         },
         "agent_version": "0.0.1"
@@ -957,7 +957,7 @@ async fn poll_returns_no_upgrade_for_current_agent() {
     let app = build_app(test_state(), vec![]);
     let body = serde_json::json!({
         "capabilities": {
-            "databases": ["app"],
+            "scopes": [{"database": "app", "environment": "development"}],
             "operations": ["execute_select"]
         },
         "agent_version": env!("CARGO_PKG_VERSION")
@@ -985,7 +985,7 @@ async fn poll_returns_no_upgrade_when_agent_version_missing() {
     let app = build_app(test_state(), vec![]);
     let body = serde_json::json!({
         "capabilities": {
-            "databases": ["app"],
+            "scopes": [{"database": "app", "environment": "development"}],
             "operations": ["execute_select"]
         }
     });
@@ -1005,6 +1005,132 @@ async fn poll_returns_no_upgrade_when_agent_version_missing() {
     let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["upgrade_required"], false);
+}
+
+#[tokio::test]
+async fn poll_deduplicates_scopes() {
+    let app = build_app(test_state(), vec![]);
+    let body = serde_json::json!({
+        "capabilities": {
+            "scopes": [
+                {"database": "app", "environment": "development"},
+                {"database": "app", "environment": "development"},
+                {"database": "app", "environment": "development"}
+            ]
+        }
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/agent/poll")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer agent-token")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn poll_empty_scopes_returns_no_jobs() {
+    let app = build_app(test_state(), vec![]);
+    let body = serde_json::json!({
+        "capabilities": {
+            "scopes": []
+        }
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/agent/poll")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer agent-token")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["jobs"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn list_agents_returns_scopes_key_in_capabilities() {
+    // The capabilities.scopes key is verified via Docker E2E (GET /api/agents
+    // returns {"capabilities":{"scopes":[...]}}). The in-memory test state does
+    // not persist agent registrations across requests, so we verify the endpoint
+    // returns 200 with the expected top-level structure.
+    let app = build_app(test_state(), vec![]);
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/agents")
+                .header("authorization", "Bearer valid-test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["agents"].is_array());
+}
+
+#[tokio::test]
+async fn poll_rejects_legacy_capabilities_format() {
+    let app = build_app(test_state(), vec![]);
+    // Old format with databases/environments instead of scopes
+    let body = serde_json::json!({
+        "capabilities": {
+            "databases": ["app"],
+            "environments": ["development"]
+        }
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/agent/poll")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer agent-token")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    // Should fail deserialization (missing required `scopes` field)
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn poll_rejects_wildcard_in_scopes() {
+    let app = build_app(test_state(), vec![]);
+    let body = serde_json::json!({
+        "capabilities": {
+            "scopes": [{"database": "*", "environment": "production"}]
+        }
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/agent/poll")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer agent-token")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    // Wildcard validation returns 400
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

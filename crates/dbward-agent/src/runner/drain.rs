@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use dbward_api_types::agent::{ActiveJob, AgentStatusReport, PollRequest};
+use dbward_api_types::agent::{
+    ActiveJob, AgentStatusReport, PollCapabilities, PollRequest, PollScope,
+};
 use tracing::{error, info};
 
 use crate::AgentError;
@@ -14,8 +16,7 @@ use super::JobTracker;
 pub(super) async fn drain(
     client: &Arc<AgentClient>,
     tracker: &Arc<JobTracker>,
-    databases: &[String],
-    environments: &[String],
+    scopes: &[(String, String)],
     operations: &[String],
     max_concurrent: u32,
     timeout: Duration,
@@ -32,8 +33,7 @@ pub(super) async fn drain(
     }
 
     let req = build_poll_request(
-        databases,
-        environments,
+        scopes,
         operations,
         0,
         max_concurrent,
@@ -52,8 +52,7 @@ pub(super) async fn drain(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_poll_request(
-    databases: &[String],
-    environments: &[String],
+    scopes: &[(String, String)],
     operations: &[String],
     limit: u32,
     max_concurrent: u32,
@@ -64,9 +63,14 @@ pub(super) fn build_poll_request(
 ) -> PollRequest {
     PollRequest {
         agent_id: None,
-        capabilities: dbward_api_types::agent::PollCapabilities {
-            databases: databases.to_vec(),
-            environments: environments.to_vec(),
+        capabilities: PollCapabilities {
+            scopes: scopes
+                .iter()
+                .map(|(db, env)| PollScope {
+                    database: db.clone(),
+                    environment: env.clone(),
+                })
+                .collect(),
             operations: operations.to_vec(),
         },
         limit,
@@ -78,5 +82,66 @@ pub(super) fn build_poll_request(
             active_jobs,
         }),
         agent_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_poll_request_uses_scopes_format() {
+        let scopes = vec![
+            ("app".to_string(), "production".to_string()),
+            ("app".to_string(), "staging".to_string()),
+            ("analytics".to_string(), "production".to_string()),
+        ];
+        let operations = vec!["execute_select".to_string(), "migrate_up".to_string()];
+
+        let req = build_poll_request(&scopes, &operations, 5, 4, false, 100, 1, vec![]);
+
+        // Verify scopes are set correctly
+        assert_eq!(req.capabilities.scopes.len(), 3);
+        assert_eq!(req.capabilities.scopes[0].database, "app");
+        assert_eq!(req.capabilities.scopes[0].environment, "production");
+        assert_eq!(req.capabilities.scopes[1].database, "app");
+        assert_eq!(req.capabilities.scopes[1].environment, "staging");
+        assert_eq!(req.capabilities.scopes[2].database, "analytics");
+        assert_eq!(req.capabilities.scopes[2].environment, "production");
+
+        // Verify operations
+        assert_eq!(
+            req.capabilities.operations,
+            vec!["execute_select", "migrate_up"]
+        );
+
+        // Verify other fields
+        assert_eq!(req.limit, 5);
+        assert!(req.status.is_some());
+        let status = req.status.unwrap();
+        assert_eq!(status.in_flight, 1);
+        assert_eq!(status.max_concurrent, 4);
+        assert!(!status.draining);
+    }
+
+    #[test]
+    fn build_poll_request_serializes_to_expected_json() {
+        let scopes = vec![("db1".to_string(), "dev".to_string())];
+        let req = build_poll_request(&scopes, &[], 1, 2, true, 60, 0, vec![]);
+
+        let json = serde_json::to_value(&req).unwrap();
+        let caps = &json["capabilities"];
+
+        // Must have scopes key with array of objects
+        assert!(caps["scopes"].is_array());
+        assert_eq!(caps["scopes"][0]["database"], "db1");
+        assert_eq!(caps["scopes"][0]["environment"], "dev");
+
+        // Must NOT have old databases/environments keys
+        assert!(caps.get("databases").is_none());
+        assert!(caps.get("environments").is_none());
+
+        // Draining should be true in status
+        assert_eq!(json["status"]["draining"], true);
     }
 }

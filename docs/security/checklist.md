@@ -26,7 +26,7 @@ Use this checklist before deploying dbward to production and for periodic securi
 - [ ] **Webhook HMAC secret configured** — All webhook receivers verify `X-Dbward-Signature`
 - [ ] **Slack signing secret set** — Stored as environment variable, not in committed config
 - [ ] **Break-glass restricted** — Only designated roles (e.g., `admin`) can use `--emergency`
-- [ ] **Agent capabilities restricted** — Explicit `databases` and `environments` in agent config
+- [ ] **Agent capabilities restricted** — Agent scopes derived from `[databases.<name>.<env>]` config entries; only configured pairs are advertised
 - [ ] **Execution policy limits set** — `max_executions` and `execution_window` configured
 - [ ] **Core dumps disabled** — On server host where signing key resides in memory
 - [ ] **Outbound network restricted** — Agent can only reach server URL + target databases

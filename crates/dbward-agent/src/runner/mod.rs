@@ -227,13 +227,13 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     // --- Background schema sync (non-blocking) ---
     startup::spawn_schema_sync(&config, &client, &pools);
 
-    let databases: Vec<String> = config.databases.keys().cloned().collect();
-    let environments: Vec<String> = config
+    let scopes: Vec<(String, String)> = config
         .databases
-        .values()
-        .flat_map(|envs| envs.keys().cloned())
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
+        .iter()
+        .flat_map(|(db_name, envs)| {
+            envs.keys()
+                .map(move |env_name| (db_name.clone(), env_name.clone()))
+        })
         .collect();
 
     let tracker = Arc::new(JobTracker::new());
@@ -256,8 +256,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
         &tracker,
         &draining,
         &probes,
-        &databases,
-        &environments,
+        &scopes,
         &operations,
         max_concurrent,
         poll_interval,
@@ -270,8 +269,7 @@ pub async fn run(config: AgentConfig) -> Result<(), AgentError> {
     drain::drain(
         &client,
         &tracker,
-        &databases,
-        &environments,
+        &scopes,
         &operations,
         max_concurrent,
         drain_timeout,
@@ -361,5 +359,42 @@ mod tests {
         assert!(!is_hard_error(&AgentError::Driver(
             dbward_driver::DriverError::ConnectionFailed("connection refused".into())
         )));
+    }
+
+    #[test]
+    fn scopes_from_config_produces_correct_pairs() {
+        use std::collections::HashMap;
+
+        // Simulate config.databases structure: HashMap<db, HashMap<env, _>>
+        let mut databases: HashMap<String, HashMap<String, ()>> = HashMap::new();
+        databases
+            .entry("app".into())
+            .or_default()
+            .insert("production".into(), ());
+        databases
+            .entry("app".into())
+            .or_default()
+            .insert("staging".into(), ());
+        databases
+            .entry("analytics".into())
+            .or_default()
+            .insert("production".into(), ());
+
+        // Same logic as runner/mod.rs
+        let scopes: Vec<(String, String)> = databases
+            .iter()
+            .flat_map(|(db_name, envs)| {
+                envs.keys()
+                    .map(move |env_name| (db_name.clone(), env_name.clone()))
+            })
+            .collect();
+
+        // Should produce exactly 3 pairs, no extras
+        assert_eq!(scopes.len(), 3);
+        assert!(scopes.contains(&("app".into(), "production".into())));
+        assert!(scopes.contains(&("app".into(), "staging".into())));
+        assert!(scopes.contains(&("analytics".into(), "production".into())));
+        // Should NOT contain cross-product phantom
+        assert!(!scopes.contains(&("analytics".into(), "staging".into())));
     }
 }

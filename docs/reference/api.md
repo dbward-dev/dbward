@@ -403,7 +403,7 @@ Permission: `agent.operate` (agent token required)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `capabilities` | object | ✓ | `{databases: string[], environments?: string[], operations?: string[]}` |
+| `capabilities` | object | ✓ | `{scopes: [{database: string, environment: string}], operations?: string[]}` |
 | `limit` | u32 | | Max jobs to return (default: 10, max: 20) |
 | `status` | object | | Agent status report (in_flight, max_concurrent, draining, etc.) |
 | `agent_version` | string | | Agent binary version |

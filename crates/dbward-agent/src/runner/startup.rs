@@ -166,13 +166,16 @@ pub(super) async fn startup_with_retry(
     let pools = Arc::new(registry);
 
     // Initial poll to validate token
-    let databases: Vec<String> = config.databases.keys().cloned().collect();
-    let environments: Vec<String> = config
+    let scopes: Vec<dbward_api_types::agent::PollScope> = config
         .databases
-        .values()
-        .flat_map(|envs| envs.keys().cloned())
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
+        .iter()
+        .flat_map(|(db_name, envs)| {
+            envs.keys()
+                .map(move |env_name| dbward_api_types::agent::PollScope {
+                    database: db_name.clone(),
+                    environment: env_name.clone(),
+                })
+        })
         .collect();
     {
         let mut backoff_ms = initial_ms;
@@ -180,8 +183,7 @@ pub(super) async fn startup_with_retry(
         let init_req = PollRequest {
             agent_id: None,
             capabilities: dbward_api_types::agent::PollCapabilities {
-                databases: databases.clone(),
-                environments: environments.clone(),
+                scopes: scopes.clone(),
                 operations: operations.to_vec(),
             },
             limit: 0,
