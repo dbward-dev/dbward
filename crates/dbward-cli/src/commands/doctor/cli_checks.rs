@@ -111,7 +111,7 @@ pub(super) async fn run_cli_mode(ctx: &mut DoctorContext, config_path: Option<&s
                 id: "server_reachable",
                 status: Status::Fail,
                 message: e,
-                hint: Some("Is the server running? If using Docker, check 'docker compose ps'. Verify server.url in your config.".into()),
+                hint: Some("Is the server running? Verify server.url in your config and check that the process is up.".into()),
             });
             ctx.record(CheckResult {
                 id: "version_info",

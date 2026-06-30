@@ -226,15 +226,15 @@ On SIGTERM/SIGINT:
 2. Waits for in-flight jobs to complete (up to `drain_timeout_secs`)
 3. Exits cleanly
 
-## Verifying agent health
+## Validate before starting
 
-After deployment, verify the agent configuration and connectivity:
+Before starting the agent, validate your configuration and connectivity:
 
 ```bash
 dbward doctor --agent /path/to/agent.toml
 ```
 
-This checks config parsing, server reachability, token validity, and database URL scheme.
+This checks config parsing, environment variables, server reachability, token validity, and database URL scheme — catching issues before the agent attempts to connect.
 
 ## Security considerations
 
