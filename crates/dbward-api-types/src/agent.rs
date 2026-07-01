@@ -41,6 +41,8 @@ pub struct PollResponse {
     #[serde(default)]
     pub dry_run_jobs: Vec<DryRunJob>,
     #[serde(default)]
+    pub preflight_jobs: Vec<PreflightJobPayload>,
+    #[serde(default)]
     pub server_version: Option<String>,
     #[serde(default)]
     pub min_agent_version: Option<String>,
@@ -56,6 +58,16 @@ pub struct DryRunJob {
     pub database: String,
     pub environment: String,
     pub sql: String,
+}
+
+/// A preflight EXPLAIN job (pre-claimed by server during poll).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PreflightJobPayload {
+    pub id: String,
+    pub database: String,
+    pub environment: String,
+    pub sql: String,
+    pub claim_token: Option<String>,
 }
 
 /// A job returned from poll.
@@ -121,6 +133,8 @@ pub struct ResultBody {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentStatusReport {
     pub in_flight: u32,
+    #[serde(default)]
+    pub in_flight_preflight: u32,
     pub max_concurrent: u32,
     #[serde(default)]
     pub draining: bool,

@@ -189,6 +189,7 @@ pub(super) async fn startup_with_retry(
             limit: 0,
             status: Some(AgentStatusReport {
                 in_flight: 0,
+                in_flight_preflight: 0,
                 max_concurrent,
                 draining: false,
                 uptime_secs: 0,
