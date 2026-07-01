@@ -199,13 +199,19 @@ async fn handle_explain(
             estimated_cost: None,
             index_used: None,
         }),
-        _ => Ok(PreflightImpact {
-            status: ImpactStatus::Timeout,
-            explain_plan: None,
-            estimated_rows: None,
-            estimated_cost: None,
-            index_used: None,
-        }),
+        _ => {
+            // Mark the job as expired so it no longer counts against concurrent limit
+            let repo_expire = repo.clone();
+            let job_id_expire = req.job_id.clone();
+            let _ = tokio::task::spawn_blocking(move || repo_expire.mark_expired_by_id(&job_id_expire)).await;
+            Ok(PreflightImpact {
+                status: ImpactStatus::Timeout,
+                explain_plan: None,
+                estimated_rows: None,
+                estimated_cost: None,
+                index_used: None,
+            })
+        },
     }
 }
 

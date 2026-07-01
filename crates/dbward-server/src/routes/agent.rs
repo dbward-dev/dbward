@@ -550,10 +550,15 @@ pub async fn preflight_result(
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
 
-    // Mutual exclusivity: result and error cannot both be present
+    // Mutual exclusivity: exactly one of result or error must be present
     if body.result.is_some() && body.error.is_some() {
         return Err(map_error(dbward_app::error::AppError::Validation(
             "result and error are mutually exclusive".into(),
+        )));
+    }
+    if body.result.is_none() && body.error.is_none() {
+        return Err(map_error(dbward_app::error::AppError::Validation(
+            "either result or error must be provided".into(),
         )));
     }
 

@@ -580,6 +580,9 @@ impl dbward_app::ports::PreflightJobRepo for StubPreflightJobRepo {
     fn get(&self, _: &str) -> Result<Option<dbward_app::ports::PreflightJob>, AppError> {
         Ok(None)
     }
+    fn mark_expired_by_id(&self, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
     fn mark_expired(&self) -> Result<u64, AppError> {
         Ok(0)
     }

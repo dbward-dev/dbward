@@ -197,6 +197,18 @@ impl PreflightJobRepo for SqlitePreflightJobRepo {
         Ok(job)
     }
 
+    fn mark_expired_by_id(&self, job_id: &str) -> Result<bool, AppError> {
+        let conn = self.conn.lock();
+        let rows = conn
+            .execute(
+                "UPDATE preflight_jobs SET status = 'expired'
+                 WHERE id = ?1 AND status IN ('pending', 'claimed')",
+                params![job_id],
+            )
+            .map_err(db_err("preflight: mark_expired_by_id"))?;
+        Ok(rows > 0)
+    }
+
     fn mark_expired(&self) -> Result<u64, AppError> {
         let conn = self.conn.lock();
         let now = chrono::Utc::now().to_rfc3339();

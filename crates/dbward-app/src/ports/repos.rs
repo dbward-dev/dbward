@@ -877,6 +877,9 @@ pub trait PreflightJobRepo: Send + Sync {
 
     fn get(&self, job_id: &str) -> Result<Option<PreflightJob>, AppError>;
 
+    /// Mark a specific job as expired (used on HTTP timeout).
+    fn mark_expired_by_id(&self, job_id: &str) -> Result<bool, AppError>;
+
     /// Mark pending/claimed jobs past expires_at as expired.
     fn mark_expired(&self) -> Result<u64, AppError>;
 
