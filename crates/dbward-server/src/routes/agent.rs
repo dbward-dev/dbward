@@ -544,6 +544,22 @@ pub async fn preflight_result(
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
 
+    // Size validation
+    if let Some(ref r) = body.result {
+        if r.to_string().len() > 256 * 1024 {
+            return Err(map_error(dbward_app::error::AppError::PayloadTooLarge(
+                "result exceeds 256KB".into(),
+            )));
+        }
+    }
+    if let Some(ref e) = body.error {
+        if e.len() > 4096 {
+            return Err(map_error(dbward_app::error::AppError::PayloadTooLarge(
+                "error exceeds 4KB".into(),
+            )));
+        }
+    }
+
     let now = chrono::Utc::now().to_rfc3339();
     let repo = state.agent().preflight_job_repo().clone();
     let notifier = state.agent().preflight_notifier().clone();
@@ -576,9 +592,13 @@ pub async fn preflight_result(
 
     if updated {
         notifier.notify(&body.job_id);
+        Ok(StatusCode::OK)
+    } else {
+        // Job was already expired, completed, or claim mismatch
+        Err(map_error(dbward_app::error::AppError::Gone(
+            "preflight job already completed or expired".into(),
+        )))
     }
-
-    Ok(StatusCode::OK)
 }
 
 #[cfg(test)]

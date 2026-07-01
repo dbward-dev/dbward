@@ -329,7 +329,7 @@ mod tests {
         let resp = handle_request(req, &MockBackend, &NoopElicitation, &user(), "app", "dev").await;
         let resp = resp.unwrap();
         let tools = resp.result.unwrap()["tools"].as_array().unwrap().len();
-        assert_eq!(tools, 9);
+        assert_eq!(tools, 8);
     }
 
     #[tokio::test]

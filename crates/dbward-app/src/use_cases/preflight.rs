@@ -424,7 +424,7 @@ impl PreflightUseCase {
 
         // 14. Build classification DTO
         let classification_dto = PreflightClassification {
-            statement_type: format!("{:?}", operation),
+            statement_type: operation.as_str().to_string(),
             operation: operation.as_str().to_string(),
             mutating: !operation.is_read_only(),
             ddl: classification.is_ddl_only,
@@ -438,7 +438,7 @@ impl PreflightUseCase {
                 .findings
                 .iter()
                 .map(|f| PreflightFinding {
-                    code: format!("{:?}", f.rule).to_lowercase(),
+                    code: f.rule.as_str().to_string(),
                     action: match f.action {
                         RuleAction::Block => "block".to_string(),
                         RuleAction::Warn => "warn".to_string(),
@@ -457,7 +457,7 @@ impl PreflightUseCase {
             factors: risk_assessment
                 .factors
                 .iter()
-                .map(|f| format!("{f:?}"))
+                .map(|f| f.name().to_string())
                 .collect(),
         };
 

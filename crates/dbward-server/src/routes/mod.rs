@@ -182,7 +182,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/agent/preflight-result",
-            axum::routing::post(agent::preflight_result),
+            axum::routing::post(agent::preflight_result).layer(DefaultBodyLimit::max(256 * 1024)),
         )
         // Tokens
         .route(

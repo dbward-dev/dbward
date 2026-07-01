@@ -46,6 +46,22 @@ impl RuleId {
             Self::ParseFailure => false,
         }
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::NoWhereDelete => "no_where_delete",
+            Self::NoWhereUpdate => "no_where_update",
+            Self::DropTable => "drop_table",
+            Self::DropColumn => "drop_column",
+            Self::NotNullWithoutDefault => "not_null_without_default",
+            Self::CreateIndexNotConcurrently => "create_index_not_concurrently",
+            Self::AlterColumnType => "alter_column_type",
+            Self::Truncate => "truncate",
+            Self::MixedDdlDml => "mixed_ddl_dml",
+            Self::LargeInList => "large_in_list",
+            Self::ParseFailure => "parse_failure",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
