@@ -726,20 +726,23 @@ fn build_next_actions(status: PreflightStatus, findings: &[Finding]) -> Vec<Stri
 }
 
 /// Derive the SQL verb (e.g. "SELECT", "UPDATE") from the raw SQL text.
-/// Falls back to category-based inference when parsing yields no verb.
+/// Skips CTE/subquery content inside parentheses to find the top-level verb.
 fn infer_statement_type(sql: &str, categories: &[StatementCategory]) -> String {
-    // Extract first meaningful keyword from SQL (skip WITH/EXPLAIN wrappers)
     let upper = sql.trim().to_uppercase();
-    let keywords: Vec<&str> = upper.split_whitespace().collect();
-
-    for kw in &keywords {
-        match *kw {
-            "WITH" | "EXPLAIN" | "ANALYZE" => continue,
-            verb @ ("SELECT" | "INSERT" | "UPDATE" | "DELETE" | "CREATE" | "ALTER" | "DROP"
-            | "TRUNCATE" | "MERGE" | "GRANT" | "REVOKE" | "COPY") => {
-                return verb.to_string();
+    let mut depth: i32 = 0;
+    for token in upper.split_whitespace() {
+        // Track parenthesis depth to skip CTE bodies
+        depth += token.chars().filter(|&c| c == '(').count() as i32;
+        depth -= token.chars().filter(|&c| c == ')').count() as i32;
+        if depth > 0 {
+            continue;
+        }
+        match token.trim_matches(|c: char| c == '(' || c == ')') {
+            "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "CREATE" | "ALTER" | "DROP"
+            | "TRUNCATE" | "MERGE" | "GRANT" | "REVOKE" | "COPY" => {
+                return token.trim_matches(|c: char| c == '(' || c == ')').to_string();
             }
-            _ => break,
+            _ => continue,
         }
     }
 
