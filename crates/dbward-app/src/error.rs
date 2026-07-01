@@ -26,6 +26,9 @@ pub enum AppError {
     #[error("payload too large: {0}")]
     PayloadTooLarge(String),
 
+    #[error("rate limited: {0}")]
+    RateLimited(String),
+
     #[error("internal: {0}")]
     Internal(String),
 }
@@ -41,6 +44,7 @@ impl AppError {
             AppError::Validation(_) => "validation.failed",
             AppError::PlanLimit(_) => "policy.limit_exceeded",
             AppError::PayloadTooLarge(_) => "payload.too_large",
+            AppError::RateLimited(_) => "preflight.rate_limited",
             AppError::Internal(_) => "internal_error",
         }
     }

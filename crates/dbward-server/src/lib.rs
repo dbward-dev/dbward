@@ -5,6 +5,7 @@ pub mod http_elicitation;
 pub mod mcp_backend;
 pub mod metrics;
 pub mod middleware;
+pub mod preflight_notifier;
 pub mod routes;
 pub mod session;
 pub mod session_store;

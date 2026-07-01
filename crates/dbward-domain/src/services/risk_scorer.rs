@@ -55,7 +55,7 @@ pub struct RiskInput<'a> {
     pub max_estimated_rows: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TableRiskInfo {
     pub name: String,
     pub estimated_rows: i64,

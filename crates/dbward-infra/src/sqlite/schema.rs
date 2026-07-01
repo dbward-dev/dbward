@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 23;
+const SCHEMA_VERSION: u32 = 24;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -320,6 +320,29 @@ ALTER TABLE tokens_new RENAME TO tokens;
 CREATE INDEX IF NOT EXISTS idx_tokens_prefix ON tokens(token_prefix);
 ";
 
+const MIGRATION_V24: &str = "
+-- Preflight jobs: short-lived EXPLAIN requests (PRE-1)
+CREATE TABLE preflight_jobs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    database_name TEXT NOT NULL,
+    environment TEXT NOT NULL,
+    sql_text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    claimed_by TEXT,
+    claim_token TEXT,
+    result_json TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    completed_at TEXT
+);
+CREATE INDEX idx_preflight_jobs_pending ON preflight_jobs(status, database_name, environment)
+    WHERE status = 'pending';
+CREATE INDEX idx_preflight_jobs_user_active ON preflight_jobs(user_id, status)
+    WHERE status IN ('pending', 'claimed');
+";
+
 /// Apply V14 source-column additions idempotently.
 fn apply_migration_v14(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(MIGRATION_V14)?;
@@ -400,6 +423,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(MIGRATION_V17)?;
         conn.execute_batch(MIGRATION_V18)?;
         // V19 not needed for fresh DB (schema already includes chain_version + purge_checkpoints)
+        conn.execute_batch(MIGRATION_V24)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -477,6 +501,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 23 {
             conn.execute_batch(MIGRATION_V23)?;
+        }
+        if current < 24 {
+            conn.execute_batch(MIGRATION_V24)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }

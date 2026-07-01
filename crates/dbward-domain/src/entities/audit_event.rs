@@ -14,6 +14,7 @@ pub enum EventCategory {
     Identity,
     Policy,
     Request,
+    Preflight,
 }
 
 impl EventCategory {
@@ -35,6 +36,7 @@ impl EventCategory {
             "identity" => Ok(Self::Identity),
             "policy" => Ok(Self::Policy),
             "request" => Ok(Self::Request),
+            "preflight" => Ok(Self::Preflight),
             other => Err(format!("unknown event category: {other}")),
         }
     }

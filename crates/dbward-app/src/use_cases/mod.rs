@@ -12,6 +12,7 @@ pub mod get_request;
 pub mod get_result;
 pub mod get_schema;
 pub mod list_requests;
+pub mod preflight;
 pub mod reject_request;
 pub mod resume_request;
 pub mod schema_sync;
