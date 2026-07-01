@@ -110,6 +110,7 @@ pub(crate) fn tools_definitions() -> Value {
                 "properties": {
                     "sql": {"type": "string", "description": "SQL statement to analyze"},
                     "database": {"type": "string", "description": "Target database (optional, uses default)"},
+                    "environment": {"type": "string", "description": "Environment (development/staging/production). Optional, uses default."},
                     "include_explain": {"type": "boolean", "description": "Run EXPLAIN via agent (default: true)"},
                     "explain_timeout_ms": {"type": "integer", "description": "EXPLAIN timeout in ms (default: 5000)"}
                 }
@@ -772,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_count_is_13() {
+    fn tools_count_is_12() {
         let defs = tools_definitions();
         let tools = defs.as_array().unwrap();
         assert_eq!(tools.len(), 12);

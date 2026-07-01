@@ -5,7 +5,7 @@ use dbward_domain::auth::ResourceContext;
 use dbward_domain::auth::AuthUser;
 use dbward_domain::entities::{AgentDerivedStatus, AgentStatus};
 use dbward_domain::policies::workflow::Workflow;
-use dbward_domain::services::classification::{ClassifyError, Dialect};
+use dbward_domain::services::classification::{ClassifyError, Dialect, StatementCategory};
 use dbward_domain::services::fix_hints;
 use dbward_domain::services::risk_scorer::{self, RiskAssessment, RiskInput, RiskLevel, TableRiskInfo};
 use dbward_domain::services::sql_classifier;
@@ -297,11 +297,35 @@ impl PreflightUseCase {
 
         let table_risk_info = self.resolve_table_risk(&input.database, &input.environment, &tables);
 
-        let max_estimated_rows = table_risk_info
-            .iter()
-            .map(|t| t.estimated_rows)
-            .max()
-            .unwrap_or(0);
+        let max_estimated_rows = workflow
+            .auto_approve
+            .as_ref()
+            .map(|aa| aa.max_estimated_rows)
+            .unwrap_or(1000);
+
+        let allow_read_only = operation.is_read_only()
+            && workflow
+                .auto_approve
+                .as_ref()
+                .map(|aa| aa.allow_read_only)
+                .unwrap_or(false);
+
+        let safe_ddl = workflow
+            .auto_approve
+            .as_ref()
+            .map(|aa| aa.allow_safe_ddl)
+            .unwrap_or(false)
+            && classification.statement_count == 1
+            && classify_result
+                .parsed_statements
+                .as_ref()
+                .map(|stmts| {
+                    stmts
+                        .iter()
+                        .all(|s| sql_classifier::is_safe_ddl_statement(s, Some(dialect)))
+                })
+                .unwrap_or(false)
+            && review_result.findings.is_empty();
 
         // 9. Risk Assessment
         let risk_input = RiskInput {
@@ -315,8 +339,8 @@ impl PreflightUseCase {
             tables: &table_risk_info,
             statement_count: classification.statement_count,
             has_dml: !operation.is_read_only(),
-            allow_read_only: operation.is_read_only(),
-            safe_ddl: false,
+            allow_read_only,
+            safe_ddl,
             max_estimated_rows,
         };
         let risk_assessment = risk_scorer::evaluate(&risk_input);
@@ -423,8 +447,9 @@ impl PreflightUseCase {
         };
 
         // 14. Build classification DTO
+        let statement_type = infer_statement_type(&input.sql, &classify_result.categories);
         let classification_dto = PreflightClassification {
-            statement_type: operation.as_str().to_string(),
+            statement_type,
             operation: operation.as_str().to_string(),
             mutating: !operation.is_read_only(),
             ddl: classification.is_ddl_only,
@@ -633,5 +658,32 @@ fn build_next_actions(status: PreflightStatus, findings: &[Finding]) -> Vec<Stri
         PreflightStatus::Warning => {
             vec!["Review warnings before submitting the request".to_string()]
         }
+    }
+}
+
+/// Derive the SQL verb (e.g. "SELECT", "UPDATE") from the raw SQL text.
+/// Falls back to category-based inference when parsing yields no verb.
+fn infer_statement_type(sql: &str, categories: &[StatementCategory]) -> String {
+    // Extract first meaningful keyword from SQL (skip WITH/EXPLAIN wrappers)
+    let upper = sql.trim().to_uppercase();
+    let keywords: Vec<&str> = upper.split_whitespace().collect();
+
+    for kw in &keywords {
+        match *kw {
+            "WITH" | "EXPLAIN" | "ANALYZE" => continue,
+            verb @ ("SELECT" | "INSERT" | "UPDATE" | "DELETE" | "CREATE" | "ALTER" | "DROP"
+            | "TRUNCATE" | "MERGE" | "GRANT" | "REVOKE" | "COPY") => {
+                return verb.to_string();
+            }
+            _ => break,
+        }
+    }
+
+    // Fallback: use first category
+    match categories.first() {
+        Some(StatementCategory::ReadOnly) => "SELECT".to_string(),
+        Some(StatementCategory::Dml) => "DML".to_string(),
+        Some(StatementCategory::SafeDdl | StatementCategory::BreakGlassDdl) => "DDL".to_string(),
+        _ => "UNKNOWN".to_string(),
     }
 }

@@ -214,7 +214,8 @@ impl PreflightJobRepo for SqlitePreflightJobRepo {
         let rows = conn
             .execute(
                 "DELETE FROM preflight_jobs
-                 WHERE status IN ('completed', 'expired', 'error') AND created_at <= ?1",
+                 WHERE (status = 'completed' AND completed_at <= ?1)
+                    OR (status IN ('expired', 'error') AND created_at <= ?1)",
                 params![cutoff],
             )
             .map_err(db_err("preflight: purge_old"))?;

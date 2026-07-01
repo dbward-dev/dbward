@@ -544,6 +544,13 @@ pub async fn preflight_result(
 ) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
     require_agent(&user)?;
 
+    // Mutual exclusivity: result and error cannot both be present
+    if body.result.is_some() && body.error.is_some() {
+        return Err(map_error(dbward_app::error::AppError::Validation(
+            "result and error are mutually exclusive".into(),
+        )));
+    }
+
     // Size validation
     if let Some(ref r) = body.result {
         if r.to_string().len() > 256 * 1024 {
