@@ -332,15 +332,25 @@ impl PreflightUseCase {
                 .unwrap_or(false)
             && review_result.findings.is_empty();
 
+        let schema_status = match self
+            .schema_repo
+            .get_snapshot(input.database.as_str(), input.environment.as_str())
+        {
+            Ok(Some(s))
+                if s.status
+                    == dbward_domain::services::status_constants::schema::READY =>
+            {
+                risk_scorer::SchemaStatus::Ready
+            }
+            Ok(Some(_)) => risk_scorer::SchemaStatus::Failed,
+            _ => risk_scorer::SchemaStatus::NotSynced,
+        };
+
         // 9. Risk Assessment
         let risk_input = RiskInput {
             operation,
             findings: &review_result.findings,
-            schema_status: if table_risk_info.is_empty() && !tables.is_empty() {
-                risk_scorer::SchemaStatus::NotSynced
-            } else {
-                risk_scorer::SchemaStatus::Ready
-            },
+            schema_status,
             tables: &table_risk_info,
             statement_count: classification.statement_count,
             has_dml: !operation.is_read_only(),
@@ -540,7 +550,58 @@ impl PreflightUseCase {
             .ok()
             .flatten();
         match json {
-            Some(ref s) => serde_json::from_str::<Vec<TableRiskInfo>>(s).unwrap_or_default(),
+            Some(ref s) => {
+                serde_json::from_str::<Vec<serde_json::Value>>(s)
+                    .ok()
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|t| {
+                                let has_cascade = t
+                                    .get("constraints")
+                                    .and_then(|c| c.as_array())
+                                    .map(|cs| {
+                                        cs.iter().any(|c| {
+                                            c.get("on_delete")
+                                                .and_then(|d| d.as_str())
+                                                .map(|d| d == "CASCADE")
+                                                .unwrap_or(false)
+                                        })
+                                    })
+                                    .unwrap_or(false);
+                                TableRiskInfo {
+                                    name: t
+                                        .get("name")
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    estimated_rows: t
+                                        .get("estimated_rows")
+                                        .and_then(|r| r.as_i64())
+                                        .unwrap_or(0),
+                                    has_cascade_fk: has_cascade,
+                                    cascade_targets: t
+                                        .get("constraints")
+                                        .and_then(|c| c.as_array())
+                                        .map(|cs| {
+                                            cs.iter()
+                                                .filter(|c| {
+                                                    c.get("on_delete").and_then(|d| d.as_str())
+                                                        == Some("CASCADE")
+                                                })
+                                                .filter_map(|c| {
+                                                    c.get("referenced_table")
+                                                        .and_then(|t| t.as_str())
+                                                        .map(String::from)
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
             None => vec![],
         }
     }
