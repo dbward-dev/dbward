@@ -174,9 +174,8 @@ async fn handle_explain(
     let job_id = req.job_id.clone();
     let job_record = tokio::task::spawn_blocking(move || repo_clone.get(&job_id))
         .await
-        .ok()
-        .and_then(|r| r.ok())
-        .flatten();
+        .map_err(|_| dbward_app::error::AppError::Internal("task join".into()))?
+        .map_err(|e| dbward_app::error::AppError::Internal(format!("preflight get: {e}")))?;
 
     match job_record {
         Some(j) if j.status == "completed" => {
@@ -203,7 +202,15 @@ async fn handle_explain(
             // Mark the job as expired so it no longer counts against concurrent limit
             let repo_expire = repo.clone();
             let job_id_expire = req.job_id.clone();
-            let _ = tokio::task::spawn_blocking(move || repo_expire.mark_expired_by_id(&job_id_expire)).await;
+            let expire_result = tokio::task::spawn_blocking(move || {
+                repo_expire.mark_expired_by_id(&job_id_expire)
+            })
+            .await;
+            if let Err(ref e) = expire_result {
+                tracing::warn!(job_id = %req.job_id, error = %e, "failed to expire timed-out preflight job");
+            } else if let Ok(Err(ref e)) = expire_result {
+                tracing::warn!(job_id = %req.job_id, error = %e, "failed to expire timed-out preflight job");
+            }
             Ok(PreflightImpact {
                 status: ImpactStatus::Timeout,
                 explain_plan: None,
