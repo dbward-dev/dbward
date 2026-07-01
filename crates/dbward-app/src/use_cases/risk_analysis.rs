@@ -9,15 +9,18 @@ use dbward_domain::values::Operation;
 use crate::ports::SchemaRepo;
 
 /// Resolve SchemaStatus from the schema snapshot record.
+/// Returns (status, collected_at) to avoid double DB lookup.
 pub fn resolve_schema_status(
     schema_repo: &dyn SchemaRepo,
     database: &str,
     environment: &str,
-) -> SchemaStatus {
+) -> (SchemaStatus, Option<String>) {
     match schema_repo.get_snapshot(database, environment) {
-        Ok(Some(s)) if s.status == status_constants::schema::READY => SchemaStatus::Ready,
-        Ok(Some(_)) => SchemaStatus::Failed,
-        _ => SchemaStatus::NotSynced,
+        Ok(Some(s)) if s.status == status_constants::schema::READY => {
+            (SchemaStatus::Ready, Some(s.collected_at))
+        }
+        Ok(Some(s)) => (SchemaStatus::Failed, Some(s.collected_at)),
+        _ => (SchemaStatus::NotSynced, None),
     }
 }
 
@@ -95,10 +98,11 @@ pub fn resolve_table_risk(
 }
 
 /// Compute `allow_read_only` consistent with create_request logic.
-pub fn compute_allow_read_only(operation: Operation, workflow: Option<&Workflow>) -> bool {
+pub fn compute_allow_read_only(operation: Operation, workflow: &Workflow) -> bool {
     operation.is_read_only()
         && workflow
-            .and_then(|w| w.auto_approve.as_ref())
+            .auto_approve
+            .as_ref()
             .map(|aa| aa.allow_read_only)
             .unwrap_or(false)
 }
@@ -106,12 +110,13 @@ pub fn compute_allow_read_only(operation: Operation, workflow: Option<&Workflow>
 /// Compute `safe_ddl` consistent with create_request logic.
 /// `all_stmts_safe_ddl` should be: stmts.len() == 1 && all stmts pass is_safe_ddl_statement.
 pub fn compute_safe_ddl(
-    workflow: Option<&Workflow>,
+    workflow: &Workflow,
     all_stmts_safe_ddl: bool,
     findings_empty: bool,
 ) -> bool {
     workflow
-        .and_then(|w| w.auto_approve.as_ref())
+        .auto_approve
+        .as_ref()
         .map(|aa| aa.allow_safe_ddl)
         .unwrap_or(false)
         && all_stmts_safe_ddl
@@ -119,9 +124,10 @@ pub fn compute_safe_ddl(
 }
 
 /// Get `max_estimated_rows` from workflow config (default: 1000).
-pub fn max_estimated_rows(workflow: Option<&Workflow>) -> i64 {
+pub fn max_estimated_rows(workflow: &Workflow) -> i64 {
     workflow
-        .and_then(|w| w.auto_approve.as_ref())
+        .auto_approve
+        .as_ref()
         .map(|aa| aa.max_estimated_rows)
         .unwrap_or(1000)
 }

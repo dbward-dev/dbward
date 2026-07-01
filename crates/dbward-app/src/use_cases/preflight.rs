@@ -305,8 +305,8 @@ impl PreflightUseCase {
             &tables,
         );
 
-        let max_estimated_rows = super::risk_analysis::max_estimated_rows(Some(&workflow));
-        let allow_read_only = super::risk_analysis::compute_allow_read_only(operation, Some(&workflow));
+        let max_estimated_rows = super::risk_analysis::max_estimated_rows(&workflow);
+        let allow_read_only = super::risk_analysis::compute_allow_read_only(operation, &workflow);
 
         let all_stmts_safe_ddl = classification.statement_count == 1
             && classify_result
@@ -319,12 +319,12 @@ impl PreflightUseCase {
                 })
                 .unwrap_or(false);
         let safe_ddl = super::risk_analysis::compute_safe_ddl(
-            Some(&workflow),
+            &workflow,
             all_stmts_safe_ddl,
             review_result.findings.is_empty(),
         );
 
-        let schema_status = super::risk_analysis::resolve_schema_status(
+        let (schema_status, _schema_collected_at) = super::risk_analysis::resolve_schema_status(
             self.schema_repo.as_ref(),
             input.database.as_str(),
             input.environment.as_str(),

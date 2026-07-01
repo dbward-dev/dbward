@@ -371,34 +371,28 @@ impl CreateRequest {
                             .collect::<Vec<_>>(),
                     )
                     .ok();
-                    let (schema_status, schema_collected_at) = {
-                        let ss = super::risk_analysis::resolve_schema_status(
+                    let (schema_status, schema_collected_at) =
+                        super::risk_analysis::resolve_schema_status(
                             self.schema_repo.as_ref(),
                             input.database.as_str(),
                             input.environment.as_str(),
                         );
-                        let collected_at = match self
-                            .schema_repo
-                            .get_snapshot(input.database.as_str(), input.environment.as_str())
-                        {
-                            Ok(Some(s)) => Some(s.collected_at),
-                            _ => None,
-                        };
-                        (ss, collected_at)
+                    let allow_read_only = match early_workflow.as_ref() {
+                        Some(wf) => super::risk_analysis::compute_allow_read_only(operation, wf),
+                        None => false,
                     };
-                    let allow_read_only = super::risk_analysis::compute_allow_read_only(
-                        operation,
-                        early_workflow.as_ref(),
-                    );
                     let all_stmts_safe_ddl = stmts.len() == 1
                         && stmts
                             .iter()
                             .all(|s| sql_classifier::is_safe_ddl_statement(s, Some(dialect)));
-                    let safe_ddl = super::risk_analysis::compute_safe_ddl(
-                        early_workflow.as_ref(),
-                        all_stmts_safe_ddl,
-                        review.findings.is_empty(),
-                    );
+                    let safe_ddl = match early_workflow.as_ref() {
+                        Some(wf) => super::risk_analysis::compute_safe_ddl(
+                            wf,
+                            all_stmts_safe_ddl,
+                            review.findings.is_empty(),
+                        ),
+                        None => false,
+                    };
                     let table_risk_info = super::risk_analysis::resolve_table_risk(
                         self.schema_repo.as_ref(),
                         input.database.as_str(),
@@ -414,9 +408,10 @@ impl CreateRequest {
                         has_dml: matches!(operation, Operation::ExecuteDml),
                         allow_read_only,
                         safe_ddl,
-                        max_estimated_rows: super::risk_analysis::max_estimated_rows(
-                            early_workflow.as_ref(),
-                        ),
+                        max_estimated_rows: match early_workflow.as_ref() {
+                            Some(wf) => super::risk_analysis::max_estimated_rows(wf),
+                            None => 1000,
+                        },
                     });
                     let r_json = serde_json::json!({
                         "level": format!("{:?}", assessment.level),
