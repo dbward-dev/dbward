@@ -7,9 +7,7 @@ use dbward_domain::entities::{AgentDerivedStatus, AgentStatus};
 use dbward_domain::policies::workflow::Workflow;
 use dbward_domain::services::classification::{ClassifyError, Dialect, StatementCategory};
 use dbward_domain::services::fix_hints;
-use dbward_domain::services::risk_scorer::{
-    self, RiskAssessment, RiskInput, RiskLevel, TableRiskInfo,
-};
+use dbward_domain::services::risk_scorer::{self, RiskAssessment, RiskInput, RiskLevel};
 use dbward_domain::services::sql_classifier;
 use dbward_domain::services::sql_reviewer::{self, Finding, ReviewResult, RuleAction};
 use dbward_domain::services::table_extractor;
@@ -300,27 +298,17 @@ impl PreflightUseCase {
             .map(|stmts| table_extractor::extract_tables(stmts))
             .unwrap_or_default();
 
-        let table_risk_info = self.resolve_table_risk(&input.database, &input.environment, &tables);
+        let table_risk_info = super::risk_analysis::resolve_table_risk(
+            self.schema_repo.as_ref(),
+            input.database.as_str(),
+            input.environment.as_str(),
+            &tables,
+        );
 
-        let max_estimated_rows = workflow
-            .auto_approve
-            .as_ref()
-            .map(|aa| aa.max_estimated_rows)
-            .unwrap_or(1000);
+        let max_estimated_rows = super::risk_analysis::max_estimated_rows(Some(&workflow));
+        let allow_read_only = super::risk_analysis::compute_allow_read_only(operation, Some(&workflow));
 
-        let allow_read_only = operation.is_read_only()
-            && workflow
-                .auto_approve
-                .as_ref()
-                .map(|aa| aa.allow_read_only)
-                .unwrap_or(false);
-
-        let safe_ddl = workflow
-            .auto_approve
-            .as_ref()
-            .map(|aa| aa.allow_safe_ddl)
-            .unwrap_or(false)
-            && classification.statement_count == 1
+        let all_stmts_safe_ddl = classification.statement_count == 1
             && classify_result
                 .parsed_statements
                 .as_ref()
@@ -329,22 +317,18 @@ impl PreflightUseCase {
                         .iter()
                         .all(|s| sql_classifier::is_safe_ddl_statement(s, Some(dialect)))
                 })
-                .unwrap_or(false)
-            && review_result.findings.is_empty();
+                .unwrap_or(false);
+        let safe_ddl = super::risk_analysis::compute_safe_ddl(
+            Some(&workflow),
+            all_stmts_safe_ddl,
+            review_result.findings.is_empty(),
+        );
 
-        let schema_status = match self
-            .schema_repo
-            .get_snapshot(input.database.as_str(), input.environment.as_str())
-        {
-            Ok(Some(s))
-                if s.status
-                    == dbward_domain::services::status_constants::schema::READY =>
-            {
-                risk_scorer::SchemaStatus::Ready
-            }
-            Ok(Some(_)) => risk_scorer::SchemaStatus::Failed,
-            _ => risk_scorer::SchemaStatus::NotSynced,
-        };
+        let schema_status = super::risk_analysis::resolve_schema_status(
+            self.schema_repo.as_ref(),
+            input.database.as_str(),
+            input.environment.as_str(),
+        );
 
         // 9. Risk Assessment
         let risk_input = RiskInput {
@@ -535,76 +519,6 @@ impl PreflightUseCase {
         }))
     }
 
-    fn resolve_table_risk(
-        &self,
-        database: &DatabaseName,
-        environment: &Environment,
-        tables: &[table_extractor::TableRef],
-    ) -> Vec<TableRiskInfo> {
-        if tables.is_empty() {
-            return vec![];
-        }
-        let json = self
-            .schema_repo
-            .get_tables_for(database.as_str(), environment.as_str(), tables)
-            .ok()
-            .flatten();
-        match json {
-            Some(ref s) => {
-                serde_json::from_str::<Vec<serde_json::Value>>(s)
-                    .ok()
-                    .map(|arr| {
-                        arr.iter()
-                            .map(|t| {
-                                let has_cascade = t
-                                    .get("constraints")
-                                    .and_then(|c| c.as_array())
-                                    .map(|cs| {
-                                        cs.iter().any(|c| {
-                                            c.get("on_delete")
-                                                .and_then(|d| d.as_str())
-                                                .map(|d| d == "CASCADE")
-                                                .unwrap_or(false)
-                                        })
-                                    })
-                                    .unwrap_or(false);
-                                TableRiskInfo {
-                                    name: t
-                                        .get("name")
-                                        .and_then(|n| n.as_str())
-                                        .unwrap_or("")
-                                        .to_string(),
-                                    estimated_rows: t
-                                        .get("estimated_rows")
-                                        .and_then(|r| r.as_i64())
-                                        .unwrap_or(0),
-                                    has_cascade_fk: has_cascade,
-                                    cascade_targets: t
-                                        .get("constraints")
-                                        .and_then(|c| c.as_array())
-                                        .map(|cs| {
-                                            cs.iter()
-                                                .filter(|c| {
-                                                    c.get("on_delete").and_then(|d| d.as_str())
-                                                        == Some("CASCADE")
-                                                })
-                                                .filter_map(|c| {
-                                                    c.get("referenced_table")
-                                                        .and_then(|t| t.as_str())
-                                                        .map(String::from)
-                                                })
-                                                .collect()
-                                        })
-                                        .unwrap_or_default(),
-                                }
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            }
-            None => vec![],
-        }
-    }
 }
 
 /// Returned when EXPLAIN is needed — the HTTP handler creates the job + waits.

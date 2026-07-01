@@ -15,6 +15,7 @@ pub mod list_requests;
 pub mod preflight;
 pub mod reject_request;
 pub mod resume_request;
+pub mod risk_analysis;
 pub mod schema_sync;
 pub mod stream_result;
 pub mod sync_config;

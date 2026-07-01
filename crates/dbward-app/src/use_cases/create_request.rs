@@ -371,92 +371,40 @@ impl CreateRequest {
                             .collect::<Vec<_>>(),
                     )
                     .ok();
-                    let (schema_status, schema_collected_at) = match self
-                        .schema_repo
-                        .get_snapshot(input.database.as_str(), input.environment.as_str())
-                    {
-                        Ok(Some(s))
-                            if s.status
-                                == dbward_domain::services::status_constants::schema::READY =>
-                        {
-                            (risk_scorer::SchemaStatus::Ready, Some(s.collected_at))
-                        }
-                        Ok(Some(s)) => (risk_scorer::SchemaStatus::Failed, Some(s.collected_at)),
-                        _ => (risk_scorer::SchemaStatus::NotSynced, None),
-                    };
-                    let allow_read_only = operation == Operation::ExecuteSelect
-                        && early_workflow
-                            .as_ref()
-                            .and_then(|w| w.auto_approve.as_ref())
-                            .map(|aa| aa.allow_read_only)
-                            .unwrap_or(false); // restrictive on lookup failure
-                    let safe_ddl = early_workflow
-                        .as_ref()
-                        .and_then(|w| w.auto_approve.as_ref())
-                        .map(|aa| aa.allow_safe_ddl)
-                        .unwrap_or(false)
-                        && stmts.len() == 1
-                        && stmts
-                            .iter()
-                            .all(|s| sql_classifier::is_safe_ddl_statement(s, Some(dialect)))
-                        && review.findings.is_empty();
-                    let table_risk_info: Vec<risk_scorer::TableRiskInfo> = self
-                        .schema_repo
-                        .get_tables_for(
+                    let (schema_status, schema_collected_at) = {
+                        let ss = super::risk_analysis::resolve_schema_status(
+                            self.schema_repo.as_ref(),
                             input.database.as_str(),
                             input.environment.as_str(),
-                            &tables,
-                        )
-                        .unwrap_or(None)
-                        .and_then(|json| serde_json::from_str::<Vec<serde_json::Value>>(&json).ok())
-                        .map(|arr| {
-                            arr.iter()
-                                .map(|t| {
-                                    let has_cascade = t
-                                        .get("constraints")
-                                        .and_then(|c| c.as_array())
-                                        .map(|cs| {
-                                            cs.iter().any(|c| {
-                                                c.get("on_delete")
-                                                    .and_then(|d| d.as_str())
-                                                    .map(|d| d == "CASCADE")
-                                                    .unwrap_or(false)
-                                            })
-                                        })
-                                        .unwrap_or(false);
-                                    risk_scorer::TableRiskInfo {
-                                        name: t
-                                            .get("name")
-                                            .and_then(|n| n.as_str())
-                                            .unwrap_or("")
-                                            .to_string(),
-                                        estimated_rows: t
-                                            .get("estimated_rows")
-                                            .and_then(|r| r.as_i64())
-                                            .unwrap_or(0),
-                                        has_cascade_fk: has_cascade,
-                                        cascade_targets: t
-                                            .get("constraints")
-                                            .and_then(|c| c.as_array())
-                                            .map(|cs| {
-                                                cs.iter()
-                                                    .filter(|c| {
-                                                        c.get("on_delete").and_then(|d| d.as_str())
-                                                            == Some("CASCADE")
-                                                    })
-                                                    .filter_map(|c| {
-                                                        c.get("referenced_table")
-                                                            .and_then(|t| t.as_str())
-                                                            .map(String::from)
-                                                    })
-                                                    .collect()
-                                            })
-                                            .unwrap_or_default(),
-                                    }
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                        );
+                        let collected_at = match self
+                            .schema_repo
+                            .get_snapshot(input.database.as_str(), input.environment.as_str())
+                        {
+                            Ok(Some(s)) => Some(s.collected_at),
+                            _ => None,
+                        };
+                        (ss, collected_at)
+                    };
+                    let allow_read_only = super::risk_analysis::compute_allow_read_only(
+                        operation,
+                        early_workflow.as_ref(),
+                    );
+                    let all_stmts_safe_ddl = stmts.len() == 1
+                        && stmts
+                            .iter()
+                            .all(|s| sql_classifier::is_safe_ddl_statement(s, Some(dialect)));
+                    let safe_ddl = super::risk_analysis::compute_safe_ddl(
+                        early_workflow.as_ref(),
+                        all_stmts_safe_ddl,
+                        review.findings.is_empty(),
+                    );
+                    let table_risk_info = super::risk_analysis::resolve_table_risk(
+                        self.schema_repo.as_ref(),
+                        input.database.as_str(),
+                        input.environment.as_str(),
+                        &tables,
+                    );
                     let assessment = risk_scorer::evaluate(&risk_scorer::RiskInput {
                         operation,
                         findings: &review.findings,
@@ -466,11 +414,9 @@ impl CreateRequest {
                         has_dml: matches!(operation, Operation::ExecuteDml),
                         allow_read_only,
                         safe_ddl,
-                        max_estimated_rows: early_workflow
-                            .as_ref()
-                            .and_then(|w| w.auto_approve.as_ref())
-                            .map(|aa| aa.max_estimated_rows)
-                            .unwrap_or(1000),
+                        max_estimated_rows: super::risk_analysis::max_estimated_rows(
+                            early_workflow.as_ref(),
+                        ),
                     });
                     let r_json = serde_json::json!({
                         "level": format!("{:?}", assessment.level),
