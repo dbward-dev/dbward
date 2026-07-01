@@ -5,9 +5,9 @@ use arc_swap::ArcSwap;
 use dbward_app::ports::{
     AgentRepo, ApprovalRepo, AuditLogger, AuditRepo, Authorizer, BackgroundTaskRepo, Clock,
     ContextRepo, DatabaseRegistry, DryRunRepo, IdGenerator, LicenseChecker, Notifier,
-    PolicyEvaluator, PolicyRepo, RequestReader, RequestWriter, ResultChannel, ResultStore,
-    RoleResolver, SchemaRepo, SsrfValidator, TokenRepo, TokenSigner, TokenVerifier, UnitOfWork,
-    UserRepo, WebhookRepo,
+    PolicyEvaluator, PolicyRepo, PreflightJobRepo, RequestReader, RequestWriter, ResultChannel,
+    ResultStore, RoleResolver, SchemaRepo, SsrfValidator, TokenRepo, TokenSigner, TokenVerifier,
+    UnitOfWork, UserRepo, WebhookRepo,
 };
 use dbward_app::use_cases::{
     agent_claim::AgentClaim,
@@ -23,6 +23,7 @@ use dbward_app::use_cases::{
     get_result::GetResult,
     get_schema::GetSchema,
     list_requests::ListRequests,
+    preflight::PreflightUseCase,
     reject_request::RejectRequest,
     resume_request::ResumeRequest,
     schema_sync::SchemaSync,
@@ -96,6 +97,12 @@ pub struct AppState {
 
     // Shutdown — pub(crate)
     pub(crate) draining: Arc<AtomicBool>,
+
+    // Preflight — pub(crate)
+    pub(crate) preflight_job_repo: Arc<dyn PreflightJobRepo>,
+    pub(crate) preflight_notifier: Arc<crate::preflight_notifier::PreflightNotifier>,
+    pub(crate) preflight_max_concurrent_per_user: u32,
+    pub(crate) preflight_max_explain_timeout_ms: u64,
 
     // Slack — pub(crate)
     pub(crate) slack_config: Option<dbward_infra::slack::SlackConfig>,
@@ -330,6 +337,14 @@ impl<'a> AgentUseCases<'a> {
     pub(crate) fn dry_run_repo(&self) -> &Arc<dyn DryRunRepo> {
         &self.0.dry_run_repo
     }
+
+    pub(crate) fn preflight_job_repo(&self) -> &Arc<dyn PreflightJobRepo> {
+        &self.0.preflight_job_repo
+    }
+
+    pub(crate) fn preflight_notifier(&self) -> &Arc<crate::preflight_notifier::PreflightNotifier> {
+        &self.0.preflight_notifier
+    }
 }
 
 /// Admin use cases (policies, roles, webhooks, audit).
@@ -435,6 +450,19 @@ impl AppState {
 
     pub(crate) fn schemas(&self) -> SchemaUseCases<'_> {
         SchemaUseCases(self)
+    }
+
+    pub(crate) fn preflight(&self) -> PreflightUseCase {
+        PreflightUseCase {
+            authorizer: self.authorizer.clone(),
+            policy_evaluator: self.policy_evaluator.clone(),
+            db_registry: self.database_registry.clone(),
+            schema_repo: self.schema_repo.clone(),
+            agent_repo: self.agent_repo.clone(),
+            clock: self.clock.clone(),
+            id_gen: self.id_generator.clone(),
+            max_sql_length: self.max_persist_bytes,
+        }
     }
 
     // --- Thin helpers ---
@@ -587,6 +615,9 @@ impl<'a> BackgroundAccess<'a> {
     pub(crate) fn dry_run_repo(&self) -> &Arc<dyn DryRunRepo> {
         &self.0.dry_run_repo
     }
+    pub(crate) fn preflight_job_repo(&self) -> &Arc<dyn PreflightJobRepo> {
+        &self.0.preflight_job_repo
+    }
     pub(crate) fn context_repo(&self) -> &Arc<dyn ContextRepo> {
         &self.0.context_repo
     }
@@ -702,6 +733,10 @@ pub struct AppStateBuilder {
     pub auth_mode: String,
     pub storage_backend: String,
     pub draining: Arc<AtomicBool>,
+    pub preflight_job_repo: Arc<dyn PreflightJobRepo>,
+    pub preflight_notifier: Arc<crate::preflight_notifier::PreflightNotifier>,
+    pub preflight_max_concurrent_per_user: u32,
+    pub preflight_max_explain_timeout_ms: u64,
     pub slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
     #[allow(dead_code)]
@@ -761,6 +796,10 @@ impl AppStateBuilder {
             auth_mode: self.auth_mode,
             storage_backend: self.storage_backend,
             draining: self.draining,
+            preflight_job_repo: self.preflight_job_repo,
+            preflight_notifier: self.preflight_notifier,
+            preflight_max_concurrent_per_user: self.preflight_max_concurrent_per_user,
+            preflight_max_explain_timeout_ms: self.preflight_max_explain_timeout_ms,
             slack_config: self.slack_config,
             slack_client: self.slack_client,
             mcp_enabled: self.mcp_enabled,

@@ -15,6 +15,7 @@ mod health;
 pub(crate) mod mcp;
 mod metrics;
 mod policies;
+mod preflight;
 mod requests;
 mod schemas;
 pub(crate) mod slack;
@@ -149,6 +150,8 @@ pub fn build_router(state: AppState) -> Router {
         )
         // Agent
         .route("/api/agent/poll", axum::routing::post(agent::poll))
+        // Preflight
+        .route("/api/preflight", axum::routing::post(preflight::create))
         .route(
             "/api/agent/jobs/{id}/claim",
             axum::routing::post(agent::claim),
@@ -176,6 +179,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/agent/dry-run/{id}/result",
             axum::routing::post(agent::dry_run_result),
+        )
+        .route(
+            "/api/agent/preflight-result",
+            axum::routing::post(agent::preflight_result),
         )
         // Tokens
         .route(

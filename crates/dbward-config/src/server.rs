@@ -49,6 +49,8 @@ pub struct ServerConfig {
     pub slack: Option<SlackConfig>,
     #[serde(default)]
     pub mcp: McpConfig,
+    #[serde(default)]
+    pub preflight: Option<PreflightConfig>,
 }
 
 impl ServerConfig {
@@ -1873,4 +1875,11 @@ impl Default for McpConfig {
 
 fn default_environment() -> String {
     "development".into()
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PreflightConfig {
+    pub max_concurrent_per_user: Option<u32>,
+    pub max_explain_timeout_ms: Option<u64>,
+    pub rate_limit_per_minute: Option<u32>,
 }

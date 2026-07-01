@@ -199,11 +199,51 @@ pub async fn poll(
         }
     };
 
+    // Preflight jobs: atomically claim pending jobs for this agent's scopes
+    let preflight_jobs: Vec<serde_json::Value> = if upgrade_required || db_pairs.is_empty() {
+        vec![]
+    } else {
+        // Shared budget: normal jobs already allocated, use remainder for preflight
+        let normal_count = jobs.len() as u32;
+        let status_in_flight = body.status.as_ref().map(|s| s.in_flight).unwrap_or(0);
+        let max_concurrent = body.status.as_ref().map(|s| s.max_concurrent).unwrap_or(1);
+        let total_available = max_concurrent.saturating_sub(status_in_flight);
+        let remaining = total_available.saturating_sub(normal_count) as usize;
+
+        if remaining == 0 {
+            vec![]
+        } else {
+            match state
+                .agent()
+                .preflight_job_repo()
+                .claim_for_agent(&user.subject_id, &db_pairs, remaining)
+            {
+                Ok(claimed) => claimed
+                    .iter()
+                    .map(|j| {
+                        serde_json::json!({
+                            "id": j.id,
+                            "database": j.database_name,
+                            "environment": j.environment,
+                            "sql": j.sql_text,
+                            "claim_token": j.claim_token,
+                        })
+                    })
+                    .collect(),
+                Err(e) => {
+                    tracing::warn!(%e, "failed to claim preflight jobs");
+                    vec![]
+                }
+            }
+        }
+    };
+
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
             "jobs": jobs,
             "dry_run_jobs": dry_run_jobs,
+            "preflight_jobs": preflight_jobs,
             "server_version": env!("CARGO_PKG_VERSION"),
             "min_agent_version": min_agent_version,
             "upgrade_required": upgrade_required,
@@ -482,6 +522,60 @@ pub async fn dry_run_result(
         error: body.error.as_deref(),
     })
     .map_err(map_error)?;
+
+    Ok(StatusCode::OK)
+}
+
+// --- Preflight Result ---
+
+#[derive(serde::Deserialize)]
+pub struct PreflightResultBody {
+    pub job_id: String,
+    pub claim_token: String,
+    pub result: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+pub async fn preflight_result(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Json(body): Json<PreflightResultBody>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    require_agent(&user)?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let repo = state.agent().preflight_job_repo().clone();
+    let notifier = state.agent().preflight_notifier().clone();
+
+    let job_id = body.job_id.clone();
+    let agent_id = user.subject_id.clone();
+    let claim_token = body.claim_token.clone();
+
+    let updated = if let Some(ref error) = body.error {
+        let error = error.clone();
+        tokio::task::spawn_blocking(move || {
+            repo.fail(&job_id, &agent_id, &claim_token, &error, &now)
+        })
+        .await
+        .map_err(|_| map_error(dbward_app::error::AppError::Internal("task join".into())))?
+        .map_err(map_error)?
+    } else {
+        let result_json = body
+            .result
+            .as_ref()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "{}".into());
+        tokio::task::spawn_blocking(move || {
+            repo.complete(&job_id, &agent_id, &claim_token, &result_json, &now)
+        })
+        .await
+        .map_err(|_| map_error(dbward_app::error::AppError::Internal("task join".into())))?
+        .map_err(map_error)?
+    };
+
+    if updated {
+        notifier.notify(&body.job_id);
+    }
 
     Ok(StatusCode::OK)
 }
