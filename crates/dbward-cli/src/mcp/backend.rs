@@ -140,32 +140,6 @@ impl McpBackend for CliMcpBackend {
         }
     }
 
-    async fn preview_impact(
-        &self,
-        sql: &str,
-        database: &str,
-        environment: &str,
-        reason: Option<String>,
-        _user: &AuthUser,
-    ) -> McpResult<Value> {
-        let input = CreateRequestInput {
-            operation: "execute".into(),
-            environment: environment.into(),
-            database: database.into(),
-            detail: format!("EXPLAIN {sql}"),
-            reason,
-            idempotency_key: None,
-        };
-        let cr = self.create_request(input, _user).await?;
-        if cr.status.is_pending() {
-            return Ok(json!({"request_id": cr.request_id, "status": "pending_approval"}));
-        }
-        match self.resume_and_wait(&cr.request_id, 30, _user).await? {
-            WaitOutput::Completed(text) => Ok(json!({"plan": text})),
-            _ => Ok(json!({"request_id": cr.request_id, "status": "in_progress"})),
-        }
-    }
-
     async fn who_can_approve(&self, request_id: &str, _user: &AuthUser) -> McpResult<Value> {
         self.client
             .get_request(request_id)

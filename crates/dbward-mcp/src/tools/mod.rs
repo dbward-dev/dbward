@@ -28,7 +28,6 @@ pub async fn dispatch(
         "dbward_wait_request" => request::wait_request(ctx, args).await,
         "dbward_list_pending" => request::list_pending(ctx).await,
         "dbward_find_similar_requests" => request::find_similar(ctx, args).await,
-        "dbward_preview_impact" => request::preview_impact(ctx, args).await,
         "dbward_who_can_approve" => request::who_can_approve(ctx, args).await,
         "dbward_explain_policy_failure" => request::explain_policy_failure(ctx, args).await,
         "dbward_inspect_schema" => schema::inspect_schema(ctx, args).await,

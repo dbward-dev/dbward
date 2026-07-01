@@ -125,19 +125,6 @@ pub(super) async fn find_similar(ctx: &ToolContext<'_>, args: &Value) -> Result<
         .map_err(|e| e.to_string())
 }
 
-pub(super) async fn preview_impact(ctx: &ToolContext<'_>, args: &Value) -> Result<String, String> {
-    let sql = require_str(args, "sql")?;
-    let db = str_or(args, "database", ctx.default_database);
-    let env = str_or(args, "environment", ctx.default_environment);
-    let reason = args["reason"].as_str().map(String::from);
-
-    with_elicitation(ctx, reason, |r| {
-        ctx.backend.preview_impact(sql, db, env, r, ctx.user)
-    })
-    .await
-    .map(format_json)
-}
-
 pub(super) async fn who_can_approve(ctx: &ToolContext<'_>, args: &Value) -> Result<String, String> {
     let request_id = require_str(args, "request_id")?;
     ctx.backend
@@ -307,16 +294,6 @@ mod tests {
             &self,
             _: &str,
             _: u32,
-            _: &dbward_domain::auth::AuthUser,
-        ) -> McpResult<Value> {
-            unimplemented!()
-        }
-        async fn preview_impact(
-            &self,
-            _: &str,
-            _: &str,
-            _: &str,
-            _: Option<String>,
             _: &dbward_domain::auth::AuthUser,
         ) -> McpResult<Value> {
             unimplemented!()

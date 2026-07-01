@@ -1,8 +1,5 @@
 use serde_json::Value;
 
-use super::super::server::ElicitHandle;
-use super::request::submit_and_wait;
-
 pub(super) async fn handle_inspect_schema(
     client: &crate::server_client::ServerClient,
     args: &Value,
@@ -50,29 +47,4 @@ pub(super) async fn handle_inspect_schema(
         }
         Err(e) => Err(e.to_string()),
     }
-}
-
-pub(super) async fn handle_preview_impact(
-    client: &crate::server_client::ServerClient,
-    sql: &str,
-    env: &str,
-    db_name: &str,
-    args: &Value,
-    elicit: &ElicitHandle,
-    client_supports_elicitation: bool,
-) -> Result<String, String> {
-    let db = args["database"].as_str().unwrap_or(db_name);
-    let reason = args["reason"].as_str();
-    let explain_sql = format!("EXPLAIN {sql}");
-    submit_and_wait(
-        client,
-        "execute_query",
-        env,
-        db,
-        &explain_sql,
-        reason,
-        elicit,
-        client_supports_elicitation,
-    )
-    .await
 }

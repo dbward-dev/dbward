@@ -84,15 +84,6 @@ pub trait McpBackend: Send + Sync {
 
     async fn find_similar(&self, sql: &str, limit: u32, user: &AuthUser) -> McpResult<Value>;
 
-    async fn preview_impact(
-        &self,
-        sql: &str,
-        database: &str,
-        environment: &str,
-        reason: Option<String>,
-        user: &AuthUser,
-    ) -> McpResult<Value>;
-
     async fn who_can_approve(&self, request_id: &str, user: &AuthUser) -> McpResult<Value>;
 
     async fn explain_policy_failure(

@@ -194,66 +194,6 @@ impl McpBackend for ServerMcpBackend {
         Ok(json!(results))
     }
 
-    async fn preview_impact(
-        &self,
-        sql: &str,
-        database: &str,
-        environment: &str,
-        reason: Option<String>,
-        user: &AuthUser,
-    ) -> McpResult<Value> {
-        // preview_impact creates a request with operation "explain"
-        let db = DatabaseName::new(database).map_err(|e| McpError::Internal(e.to_string()))?;
-        let env = Environment::new(environment).map_err(|e| McpError::Internal(e.to_string()))?;
-
-        let app_input = AppCreateInput {
-            database: db,
-            environment: env,
-            operation: Operation::ExecuteSelect,
-            detail: format!("EXPLAIN {sql}"),
-            reason,
-            emergency: false,
-            allow_ddl: false,
-            idempotency_key: None,
-            share_with: vec![],
-            no_result_store: true,
-            metadata_json: "{}".into(),
-            channel: RequestChannel::Mcp,
-        };
-
-        let ctx = self.audit_ctx.clone();
-        let output = self
-            .state
-            .requests()
-            .create()
-            .execute(app_input, user, &ctx)
-            .map_err(format_app_error)?;
-
-        // If auto-approved, wait for result
-        if output.status != RequestStatus::Pending {
-            let resume_input = ResumeRequestInput {
-                request_id: output.id.clone(),
-            };
-            match self
-                .state
-                .requests()
-                .resume()
-                .execute(resume_input, user, &ctx)
-            {
-                Ok(_) | Err(AppError::Conflict(_)) => {}
-                Err(e) => {
-                    tracing::warn!(error = %e, request_id = %output.id, "resume failed for preview_impact");
-                    return Err(format!("resume failed: {e}").into());
-                }
-            }
-            if let WaitOutput::Completed(text) = self.stream_result(&output.id, 30, user).await? {
-                return Ok(json!({"plan": text}));
-            }
-        }
-
-        Ok(json!({"request_id": output.id, "status": "pending_approval"}))
-    }
-
     async fn who_can_approve(&self, request_id: &str, user: &AuthUser) -> McpResult<Value> {
         let output = self
             .state

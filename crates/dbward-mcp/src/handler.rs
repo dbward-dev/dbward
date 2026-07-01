@@ -252,16 +252,6 @@ mod tests {
         async fn find_similar(&self, _: &str, _: u32, _: &AuthUser) -> McpResult<Value> {
             Ok(json!([]))
         }
-        async fn preview_impact(
-            &self,
-            _: &str,
-            _: &str,
-            _: &str,
-            _: Option<String>,
-            _: &AuthUser,
-        ) -> McpResult<Value> {
-            Ok(json!({"plan": "Seq Scan"}))
-        }
         async fn who_can_approve(&self, _: &str, _: &AuthUser) -> McpResult<Value> {
             Ok(json!({"approvers": []}))
         }
