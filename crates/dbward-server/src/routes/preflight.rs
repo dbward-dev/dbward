@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::State;
@@ -15,6 +14,7 @@ use dbward_domain::entities::AuditEvent;
 use dbward_domain::services::sql_redactor;
 use dbward_domain::values::{DatabaseName, Environment};
 
+use crate::middleware::trusted_proxies::ClientIp;
 use crate::preflight_notifier::NotifierGuard;
 use crate::routes::map_error;
 use crate::state::AppState;
@@ -44,8 +44,14 @@ fn default_explain_timeout() -> u64 {
 pub async fn create(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     Json(body): Json<PreflightBody>,
 ) -> ApiResult {
+    // TODO(PRE-1): Add per-user rate limiter (30 req/min sliding window).
+    // The DB-based concurrent limit (create_with_limit) prevents abuse for now.
+    // Full rate limiter deferred to follow-up PR.
+
     let database = DatabaseName::new(&body.database)
         .map_err(|e| map_error(AppError::Validation(e.to_string())))?;
     let environment = Environment::new(&body.environment)
@@ -71,13 +77,17 @@ pub async fn create(
 
     // Layer 5: EXPLAIN via agent (if needed)
     if let Some(explain_req) = explain_request {
-        let impact = handle_explain(&state, &explain_req).await;
+        let impact = handle_explain(&state, &explain_req).await.map_err(map_error)?;
         result.impact = impact;
     }
 
     // Audit (best-effort)
+    let audit_ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
     let fingerprint = sql_redactor::redact_literals(&body.sql);
-    let audit_event = build_audit_event(&user, &body.database, &body.environment, &result, &fingerprint);
+    let audit_event = build_audit_event(&user, &body.database, &body.environment, &result, &fingerprint, body.include_explain, &audit_ctx);
     if let Err(e) = state.audit_logger().record(&audit_event) {
         tracing::warn!("preflight audit write failed: {e}");
     }
@@ -88,7 +98,7 @@ pub async fn create(
 async fn handle_explain(
     state: &AppState,
     req: &PreflightExplainRequest,
-) -> dbward_app::use_cases::preflight::PreflightImpact {
+) -> Result<dbward_app::use_cases::preflight::PreflightImpact, AppError> {
     use dbward_app::use_cases::preflight::PreflightImpact;
 
     let notifier = &state.preflight_notifier;
@@ -127,23 +137,17 @@ async fn handle_explain(
 
     match create_result {
         Ok(Ok(())) => {}
-        Ok(Err(AppError::RateLimited(_))) => {
-            return PreflightImpact {
-                status: ImpactStatus::Error,
-                explain_plan: None,
-                estimated_rows: None,
-                estimated_cost: None,
-                index_used: None,
-            };
+        Ok(Err(e @ AppError::RateLimited(_))) => {
+            return Err(e);
         }
-        _ => {
-            return PreflightImpact {
+        Ok(Err(_)) | Err(_) => {
+            return Ok(PreflightImpact {
                 status: ImpactStatus::Error,
                 explain_plan: None,
                 estimated_rows: None,
                 estimated_cost: None,
                 index_used: None,
-            };
+            });
         }
     }
 
@@ -166,28 +170,28 @@ async fn handle_explain(
                 .result_json
                 .as_deref()
                 .and_then(|s| serde_json::from_str(s).ok());
-            PreflightImpact {
+            Ok(PreflightImpact {
                 status: ImpactStatus::Completed,
                 explain_plan: plan,
                 estimated_rows: None,
                 estimated_cost: None,
                 index_used: None,
-            }
+            })
         }
-        Some(j) if j.status == "error" => PreflightImpact {
+        Some(j) if j.status == "error" => Ok(PreflightImpact {
             status: ImpactStatus::Error,
             explain_plan: None,
             estimated_rows: None,
             estimated_cost: None,
             index_used: None,
-        },
-        _ => PreflightImpact {
+        }),
+        _ => Ok(PreflightImpact {
             status: ImpactStatus::Timeout,
             explain_plan: None,
             estimated_rows: None,
             estimated_cost: None,
             index_used: None,
-        },
+        }),
     }
 }
 
@@ -197,8 +201,16 @@ fn build_audit_event(
     environment: &str,
     result: &dbward_app::use_cases::preflight::PreflightResult,
     fingerprint: &str,
+    include_explain: bool,
+    audit_ctx: &dbward_domain::entities::AuditContext,
 ) -> AuditEvent {
-    use dbward_domain::entities::AuditContext;
+    let blocked_codes: Vec<&str> = result
+        .review
+        .findings
+        .iter()
+        .filter(|f| f.action == "block")
+        .map(|f| f.code.as_str())
+        .collect();
 
     let mut event = AuditEvent::simple(
         "preflight.attempted",
@@ -206,7 +218,7 @@ fn build_audit_event(
         &user.subject_id,
         None,
         chrono::Utc::now(),
-        &AuditContext::System,
+        audit_ctx,
     );
     event.database_name = Some(database.to_string());
     event.environment = Some(environment.to_string());
@@ -215,6 +227,8 @@ fn build_audit_event(
         "status": format!("{:?}", result.status).to_lowercase(),
         "risk_level": format!("{:?}", result.risk).to_lowercase(),
         "impact_status": format!("{:?}", result.impact.status).to_lowercase(),
+        "blocked_codes": blocked_codes,
+        "include_explain": include_explain,
     })
     .to_string();
     event

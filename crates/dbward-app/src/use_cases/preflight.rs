@@ -12,7 +12,7 @@ use dbward_domain::services::sql_classifier;
 use dbward_domain::services::sql_reviewer::{self, Finding, ReviewResult, RuleAction};
 use dbward_domain::services::table_extractor;
 use dbward_domain::services::workflow_matcher::{self, ApprovalDecision};
-use dbward_domain::values::{DatabaseName, Environment, Operation};
+use dbward_domain::values::{DatabaseName, Environment};
 use serde::Serialize;
 
 use crate::error::AppError;

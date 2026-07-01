@@ -772,10 +772,10 @@ mod tests {
     }
 
     #[test]
-    fn tools_count_is_12() {
+    fn tools_count_is_13() {
         let defs = tools_definitions();
         let tools = defs.as_array().unwrap();
-        assert_eq!(tools.len(), 13);
+        assert_eq!(tools.len(), 12);
     }
 
     #[test]

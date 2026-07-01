@@ -61,10 +61,22 @@ impl PreflightJobRepo for SqlitePreflightJobRepo {
         let claim_token = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().to_rfc3339();
 
-        // Build scope filter
+        // Build parameterized scope conditions to prevent SQL injection
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![
+            Box::new(agent_id.to_string()),
+            Box::new(claim_token.clone()),
+            Box::new(now.clone()),
+            Box::new(limit as u32),
+        ];
         let scope_conditions: Vec<String> = scopes
             .iter()
-            .map(|(db, env)| format!("(database_name = '{}' AND environment = '{}')", db.replace('\'', "''"), env.replace('\'', "''")))
+            .enumerate()
+            .map(|(i, (db, env))| {
+                let base = 5 + i * 2;
+                params.push(Box::new(db.clone()));
+                params.push(Box::new(env.clone()));
+                format!("(database_name = ?{} AND environment = ?{})", base, base + 1)
+            })
             .collect();
         let scope_filter = scope_conditions.join(" OR ");
 
@@ -79,12 +91,14 @@ impl PreflightJobRepo for SqlitePreflightJobRepo {
              RETURNING id, user_id, database_name, environment, sql_text, status, claimed_by, claim_token, result_json, error_message, created_at, expires_at, completed_at"
         );
 
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = conn
             .prepare(&sql)
             .map_err(db_err("preflight: claim_for_agent prepare"))?;
 
         let jobs = stmt
-            .query_map(params![agent_id, claim_token, now, limit as u32], |row| {
+            .query_map(params_ref.as_slice(), |row| {
                 Ok(PreflightJob {
                     id: row.get(0)?,
                     user_id: row.get(1)?,
