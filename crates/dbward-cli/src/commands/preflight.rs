@@ -15,7 +15,10 @@ pub async fn run_preflight(
         .await?;
 
     if json_output {
-        println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap_or_default()
+        );
         return Ok(());
     }
 
@@ -34,18 +37,18 @@ pub async fn run_preflight(
     eprintln!();
 
     // Review findings
-    if let Some(findings) = result["review"]["findings"].as_array() {
-        if !findings.is_empty() {
-            eprintln!("📋 Review findings:");
-            for f in findings {
-                let action = f["action"].as_str().unwrap_or("?");
-                let code = f["code"].as_str().unwrap_or("?");
-                let msg = f["message"].as_str().unwrap_or("");
-                let icon = if action == "block" { "❌" } else { "⚠️" };
-                eprintln!("  {icon} [{code}] {msg}");
-            }
-            eprintln!();
+    if let Some(findings) = result["review"]["findings"].as_array()
+        && !findings.is_empty()
+    {
+        eprintln!("📋 Review findings:");
+        for f in findings {
+            let action = f["action"].as_str().unwrap_or("?");
+            let code = f["code"].as_str().unwrap_or("?");
+            let msg = f["message"].as_str().unwrap_or("");
+            let icon = if action == "block" { "❌" } else { "⚠️" };
+            eprintln!("  {icon} [{code}] {msg}");
         }
+        eprintln!();
     }
 
     // Policy
@@ -54,15 +57,17 @@ pub async fn run_preflight(
         let auto = policy["would_auto_approve"].as_bool().unwrap_or(false);
         let needs_approval = policy["requires_approval"].as_bool().unwrap_or(false);
         eprintln!("📜 Policy:");
-        eprintln!("  Can submit: {can_submit}  |  Auto-approve: {auto}  |  Needs approval: {needs_approval}");
-        if let Some(approvers) = policy["approvers"].as_array() {
-            if !approvers.is_empty() {
-                let names: Vec<&str> = approvers
-                    .iter()
-                    .filter_map(|a| a["selector"].as_str())
-                    .collect();
-                eprintln!("  Approvers: {}", names.join(", "));
-            }
+        eprintln!(
+            "  Can submit: {can_submit}  |  Auto-approve: {auto}  |  Needs approval: {needs_approval}"
+        );
+        if let Some(approvers) = policy["approvers"].as_array()
+            && !approvers.is_empty()
+        {
+            let names: Vec<&str> = approvers
+                .iter()
+                .filter_map(|a| a["selector"].as_str())
+                .collect();
+            eprintln!("  Approvers: {}", names.join(", "));
         }
         eprintln!();
     }
@@ -72,36 +77,36 @@ pub async fn run_preflight(
         let impact_status = impact["status"].as_str().unwrap_or("skipped");
         if impact_status != "skipped" {
             eprintln!("🔍 EXPLAIN: {impact_status}");
-            if impact_status == "completed" {
-                if let Some(rows) = impact["estimated_rows"].as_i64() {
-                    eprintln!("  Estimated rows: {rows}");
-                }
+            if impact_status == "completed"
+                && let Some(rows) = impact["estimated_rows"].as_i64()
+            {
+                eprintln!("  Estimated rows: {rows}");
             }
             eprintln!();
         }
     }
 
     // Fix hints
-    if let Some(hints) = result["fix_hints"].as_array() {
-        if !hints.is_empty() {
-            eprintln!("💡 Suggestions:");
-            for h in hints {
-                if let Some(s) = h.as_str() {
-                    eprintln!("  • {s}");
-                }
+    if let Some(hints) = result["fix_hints"].as_array()
+        && !hints.is_empty()
+    {
+        eprintln!("💡 Suggestions:");
+        for h in hints {
+            if let Some(s) = h.as_str() {
+                eprintln!("  • {s}");
             }
-            eprintln!();
         }
+        eprintln!();
     }
 
     // Next actions
-    if let Some(actions) = result["next_actions"].as_array() {
-        if !actions.is_empty() {
-            eprintln!("➡️  Next:");
-            for a in actions {
-                if let Some(s) = a.as_str() {
-                    eprintln!("  • {s}");
-                }
+    if let Some(actions) = result["next_actions"].as_array()
+        && !actions.is_empty()
+    {
+        eprintln!("➡️  Next:");
+        for a in actions {
+            if let Some(s) = a.as_str() {
+                eprintln!("  • {s}");
             }
         }
     }

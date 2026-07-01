@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
+use dbward_domain::auth::AuthUser;
 use dbward_domain::auth::Permission;
 use dbward_domain::auth::ResourceContext;
-use dbward_domain::auth::AuthUser;
 use dbward_domain::entities::{AgentDerivedStatus, AgentStatus};
 use dbward_domain::policies::workflow::Workflow;
 use dbward_domain::services::classification::{ClassifyError, Dialect, StatementCategory};
 use dbward_domain::services::fix_hints;
-use dbward_domain::services::risk_scorer::{self, RiskAssessment, RiskInput, RiskLevel, TableRiskInfo};
+use dbward_domain::services::risk_scorer::{
+    self, RiskAssessment, RiskInput, RiskLevel, TableRiskInfo,
+};
 use dbward_domain::services::sql_classifier;
 use dbward_domain::services::sql_reviewer::{self, Finding, ReviewResult, RuleAction};
 use dbward_domain::services::table_extractor;
@@ -223,7 +225,10 @@ impl PreflightUseCase {
         };
 
         // 3. Database registration check
-        if !self.db_registry.exists_active(&input.database, &input.environment)? {
+        if !self
+            .db_registry
+            .exists_active(&input.database, &input.environment)?
+        {
             return Err(AppError::Validation(format!(
                 "database '{}' environment '{}' is not registered",
                 input.database, input.environment
@@ -346,8 +351,7 @@ impl PreflightUseCase {
         let risk_assessment = risk_scorer::evaluate(&risk_input);
 
         // 10. Policy simulation
-        let decision =
-            workflow_matcher::evaluate(&workflow, Some(risk_assessment.level));
+        let decision = workflow_matcher::evaluate(&workflow, Some(risk_assessment.level));
 
         let op_permission = if operation.is_read_only() {
             Permission::RequestQuery
@@ -515,9 +519,9 @@ impl PreflightUseCase {
         Ok(agents.iter().any(|a| {
             a.status != AgentStatus::Draining
                 && a.derived_status(now) == AgentDerivedStatus::Healthy
-                && a.databases.iter().any(|cap| {
-                    &cap.database == database && &cap.environment == environment
-                })
+                && a.databases
+                    .iter()
+                    .any(|cap| &cap.database == database && &cap.environment == environment)
         }))
     }
 
@@ -570,12 +574,11 @@ fn determine_status(
         return PreflightStatus::Blocked;
     }
     // Check risk against auto_approve threshold
-    if let Some(ref aa) = workflow.auto_approve {
-        if let Some(ref max_risk) = aa.max_risk_level {
-            if risk.level > *max_risk {
-                return PreflightStatus::Warning;
-            }
-        }
+    if let Some(ref aa) = workflow.auto_approve
+        && let Some(ref max_risk) = aa.max_risk_level
+        && risk.level > *max_risk
+    {
+        return PreflightStatus::Warning;
     }
     if review.findings.iter().any(|f| f.action == RuleAction::Warn) {
         return PreflightStatus::Warning;

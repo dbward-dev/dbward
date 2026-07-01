@@ -12,9 +12,7 @@ pub fn generate(findings: &[Finding], risk_level: RiskLevel) -> Vec<String> {
     // Risk-based hints (only if not already covered by rule hints)
     match risk_level {
         RiskLevel::Critical | RiskLevel::High => {
-            hints.push(
-                "For production writes, include --reason with expected impact".to_string(),
-            );
+            hints.push("For production writes, include --reason with expected impact".to_string());
         }
         RiskLevel::Unknown => {
             hints.push(

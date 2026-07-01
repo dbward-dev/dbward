@@ -207,18 +207,24 @@ pub async fn poll(
         let normal_count = jobs.len() as u32;
         let status_in_flight = body.status.as_ref().map(|s| s.in_flight).unwrap_or(0);
         let max_concurrent = body.status.as_ref().map(|s| s.max_concurrent).unwrap_or(1);
-        let in_flight_preflight = body.status.as_ref().map(|s| s.in_flight_preflight).unwrap_or(0);
-        let total_available = max_concurrent.saturating_sub(status_in_flight).saturating_sub(in_flight_preflight);
+        let in_flight_preflight = body
+            .status
+            .as_ref()
+            .map(|s| s.in_flight_preflight)
+            .unwrap_or(0);
+        let total_available = max_concurrent
+            .saturating_sub(status_in_flight)
+            .saturating_sub(in_flight_preflight);
         let remaining = total_available.saturating_sub(normal_count) as usize;
 
         if remaining == 0 {
             vec![]
         } else {
-            match state
-                .agent()
-                .preflight_job_repo()
-                .claim_for_agent(&user.subject_id, &db_pairs, remaining)
-            {
+            match state.agent().preflight_job_repo().claim_for_agent(
+                &user.subject_id,
+                &db_pairs,
+                remaining,
+            ) {
                 Ok(claimed) => claimed
                     .iter()
                     .map(|j| {
@@ -552,19 +558,19 @@ pub async fn preflight_result(
     }
 
     // Size validation
-    if let Some(ref r) = body.result {
-        if r.to_string().len() > 256 * 1024 {
-            return Err(map_error(dbward_app::error::AppError::PayloadTooLarge(
-                "result exceeds 256KB".into(),
-            )));
-        }
+    if let Some(ref r) = body.result
+        && r.to_string().len() > 256 * 1024
+    {
+        return Err(map_error(dbward_app::error::AppError::PayloadTooLarge(
+            "result exceeds 256KB".into(),
+        )));
     }
-    if let Some(ref e) = body.error {
-        if e.len() > 4096 {
-            return Err(map_error(dbward_app::error::AppError::PayloadTooLarge(
-                "error exceeds 4KB".into(),
-            )));
-        }
+    if let Some(ref e) = body.error
+        && e.len() > 4096
+    {
+        return Err(map_error(dbward_app::error::AppError::PayloadTooLarge(
+            "error exceeds 4KB".into(),
+        )));
     }
 
     let now = chrono::Utc::now().to_rfc3339();

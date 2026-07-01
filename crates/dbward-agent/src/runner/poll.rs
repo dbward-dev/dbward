@@ -236,12 +236,8 @@ pub(super) async fn poll_loop(
 
                 // Process preflight EXPLAIN jobs (pre-claimed, fire-and-forget)
                 if !resp.preflight_jobs.is_empty() {
-                    super::preflight::handle_preflight_jobs(
-                        resp.preflight_jobs,
-                        &pools,
-                        &client,
-                    )
-                    .await;
+                    super::preflight::handle_preflight_jobs(resp.preflight_jobs, pools, client)
+                        .await;
                 }
             }
             Err(e) => {

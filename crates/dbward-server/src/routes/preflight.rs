@@ -19,7 +19,8 @@ use crate::preflight_notifier::NotifierGuard;
 use crate::routes::map_error;
 use crate::state::AppState;
 
-type ApiResult = Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)>;
+type ApiResult =
+    Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)>;
 
 #[derive(Deserialize)]
 pub struct PreflightBody {
@@ -77,7 +78,9 @@ pub async fn create(
 
     // Layer 5: EXPLAIN via agent (if needed)
     if let Some(explain_req) = explain_request {
-        let impact = handle_explain(&state, &explain_req).await.map_err(map_error)?;
+        let impact = handle_explain(&state, &explain_req)
+            .await
+            .map_err(map_error)?;
         result.impact = impact;
     }
 
@@ -87,12 +90,23 @@ pub async fn create(
         connect_info.as_ref().map(|e| &e.0),
     );
     let fingerprint = sql_redactor::redact_literals(&body.sql);
-    let audit_event = build_audit_event(&user, &body.database, &body.environment, &result, &fingerprint, body.include_explain, &audit_ctx);
+    let audit_event = build_audit_event(
+        &user,
+        &body.database,
+        &body.environment,
+        &result,
+        &fingerprint,
+        body.include_explain,
+        &audit_ctx,
+    );
     if let Err(e) = state.audit_logger().record(&audit_event) {
         tracing::warn!("preflight audit write failed: {e}");
     }
 
-    Ok((StatusCode::OK, Json(serde_json::to_value(&result).unwrap_or(json!({})))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::to_value(&result).unwrap_or(json!({}))),
+    ))
 }
 
 async fn handle_explain(

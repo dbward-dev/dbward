@@ -1,5 +1,5 @@
-use rusqlite::params;
 use rusqlite::OptionalExtension;
+use rusqlite::params;
 
 use dbward_app::error::AppError;
 use dbward_app::ports::repos::{PreflightJob, PreflightJobRepo};
@@ -75,7 +75,11 @@ impl PreflightJobRepo for SqlitePreflightJobRepo {
                 let base = 5 + i * 2;
                 params.push(Box::new(db.clone()));
                 params.push(Box::new(env.clone()));
-                format!("(database_name = ?{} AND environment = ?{})", base, base + 1)
+                format!(
+                    "(database_name = ?{} AND environment = ?{})",
+                    base,
+                    base + 1
+                )
             })
             .collect();
         let scope_filter = scope_conditions.join(" OR ");
@@ -208,9 +212,8 @@ impl PreflightJobRepo for SqlitePreflightJobRepo {
 
     fn purge_old(&self, retention_secs: u64) -> Result<u64, AppError> {
         let conn = self.conn.lock();
-        let cutoff = (chrono::Utc::now()
-            - chrono::Duration::seconds(retention_secs as i64))
-        .to_rfc3339();
+        let cutoff =
+            (chrono::Utc::now() - chrono::Duration::seconds(retention_secs as i64)).to_rfc3339();
         let rows = conn
             .execute(
                 "DELETE FROM preflight_jobs
