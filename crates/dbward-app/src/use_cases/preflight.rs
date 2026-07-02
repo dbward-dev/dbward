@@ -551,7 +551,7 @@ fn determine_status(
     // Check risk against auto_approve threshold
     if let Some(ref aa) = workflow.auto_approve
         && let Some(ref max_risk) = aa.max_risk_level
-        && risk.level > *max_risk
+        && risk.level >= *max_risk
     {
         return PreflightStatus::Warning;
     }

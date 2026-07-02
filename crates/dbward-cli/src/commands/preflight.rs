@@ -19,6 +19,9 @@ pub async fn run_preflight(
             "{}",
             serde_json::to_string_pretty(&result).unwrap_or_default()
         );
+        if result["status"].as_str() == Some("blocked") {
+            std::process::exit(1);
+        }
         return Ok(());
     }
 

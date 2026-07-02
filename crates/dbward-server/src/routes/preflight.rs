@@ -154,14 +154,11 @@ async fn handle_explain(
         Ok(Err(e @ AppError::RateLimited(_))) => {
             return Err(e);
         }
-        Ok(Err(_)) | Err(_) => {
-            return Ok(PreflightImpact {
-                status: ImpactStatus::Error,
-                explain_plan: None,
-                estimated_rows: None,
-                estimated_cost: None,
-                index_used: None,
-            });
+        Ok(Err(e)) => {
+            return Err(AppError::Internal(format!("preflight job create: {e}")));
+        }
+        Err(_) => {
+            return Err(AppError::Internal("preflight job create: task join".into()));
         }
     }
 
@@ -206,11 +203,41 @@ async fn handle_explain(
                 repo_expire.mark_expired_by_id(&job_id_expire)
             })
             .await;
-            if let Err(ref e) = expire_result {
-                tracing::warn!(job_id = %req.job_id, error = %e, "failed to expire timed-out preflight job");
-            } else if let Ok(Err(ref e)) = expire_result {
-                tracing::warn!(job_id = %req.job_id, error = %e, "failed to expire timed-out preflight job");
+
+            match expire_result {
+                Ok(Ok(true)) => {
+                    // Successfully expired — genuine timeout
+                }
+                Ok(Ok(false)) => {
+                    // Job was already completed/failed between our get() and mark_expired
+                    // Re-read to return the correct result
+                    let repo_reread = repo.clone();
+                    let job_id_reread = req.job_id.clone();
+                    if let Ok(Ok(Some(j))) =
+                        tokio::task::spawn_blocking(move || repo_reread.get(&job_id_reread)).await
+                        && j.status == "completed"
+                    {
+                        let plan: Option<serde_json::Value> = j
+                            .result_json
+                            .as_deref()
+                            .and_then(|s| serde_json::from_str(s).ok());
+                        return Ok(PreflightImpact {
+                                status: ImpactStatus::Completed,
+                                explain_plan: plan,
+                                estimated_rows: None,
+                                estimated_cost: None,
+                                index_used: None,
+                            });
+                    }
+                }
+                Ok(Err(ref e)) => {
+                    tracing::warn!(job_id = %req.job_id, error = %e, "failed to expire timed-out preflight job");
+                }
+                Err(ref e) => {
+                    tracing::warn!(job_id = %req.job_id, error = %e, "failed to expire timed-out preflight job");
+                }
             }
+
             Ok(PreflightImpact {
                 status: ImpactStatus::Timeout,
                 explain_plan: None,
