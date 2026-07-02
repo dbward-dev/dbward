@@ -99,15 +99,19 @@ Find past requests similar to the given SQL or operation.
 | `operation` | string | | Operation type filter |
 | `limit` | integer | | Max results (default: 5) |
 
-### dbward_preview_impact
+### dbward_preflight_sql
 
-Preview the impact of a SQL statement (EXPLAIN output).
+Analyze a SQL statement without creating a request. Returns classification, risk assessment, policy simulation, review findings, fix hints, and optionally EXPLAIN output.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sql` | string | ✓ | SQL statement to explain |
+| `sql` | string | ✓ | SQL statement to analyze |
 | `database` | string | | Target database name |
 | `environment` | string | | Environment |
+| `include_explain` | boolean | | Run EXPLAIN via agent (default: true) |
+| `explain_timeout_ms` | integer | | Max EXPLAIN wait in ms (default: 5000) |
+
+Returns: Full preflight analysis result including `status` (`requestable`/`blocked`/`warning`), `risk`, `classification`, `review`, `risk_assessment`, `policy`, `impact`, `fix_hints`, `retryable`, and `next_actions`.
 
 ### dbward_explain_policy_failure
 

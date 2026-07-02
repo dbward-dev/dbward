@@ -150,6 +150,115 @@ Permission: `request.view` (scoped)
 
 ---
 
+## Preflight
+
+### POST /api/preflight
+
+Analyze a SQL statement without creating a request. Runs up to 5 layers of analysis (classification, static review, risk assessment, policy simulation, EXPLAIN) and returns actionable feedback. No approval queue is touched — safe to call repeatedly while iterating on SQL.
+
+Permission: `request.preflight` (scoped by database/environment). EXPLAIN additionally requires `request.preflight_explain` — if denied, EXPLAIN is silently skipped (no 403).
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `database` | string | ✓ | — | Target database name |
+| `environment` | string | ✓ | — | Target environment |
+| `sql` | string | ✓ | — | SQL to analyze |
+| `include_explain` | bool | | true | Whether to run EXPLAIN via agent |
+| `explain_timeout_ms` | u64 | | 5000 | Max EXPLAIN wait (clamped to server max) |
+
+**Response:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | `requestable`, `blocked`, or `warning` |
+| `risk` | string | Risk level (`low`, `medium`, `high`, `critical`) |
+| `classification` | object | Statement type, operation, mutating, ddl, multi_statement, statement_count |
+| `review` | object | Static review findings and blocked status |
+| `risk_assessment` | object | Risk level and contributing factors |
+| `policy` | object | Workflow simulation (sql_valid, caller_can_submit, would_auto_approve, requires_approval, approvers, break_glass_allowed, workflow_id, require_reason) |
+| `impact` | object | EXPLAIN results (status, explain_plan, estimated_rows, estimated_cost, index_used) |
+| `fix_hints` | string[] | Suggested fixes for findings |
+| `retryable` | bool | Whether re-running preflight after changes would help |
+| `next_actions` | string[] | Recommended next steps |
+
+**Status codes:**
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| 200 | Analysis complete (check `status` field for result) |
+| 400 | Validation error (empty SQL, missing fields) |
+| 401 | Not authenticated |
+| 403 | No `request.preflight` permission for this scope |
+| 429 | Rate limit or concurrent limit exceeded |
+
+**Example request:**
+
+```bash
+curl -X POST https://dbward.internal:3000/api/preflight \
+  -H "Authorization: Bearer dbw_..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "database": "primary",
+    "environment": "production",
+    "sql": "UPDATE users SET status = '\''inactive'\'' WHERE last_login_at < '\''2025-01-01'\''",
+    "include_explain": true,
+    "explain_timeout_ms": 5000
+  }'
+```
+
+**Example response:**
+
+```json
+{
+  "status": "warning",
+  "risk": "high",
+  "classification": {
+    "statement_type": "UPDATE",
+    "operation": "execute_dml",
+    "mutating": true,
+    "ddl": false,
+    "multi_statement": false,
+    "statement_count": 1
+  },
+  "review": {
+    "findings": [],
+    "blocked": false
+  },
+  "risk_assessment": {
+    "level": "high",
+    "factors": ["LargeTable"]
+  },
+  "policy": {
+    "sql_valid": true,
+    "caller_can_submit": true,
+    "would_auto_approve": false,
+    "requires_approval": true,
+    "approvers": [{"selector": "role:dba-team", "min": 1}],
+    "break_glass_allowed": true,
+    "workflow_id": "wf:primary:production:abc123",
+    "require_reason": true
+  },
+  "impact": {
+    "status": "completed",
+    "explain_plan": [{"sql": "UPDATE users SET ...", "plan": {"Node Type": "Seq Scan", "Relation Name": "users"}}],
+    "estimated_rows": 12430221,
+    "estimated_cost": 234567.89,
+    "index_used": false
+  },
+  "fix_hints": [
+    "Consider batching into smaller transactions",
+    "Add an indexed predicate to reduce estimated rows"
+  ],
+  "retryable": true,
+  "next_actions": [
+    "Add a LIMIT or tighter WHERE clause",
+    "For production writes, include --reason with expected impact"
+  ]
+}
+```
+
+---
+
 ## Results
 
 ### GET /api/results
