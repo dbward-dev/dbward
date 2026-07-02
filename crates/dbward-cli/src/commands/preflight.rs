@@ -88,44 +88,46 @@ pub async fn run_preflight(
                     && let Some(arr) = plan.as_array()
                 {
                     for entry in arr {
-                            let p = &entry["Plan"];
-                            let node = p["Node Type"].as_str().unwrap_or("?");
-                            let rows = p["Plan Rows"].as_f64().map(|r| r as i64);
-                            let cost = p["Total Cost"].as_f64();
-                            // Check for index usage in child plans
-                            let index = p["Plans"]
-                                .as_array()
-                                .and_then(|plans| {
-                                    plans.iter().find_map(|child| {
-                                        child["Index Name"].as_str().map(|idx| {
-                                            format!(
-                                                "{} using {}",
-                                                child["Node Type"].as_str().unwrap_or("Scan"),
-                                                idx
-                                            )
-                                        })
+                        let p = &entry["Plan"];
+                        let node = p["Node Type"].as_str().unwrap_or("?");
+                        let rows = p["Plan Rows"].as_f64().map(|r| r as i64);
+                        let cost = p["Total Cost"].as_f64();
+                        // Check for index usage in child plans
+                        let index = p["Plans"]
+                            .as_array()
+                            .and_then(|plans| {
+                                plans.iter().find_map(|child| {
+                                    child["Index Name"].as_str().map(|idx| {
+                                        format!(
+                                            "{} using {}",
+                                            child["Node Type"].as_str().unwrap_or("Scan"),
+                                            idx
+                                        )
                                     })
                                 })
-                                .or_else(|| p["Index Name"].as_str().map(|idx| {
-                                    format!("{node} using {idx}")
-                                }));
+                            })
+                            .or_else(|| {
+                                p["Index Name"]
+                                    .as_str()
+                                    .map(|idx| format!("{node} using {idx}"))
+                            });
 
-                            let mut summary = String::new();
-                            if let Some(idx_info) = index {
-                                summary.push_str(&idx_info);
-                            } else {
-                                summary.push_str(node);
-                            }
-                            if let Some(r) = rows {
-                                summary.push_str(&format!(" (rows: {r}"));
-                                if let Some(c) = cost {
-                                    summary.push_str(&format!(", cost: {c:.2}"));
-                                }
-                                summary.push(')');
-                            }
-                            eprintln!("    Plan: {summary}");
+                        let mut summary = String::new();
+                        if let Some(idx_info) = index {
+                            summary.push_str(&idx_info);
+                        } else {
+                            summary.push_str(node);
                         }
+                        if let Some(r) = rows {
+                            summary.push_str(&format!(" (rows: {r}"));
+                            if let Some(c) = cost {
+                                summary.push_str(&format!(", cost: {c:.2}"));
+                            }
+                            summary.push(')');
+                        }
+                        eprintln!("    Plan: {summary}");
                     }
+                }
             }
             "skipped" => {}
             other => eprintln!("  EXPLAIN:     {other}"),

@@ -518,7 +518,6 @@ impl PreflightUseCase {
                     .any(|cap| &cap.database == database && &cap.environment == environment)
         }))
     }
-
 }
 
 /// Returned when EXPLAIN is needed — the HTTP handler creates the job + waits.
@@ -654,7 +653,9 @@ fn infer_statement_type(sql: &str, categories: &[StatementCategory]) -> String {
         match token.trim_matches(|c: char| c == '(' || c == ')') {
             "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "CREATE" | "ALTER" | "DROP"
             | "TRUNCATE" | "MERGE" | "GRANT" | "REVOKE" | "COPY" => {
-                return token.trim_matches(|c: char| c == '(' || c == ')').to_string();
+                return token
+                    .trim_matches(|c: char| c == '(' || c == ')')
+                    .to_string();
             }
             _ => continue,
         }
@@ -829,7 +830,13 @@ mod tests {
 
         assert_eq!(result.status, PreflightStatus::Blocked);
         assert!(result.review.blocked);
-        assert!(result.review.findings.iter().any(|f| f.message.contains("fail-closed")));
+        assert!(
+            result
+                .review
+                .findings
+                .iter()
+                .any(|f| f.message.contains("fail-closed"))
+        );
         assert!(explain_req.is_none());
     }
 

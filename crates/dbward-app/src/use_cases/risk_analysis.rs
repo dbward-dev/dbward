@@ -2,8 +2,8 @@
 
 use dbward_domain::policies::workflow::Workflow;
 use dbward_domain::services::risk_scorer::{SchemaStatus, TableRiskInfo};
-use dbward_domain::services::table_extractor::TableRef;
 use dbward_domain::services::status_constants;
+use dbward_domain::services::table_extractor::TableRef;
 use dbward_domain::values::Operation;
 
 use crate::ports::SchemaRepo;

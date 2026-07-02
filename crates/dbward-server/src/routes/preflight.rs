@@ -199,10 +199,9 @@ async fn handle_explain(
             // Mark the job as expired so it no longer counts against concurrent limit
             let repo_expire = repo.clone();
             let job_id_expire = req.job_id.clone();
-            let expire_result = tokio::task::spawn_blocking(move || {
-                repo_expire.mark_expired_by_id(&job_id_expire)
-            })
-            .await;
+            let expire_result =
+                tokio::task::spawn_blocking(move || repo_expire.mark_expired_by_id(&job_id_expire))
+                    .await;
 
             match expire_result {
                 Ok(Ok(true)) => {
@@ -222,12 +221,12 @@ async fn handle_explain(
                             .as_deref()
                             .and_then(|s| serde_json::from_str(s).ok());
                         return Ok(PreflightImpact {
-                                status: ImpactStatus::Completed,
-                                explain_plan: plan,
-                                estimated_rows: None,
-                                estimated_cost: None,
-                                index_used: None,
-                            });
+                            status: ImpactStatus::Completed,
+                            explain_plan: plan,
+                            estimated_rows: None,
+                            estimated_cost: None,
+                            index_used: None,
+                        });
                     }
                 }
                 Ok(Err(ref e)) => {
@@ -245,7 +244,7 @@ async fn handle_explain(
                 estimated_cost: None,
                 index_used: None,
             })
-        },
+        }
     }
 }
 
