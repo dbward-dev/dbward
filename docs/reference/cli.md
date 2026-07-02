@@ -229,7 +229,7 @@ dbward migrate repair --emergency --action remove --version 20240601_add_index -
 
 ## dbward preflight
 
-Analyze a SQL statement without creating a request. Returns classification, risk, policy simulation, and fix suggestions.
+Analyze a SQL statement without creating a request. Returns risk, findings, and fix suggestions.
 
 ```bash
 dbward preflight "SELECT * FROM users WHERE id = 1"
@@ -245,45 +245,7 @@ dbward preflight --no-explain "DROP TABLE sessions"
 | `--database <NAME>` | | Target database (overrides global) |
 | `-e, --environment <ENV>` | | Target environment (overrides global) |
 
-**Output format:**
-
-Human-readable key-value output showing status, risk, statement type, findings, approval prediction, and EXPLAIN summary. Use `--format json` for full structured output.
-
-**Example output:**
-
-```
-  Status:      requestable
-  Risk:        low
-  Statement:   SELECT (execute_select)
-  Findings:    none
-  Approval:    auto-approve
-  EXPLAIN:     completed
-    Plan: Index Scan using users_pkey (rows: 1, cost: 8.17)
-```
-
-When blocked:
-
-```
-  Status:      blocked
-  Risk:        medium
-  Statement:   UPDATE (execute_dml)
-  Findings:
-    [BLOCK] no_where_update: UPDATE without WHERE clause
-  Approval:    auto-approve
-
-  Suggestions:
-    - Add a WHERE clause using an indexed column
-
-  Next steps:
-    - Run preflight again with a narrower WHERE clause
-```
-
-**Exit codes:**
-
-| Code | Meaning |
-|------|---------|
-| 0 | `requestable` or `warning` — SQL can be submitted |
-| 1 | `blocked` — SQL must be fixed before submitting |
+Exit code 0 = requestable/warning, 1 = blocked. Use `--format json` for structured output.
 
 ---
 
