@@ -668,3 +668,322 @@ fn infer_statement_type(sql: &str, categories: &[StatementCategory]) -> String {
         _ => "UNKNOWN".to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::*;
+    use std::sync::Arc;
+
+    use chrono::{Duration, Utc};
+    use dbward_domain::auth::{ResolvedRole, SubjectType};
+    use dbward_domain::services::risk_scorer::RiskLevel;
+
+    // --- Helpers ---
+
+    fn test_user() -> AuthUser {
+        AuthUser {
+            subject_id: "user-1".into(),
+            subject_type: SubjectType::User,
+            roles: vec![ResolvedRole {
+                name: "admin".into(),
+                permissions: std::collections::HashSet::from([
+                    dbward_domain::auth::Permission::All,
+                ]),
+                databases: vec![DatabaseName::wildcard()],
+                environments: vec![Environment::wildcard()],
+            }],
+            groups: vec![],
+            token_id: None,
+        }
+    }
+
+    fn build_uc() -> PreflightUseCase {
+        build_uc_with_agents(vec![healthy_agent()])
+    }
+
+    fn build_uc_with_agents(agents: Vec<dbward_domain::entities::Agent>) -> PreflightUseCase {
+        PreflightUseCase {
+            authorizer: Arc::new(AllowAll),
+            policy_evaluator: Arc::new(FakePolicyEvaluator),
+            db_registry: Arc::new(FakeDatabaseRegistry),
+            schema_repo: Arc::new(FakeSchemaRepo),
+            agent_repo: Arc::new(FakeAgentRepo::with_agents(agents)),
+            clock: Arc::new(FixedClock::now_utc()),
+            id_gen: Arc::new(FixedIdGen::new()),
+            max_sql_length: 10000,
+        }
+    }
+
+    fn healthy_agent() -> dbward_domain::entities::Agent {
+        let now = Utc::now();
+        dbward_domain::entities::Agent {
+            id: "agent-1".into(),
+            token_id: "tok-1".into(),
+            databases: vec![dbward_domain::entities::DatabaseCapability {
+                database: DatabaseName::new("testdb").unwrap(),
+                environment: Environment::new("development").unwrap(),
+            }],
+            status: AgentStatus::Active,
+            max_concurrent: 4,
+            in_flight: 0,
+            uptime_secs: 300,
+            active_jobs: vec![],
+            last_seen: Some(now - Duration::seconds(5)),
+            created_at: now - Duration::hours(1),
+            lease_duration_secs: None,
+        }
+    }
+
+    fn select_input() -> PreflightInput {
+        PreflightInput {
+            database: DatabaseName::new("testdb").unwrap(),
+            environment: Environment::new("development").unwrap(),
+            sql: "SELECT * FROM users".into(),
+            operation_override: None,
+            include_explain: true,
+            explain_timeout_ms: 5000,
+        }
+    }
+
+    // --- Policy evaluator that returns no workflow ---
+
+    struct NoWorkflowPolicyEvaluator;
+    impl PolicyEvaluator for NoWorkflowPolicyEvaluator {
+        fn evaluate_workflow(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+            _: dbward_domain::values::Operation,
+        ) -> Result<Option<Workflow>, AppError> {
+            Ok(None)
+        }
+        fn get_execution_policy(
+            &self,
+            _: &DatabaseName,
+            _: &Environment,
+        ) -> Result<dbward_domain::policies::ExecutionPolicy, AppError> {
+            Ok(Default::default())
+        }
+    }
+
+    // --- Tests ---
+
+    #[test]
+    fn happy_path_select_requestable() {
+        let uc = build_uc();
+        let user = test_user();
+        let input = select_input();
+
+        let (result, explain_req) = uc.execute(&user, &input).unwrap();
+
+        assert_eq!(result.status, PreflightStatus::Requestable);
+        assert_eq!(result.risk, RiskLevel::Low);
+        assert_eq!(result.classification.statement_type, "SELECT");
+        assert_eq!(result.classification.operation, "execute_select");
+        assert!(!result.classification.mutating);
+        assert!(result.policy.caller_can_submit);
+        assert!(result.policy.would_auto_approve);
+        // include_explain=true + eligible agent → explain request generated
+        assert!(explain_req.is_some());
+    }
+
+    #[test]
+    fn blocked_update_without_where() {
+        let uc = build_uc();
+        let user = test_user();
+        let input = PreflightInput {
+            database: DatabaseName::new("testdb").unwrap(),
+            environment: Environment::new("development").unwrap(),
+            sql: "UPDATE users SET name = 'x'".into(),
+            operation_override: None,
+            include_explain: false,
+            explain_timeout_ms: 5000,
+        };
+
+        let (result, _) = uc.execute(&user, &input).unwrap();
+
+        assert_eq!(result.status, PreflightStatus::Blocked);
+        assert!(result.review.blocked);
+        assert!(!result.review.findings.is_empty());
+        assert!(!result.fix_hints.is_empty());
+        assert!(result.retryable);
+    }
+
+    #[test]
+    fn no_workflow_fail_closed() {
+        let uc = PreflightUseCase {
+            authorizer: Arc::new(AllowAll),
+            policy_evaluator: Arc::new(NoWorkflowPolicyEvaluator),
+            db_registry: Arc::new(FakeDatabaseRegistry),
+            schema_repo: Arc::new(FakeSchemaRepo),
+            agent_repo: Arc::new(FakeAgentRepo::new()),
+            clock: Arc::new(FixedClock::now_utc()),
+            id_gen: Arc::new(FixedIdGen::new()),
+            max_sql_length: 10000,
+        };
+        let user = test_user();
+        let input = select_input();
+
+        let (result, explain_req) = uc.execute(&user, &input).unwrap();
+
+        assert_eq!(result.status, PreflightStatus::Blocked);
+        assert!(result.review.blocked);
+        assert!(result.review.findings.iter().any(|f| f.message.contains("fail-closed")));
+        assert!(explain_req.is_none());
+    }
+
+    #[test]
+    fn parse_failure_blocked() {
+        let uc = build_uc();
+        let user = test_user();
+        let input = PreflightInput {
+            database: DatabaseName::new("testdb").unwrap(),
+            environment: Environment::new("development").unwrap(),
+            sql: "NOT VALID SQL ;;; GARBAGE".into(),
+            operation_override: None,
+            include_explain: false,
+            explain_timeout_ms: 5000,
+        };
+
+        let (result, explain_req) = uc.execute(&user, &input).unwrap();
+
+        // Parse failure → blocked (fail-closed)
+        assert_eq!(result.status, PreflightStatus::Blocked);
+        assert!(explain_req.is_none());
+    }
+
+    #[test]
+    fn include_explain_false_skipped() {
+        let uc = build_uc();
+        let user = test_user();
+        let input = PreflightInput {
+            database: DatabaseName::new("testdb").unwrap(),
+            environment: Environment::new("development").unwrap(),
+            sql: "SELECT 1".into(),
+            operation_override: None,
+            include_explain: false,
+            explain_timeout_ms: 5000,
+        };
+
+        let (result, explain_req) = uc.execute(&user, &input).unwrap();
+
+        assert_eq!(result.impact.status, ImpactStatus::Skipped);
+        assert!(explain_req.is_none());
+    }
+
+    #[test]
+    fn no_eligible_agent_not_available() {
+        let uc = build_uc_with_agents(vec![]); // no agents
+        let user = test_user();
+        let input = PreflightInput {
+            database: DatabaseName::new("testdb").unwrap(),
+            environment: Environment::new("development").unwrap(),
+            sql: "SELECT 1".into(),
+            operation_override: None,
+            include_explain: true,
+            explain_timeout_ms: 5000,
+        };
+
+        let (result, explain_req) = uc.execute(&user, &input).unwrap();
+
+        assert_eq!(result.impact.status, ImpactStatus::NotAvailable);
+        assert!(explain_req.is_none());
+    }
+
+    #[test]
+    fn authorization_failure_403() {
+        let uc = PreflightUseCase {
+            authorizer: Arc::new(DenyAll),
+            policy_evaluator: Arc::new(FakePolicyEvaluator),
+            db_registry: Arc::new(FakeDatabaseRegistry),
+            schema_repo: Arc::new(FakeSchemaRepo),
+            agent_repo: Arc::new(FakeAgentRepo::new()),
+            clock: Arc::new(FixedClock::now_utc()),
+            id_gen: Arc::new(FixedIdGen::new()),
+            max_sql_length: 10000,
+        };
+        let user = test_user();
+        let input = select_input();
+
+        let err = uc.execute(&user, &input).unwrap_err();
+        assert!(matches!(err, AppError::Forbidden { .. }));
+    }
+
+    #[test]
+    fn sql_too_long_validation_error() {
+        let uc = PreflightUseCase {
+            authorizer: Arc::new(AllowAll),
+            policy_evaluator: Arc::new(FakePolicyEvaluator),
+            db_registry: Arc::new(FakeDatabaseRegistry),
+            schema_repo: Arc::new(FakeSchemaRepo),
+            agent_repo: Arc::new(FakeAgentRepo::new()),
+            clock: Arc::new(FixedClock::now_utc()),
+            id_gen: Arc::new(FixedIdGen::new()),
+            max_sql_length: 10, // very small limit
+        };
+        let user = test_user();
+        let input = PreflightInput {
+            database: DatabaseName::new("testdb").unwrap(),
+            environment: Environment::new("development").unwrap(),
+            sql: "SELECT * FROM very_long_table_name WHERE id = 1".into(),
+            operation_override: None,
+            include_explain: false,
+            explain_timeout_ms: 5000,
+        };
+
+        let err = uc.execute(&user, &input).unwrap_err();
+        assert!(matches!(err, AppError::Validation(_)));
+    }
+
+    #[test]
+    fn statement_type_inferred_correctly() {
+        let uc = build_uc();
+        let user = test_user();
+
+        // SELECT
+        let input = PreflightInput {
+            database: DatabaseName::new("testdb").unwrap(),
+            environment: Environment::new("development").unwrap(),
+            sql: "SELECT id FROM users WHERE id = 1".into(),
+            operation_override: None,
+            include_explain: false,
+            explain_timeout_ms: 5000,
+        };
+        let (result, _) = uc.execute(&user, &input).unwrap();
+        assert_eq!(result.classification.statement_type, "SELECT");
+        assert_eq!(result.classification.operation, "execute_select");
+
+        // UPDATE
+        let input = PreflightInput {
+            database: DatabaseName::new("testdb").unwrap(),
+            environment: Environment::new("development").unwrap(),
+            sql: "UPDATE users SET name = 'x' WHERE id = 1".into(),
+            operation_override: None,
+            include_explain: false,
+            explain_timeout_ms: 5000,
+        };
+        let (result, _) = uc.execute(&user, &input).unwrap();
+        assert_eq!(result.classification.statement_type, "UPDATE");
+    }
+
+    #[test]
+    fn fix_hints_populated() {
+        let uc = build_uc();
+        let user = test_user();
+        let input = PreflightInput {
+            database: DatabaseName::new("testdb").unwrap(),
+            environment: Environment::new("development").unwrap(),
+            sql: "DELETE FROM users".into(),
+            operation_override: None,
+            include_explain: false,
+            explain_timeout_ms: 5000,
+        };
+
+        let (result, _) = uc.execute(&user, &input).unwrap();
+
+        // DELETE without WHERE should be blocked with fix hints
+        assert_eq!(result.status, PreflightStatus::Blocked);
+        assert!(!result.fix_hints.is_empty());
+    }
+}

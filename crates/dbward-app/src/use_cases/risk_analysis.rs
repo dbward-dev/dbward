@@ -131,3 +131,126 @@ pub fn max_estimated_rows(workflow: &Workflow) -> i64 {
         .map(|aa| aa.max_estimated_rows)
         .unwrap_or(1000)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dbward_domain::policies::{AutoApproveMode, AutoApproveSettings};
+    use dbward_domain::values::{DatabaseName, Environment};
+
+    fn make_workflow(allow_read_only: bool) -> Workflow {
+        Workflow {
+            id: "wf-test".into(),
+            database: DatabaseName::wildcard(),
+            environment: Environment::wildcard(),
+            operations: vec![],
+            auto_approve: Some(AutoApproveSettings {
+                mode: AutoApproveMode::Always,
+                max_risk_level: None,
+                allow_read_only,
+                allow_safe_ddl: true,
+                max_estimated_rows: 1000,
+            }),
+            steps: vec![],
+            require_reason: false,
+            allow_self_approve: false,
+            allow_same_approver_across_steps: false,
+            explain: true,
+            pending_ttl_secs: None,
+            statement_timeout_secs: None,
+            approval_ttl_secs: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn parse_table_risk_info_with_cascade() {
+        let json = r#"[
+            {
+                "name": "orders",
+                "estimated_rows": 50000,
+                "constraints": [
+                    {
+                        "name": "fk_order_user",
+                        "on_delete": "CASCADE",
+                        "referenced_table": "users"
+                    },
+                    {
+                        "name": "fk_order_product",
+                        "on_delete": "SET NULL",
+                        "referenced_table": "products"
+                    }
+                ]
+            }
+        ]"#;
+
+        let info = parse_table_risk_info(json);
+        assert_eq!(info.len(), 1);
+        assert_eq!(info[0].name, "orders");
+        assert_eq!(info[0].estimated_rows, 50000);
+        assert!(info[0].has_cascade_fk);
+        assert_eq!(info[0].cascade_targets, vec!["users".to_string()]);
+    }
+
+    #[test]
+    fn parse_table_risk_info_empty_json() {
+        let info = parse_table_risk_info("[]");
+        assert!(info.is_empty());
+    }
+
+    #[test]
+    fn parse_table_risk_info_invalid_json() {
+        let info = parse_table_risk_info("not json");
+        assert!(info.is_empty());
+    }
+
+    #[test]
+    fn parse_table_risk_info_no_constraints() {
+        let json = r#"[{"name": "simple", "estimated_rows": 100}]"#;
+        let info = parse_table_risk_info(json);
+        assert_eq!(info.len(), 1);
+        assert_eq!(info[0].name, "simple");
+        assert_eq!(info[0].estimated_rows, 100);
+        assert!(!info[0].has_cascade_fk);
+        assert!(info[0].cascade_targets.is_empty());
+    }
+
+    #[test]
+    fn compute_allow_read_only_query_with_allow() {
+        let wf = make_workflow(true);
+        assert!(compute_allow_read_only(Operation::ExecuteSelect, &wf));
+    }
+
+    #[test]
+    fn compute_allow_read_only_query_without_allow() {
+        let wf = make_workflow(false);
+        assert!(!compute_allow_read_only(Operation::ExecuteSelect, &wf));
+    }
+
+    #[test]
+    fn compute_allow_read_only_execute_always_false() {
+        let wf = make_workflow(true);
+        assert!(!compute_allow_read_only(Operation::ExecuteDml, &wf));
+    }
+
+    #[test]
+    fn compute_allow_read_only_no_auto_approve() {
+        let mut wf = make_workflow(true);
+        wf.auto_approve = None;
+        assert!(!compute_allow_read_only(Operation::ExecuteSelect, &wf));
+    }
+
+    #[test]
+    fn max_estimated_rows_from_workflow() {
+        let wf = make_workflow(true);
+        assert_eq!(max_estimated_rows(&wf), 1000);
+    }
+
+    #[test]
+    fn max_estimated_rows_no_auto_approve() {
+        let mut wf = make_workflow(true);
+        wf.auto_approve = None;
+        assert_eq!(max_estimated_rows(&wf), 1000); // default
+    }
+}
