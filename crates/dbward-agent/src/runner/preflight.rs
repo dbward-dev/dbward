@@ -6,6 +6,9 @@ use tracing::warn;
 use crate::client::AgentClient;
 use crate::executor::PoolRegistry;
 
+/// Statement timeout for EXPLAIN queries (seconds).
+const EXPLAIN_TIMEOUT_SECS: u64 = 5;
+
 /// Handle preflight EXPLAIN jobs received from poll (already claimed by server).
 /// Fire-and-forget: errors are logged, not propagated.
 pub(crate) async fn handle_preflight_jobs(
@@ -32,7 +35,7 @@ pub(crate) async fn handle_preflight_jobs(
 
             let claim_token = job.claim_token.as_deref().unwrap_or("");
             let driver = entry.driver.read().await;
-            match driver.explain(&job.sql, 5).await {
+            match driver.explain(&job.sql, EXPLAIN_TIMEOUT_SECS).await {
                 Ok(plan) => {
                     if let Err(e) = client
                         .submit_preflight_result(&job.id, claim_token, &plan)

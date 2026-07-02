@@ -16,6 +16,9 @@ pub(super) async fn preflight_cleanup_loop(state: AppState, shutdown: Cancellati
                     Ok(Err(e)) => {
                         tracing::error!(task = "preflight_cleanup", %e, "mark_expired failed");
                     }
+                    Err(e) => {
+                        tracing::error!(task = "preflight_cleanup", %e, "mark_expired task panicked");
+                    }
                     _ => {}
                 }
 
@@ -26,6 +29,9 @@ pub(super) async fn preflight_cleanup_loop(state: AppState, shutdown: Cancellati
                     }
                     Ok(Err(e)) => {
                         tracing::error!(task = "preflight_cleanup", %e, "purge_old failed");
+                    }
+                    Err(e) => {
+                        tracing::error!(task = "preflight_cleanup", %e, "purge_old task panicked");
                     }
                     _ => {}
                 }

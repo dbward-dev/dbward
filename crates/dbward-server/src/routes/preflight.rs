@@ -278,9 +278,9 @@ fn build_audit_event(
     event.environment = Some(environment.to_string());
     event.detail_fingerprint = Some(fingerprint.to_string());
     event.metadata_json = json!({
-        "status": format!("{:?}", result.status).to_lowercase(),
+        "status": serde_json::to_value(result.status).unwrap_or(json!("unknown")),
         "risk_level": format!("{:?}", result.risk).to_lowercase(),
-        "impact_status": format!("{:?}", result.impact.status).to_lowercase(),
+        "impact_status": serde_json::to_value(result.impact.status).unwrap_or(json!("unknown")),
         "blocked_codes": blocked_codes,
         "include_explain": include_explain,
     })
