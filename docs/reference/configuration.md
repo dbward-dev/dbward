@@ -444,6 +444,19 @@ url = "${DATABASE_URL}"
 | `startup_retry_max_ms` | u64 | | `15000` | Max retry backoff. |
 | `startup_max_wait_secs` | u64 | | `60` | Max startup wait. `0` = wait forever. |
 
+### [preflight]
+
+```toml
+[preflight]
+max_concurrent_per_user = 3
+max_explain_timeout_ms = 10000
+```
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `max_concurrent_per_user` | u32 | | `3` | Max in-flight preflight EXPLAIN jobs per user. |
+| `max_explain_timeout_ms` | u64 | | `10000` | Server-side cap on `explain_timeout_ms` from client. |
+
 ### [server]
 
 | Field | Type | Required | Default | Description |
@@ -462,19 +475,6 @@ url = "postgres://user:pass@db:5432/app"
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `url` | String | ✓ | — | Database connection URL. Scheme = driver (`postgres://` or `mysql://`). |
-
-### [preflight]
-
-```toml
-[preflight]
-max_concurrent_per_user = 3
-max_explain_timeout_ms = 10000
-```
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `max_concurrent_per_user` | u32 | | `3` | Max in-flight preflight EXPLAIN jobs per user. |
-| `max_explain_timeout_ms` | u64 | | `10000` | Server-side cap on `explain_timeout_ms` from client. |
 
 ### [schema_sync]
 
