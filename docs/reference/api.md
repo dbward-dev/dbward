@@ -497,6 +497,21 @@ Permission: `agent.operate` (agent token required)
 | `result` | object | | EXPLAIN output |
 | `error` | string | | Error message |
 
+### POST /api/agent/preflight-result
+
+Agent submits preflight EXPLAIN result. Exactly one of `result` or `error` must be provided.
+
+Permission: `agent.operate` (agent token required)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `job_id` | string | ✓ | Preflight job ID |
+| `claim_token` | string | ✓ | Claim token from poll response |
+| `result` | object | | EXPLAIN plan (max 256KB) |
+| `error` | string | | Error message (max 4KB) |
+
+Status codes: 200 (accepted), 400 (validation), 410 (expired/stale job), 413 (payload too large).
+
 ---
 
 ## Databases
