@@ -676,6 +676,58 @@ impl UserWriterOps for SqliteTxScope<'_> {
             .map_err(db_err("tx: activate_user"))?;
         Ok(n > 0)
     }
+
+    fn upsert_user_tx(&self, user: &dbward_domain::entities::User) -> Result<(), AppError> {
+        let roles_json = serde_json::to_string(&user.roles).unwrap_or_else(|_| "[]".into());
+        self.conn
+            .execute(
+                "INSERT INTO users (id, display_name, email, roles_json, status, source, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'api', ?6, ?7) \
+                 ON CONFLICT(id) DO UPDATE SET display_name=?2, email=?3, roles_json=?4, updated_at=?7",
+                params![
+                    user.id,
+                    user.display_name,
+                    user.email,
+                    roles_json,
+                    match user.status {
+                        dbward_domain::entities::UserStatus::Active => "active",
+                        dbward_domain::entities::UserStatus::Suspended => "suspended",
+                    },
+                    user.created_at.to_rfc3339(),
+                    user.updated_at.to_rfc3339(),
+                ],
+            )
+            .map_err(db_err("tx: upsert_user"))?;
+        Ok(())
+    }
+
+    fn create_token_tx(&self, token: &dbward_domain::entities::Token) -> Result<(), AppError> {
+        let scope_json = token
+            .scope_ceiling
+            .as_ref()
+            .map(|s| serde_json::to_string(s).unwrap_or_else(|_| "null".into()));
+        self.conn
+            .execute(
+                "INSERT INTO tokens (id, subject_type, subject_id, token_hash, token_prefix, scope_ceiling_json, name, status, expires_at, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active', ?8, ?9)",
+                params![
+                    token.id,
+                    match token.subject_type {
+                        dbward_domain::auth::SubjectType::User => "user",
+                        dbward_domain::auth::SubjectType::Agent => "agent",
+                    },
+                    token.subject_id,
+                    token.token_hash,
+                    token.token_prefix,
+                    scope_json,
+                    token.name,
+                    token.expires_at.map(|d| d.to_rfc3339()),
+                    token.created_at.to_rfc3339(),
+                ],
+            )
+            .map_err(db_err("tx: create_token"))?;
+        Ok(())
+    }
 }
 
 impl dbward_app::ports::ResultWriterOps for SqliteTxScope<'_> {

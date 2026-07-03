@@ -115,7 +115,7 @@ impl UserManage {
             }
         }
 
-        // Create user
+        // Create user + token atomically via UoW
         let now = self.clock.now();
         let new_user = dbward_domain::entities::User {
             id: input.id.clone(),
@@ -128,16 +128,14 @@ impl UserManage {
             created_at: now,
             updated_at: now,
         };
-        self.user_repo.upsert(&new_user)?;
 
-        // Add group memberships
+        // Add group memberships (before resolve, so resolve sees them)
         for group in &input.groups {
             self.group_repo.add_member(group, &input.id, now)?;
         }
 
-        // Generate token (scope_ceiling = user's resolved roles)
+        // Resolve effective roles (direct + group-derived)
         let mut effective_roles = input.roles.clone();
-        // Add group-derived roles (from config groups.roles)
         let resolved = self.role_resolver.resolve(
             &input.id,
             dbward_domain::auth::SubjectType::User,
@@ -174,7 +172,15 @@ impl UserManage {
             created_at: now,
             revoked_at: None,
         };
-        self.token_repo.create(&token)?;
+
+        // Atomic: INSERT user + INSERT token in single transaction
+        let user_clone = new_user.clone();
+        let token_clone = token.clone();
+        self.uow.execute(Box::new(move |tx| {
+            tx.upsert_user_tx(&user_clone)?;
+            tx.create_token_tx(&token_clone)?;
+            Ok(())
+        }))?;
 
         Ok(UserAddOutput {
             id: input.id,
@@ -275,6 +281,21 @@ impl UserManage {
             self.group_repo.add_member(group, &input.user_id, now)?;
         }
         for group in &input.rm_groups {
+            // Last-admin-via-group guard: if this group grants admin and user is last admin holder
+            let group_grants_admin = self
+                .role_resolver
+                .resolve(&input.user_id, dbward_domain::auth::SubjectType::User, &[])
+                .map(|roles| roles.iter().any(|r| r.name == "admin"))
+                .unwrap_or(false);
+            if group_grants_admin {
+                let admin_count = self.user_repo.count_admins()?;
+                let subjects_with_admin = self.role_resolver.subjects_for_role("admin");
+                if admin_count + subjects_with_admin.len() as u32 <= 1 {
+                    return Err(AppError::Validation(
+                        "cannot remove user from group: would leave zero admins".into(),
+                    ));
+                }
+            }
             self.group_repo.remove_member(group, &input.user_id)?;
         }
 

@@ -124,6 +124,20 @@ pub trait UserWriterOps {
         user_id: &str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError>;
+    /// Insert or update user in transaction.
+    fn upsert_user_tx(
+        &self,
+        _user: &dbward_domain::entities::User,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+    /// Create token in transaction.
+    fn create_token_tx(
+        &self,
+        _token: &dbward_domain::entities::Token,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 /// Operations available on execution results within a transaction.
