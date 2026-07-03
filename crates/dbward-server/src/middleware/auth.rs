@@ -114,6 +114,8 @@ pub async fn auth_middleware(
             })?;
 
         // User limit check: block new users when at limit
+        // NOTE: SQLite single-writer constraint prevents TOCTOU race between
+        // count_active() and upsert(). For multi-writer DBs, use IMMEDIATE tx.
         let user_exists = match state.user_repo().get(&subject_id) {
             Ok(u) => u.is_some(),
             Err(e) => {

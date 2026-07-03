@@ -138,6 +138,15 @@ pub trait UserWriterOps {
     ) -> Result<(), AppError> {
         Ok(())
     }
+    /// Add group membership in transaction.
+    fn add_group_member_tx(
+        &self,
+        _group_name: &str,
+        _user_id: &str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 /// Operations available on execution results within a transaction.

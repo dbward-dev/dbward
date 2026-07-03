@@ -728,6 +728,21 @@ impl UserWriterOps for SqliteTxScope<'_> {
             .map_err(db_err("tx: create_token"))?;
         Ok(())
     }
+
+    fn add_group_member_tx(
+        &self,
+        group_name: &str,
+        user_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO group_members (group_name, user_id, added_at) VALUES (?1, ?2, ?3)",
+                params![group_name, user_id, now.to_rfc3339()],
+            )
+            .map_err(db_err("tx: add_group_member"))?;
+        Ok(())
+    }
 }
 
 impl dbward_app::ports::ResultWriterOps for SqliteTxScope<'_> {

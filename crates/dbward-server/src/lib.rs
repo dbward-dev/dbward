@@ -798,8 +798,15 @@ pub async fn run_from_args(
                                         }
                                     }
                                 }
-                                resolver.update_group_roles(new_group_roles);
-                                tracing::info!("config reload: DbRoleResolver group_roles updated + cache cleared");
+                                // Admin absence guard: reject reload if it would leave zero admins
+                                let direct_admin_count = reload_state.user_repo().count_admins().unwrap_or(0);
+                                let group_grants_admin = new_group_roles.values().any(|roles| roles.contains(&"admin".to_string()));
+                                if direct_admin_count == 0 && !group_grants_admin {
+                                    tracing::warn!("config reload rejected: would leave zero admin users");
+                                } else {
+                                    resolver.update_group_roles(new_group_roles);
+                                    tracing::info!("config reload: DbRoleResolver group_roles updated + cache cleared");
+                                }
                             }
                             // ReloadableConfig stores the same DbRoleResolver Arc; update approval TTL only
                             let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = match reload_state.db_role_resolver.clone() {

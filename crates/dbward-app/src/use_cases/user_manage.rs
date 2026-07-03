@@ -134,10 +134,6 @@ impl UserManage {
         // Add group memberships (before resolve, so resolve sees them)
         for group in &input.groups {
             self.group_repo.add_member(group, &input.id, now)?;
-            let audit = dbward_domain::entities::AuditEvent::simple(
-                "group.member_added", "identity", &user.subject_id, Some(&input.id), now, _ctx,
-            );
-            let _ = self.audit_logger.record(&audit);
         }
 
         // Resolve effective roles (direct + group-derived)
@@ -182,13 +178,24 @@ impl UserManage {
         // Atomic: INSERT user + INSERT token in single transaction
         let user_clone = new_user.clone();
         let token_clone = token.clone();
+        let groups_clone = input.groups.clone();
+        let id_clone = input.id.clone();
         self.uow.execute(Box::new(move |tx| {
             tx.upsert_user_tx(&user_clone)?;
+            for group in &groups_clone {
+                tx.add_group_member_tx(group, &id_clone, now)?;
+            }
             tx.create_token_tx(&token_clone)?;
             Ok(())
         }))?;
 
-        // Audit
+        // Audit (group membership)
+        for _group in &input.groups {
+            let audit = dbward_domain::entities::AuditEvent::simple(
+                "group.member_added", "identity", &user.subject_id, Some(&input.id), now, _ctx,
+            );
+            let _ = self.audit_logger.record(&audit);
+        }
         let audit = dbward_domain::entities::AuditEvent::simple(
             "user.created",
             "identity",
@@ -420,6 +427,20 @@ impl UserManage {
         self.user_repo
             .get(&input.user_id)?
             .ok_or_else(|| AppError::NotFound("user not found".into()))?;
+
+        // Last admin guard: cannot suspend the last admin
+        let roles = self.user_repo.get_roles(&input.user_id)?;
+        if roles.contains(&"admin".to_string()) {
+            let admin_count = self.user_repo.count_admins()?;
+            let subjects_with_admin = self.role_resolver.subjects_for_role("admin");
+            let unique_admins: std::collections::HashSet<&str> = subjects_with_admin.iter().map(|s| s.as_str()).collect();
+            let total = admin_count.max(unique_admins.len() as u32);
+            if total <= 1 {
+                return Err(AppError::Validation(
+                    "cannot suspend the last admin".into(),
+                ));
+            }
+        }
 
         let now = self.clock.now();
 

@@ -1416,10 +1416,13 @@ async fn handle_onboarding_action(
                         "UPDATE users SET slack_user_id = ?1 WHERE id = ?2",
                         dbward_infra::rusqlite::params![target_slack_id, user_id],
                     );
-                    let _ = conn.execute(
-                        "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2 WHERE id = ?3",
+                    let affected = conn.execute(
+                        "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2 WHERE id = ?3 AND status = 'pending'",
                         dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), request_id],
-                    );
+                    ).unwrap_or(0);
+                    if affected == 0 {
+                        return; // Already processed (concurrent approval)
+                    }
                 }
 
                 // DM token to user
@@ -1473,7 +1476,7 @@ async fn handle_onboarding_action(
         {
             let conn = state.db_conn().lock();
             let _ = conn.execute(
-                "UPDATE onboarding_requests SET status = 'rejected', decided_by = ?1, decided_at = ?2 WHERE id = ?3",
+                "UPDATE onboarding_requests SET status = 'rejected', decided_by = ?1, decided_at = ?2 WHERE id = ?3 AND status = 'pending'",
                 dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), request_id],
             );
         }
@@ -1669,10 +1672,13 @@ async fn handle_modify_approval_submission(
                 );
                 let ar = serde_json::to_string(&roles).unwrap_or_default();
                 let ag = serde_json::to_string(&groups).unwrap_or_default();
-                let _ = conn.execute(
-                    "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2 WHERE id = ?3",
+                let affected = conn.execute(
+                    "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2 WHERE id = ?3 AND status = 'pending'",
                     dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), request_id],
-                );
+                ).unwrap_or(0);
+                if affected == 0 {
+                    return axum::Json(serde_json::json!({"response_action": "clear"})).into_response();
+                }
                 (ar, ag)
             };
 
