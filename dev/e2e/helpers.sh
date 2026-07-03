@@ -134,10 +134,17 @@ create_token() {
   # Read admin token from file (written by auto-bootstrap on first startup)
   local admin_token
   admin_token=$(docker compose exec -T dbward-server cat /data/admin-token 2>/dev/null || echo "")
-  # Create token via API
+  # V25: ensure user exists in DB before creating token
   local is_agent=""
   case "$extra_args" in *--agent*) is_agent="agent" ;; esac
   local subject_type="${is_agent:-user}"
+  if [ "$subject_type" = "user" ]; then
+    # Create user via API (ignore 409 if already exists)
+    curl -sf -X POST "${SERVER_URL}/api/users/${user}" \
+      -H "Authorization: Bearer $admin_token" \
+      -H "Content-Type: application/json" \
+      -d "{\"id\":\"$user\",\"roles\":[\"$role\"],\"groups\":[]}" >/dev/null 2>&1 || true
+  fi
   local result
   if [ "$subject_type" = "agent" ]; then
     # Agent tokens: no scope_ceiling (unrestricted)
