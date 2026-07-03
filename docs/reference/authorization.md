@@ -32,16 +32,16 @@ Custom role permissions only apply within the specified `databases` and `environ
 
 ## Groups
 
-Groups are named collections of users, used as approvers in workflow steps:
+Groups are named collections of users with associated roles. Members inherit the group's roles. Groups are also used as approvers in workflow steps:
 
 ```toml
 [[auth.groups]]
 name = "backend-team"
-members = ["alice", "bob", "charlie"]
+roles = ["developer"]
 
 [[auth.groups]]
 name = "dba-team"
-members = ["dave", "eve"]
+roles = ["dba"]
 ```
 
 Groups are referenced in workflows:
@@ -52,22 +52,42 @@ group = "dba-team"
 min = 1
 ```
 
-## Role bindings
+Users are added to groups via `dbward user add --group` or `dbward user update --add-group`.
 
-Bind roles to users or groups. **Required** for API token authentication — tokens without a matching binding (and no `default_role`) are rejected.
+## Role assignment
 
-```toml
-[[auth.role_bindings]]
-role = "dba"
-subjects = ["alice", "dave"]
-groups = ["dba-team"]
+Roles are assigned to users in two ways:
+
+### Direct assignment
+
+Assign roles directly when creating or updating a user:
+
+```bash
+dbward user add alice --role dba
+dbward user update alice --role admin
 ```
 
-All members of bound groups inherit the role. `subjects` are raw subject IDs (not `user:` prefixed).
+Roles are stored in the user record (`roles_json` column).
+
+### Group-derived roles
+
+Users inherit roles from their group memberships. Groups define their roles in config:
+
+```toml
+[[auth.groups]]
+name = "dba-team"
+roles = ["dba", "developer"]
+```
+
+When a user belongs to `dba-team`, they automatically receive the `dba` and `developer` roles.
+
+### Effective roles
+
+A user's effective roles = direct roles ∪ group-derived roles. For token authentication, effective roles are further intersected with the token's `scope_ceiling`.
 
 ## Default role
 
-Assign a role to all authenticated users who don't have an explicit binding:
+Assign a role to all authenticated users who don't have an explicit role (neither direct nor group-derived):
 
 ```toml
 [auth]

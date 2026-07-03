@@ -328,17 +328,114 @@ dbward token inspect <ID>
 
 ## dbward user
 
-### dbward user update
+Manage users.
 
-Update your user profile.
+### dbward user add
+
+Register a new user.
 
 ```bash
-dbward user update --slack-user-id U02CR3TMKKJ
+dbward user add alice --role developer
+dbward user add bob --role dba --group backend-team
 ```
 
 | Option | Description |
 |--------|-------------|
+| `<ID>` (positional) | **Required.** User identifier |
+| `--role <ROLE>` | Role to assign (repeatable) |
+| `--group <GROUP>` | Group to add user to (repeatable) |
+
+### dbward user update
+
+Update an existing user.
+
+```bash
+dbward user update alice --role admin
+dbward user update alice --slack-user-id U02CR3TMKKJ
+dbward user update alice --add-group dba-team --remove-group backend-team
+```
+
+| Option | Description |
+|--------|-------------|
+| `<ID>` (positional) | **Required.** User identifier |
+| `--role <ROLE>` | Set roles (replaces existing, repeatable) |
 | `--slack-user-id <ID>` | Link Slack account for approval notifications |
+| `--add-group <GROUP>` | Add to group (repeatable) |
+| `--remove-group <GROUP>` | Remove from group (repeatable) |
+
+### dbward user show
+
+Show user details including roles, groups, and status.
+
+```bash
+dbward user show alice
+```
+
+### dbward user list
+
+List all users.
+
+```bash
+dbward user list
+dbward user list --status active
+dbward user list --group backend-team
+```
+
+| Option | Description |
+|--------|-------------|
+| `--status <STATUS>` | Filter by status: `active`, `suspended` |
+| `--group <GROUP>` | Filter by group membership |
+
+### dbward user suspend
+
+Suspend a user (revokes tokens, cancels pending requests).
+
+```bash
+dbward user suspend alice --reason "offboarding"
+```
+
+| Option | Description |
+|--------|-------------|
+| `<ID>` (positional) | **Required.** User identifier |
+| `--reason <TEXT>` | Reason for suspension |
+
+### dbward user activate
+
+Reactivate a suspended user.
+
+```bash
+dbward user activate alice
+```
+
+### dbward user rm
+
+Remove a user (revokes tokens, cancels requests, deletes record).
+
+```bash
+dbward user rm alice
+```
+
+---
+
+## dbward group
+
+Manage groups.
+
+### dbward group list
+
+List all groups.
+
+```bash
+dbward group list
+```
+
+### dbward group show
+
+Show group details including members and assigned roles.
+
+```bash
+dbward group show backend-team
+```
 
 ---
 
@@ -402,7 +499,7 @@ dbward policy resolve app production --operation execute_dml
 
 ## dbward doctor
 
-Diagnose configuration and connectivity. Checks include server reachability, OIDC discovery, agent polling, and **token binding validation** (verifies that all token subjects have at least one matching `[[auth.role_bindings]]` entry or `default_role`).
+Diagnose configuration and connectivity. Checks include server reachability, OIDC discovery, agent polling, and **user role validation** (verifies that all users have at least one role assigned directly or via group membership, or that `default_role` is set).
 
 ```bash
 dbward doctor
@@ -490,6 +587,21 @@ dbward mcp
 ```
 
 No additional options. See [MCP Reference](mcp.md).
+
+---
+
+## /dbward join (Slack command)
+
+Self-service user onboarding via Slack. When a user types `/dbward join` in Slack, they are registered as a new dbward user with the role and groups configured in `[slack.onboarding]`.
+
+```
+/dbward join
+```
+
+**Requirements:**
+- `[slack.onboarding]` must be enabled in server config
+- The user's Slack user ID is automatically linked to their dbward account
+- If the user already exists, the command returns their current status
 
 ---
 
