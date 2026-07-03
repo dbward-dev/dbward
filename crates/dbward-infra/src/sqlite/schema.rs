@@ -467,10 +467,15 @@ CREATE TABLE IF NOT EXISTS onboarding_requests (
     reason TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     decided_by TEXT,
+    approved_roles_json TEXT,
+    approved_groups_json TEXT,
+    message_ts TEXT,
     created_at TEXT NOT NULL,
-    decided_at TEXT
+    decided_at TEXT,
+    expires_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_onboarding_status ON onboarding_requests(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_onboarding_pending_user ON onboarding_requests(slack_user_id) WHERE status = 'pending';
 ";
 
 /// Initialize the database: set pragmas and create schema.
@@ -967,8 +972,13 @@ CREATE TABLE IF NOT EXISTS onboarding_requests (
     reason TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
     decided_by TEXT,
+    approved_roles_json TEXT,
+    approved_groups_json TEXT,
+    message_ts TEXT,
     created_at TEXT NOT NULL,
-    decided_at TEXT
+    decided_at TEXT,
+    expires_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_onboarding_status ON onboarding_requests(status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_onboarding_pending_user ON onboarding_requests(slack_user_id) WHERE status = 'pending';
 ";

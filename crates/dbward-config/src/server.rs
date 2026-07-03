@@ -969,6 +969,12 @@ pub struct SlackOnboardingConfig {
     pub assignable_groups: Vec<String>,
     #[serde(default)]
     pub restricted_roles: Vec<String>,
+    #[serde(default = "default_request_ttl_hours")]
+    pub request_ttl_hours: u64,
+}
+
+fn default_request_ttl_hours() -> u64 {
+    72
 }
 
 fn default_slack_channel() -> String {

@@ -1185,14 +1185,20 @@ async fn handle_onboarding_submission(
     // Insert onboarding_request
     let request_id = state.id_gen().generate();
     let now = chrono::Utc::now();
+    let ttl_hours = state
+        .slack_onboarding
+        .as_ref()
+        .map(|c| c.request_ttl_hours)
+        .unwrap_or(72);
+    let expires_at = now + chrono::Duration::hours(ttl_hours as i64);
     let roles_json = serde_json::to_string(&roles).unwrap_or_else(|_| "[]".into());
     let groups_json = serde_json::to_string(&groups).unwrap_or_else(|_| "[]".into());
 
     let insert_result = {
         let conn = state.db_conn().lock();
         conn.execute(
-            "INSERT INTO onboarding_requests (id, slack_user_id, display_name, requested_roles_json, requested_groups_json, reason, status, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7)",
+            "INSERT INTO onboarding_requests (id, slack_user_id, display_name, requested_roles_json, requested_groups_json, reason, status, created_at, expires_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8)",
             dbward_infra::rusqlite::params![
                 request_id,
                 slack_user_id,
@@ -1201,6 +1207,7 @@ async fn handle_onboarding_submission(
                 groups_json,
                 reason,
                 now.to_rfc3339(),
+                expires_at.to_rfc3339(),
             ],
         )
     };
