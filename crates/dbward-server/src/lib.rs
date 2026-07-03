@@ -166,6 +166,7 @@ pub async fn run_from_args(
         cfg.effective_auth_mode(),
         None,
         Some(policy_repo.clone()),
+        None, // user_repo not available yet (pre-bootstrap)
     )
     .map_err(|e| format!("config: {e}"))?;
     let role_resolver = pre_reloadable.role_resolver.clone();
@@ -455,7 +456,8 @@ pub async fn run_from_args(
     let initial_reloadable = if effective_auth_mode == cfg.effective_auth_mode() {
         pre_reloadable
     } else {
-        build_reloadable_config_with(&cfg, &effective_auth_mode, None, Some(policy_repo.clone()))
+        let ur: Arc<dyn dbward_app::ports::UserRepo> = user_repo.clone();
+        build_reloadable_config_with(&cfg, &effective_auth_mode, None, Some(policy_repo.clone()), Some(&ur))
             .map_err(|e| format!("config: {e}"))?
     };
 
@@ -758,6 +760,7 @@ pub async fn run_from_args(
                                 &startup_auth_mode,
                                 None,
                                 None,
+                                Some(&reload_state.user_repo().clone()),
                             );
                             match new_reloadable {
                                 Ok(r) => {
@@ -1061,6 +1064,7 @@ fn build_reloadable_config_with(
     effective_auth_mode: &str,
     override_role_mappings: Option<&[dbward_config::server::OidcRoleMapping]>,
     policy_repo: Option<Arc<dyn dbward_app::ports::PolicyRepo>>,
+    user_repo: Option<&Arc<dyn dbward_app::ports::UserRepo>>,
 ) -> Result<state::ReloadableConfig, Box<dyn std::error::Error>> {
     // Build group_roles from config [[auth.groups]].roles
     let mut group_roles: HashMap<String, Vec<String>> = HashMap::new();
@@ -1084,19 +1088,24 @@ fn build_reloadable_config_with(
         }
     }
 
-    // Build role resolver using ConfigRoleResolver (will be fully replaced by DbRoleResolver
-    // once the server startup path passes db_path here — for now, ConfigRoleResolver with
-    // empty user/role bindings + group_roles serves as the bridge)
     let role_definitions: Vec<_> = cfg.auth.roles.iter().map(build_role_definition).collect();
 
-    // ConfigRoleResolver with:
-    // - role_bindings: group_roles (from config groups + oidc mappings)
-    // - user_bindings: empty (users are in DB now)
-    // - group_members: empty (members are in DB now)
+    // V25: Read user→roles from DB for ConfigRoleResolver bridge
+    let user_bindings: HashMap<String, Vec<String>> = match user_repo {
+        Some(repo) => repo
+            .list()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|u| !u.roles.is_empty())
+            .map(|u| (u.id, u.roles))
+            .collect(),
+        None => HashMap::new(),
+    };
+
     let resolver = dbward_infra::auth::ConfigRoleResolver::with_policy_repo(
         role_definitions,
         group_roles,
-        HashMap::new(), // user_bindings: empty (V25)
+        user_bindings,
         cfg.auth.default_role.clone(),
         policy_repo,
     )
