@@ -57,17 +57,11 @@ pub(super) async fn run_server_mode(ctx: &mut DoctorContext, path: &std::path::P
     // S7: built_in_role_collision
     check_built_in_role_collision(ctx, &cfg);
 
-    // S8: role_binding_duplicates
-    check_role_binding_duplicates(ctx, &cfg);
-
     // S9: notification_webhook_refs
     check_notification_webhook_refs(ctx, &cfg);
 
-    // S10: role_binding_empty
-    check_role_binding_empty(ctx, &cfg);
-
-    // S12: token_binding_check (bootstrap subjects must have role_bindings)
-    check_token_binding(ctx, &cfg);
+    // S12: token_binding_check — V25: role_bindings removed, check skipped
+    // check_token_binding(ctx, &cfg);
 
     // S13: active token scan (read DB directly if state_dir is accessible)
     check_active_tokens(ctx, &cfg);
@@ -432,6 +426,7 @@ fn check_built_in_role_collision(ctx: &mut DoctorContext, cfg: &dbward_config::S
     }
 }
 
+#[allow(dead_code)]
 fn check_role_binding_duplicates(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut dups = Vec::new();
@@ -497,6 +492,7 @@ fn check_notification_webhook_refs(ctx: &mut DoctorContext, cfg: &dbward_config:
     }
 }
 
+#[allow(dead_code)]
 fn check_role_binding_empty(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
     let mut empty = Vec::new();
     for (i, rb) in cfg.auth.role_bindings.iter().enumerate() {
@@ -522,6 +518,7 @@ fn check_role_binding_empty(ctx: &mut DoctorContext, cfg: &dbward_config::Server
 }
 
 /// Slack connectivity checks (only runs if [slack] is configured).
+#[allow(dead_code)]
 fn check_token_binding(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfig) {
     let has_default_role = cfg.auth.default_role.is_some();
 
