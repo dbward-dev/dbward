@@ -874,9 +874,6 @@ fn build_sync_uc(
         database_registry: state.database_registry().clone(),
         user_repo: Arc::new(dbward_infra::sqlite::SqliteUserRepo::new(conn.clone())),
         group_repo: Arc::new(dbward_infra::sqlite::SqliteGroupRepo::new(conn.clone())),
-        role_binding_repo: Arc::new(dbward_infra::sqlite::SqliteRoleBindingRepo::new(
-            conn.clone(),
-        )),
         token_repo: Arc::new(dbward_infra::sqlite::SqliteTokenRepo::new(conn.clone())),
         request_writer: Arc::new(dbward_infra::sqlite::SqliteRequestRepo::new(conn.clone())),
         uow: state.uow().clone(),

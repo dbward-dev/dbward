@@ -356,28 +356,6 @@ pub trait GroupRepo: Send + Sync {
     }
 }
 
-// --- RoleBindingRepo (CFG-24) ---
-
-/// (id, role, subjects, groups)
-pub type RoleBindingEntry = (String, String, Vec<String>, Vec<String>);
-
-pub trait RoleBindingRepo: Send + Sync {
-    fn delete_by_source(&self, source: &str) -> Result<u64, AppError>;
-    fn create(
-        &self,
-        id: &str,
-        role: &str,
-        subjects: &[String],
-        groups: &[String],
-        source: &str,
-    ) -> Result<(), AppError>;
-    fn list(&self) -> Result<Vec<RoleBindingEntry>, AppError>;
-    /// Delete config-managed role_bindings not in the active set.
-    fn delete_stale_config(&self, _active_ids: &[String]) -> Result<u64, AppError> {
-        Ok(0)
-    }
-}
-
 // --- TokenRepo ---
 
 pub trait TokenRepo: Send + Sync {

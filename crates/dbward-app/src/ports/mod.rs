@@ -17,7 +17,7 @@ pub use repos::{
     ConfigGenerationRepo, ContextRepo, DatabaseRegistry, DryRunJobRecord, DryRunRepo,
     ExecutionTokenClaims, GroupRepo, LicenseChecker, NoopConfigGenerationRepo, PolicyRepo,
     PreflightJob, PreflightJobRepo, PutOptions, RequestContextRecord, RequestReader, RequestWriter,
-    ResultChannel, ResultStore, ResultStream, RoleBindingEntry, RoleBindingRepo, SchemaRepo,
+    ResultChannel, ResultStore, ResultStream, SchemaRepo,
     SchemaSnapshotRecord, ServerMetaRepo, SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner,
     UserRepo, VerifyFailureReason, WebhookDeliveryRepo, WebhookRepo,
 };

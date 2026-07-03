@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::error::AppError;
 use crate::ports::{
     Clock, DatabaseRegistry, GroupRepo, IdGenerator, LicenseChecker, Notifier, PolicyRepo,
-    RequestWriter, RoleBindingRepo, SsrfValidator, TokenRepo, UnitOfWork, UserRepo, WebhookRepo,
+    RequestWriter, SsrfValidator, TokenRepo, UnitOfWork, UserRepo, WebhookRepo,
 };
 
 /// All dependencies needed for config sync.
@@ -16,7 +16,6 @@ pub struct SyncConfig {
     pub database_registry: Arc<dyn DatabaseRegistry>,
     pub user_repo: Arc<dyn UserRepo>,
     pub group_repo: Arc<dyn GroupRepo>,
-    pub role_binding_repo: Arc<dyn RoleBindingRepo>,
     pub token_repo: Arc<dyn TokenRepo>,
     pub request_writer: Arc<dyn RequestWriter>,
     pub uow: Arc<dyn UnitOfWork>,
@@ -329,7 +328,7 @@ impl SyncConfig {
 mod tests {
     use super::*;
     use crate::error::AppError;
-    use crate::ports::{DatabaseRegistry, GroupRepo, PolicyRepo, RoleBindingRepo, WebhookRepo};
+    use crate::ports::{DatabaseRegistry, GroupRepo, PolicyRepo, WebhookRepo};
     use crate::test_support::{FixedClock, FixedIdGen};
 
     /// Adapter: delegates SyncScope calls to standalone repo trait objects (for legacy tests).
@@ -889,26 +888,6 @@ mod tests {
         }
     }
 
-    struct FakeRoleBindingRepo;
-    impl RoleBindingRepo for FakeRoleBindingRepo {
-        fn delete_by_source(&self, _: &str) -> Result<u64, AppError> {
-            Ok(0)
-        }
-        fn create(
-            &self,
-            _: &str,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: &str,
-        ) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn list(&self) -> Result<Vec<crate::ports::RoleBindingEntry>, AppError> {
-            Ok(vec![])
-        }
-    }
-
     struct FakeNotifier;
     impl crate::ports::Notifier for FakeNotifier {
         fn dispatch(&self, _: crate::ports::WebhookEvent) {}
@@ -960,7 +939,6 @@ mod tests {
             database_registry: Arc::new(FakeDatabaseRegistry),
             user_repo: Arc::new(FakeUserRepo),
             group_repo: Arc::new(FakeGroupRepo),
-            role_binding_repo: Arc::new(FakeRoleBindingRepo),
             token_repo: Arc::new(FakeTokenRepo),
             request_writer: Arc::new(FakeRequestWriter),
             uow: Arc::new(crate::test_support::NoopUnitOfWork),
