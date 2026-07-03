@@ -71,6 +71,7 @@ fn state_with_license(license: License) -> AppState {
         background_task_repo: Arc::new(SqliteRequestRepo::new(conn.clone())),
         agent_repo: Arc::new(SqliteAgentRepo::new(conn.clone())),
         user_repo: Arc::new(SqliteUserRepo::new(conn.clone())),
+        group_repo: Arc::new(SqliteGroupRepo::new(conn.clone())),
         token_repo: Arc::new(SqliteTokenRepo::new(conn.clone())),
         webhook_repo: Arc::new(SqliteWebhookRepo::new(conn.clone())),
         policy_repo: Arc::new(SqlitePolicyRepo::new(conn.clone())),

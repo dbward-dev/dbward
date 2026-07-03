@@ -9,14 +9,48 @@ use crate::ports::*;
 pub struct UserManage {
     pub authorizer: Arc<dyn Authorizer>,
     pub user_repo: Arc<dyn UserRepo>,
+    pub group_repo: Arc<dyn GroupRepo>,
     pub token_repo: Arc<dyn TokenRepo>,
     pub uow: Arc<dyn UnitOfWork>,
     pub clock: Arc<dyn Clock>,
     pub license: Arc<dyn LicenseChecker>,
+    pub role_resolver: Arc<dyn RoleResolver>,
+    pub policy_repo: Arc<dyn PolicyRepo>,
+    pub id_gen: Arc<dyn IdGenerator>,
+    pub token_gen: Arc<dyn TokenValueGenerator>,
 }
 
 pub struct UserListOutput {
     pub users: Vec<dbward_domain::entities::User>,
+}
+
+pub struct UserAddInput {
+    pub id: String,
+    pub roles: Vec<String>,
+    pub groups: Vec<String>,
+}
+
+pub struct UserAddOutput {
+    pub id: String,
+    pub token: String,
+    pub token_prefix: String,
+    pub roles: Vec<String>,
+    pub groups: Vec<String>,
+}
+
+pub struct UserUpdateInput {
+    pub user_id: String,
+    pub set_roles: Option<Vec<String>>,
+    pub add_roles: Vec<String>,
+    pub rm_roles: Vec<String>,
+    pub add_groups: Vec<String>,
+    pub rm_groups: Vec<String>,
+}
+
+pub struct UserShowOutput {
+    pub user: dbward_domain::entities::User,
+    pub groups: Vec<String>,
+    pub roles: Vec<String>,
 }
 
 pub struct UserSuspendInput {
@@ -30,6 +64,263 @@ pub struct UserSuspendOutput {
 }
 
 impl UserManage {
+    pub fn add(
+        &self,
+        input: UserAddInput,
+        user: &AuthUser,
+        _ctx: &AuditContext,
+    ) -> Result<UserAddOutput, AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::UserWrite)
+            .map_err(AppError::Forbidden)?;
+
+        if input.id.is_empty() {
+            return Err(AppError::Validation("user id is required".into()));
+        }
+
+        // Check for existing (including soft-deleted)
+        if let Some(existing) = self.user_repo.get(&input.id)? {
+            let _ = existing;
+            return Err(AppError::Conflict(format!(
+                "user '{}' already exists",
+                input.id
+            )));
+        }
+
+        // Plan limit
+        let count = self.user_repo.count_active()?;
+        if count >= self.license.max_users() {
+            return Err(AppError::PlanLimit("user limit reached".into()));
+        }
+
+        // Validate roles exist
+        let known_roles = self.policy_repo.list_roles()?;
+        let known_names: std::collections::HashSet<&str> = known_roles
+            .iter()
+            .map(|r| r.name.as_str())
+            .chain(["admin", "developer", "readonly", "agent-default"].iter().copied())
+            .collect();
+        for role in &input.roles {
+            if !known_names.contains(role.as_str()) {
+                return Err(AppError::Validation(format!("unknown role: {role}")));
+            }
+        }
+
+        // Validate groups exist in DB (config-synced)
+        for group in &input.groups {
+            if !self.group_repo.exists(group)? {
+                return Err(AppError::Validation(format!(
+                    "group '{group}' is not defined in config"
+                )));
+            }
+        }
+
+        // Create user
+        let now = self.clock.now();
+        let new_user = dbward_domain::entities::User {
+            id: input.id.clone(),
+            display_name: None,
+            email: None,
+            groups: vec![],
+            roles: input.roles.clone(),
+            status: dbward_domain::entities::UserStatus::Active,
+            last_seen_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        self.user_repo.upsert(&new_user)?;
+
+        // Add group memberships
+        for group in &input.groups {
+            self.group_repo.add_member(group, &input.id, now)?;
+        }
+
+        // Generate token (scope_ceiling = user's resolved roles)
+        let mut effective_roles = input.roles.clone();
+        // Add group-derived roles (from config groups.roles)
+        let resolved = self.role_resolver.resolve(
+            &input.id,
+            dbward_domain::auth::SubjectType::User,
+            &[],
+        ).map_err(|e| AppError::Internal(format!("resolve: {e}")))?;
+        for r in &resolved {
+            if !effective_roles.contains(&r.name) {
+                effective_roles.push(r.name.clone());
+            }
+        }
+
+        let ceiling = dbward_domain::entities::ScopeCeiling {
+            roles: effective_roles.clone(),
+        };
+
+        let token_id = self.id_gen.generate();
+        let raw_token = self.token_gen.generate_token_value();
+        let prefix = raw_token[..8].to_string();
+        let hash = {
+            use sha2::{Digest, Sha256};
+            hex::encode(Sha256::digest(raw_token.as_bytes()))
+        };
+
+        let token = dbward_domain::entities::Token {
+            id: token_id.clone(),
+            subject_type: dbward_domain::auth::SubjectType::User,
+            subject_id: input.id.clone(),
+            token_hash: hash,
+            token_prefix: prefix.clone(),
+            scope_ceiling: Some(ceiling),
+            name: Some("initial".to_string()),
+            status: dbward_domain::entities::TokenStatus::Active,
+            expires_at: None,
+            created_at: now,
+            revoked_at: None,
+        };
+        self.token_repo.create(&token)?;
+
+        Ok(UserAddOutput {
+            id: input.id,
+            token: raw_token,
+            token_prefix: prefix,
+            roles: effective_roles,
+            groups: input.groups,
+        })
+    }
+
+    pub fn show(&self, user_id: &str, user: &AuthUser) -> Result<UserShowOutput, AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::UserWrite)
+            .map_err(AppError::Forbidden)?;
+
+        let existing = self
+            .user_repo
+            .get(user_id)?
+            .ok_or_else(|| AppError::NotFound("user not found".into()))?;
+
+        let groups = self.group_repo.list_groups_for_user(user_id)?;
+        let roles = self.user_repo.get_roles(user_id)?;
+
+        Ok(UserShowOutput {
+            user: existing,
+            groups,
+            roles,
+        })
+    }
+
+    pub fn update(
+        &self,
+        input: UserUpdateInput,
+        user: &AuthUser,
+        ctx: &AuditContext,
+    ) -> Result<(), AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::UserWrite)
+            .map_err(AppError::Forbidden)?;
+
+        let existing = self
+            .user_repo
+            .get(&input.user_id)?
+            .ok_or_else(|| AppError::NotFound("user not found".into()))?;
+
+        if self.user_repo.is_deleted(&input.user_id)? {
+            return Err(AppError::Gone("user has been deleted".into()));
+        }
+
+        // Compute new roles
+        let mut current_roles = self.user_repo.get_roles(&input.user_id)?;
+        if let Some(set) = input.set_roles {
+            current_roles = set;
+        } else {
+            for r in &input.add_roles {
+                if !current_roles.contains(r) {
+                    current_roles.push(r.clone());
+                }
+            }
+            current_roles.retain(|r| !input.rm_roles.contains(r));
+        }
+
+        // Validate roles
+        let known_roles = self.policy_repo.list_roles()?;
+        let known_names: std::collections::HashSet<&str> = known_roles
+            .iter()
+            .map(|r| r.name.as_str())
+            .chain(["admin", "developer", "readonly", "agent-default"].iter().copied())
+            .collect();
+        for role in &current_roles {
+            if !known_names.contains(role.as_str()) {
+                return Err(AppError::Validation(format!("unknown role: {role}")));
+            }
+        }
+
+        // Last admin guard
+        if existing.roles.contains(&"admin".to_string())
+            && !current_roles.contains(&"admin".to_string())
+        {
+            let admin_count = self.user_repo.count_admins()?;
+            if admin_count <= 1 {
+                return Err(AppError::Validation(
+                    "cannot remove admin role from the last admin".into(),
+                ));
+            }
+        }
+
+        self.user_repo.set_roles(&input.user_id, &current_roles)?;
+
+        // Group changes
+        let now = self.clock.now();
+        for group in &input.add_groups {
+            if !self.group_repo.exists(group)? {
+                return Err(AppError::Validation(format!(
+                    "group '{group}' is not defined in config"
+                )));
+            }
+            self.group_repo.add_member(group, &input.user_id, now)?;
+        }
+        for group in &input.rm_groups {
+            self.group_repo.remove_member(group, &input.user_id)?;
+        }
+
+        let _ = ctx;
+        Ok(())
+    }
+
+    pub fn remove(
+        &self,
+        user_id: &str,
+        user: &AuthUser,
+        ctx: &AuditContext,
+    ) -> Result<(), AppError> {
+        self.authorizer
+            .authorize_global(user, Permission::UserWrite)
+            .map_err(AppError::Forbidden)?;
+
+        self.user_repo
+            .get(user_id)?
+            .ok_or_else(|| AppError::NotFound("user not found".into()))?;
+
+        if self.user_repo.is_deleted(user_id)? {
+            return Err(AppError::Gone("user already deleted".into()));
+        }
+
+        // Last admin guard
+        let roles = self.user_repo.get_roles(user_id)?;
+        if roles.contains(&"admin".to_string()) {
+            let admin_count = self.user_repo.count_admins()?;
+            if admin_count <= 1 {
+                return Err(AppError::Validation(
+                    "cannot delete the last admin".into(),
+                ));
+            }
+        }
+
+        let now = self.clock.now();
+        self.user_repo.soft_delete(user_id, now)?;
+        self.group_repo.remove_all_memberships(user_id)?;
+        // Revoke all tokens
+        self.token_repo.revoke_all_for_user(user_id, now)?;
+
+        let _ = ctx;
+        Ok(())
+    }
+
     pub fn list(&self, user: &AuthUser) -> Result<UserListOutput, AppError> {
         self.authorizer
             .authorize_global(user, Permission::UserWrite)
@@ -181,6 +472,65 @@ mod tests {
         fn now(&self) -> DateTime<Utc> {
             Utc::now()
         }
+    }
+
+    struct FakeGroupRepo;
+    impl crate::ports::GroupRepo for FakeGroupRepo {
+        fn upsert(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+        fn list_names(&self) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn exists(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+        fn delete_stale(&self, _: &[String]) -> Result<u64, AppError> { Ok(0) }
+        fn add_member(&self, _: &str, _: &str, _: DateTime<Utc>) -> Result<(), AppError> { Ok(()) }
+        fn remove_member(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(false) }
+        fn list_members(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn list_groups_for_user(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+        fn remove_all_memberships(&self, _: &str) -> Result<u64, AppError> { Ok(0) }
+    }
+
+    struct FakeRoleResolver;
+    impl crate::ports::RoleResolver for FakeRoleResolver {
+        fn resolve(&self, _: &str, _: SubjectType, _: &[String]) -> Result<Vec<ResolvedRole>, crate::error::AuthError> {
+            Ok(vec![])
+        }
+    }
+
+    struct FakePolicyRepo;
+    impl crate::ports::PolicyRepo for FakePolicyRepo {
+        fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
+        fn get_roles_by_names(&self, _: &[String]) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
+        fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> { Ok(()) }
+        fn get_workflow(&self, _: &str) -> Result<Option<dbward_domain::policies::Workflow>, AppError> { Ok(None) }
+        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError> { Ok(vec![]) }
+        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+        fn count_workflows(&self) -> Result<u32, AppError> { Ok(0) }
+        fn create_execution_policy(&self, _: &dbward_domain::policies::ExecutionPolicy) -> Result<(), AppError> { Ok(()) }
+        fn get_execution_policy(&self, _: &str) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(None) }
+        fn list_execution_policies(&self) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(vec![]) }
+        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+        fn find_result_policy(&self, _: &dbward_domain::values::DatabaseName, _: &dbward_domain::values::Environment) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> { Ok(None) }
+        fn create_result_policy(&self, _: &dbward_domain::policies::ResultPolicy) -> Result<(), AppError> { Ok(()) }
+        fn get_result_policy(&self, _: &str) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> { Ok(None) }
+        fn list_result_policies(&self) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> { Ok(vec![]) }
+        fn update_result_policy(&self, _: &dbward_domain::policies::ResultPolicy) -> Result<bool, AppError> { Ok(false) }
+        fn delete_result_policy(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+        fn create_notification_policy(&self, _: &dbward_domain::policies::NotificationPolicy) -> Result<(), AppError> { Ok(()) }
+        fn get_notification_policy(&self, _: &str) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError> { Ok(None) }
+        fn list_notification_policies(&self) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> { Ok(vec![]) }
+        fn update_notification_policy(&self, _: &dbward_domain::policies::NotificationPolicy) -> Result<bool, AppError> { Ok(false) }
+        fn delete_notification_policy(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+        fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> { Ok(()) }
+        fn delete_role(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+        fn count_roles(&self) -> Result<u32, AppError> { Ok(0) }
+    }
+
+    struct FakeIdGen;
+    impl crate::ports::IdGenerator for FakeIdGen {
+        fn generate(&self) -> String { "test-id-001".to_string() }
+    }
+
+    struct FakeTokenGen;
+    impl crate::ports::TokenValueGenerator for FakeTokenGen {
+        fn generate_token_value(&self) -> String { "dbw_test1234567890abcdef".to_string() }
     }
 
     struct FakeUserRepo {
@@ -376,10 +726,15 @@ mod tests {
         UserManage {
             authorizer: authz,
             user_repo: Arc::new(FakeUserRepo { has_user }),
+            group_repo: Arc::new(FakeGroupRepo),
             token_repo: Arc::new(FakeTokenRepo),
             uow: Arc::new(NoopUnitOfWork),
             clock: Arc::new(FakeClock),
             license: Arc::new(FakeLicense),
+            role_resolver: Arc::new(FakeRoleResolver),
+            policy_repo: Arc::new(FakePolicyRepo),
+            id_gen: Arc::new(FakeIdGen),
+            token_gen: Arc::new(FakeTokenGen),
         }
     }
 
@@ -505,10 +860,15 @@ mod tests {
         let uc = UserManage {
             authorizer: Arc::new(AllowAll),
             user_repo: Arc::new(SuspendedUserRepo),
+            group_repo: Arc::new(FakeGroupRepo),
             token_repo: Arc::new(FakeTokenRepo),
             uow: Arc::new(NoopUnitOfWork),
             clock: Arc::new(FakeClock),
             license: Arc::new(ZeroLicense),
+            role_resolver: Arc::new(FakeRoleResolver),
+            policy_repo: Arc::new(FakePolicyRepo),
+            id_gen: Arc::new(FakeIdGen),
+            token_gen: Arc::new(FakeTokenGen),
         };
         let result = uc.activate("u1", &admin_user(), &AuditContext::System);
         assert!(matches!(result, Err(AppError::PlanLimit(_))));

@@ -362,6 +362,19 @@ impl UserRepo for StubUserRepo {
     }
 }
 
+struct StubGroupRepo;
+impl GroupRepo for StubGroupRepo {
+    fn upsert(&self, _: &str) -> Result<(), AppError> { Ok(()) }
+    fn list_names(&self) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+    fn exists(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
+    fn delete_stale(&self, _: &[String]) -> Result<u64, AppError> { Ok(0) }
+    fn add_member(&self, _: &str, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<(), AppError> { Ok(()) }
+    fn remove_member(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(false) }
+    fn list_members(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+    fn list_groups_for_user(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
+    fn remove_all_memberships(&self, _: &str) -> Result<u64, AppError> { Ok(0) }
+}
+
 struct StubTokenRepo;
 impl TokenRepo for StubTokenRepo {
     fn create(&self, _: &Token) -> Result<(), AppError> {
@@ -709,6 +722,7 @@ fn test_state() -> AppState {
         background_task_repo: Arc::new(StubRequestRepo),
         agent_repo: Arc::new(StubAgentRepo),
         user_repo: Arc::new(StubUserRepo),
+        group_repo: Arc::new(StubGroupRepo),
         token_repo: Arc::new(StubTokenRepo),
         webhook_repo: Arc::new(StubWebhookRepo),
         policy_repo: Arc::new(StubPolicyRepo),

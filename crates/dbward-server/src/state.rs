@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicBool;
 use arc_swap::ArcSwap;
 use dbward_app::ports::{
     AgentRepo, ApprovalRepo, AuditLogger, AuditRepo, Authorizer, BackgroundTaskRepo, Clock,
-    ContextRepo, DatabaseRegistry, DryRunRepo, IdGenerator, LicenseChecker, Notifier,
+    ContextRepo, DatabaseRegistry, DryRunRepo, GroupRepo, IdGenerator, LicenseChecker, Notifier,
     PolicyEvaluator, PolicyRepo, PreflightJobRepo, RequestReader, RequestWriter, ResultChannel,
     ResultStore, RoleResolver, SchemaRepo, SsrfValidator, TokenRepo, TokenSigner, TokenVerifier,
     UnitOfWork, UserRepo, WebhookRepo,
@@ -56,6 +56,7 @@ pub struct AppState {
     background_task_repo: Arc<dyn BackgroundTaskRepo>,
     agent_repo: Arc<dyn AgentRepo>,
     user_repo: Arc<dyn UserRepo>,
+    group_repo: Arc<dyn GroupRepo>,
     token_repo: Arc<dyn TokenRepo>,
     webhook_repo: Arc<dyn WebhookRepo>,
     policy_repo: Arc<dyn PolicyRepo>,
@@ -411,10 +412,15 @@ impl<'a> UserUseCases<'a> {
         UserManage {
             authorizer: s.authorizer.clone(),
             user_repo: s.user_repo.clone(),
+            group_repo: s.group_repo.clone(),
             token_repo: s.token_repo.clone(),
             uow: s.uow.clone(),
             clock: s.clock.clone(),
             license: s.license_checker.clone(),
+            role_resolver: s.reloadable.load().role_resolver.clone(),
+            policy_repo: s.policy_repo.clone(),
+            id_gen: s.id_generator.clone(),
+            token_gen: s.token_value_generator.clone(),
         }
     }
 
@@ -701,6 +707,7 @@ pub struct AppStateBuilder {
     pub background_task_repo: Arc<dyn BackgroundTaskRepo>,
     pub agent_repo: Arc<dyn AgentRepo>,
     pub user_repo: Arc<dyn UserRepo>,
+    pub group_repo: Arc<dyn GroupRepo>,
     pub token_repo: Arc<dyn TokenRepo>,
     pub webhook_repo: Arc<dyn WebhookRepo>,
     pub policy_repo: Arc<dyn PolicyRepo>,
@@ -764,6 +771,7 @@ impl AppStateBuilder {
             background_task_repo: self.background_task_repo,
             agent_repo: self.agent_repo,
             user_repo: self.user_repo,
+            group_repo: self.group_repo,
             token_repo: self.token_repo,
             webhook_repo: self.webhook_repo,
             policy_repo: self.policy_repo,
