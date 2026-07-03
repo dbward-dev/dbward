@@ -425,6 +425,7 @@ impl<'a> UserUseCases<'a> {
             policy_repo: s.policy_repo.clone(),
             id_gen: s.id_generator.clone(),
             token_gen: s.token_value_generator.clone(),
+            audit_logger: s.audit_logger.clone(),
         }
     }
 

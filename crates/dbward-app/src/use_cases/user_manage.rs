@@ -18,6 +18,7 @@ pub struct UserManage {
     pub policy_repo: Arc<dyn PolicyRepo>,
     pub id_gen: Arc<dyn IdGenerator>,
     pub token_gen: Arc<dyn TokenValueGenerator>,
+    pub audit_logger: Arc<dyn crate::ports::AuditLogger>,
 }
 
 pub struct UserListOutput {
@@ -132,6 +133,10 @@ impl UserManage {
         // Add group memberships (before resolve, so resolve sees them)
         for group in &input.groups {
             self.group_repo.add_member(group, &input.id, now)?;
+            let audit = dbward_domain::entities::AuditEvent::simple(
+                "group.member_added", "identity", &user.subject_id, Some(&input.id), now, _ctx,
+            );
+            let _ = self.audit_logger.record(&audit);
         }
 
         // Resolve effective roles (direct + group-derived)
@@ -181,6 +186,17 @@ impl UserManage {
             tx.create_token_tx(&token_clone)?;
             Ok(())
         }))?;
+
+        // Audit
+        let audit = dbward_domain::entities::AuditEvent::simple(
+            "user.created",
+            "identity",
+            &user.subject_id,
+            Some(&input.id),
+            now,
+            _ctx,
+        );
+        let _ = self.audit_logger.record(&audit);
 
         Ok(UserAddOutput {
             id: input.id,
@@ -279,6 +295,10 @@ impl UserManage {
                 )));
             }
             self.group_repo.add_member(group, &input.user_id, now)?;
+            let audit = dbward_domain::entities::AuditEvent::simple(
+                "group.member_added", "identity", &user.subject_id, Some(&input.user_id), now, ctx,
+            );
+            let _ = self.audit_logger.record(&audit);
         }
         for group in &input.rm_groups {
             // Last-admin-via-group guard: if this group grants admin and user is last admin holder
@@ -297,9 +317,16 @@ impl UserManage {
                 }
             }
             self.group_repo.remove_member(group, &input.user_id)?;
+            let audit = dbward_domain::entities::AuditEvent::simple(
+                "group.member_removed", "identity", &user.subject_id, Some(&input.user_id), now, ctx,
+            );
+            let _ = self.audit_logger.record(&audit);
         }
 
-        let _ = ctx;
+        let audit = dbward_domain::entities::AuditEvent::simple(
+            "user.updated", "identity", &user.subject_id, Some(&input.user_id), self.clock.now(), ctx,
+        );
+        let _ = self.audit_logger.record(&audit);
         Ok(())
     }
 
@@ -338,7 +365,10 @@ impl UserManage {
         // Revoke all tokens
         self.token_repo.revoke_all_for_user(user_id, now)?;
 
-        let _ = ctx;
+        let audit = dbward_domain::entities::AuditEvent::simple(
+            "user.deleted", "identity", &user.subject_id, Some(user_id), now, ctx,
+        );
+        let _ = self.audit_logger.record(&audit);
         Ok(())
     }
 
@@ -371,7 +401,7 @@ impl UserManage {
         let user_id = input.user_id.clone();
         let actor_id = user.subject_id.clone();
         let audit_event = dbward_domain::entities::AuditEvent::simple(
-            "user.disabled",
+            "user.suspended",
             "identity",
             &actor_id,
             Some(&user_id),
@@ -756,6 +786,7 @@ mod tests {
             policy_repo: Arc::new(FakePolicyRepo),
             id_gen: Arc::new(FakeIdGen),
             token_gen: Arc::new(FakeTokenGen),
+            audit_logger: Arc::new(crate::test_support::NoopAuditLogger),
         }
     }
 
@@ -890,6 +921,7 @@ mod tests {
             policy_repo: Arc::new(FakePolicyRepo),
             id_gen: Arc::new(FakeIdGen),
             token_gen: Arc::new(FakeTokenGen),
+            audit_logger: Arc::new(crate::test_support::NoopAuditLogger),
         };
         let result = uc.activate("u1", &admin_user(), &AuditContext::System);
         assert!(matches!(result, Err(AppError::PlanLimit(_))));
