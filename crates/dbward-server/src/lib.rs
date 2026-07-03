@@ -820,7 +820,6 @@ fn safety_guard(
         // Note: roles excluded — built-in roles (admin/developer/readonly) are schema-seeded
         // with source='config' and cannot be redefined in TOML.
         ("groups", cfg.auth.groups.is_empty()),
-        ("role_bindings", cfg.auth.role_bindings.is_empty()),
     ];
 
     let c = conn.lock();
@@ -1029,7 +1028,6 @@ fn build_sync_inputs_and_run(
     let users = convert::users_from_config(&cfg.users);
     let groups = convert::groups_from_config(&cfg.auth.groups);
     let roles = convert::roles_from_config(&cfg.auth.roles);
-    let role_bindings = convert::role_bindings_from_config(&cfg.auth.role_bindings);
     let webhooks = convert::webhooks_from_config(&cfg.webhooks);
     let workflows = convert::workflows_from_config(&cfg.workflows)?;
     let execution_policies = convert::execution_policies_from_config(&cfg.execution_policies);
@@ -1044,7 +1042,7 @@ fn build_sync_inputs_and_run(
         users,
         groups,
         roles,
-        role_bindings,
+        vec![], // V25: role_bindings removed
         webhooks,
         workflows,
         execution_policies,
