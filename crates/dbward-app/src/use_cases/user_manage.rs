@@ -19,6 +19,7 @@ pub struct UserManage {
     pub id_gen: Arc<dyn IdGenerator>,
     pub token_gen: Arc<dyn TokenValueGenerator>,
     pub audit_logger: Arc<dyn crate::ports::AuditLogger>,
+    pub notifier: Arc<dyn crate::ports::Notifier>,
 }
 
 pub struct UserListOutput {
@@ -197,6 +198,27 @@ impl UserManage {
             _ctx,
         );
         let _ = self.audit_logger.record(&audit);
+
+        // Webhook
+        self.notifier.dispatch(crate::ports::WebhookEvent {
+            event_type: "user.created".into(),
+            request_id: None,
+            database: None,
+            environment: None,
+            actor: Some(user.subject_id.clone()),
+            detail: Some(format!("user '{}' created", input.id)),
+            requester: None,
+            reason: None,
+            redacted_detail: None,
+            error_summary: None,
+            approval_hint: None,
+            operation: None,
+            step_index: None,
+            total_steps: None,
+            expires_at: None,
+            approvers: None,
+            matched_selector: None,
+        });
 
         Ok(UserAddOutput {
             id: input.id,
@@ -787,6 +809,7 @@ mod tests {
             id_gen: Arc::new(FakeIdGen),
             token_gen: Arc::new(FakeTokenGen),
             audit_logger: Arc::new(crate::test_support::NoopAuditLogger),
+            notifier: Arc::new(crate::test_support::NoopNotifier),
         }
     }
 
@@ -922,6 +945,7 @@ mod tests {
             id_gen: Arc::new(FakeIdGen),
             token_gen: Arc::new(FakeTokenGen),
             audit_logger: Arc::new(crate::test_support::NoopAuditLogger),
+            notifier: Arc::new(crate::test_support::NoopNotifier),
         };
         let result = uc.activate("u1", &admin_user(), &AuditContext::System);
         assert!(matches!(result, Err(AppError::PlanLimit(_))));

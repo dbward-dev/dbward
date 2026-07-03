@@ -426,6 +426,7 @@ impl<'a> UserUseCases<'a> {
             id_gen: s.id_generator.clone(),
             token_gen: s.token_value_generator.clone(),
             audit_logger: s.audit_logger.clone(),
+            notifier: s.notifier.clone(),
         }
     }
 
