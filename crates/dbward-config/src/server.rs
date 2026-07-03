@@ -28,8 +28,6 @@ pub struct ServerConfig {
     #[serde(default)]
     pub notification_policies: Vec<NotificationPolicyDef>,
     #[serde(default)]
-    pub users: Vec<UserDef>,
-    #[serde(default)]
     pub retention: RetentionConfig,
     #[serde(default)]
     pub auth: AuthConfig,
@@ -365,32 +363,6 @@ impl ServerConfig {
             }
         }
 
-        // User validation
-        {
-            let mut seen_user_ids: HashSet<&str> = HashSet::new();
-            for (i, u) in self.users.iter().enumerate() {
-                if u.id.is_empty() {
-                    return Err(ConfigError::Validation(format!(
-                        "users[{i}]: 'id' cannot be empty"
-                    )));
-                }
-                if !seen_user_ids.insert(u.id.as_str()) {
-                    return Err(ConfigError::Validation(format!(
-                        "users[{i}]: duplicate user id '{}'",
-                        u.id
-                    )));
-                }
-                match u.status.as_str() {
-                    "active" | "suspended" => {}
-                    other => {
-                        return Err(ConfigError::Validation(format!(
-                            "users[{i}].status: unknown value '{other}' (expected: active, suspended)"
-                        )));
-                    }
-                }
-            }
-        }
-
         // Execution policy timeout consistency
         for (i, ep) in self.execution_policies.iter().enumerate() {
             if ep.max_executions == Some(0) {
@@ -498,15 +470,7 @@ impl ServerConfig {
             }
         }
 
-        // role_bindings must reference defined roles
-        for rb in &self.auth.role_bindings {
-            if !all_defined_roles.contains(rb.role.as_str()) {
-                return Err(ConfigError::Validation(format!(
-                    "auth.role_bindings: role '{}' is not defined in auth.roles or built-in",
-                    rb.role
-                )));
-            }
-        }
+        // default_role must reference defined roles
         if let Some(ref default) = self.auth.default_role
             && !all_defined_roles.contains(default.as_str())
         {
@@ -514,36 +478,6 @@ impl ServerConfig {
                 "auth.default_role: role '{}' is not defined in auth.roles or built-in",
                 default
             )));
-        }
-
-        // role_binding duplicates (same role + sorted subjects + sorted groups)
-        {
-            let mut seen: HashSet<String> = HashSet::new();
-            for (i, rb) in self.auth.role_bindings.iter().enumerate() {
-                if rb.subjects.is_empty() && rb.groups.is_empty() {
-                    return Err(ConfigError::Validation(format!(
-                        "auth.role_bindings[{i}]: must have at least one subject or group"
-                    )));
-                }
-                let mut sorted_subjects = rb.subjects.clone();
-                sorted_subjects.sort();
-                sorted_subjects.dedup();
-                let mut sorted_groups = rb.groups.clone();
-                sorted_groups.sort();
-                sorted_groups.dedup();
-                let key = format!(
-                    "{}|{}|{}",
-                    rb.role,
-                    sorted_subjects.join(","),
-                    sorted_groups.join(",")
-                );
-                if !seen.insert(key) {
-                    return Err(ConfigError::Validation(format!(
-                        "auth.role_bindings[{i}]: duplicate binding for role '{}' with same subjects/groups",
-                        rb.role
-                    )));
-                }
-            }
         }
 
         // sql_review: (database, environment) uniqueness + reserved word + rule value validation
@@ -640,8 +574,6 @@ pub struct AuthConfig {
     pub mode: Option<String>,
     #[serde(default)]
     pub oidc: Option<OidcConfig>,
-    #[serde(default)]
-    pub role_bindings: Vec<RoleBinding>,
     pub default_role: Option<String>,
     #[serde(default)]
     pub roles: Vec<RoleConfig>,
@@ -663,15 +595,6 @@ pub struct RoleConfig {
 pub struct GroupConfig {
     pub name: String,
     pub roles: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RoleBinding {
-    pub role: String,
-    #[serde(default)]
-    pub subjects: Vec<String>,
-    #[serde(default)]
-    pub groups: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -945,17 +868,6 @@ pub struct NotificationPolicyDef {
     pub webhooks: Vec<String>,
     #[serde(default)]
     pub events: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UserDef {
-    pub id: String,
-    #[serde(default = "default_user_status")]
-    pub status: String,
-}
-
-fn default_user_status() -> String {
-    "active".into()
 }
 
 #[derive(Debug, Deserialize, Clone)]

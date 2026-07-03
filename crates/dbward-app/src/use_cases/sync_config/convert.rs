@@ -7,7 +7,7 @@ use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
 
 use super::{
     ApproverInput, DatabaseInput, ExecutionPolicyInput, GroupInput, NotificationPolicyInput,
-    ResultPolicyInput, RoleInput, UserInput, WebhookInput, WorkflowInput,
+    ResultPolicyInput, RoleInput, WebhookInput, WorkflowInput,
     WorkflowStepInput,
 };
 use crate::error::AppError;
@@ -168,15 +168,6 @@ pub fn databases_from_config(defs: &[server::DatabaseDef]) -> Vec<DatabaseInput>
         .map(|d| DatabaseInput {
             name: d.name.clone(),
             environments: d.environments.clone(),
-        })
-        .collect()
-}
-
-pub fn users_from_config(defs: &[server::UserDef]) -> Vec<UserInput> {
-    defs.iter()
-        .map(|u| UserInput {
-            id: u.id.clone(),
-            status: u.status.clone(),
         })
         .collect()
 }

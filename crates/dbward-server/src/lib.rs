@@ -818,7 +818,6 @@ fn safety_guard(
             cfg.notification_policies.is_empty(),
         ),
         ("databases", cfg.databases.is_empty()),
-        ("users", cfg.users.is_empty()),
         // Note: roles excluded — built-in roles (admin/developer/readonly) are schema-seeded
         // with source='config' and cannot be redefined in TOML.
         ("groups", cfg.auth.groups.is_empty()),
@@ -1027,7 +1026,6 @@ fn build_sync_inputs_and_run(
     use dbward_app::use_cases::sync_config::convert;
 
     let databases = convert::databases_from_config(&cfg.databases);
-    let users = convert::users_from_config(&cfg.users);
     let groups = convert::groups_from_config(&cfg.auth.groups);
     let roles = convert::roles_from_config(&cfg.auth.roles);
     let webhooks = convert::webhooks_from_config(&cfg.webhooks);
@@ -1041,7 +1039,6 @@ fn build_sync_inputs_and_run(
 
     uc.sync_all(
         databases,
-        users,
         groups,
         roles,
         webhooks,

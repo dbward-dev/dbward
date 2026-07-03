@@ -139,7 +139,6 @@ impl SyncConfig {
     pub fn sync_all(
         &self,
         databases: Vec<DatabaseInput>,
-        users: Vec<UserInput>,
         groups: Vec<GroupInput>,
         roles: Vec<RoleInput>,
         webhooks: Vec<WebhookInput>,
@@ -161,7 +160,6 @@ impl SyncConfig {
                 license_checker,
                 ssrf_validator,
                 databases,
-                users,
                 groups,
                 roles,
                 webhooks,
@@ -257,7 +255,6 @@ impl SyncConfig {
         license_checker: &dyn crate::ports::LicenseChecker,
         ssrf_validator: &dyn crate::ports::SsrfValidator,
         databases: Vec<DatabaseInput>,
-        users: Vec<UserInput>,
         groups: Vec<GroupInput>,
         roles: Vec<RoleInput>,
         webhooks: Vec<WebhookInput>,
@@ -269,7 +266,7 @@ impl SyncConfig {
     ) -> Result<SyncSummary, AppError> {
         Ok(SyncSummary {
             databases: apply::sync_databases(scope, license_checker, databases)?,
-            users: { let _ = users; (0, 0) }, // V25: users managed via API, not config
+            users: (0, 0), // V25: users managed via API, not config
             groups: apply::sync_groups(scope, groups)?,
             roles: {
                 let r = apply::sync_roles(scope, roles)?;
