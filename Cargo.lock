@@ -801,9 +801,11 @@ dependencies = [
 name = "dbward-infra"
 version = "0.1.6"
 dependencies = [
+ "arc-swap",
  "async-trait",
  "base64 0.22.1",
  "chrono",
+ "dashmap",
  "dbward-app",
  "dbward-domain",
  "ed25519-dalek",

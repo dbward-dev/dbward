@@ -19,15 +19,15 @@ impl SqliteUserRepo {
 impl UserRepo for SqliteUserRepo {
     fn get(&self, user_id: &str) -> Result<Option<User>, AppError> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT id, display_name, email, groups_json, status, last_seen_at, created_at, updated_at FROM users WHERE id = ?1").map_err(db_err("user: get"))?;
+        let mut stmt = conn.prepare("SELECT id, display_name, email, roles_json, status, last_seen_at, created_at, updated_at FROM users WHERE id = ?1").map_err(db_err("user: get"))?;
         let result = stmt.query_row(rusqlite::params![user_id], |row| {
             Ok(User {
                 id: row.get(0)?,
                 display_name: row.get(1)?,
                 email: row.get(2)?,
-                groups: serde_json::from_str::<Vec<String>>(&row.get::<_, String>(3)?)
+                groups: vec![],
+                roles: serde_json::from_str::<Vec<String>>(&row.get::<_, String>(3)?)
                     .unwrap_or_default(),
-                roles: vec![],
                 status: parse_user_status(&row.get::<_, String>(4)?),
                 last_seen_at: row.get::<_, Option<String>>(5)?.and_then(|s| {
                     DateTime::parse_from_rfc3339(&s)
@@ -48,10 +48,10 @@ impl UserRepo for SqliteUserRepo {
     fn upsert(&self, user: &User) -> Result<(), AppError> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO users (id, display_name, email, groups_json, status, last_seen_at, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, email=excluded.email, groups_json=excluded.groups_json, last_seen_at=excluded.last_seen_at, updated_at=excluded.updated_at",
+            "INSERT INTO users (id, display_name, email, roles_json, status, last_seen_at, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, email=excluded.email, roles_json=excluded.roles_json, last_seen_at=excluded.last_seen_at, updated_at=excluded.updated_at",
             rusqlite::params![
                 user.id, user.display_name, user.email,
-                serde_json::to_string(&user.groups).unwrap(),
+                serde_json::to_string(&user.roles).unwrap(),
                 status_to_str(user.status),
                 user.last_seen_at.map(|d| d.to_rfc3339()),
                 user.created_at.to_rfc3339(),
@@ -63,16 +63,16 @@ impl UserRepo for SqliteUserRepo {
 
     fn list(&self) -> Result<Vec<User>, AppError> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT id, display_name, email, groups_json, status, last_seen_at, created_at, updated_at FROM users ORDER BY created_at DESC").map_err(db_err("user: list"))?;
+        let mut stmt = conn.prepare("SELECT id, display_name, email, roles_json, status, last_seen_at, created_at, updated_at FROM users ORDER BY created_at DESC").map_err(db_err("user: list"))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(User {
                     id: row.get(0)?,
                     display_name: row.get(1)?,
                     email: row.get(2)?,
-                    groups: serde_json::from_str::<Vec<String>>(&row.get::<_, String>(3)?)
+                    groups: vec![],
+                    roles: serde_json::from_str::<Vec<String>>(&row.get::<_, String>(3)?)
                         .unwrap_or_default(),
-                    roles: vec![],
                     status: parse_user_status(&row.get::<_, String>(4)?),
                     last_seen_at: row.get::<_, Option<String>>(5)?.and_then(|s| {
                         DateTime::parse_from_rfc3339(&s)
@@ -117,7 +117,7 @@ impl UserRepo for SqliteUserRepo {
         let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT OR IGNORE INTO users (id, groups_json, status, created_at, updated_at) VALUES (?1, '[]', 'active', ?2, ?2)",
+            "INSERT OR IGNORE INTO users (id, roles_json, status, created_at, updated_at) VALUES (?1, '[]', 'active', ?2, ?2)",
             rusqlite::params![subject_id, now],
         ).map_err(db_err("user: ensure_exists"))?;
         Ok(())
@@ -278,6 +278,70 @@ impl UserRepo for SqliteUserRepo {
             .map_err(db_err("user: list_active_ids"))?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(db_err("user: list_active_ids"))
+    }
+
+    fn get_roles(&self, user_id: &str) -> Result<Vec<String>, AppError> {
+        let conn = self.conn.lock();
+        let json: String = conn
+            .query_row(
+                "SELECT roles_json FROM users WHERE id = ?1",
+                rusqlite::params![user_id],
+                |row| row.get(0),
+            )
+            .map_err(db_err("user: get_roles"))?;
+        Ok(serde_json::from_str(&json).unwrap_or_default())
+    }
+
+    fn set_roles(&self, user_id: &str, roles: &[String]) -> Result<(), AppError> {
+        let conn = self.conn.lock();
+        let json = serde_json::to_string(roles).unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE users SET roles_json = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![json, now, user_id],
+        )
+        .map_err(db_err("user: set_roles"))?;
+        Ok(())
+    }
+
+    fn soft_delete(
+        &self,
+        user_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError> {
+        let conn = self.conn.lock();
+        let n = conn
+            .execute(
+                "UPDATE users SET lifecycle_state = 'deleted', status = 'suspended', updated_at = ?1 WHERE id = ?2 AND lifecycle_state = 'active'",
+                rusqlite::params![now.to_rfc3339(), user_id],
+            )
+            .map_err(db_err("user: soft_delete"))?;
+        Ok(n > 0)
+    }
+
+    fn is_deleted(&self, user_id: &str) -> Result<bool, AppError> {
+        let conn = self.conn.lock();
+        let state: Option<String> = conn
+            .query_row(
+                "SELECT lifecycle_state FROM users WHERE id = ?1",
+                rusqlite::params![user_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_err("user: is_deleted"))?;
+        Ok(state.as_deref() == Some("deleted"))
+    }
+
+    fn count_admins(&self) -> Result<u32, AppError> {
+        let conn = self.conn.lock();
+        let count: u32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE roles_json LIKE '%\"admin\"%' AND lifecycle_state = 'active'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(db_err("user: count_admins"))?;
+        Ok(count)
     }
 }
 

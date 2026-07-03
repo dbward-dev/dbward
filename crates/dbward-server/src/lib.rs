@@ -1100,11 +1100,9 @@ fn build_reloadable_config_with(
         policy_repo,
     )
     .with_group_members(
-        cfg.auth
-            .groups
-            .iter()
-            .map(|gc| (gc.name.clone(), gc.members.iter().cloned().collect()))
-            .collect(),
+        // V25: group members are now managed in DB, not config.
+        // ConfigRoleResolver will be replaced by DbRoleResolver in Step 5.6.
+        HashMap::new(),
     );
     let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new(resolver);
 

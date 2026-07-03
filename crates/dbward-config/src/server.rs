@@ -66,6 +66,7 @@ impl ServerConfig {
     /// Parse from TOML string. Expands env vars and validates.
     pub fn from_str(input: &str, source: &str) -> Result<Self, ConfigError> {
         let expanded = expand_env_vars(input)?;
+        check_deprecated_fields(&expanded, source)?;
         let cfg: Self = toml::from_str(&expanded).map_err(|e| ConfigError::Parse {
             path: source.to_string(),
             message: e.to_string(),
@@ -81,6 +82,7 @@ impl ServerConfig {
         active_auth_mode: &str,
     ) -> Result<Self, ConfigError> {
         let expanded = expand_env_vars(input)?;
+        check_deprecated_fields(&expanded, source)?;
         let cfg: Self = toml::from_str(&expanded).map_err(|e| ConfigError::Parse {
             path: source.to_string(),
             message: e.to_string(),
@@ -467,6 +469,11 @@ impl ServerConfig {
         }
 
         // Group definitions
+        let all_defined_roles: HashSet<&str> = builtin_roles
+            .iter()
+            .copied()
+            .chain(custom_role_names.iter().copied())
+            .collect();
         let mut group_names: HashSet<&str> = HashSet::new();
         for gc in &self.auth.groups {
             if !group_names.insert(gc.name.as_str()) {
@@ -475,20 +482,23 @@ impl ServerConfig {
                     gc.name
                 )));
             }
-            if gc.members.is_empty() {
+            if gc.roles.is_empty() {
                 return Err(ConfigError::Validation(format!(
-                    "auth.groups[{}]: members cannot be empty",
+                    "auth.groups[{}]: roles cannot be empty",
                     gc.name
                 )));
+            }
+            for role in &gc.roles {
+                if !all_defined_roles.contains(role.as_str()) {
+                    return Err(ConfigError::Validation(format!(
+                        "auth.groups[{}]: role '{}' is not defined in auth.roles or built-in",
+                        gc.name, role
+                    )));
+                }
             }
         }
 
         // role_bindings must reference defined roles
-        let all_defined_roles: HashSet<&str> = builtin_roles
-            .iter()
-            .copied()
-            .chain(custom_role_names.iter().copied())
-            .collect();
         for rb in &self.auth.role_bindings {
             if !all_defined_roles.contains(rb.role.as_str()) {
                 return Err(ConfigError::Validation(format!(
@@ -652,7 +662,7 @@ pub struct RoleConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct GroupConfig {
     pub name: String,
-    pub members: Vec<String>,
+    pub roles: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1036,6 +1046,48 @@ pub struct SlackConfig {
 
 fn default_slack_channel() -> String {
     "#db-approvals".into()
+}
+
+/// Detect deprecated config fields before deserialization.
+/// serde silently ignores unknown fields, so we parse as raw TOML Value first.
+fn check_deprecated_fields(toml_str: &str, source: &str) -> Result<(), ConfigError> {
+    let raw: toml::Value = toml::from_str(toml_str).map_err(|e| ConfigError::Parse {
+        path: source.to_string(),
+        message: e.to_string(),
+    })?;
+    let table = match raw.as_table() {
+        Some(t) => t,
+        None => return Ok(()),
+    };
+
+    if table.contains_key("users") {
+        return Err(ConfigError::Validation(
+            "[[users]] is no longer supported. Use `dbward user add` to manage users via API/CLI."
+                .into(),
+        ));
+    }
+
+    if let Some(auth) = table.get("auth").and_then(|v| v.as_table()) {
+        if auth.contains_key("role_bindings") {
+            return Err(ConfigError::Validation(
+                "[[auth.role_bindings]] is no longer supported. \
+                 Roles are now assigned directly via `dbward user add --role` or through [[auth.groups]].roles."
+                    .into(),
+            ));
+        }
+        if let Some(groups) = auth.get("groups").and_then(|v| v.as_array()) {
+            for (i, g) in groups.iter().enumerate() {
+                if g.as_table().is_some_and(|t| t.contains_key("members")) {
+                    return Err(ConfigError::Validation(format!(
+                        "auth.groups[{i}].members is no longer supported. \
+                         Use `dbward user add --group` to manage group membership via API/CLI."
+                    )));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1557,6 +1609,7 @@ permissions = ["request.view"]
 
     #[test]
     fn reject_undefined_role_in_bindings() {
+        // V25: [[auth.role_bindings]] is deprecated → startup error
         let err = parse(&base_config(
             r#"
 [[auth.role_bindings]]
@@ -1565,7 +1618,7 @@ subjects = ["alice"]
 "#,
         ))
         .unwrap_err();
-        assert!(err.to_string().contains("not defined"));
+        assert!(err.to_string().contains("no longer supported"));
     }
 
     #[test]
@@ -1574,24 +1627,25 @@ subjects = ["alice"]
             r#"
 [[auth.groups]]
 name = "team-a"
-members = ["alice", "bob"]
+roles = ["developer"]
 "#,
         ))
         .unwrap();
         assert_eq!(cfg.auth.groups.len(), 1);
+        assert_eq!(cfg.auth.groups[0].roles, vec!["developer"]);
     }
 
     #[test]
-    fn reject_empty_group_members() {
+    fn reject_empty_group_roles() {
         let err = parse(&base_config(
             r#"
 [[auth.groups]]
 name = "empty-team"
-members = []
+roles = []
 "#,
         ))
         .unwrap_err();
-        assert!(err.to_string().contains("members cannot be empty"));
+        assert!(err.to_string().contains("roles cannot be empty"));
     }
 
     #[test]
@@ -1600,11 +1654,11 @@ members = []
             r#"
 [[auth.groups]]
 name = "team"
-members = ["alice"]
+roles = ["developer"]
 
 [[auth.groups]]
 name = "team"
-members = ["bob"]
+roles = ["admin"]
 "#,
         ))
         .unwrap_err();
@@ -1612,19 +1666,29 @@ members = ["bob"]
     }
 
     #[test]
-    fn role_binding_with_config_role_passes() {
-        parse(&base_config(
+    fn reject_undefined_role_in_group() {
+        let err = parse(&base_config(
             r#"
-[[auth.roles]]
-name = "dba"
-permissions = ["request.approve"]
-
-[[auth.role_bindings]]
-role = "dba"
-subjects = ["carol"]
+[[auth.groups]]
+name = "team"
+roles = ["nonexistent"]
 "#,
         ))
-        .unwrap();
+        .unwrap_err();
+        assert!(err.to_string().contains("not defined"));
+    }
+
+    #[test]
+    fn reject_deprecated_group_members() {
+        let err = parse(&base_config(
+            r#"
+[[auth.groups]]
+name = "team"
+members = ["alice"]
+"#,
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("members is no longer supported"));
     }
 }
 

@@ -285,15 +285,72 @@ pub trait UserRepo: Send + Sync {
     fn list_active_ids(&self) -> Result<Vec<String>, AppError> {
         Ok(vec![])
     }
+
+    // --- V25 additions ---
+
+    /// Get roles_json for a user.
+    fn get_roles(&self, _user_id: &str) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
+    }
+    /// Set roles_json for a user (full replace).
+    fn set_roles(&self, _user_id: &str, _roles: &[String]) -> Result<(), AppError> {
+        Ok(())
+    }
+    /// Soft-delete a user (lifecycle_state='deleted'). Returns true if changed.
+    fn soft_delete(
+        &self,
+        _user_id: &str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    /// Check if user is soft-deleted.
+    fn is_deleted(&self, _user_id: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    /// Count users who have admin role (direct via roles_json).
+    fn count_admins(&self) -> Result<u32, AppError> {
+        Ok(0)
+    }
 }
 
-// --- GroupRepo (CFG-24) ---
+// --- GroupRepo (V25: name-only groups, members via group_members table) ---
 
 pub trait GroupRepo: Send + Sync {
-    fn delete_by_source(&self, source: &str) -> Result<u64, AppError>;
-    fn create(&self, name: &str, members: &[String], source: &str) -> Result<(), AppError>;
-    fn list(&self) -> Result<Vec<(String, Vec<String>)>, AppError>;
-    /// Delete config-managed groups not in the active set.
+    /// Upsert a group (name only, from config sync).
+    fn upsert(&self, name: &str) -> Result<(), AppError>;
+    /// List all group names.
+    fn list_names(&self) -> Result<Vec<String>, AppError>;
+    /// Check if group exists.
+    fn exists(&self, name: &str) -> Result<bool, AppError>;
+    /// Delete groups not in the active set (stale config groups).
+    fn delete_stale(&self, active_names: &[String]) -> Result<u64, AppError>;
+    /// Add a user to a group.
+    fn add_member(
+        &self,
+        group_name: &str,
+        user_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError>;
+    /// Remove a user from a group. Returns true if removed.
+    fn remove_member(&self, group_name: &str, user_id: &str) -> Result<bool, AppError>;
+    /// List all members of a group.
+    fn list_members(&self, group_name: &str) -> Result<Vec<String>, AppError>;
+    /// List all groups a user belongs to.
+    fn list_groups_for_user(&self, user_id: &str) -> Result<Vec<String>, AppError>;
+    /// Remove all group memberships for a user.
+    fn remove_all_memberships(&self, user_id: &str) -> Result<u64, AppError>;
+
+    // Legacy compat (used by sync_ops, will be removed in Step 5.5)
+    fn delete_by_source(&self, _source: &str) -> Result<u64, AppError> {
+        Ok(0)
+    }
+    fn create(&self, _name: &str, _members: &[String], _source: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn list_legacy(&self) -> Result<Vec<(String, Vec<String>)>, AppError> {
+        Ok(vec![])
+    }
     fn delete_stale_config(&self, _active_names: &[String]) -> Result<u64, AppError> {
         Ok(0)
     }

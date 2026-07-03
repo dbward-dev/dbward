@@ -63,6 +63,8 @@ pub(super) fn sync_databases(
 // users (AllowDangling)
 // ─────────────────────────────────────────────────────────────────────────
 
+// V25: users no longer synced from config. Kept for test_support until full removal.
+#[allow(dead_code)]
 pub(super) fn sync_users(
     scope: &dyn SyncScope,
     clock: &dyn Clock,
@@ -203,14 +205,14 @@ pub(super) fn sync_groups(
     scope: &dyn SyncScope,
     inputs: Vec<GroupInput>,
 ) -> Result<(u64, u64), AppError> {
-    let mut toml_ids = Vec::new();
+    let mut toml_names = Vec::new();
     let mut upserted = 0u64;
     for g in &inputs {
-        scope.create_group(&g.name, &g.members, "config")?;
-        toml_ids.push(g.name.clone());
+        scope.create_group(&g.name, &[], "config")?;
+        toml_names.push(g.name.clone());
         upserted += 1;
     }
-    let deleted = scope.delete_stale_config_groups(&toml_ids)?;
+    let deleted = scope.delete_stale_config_groups(&toml_names)?;
     Ok((deleted, upserted))
 }
 
@@ -282,6 +284,8 @@ pub(super) fn sync_roles(
 // role_bindings (ValidatedInBatch)
 // ─────────────────────────────────────────────────────────────────────────
 
+// V25: role_bindings table dropped. Kept temporarily until Step 5.5 removes entirely.
+#[allow(dead_code)]
 pub(super) fn sync_role_bindings(
     scope: &dyn SyncScope,
     inputs: Vec<RoleBindingInput>,
@@ -591,6 +595,7 @@ fn make_workflow_id(database: &str, environment: &str, operations: &[String]) ->
 }
 
 /// RoleBinding ID: `rb:{role}:{sha(sorted_subjects+sorted_groups)[..12]}`
+#[allow(dead_code)]
 fn make_role_binding_id(role: &str, subjects: &[String], groups: &[String]) -> String {
     let mut sorted_subjects = subjects.to_vec();
     sorted_subjects.sort();

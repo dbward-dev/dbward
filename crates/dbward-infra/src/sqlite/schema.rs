@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 24;
+const SCHEMA_VERSION: u32 = 25;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -343,6 +343,88 @@ CREATE INDEX idx_preflight_jobs_user_active ON preflight_jobs(user_id, status)
     WHERE status IN ('pending', 'claimed');
 ";
 
+/// Apply V25: User management redesign.
+/// - Rebuild `users` table (drop groups_json, add roles_json, fix source default)
+/// - Drop `role_bindings` table
+/// - Rebuild `groups` table (name-only, no members_json)
+/// - Create `group_members` table
+fn apply_migration_v25(conn: &Connection) -> Result<(), rusqlite::Error> {
+    // FK must be off for table rebuilds
+    conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+
+    // Wrap in explicit transaction for atomicity
+    conn.execute_batch("BEGIN;")?;
+
+    // --- users table rebuild ---
+    conn.execute_batch(
+        "CREATE TABLE users_new (
+            id TEXT PRIMARY KEY,
+            display_name TEXT,
+            email TEXT,
+            roles_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'active',
+            source TEXT NOT NULL DEFAULT 'api',
+            slack_user_id TEXT,
+            lifecycle_state TEXT NOT NULL DEFAULT 'active',
+            last_seen_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        INSERT INTO users_new (id, display_name, email, roles_json, status, source, slack_user_id, lifecycle_state, last_seen_at, created_at, updated_at)
+            SELECT id, display_name, email, '[]', status,
+                   CASE WHEN source = 'token' THEN 'api' ELSE source END,
+                   slack_user_id, lifecycle_state, last_seen_at, created_at, updated_at
+            FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slack_user_id ON users(slack_user_id) WHERE slack_user_id IS NOT NULL;",
+    )?;
+
+    // --- Drop role_bindings ---
+    conn.execute_batch("DROP TABLE IF EXISTS role_bindings;")?;
+
+    // --- Rebuild groups table (name-only) ---
+    conn.execute_batch(
+        "CREATE TABLE groups_new (
+            name TEXT PRIMARY KEY,
+            created_at TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO groups_new (name, created_at)
+            SELECT name, created_at FROM groups;
+        DROP TABLE IF EXISTS groups;
+        ALTER TABLE groups_new RENAME TO groups;",
+    )?;
+
+    // --- Create group_members table ---
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS group_members (
+            group_name TEXT NOT NULL REFERENCES groups(name) ON DELETE CASCADE,
+            user_id TEXT NOT NULL,
+            added_at TEXT NOT NULL,
+            PRIMARY KEY (group_name, user_id)
+        );",
+    )?;
+
+    conn.execute_batch("COMMIT;")?;
+
+    // Verify FK integrity — query result set and fail if violations found
+    let violations: i64 = conn
+        .prepare("PRAGMA foreign_key_check")?
+        .query_map([], |_row| Ok(1i64))?
+        .count() as i64;
+    if violations > 0 {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT),
+            Some(format!(
+                "V25 migration: {violations} foreign key violation(s) detected"
+            )),
+        ));
+    }
+    conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+
+    Ok(())
+}
+
 /// Apply V14 source-column additions idempotently.
 fn apply_migration_v14(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(MIGRATION_V14)?;
@@ -412,7 +494,15 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(MIGRATION_V6)?;
         conn.execute_batch(MIGRATION_V7)?;
         conn.execute_batch(MIGRATION_V8)?;
-        conn.execute_batch(MIGRATION_V9)?;
+        // V9: slack_messages table (users.slack_user_id already in SCHEMA_SQL)
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS slack_messages (
+                request_id TEXT PRIMARY KEY,
+                channel TEXT NOT NULL,
+                message_ts TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );"
+        )?;
         conn.execute_batch(MIGRATION_V10)?;
         conn.execute_batch(MIGRATION_V11)?;
         // V12 not needed for fresh DB (schema already includes config_synced)
@@ -424,6 +514,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch(MIGRATION_V18)?;
         // V19 not needed for fresh DB (schema already includes chain_version + purge_checkpoints)
         conn.execute_batch(MIGRATION_V24)?;
+        apply_migration_v25(conn)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -505,6 +596,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         if current < 24 {
             conn.execute_batch(MIGRATION_V24)?;
         }
+        if current < 25 {
+            apply_migration_v25(conn)?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())
@@ -520,17 +614,21 @@ CREATE TABLE IF NOT EXISTS databases (
     UNIQUE(name, environment)
 );
 
--- Users (auto-created on first auth)
+-- Users (managed via API/CLI)
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     display_name TEXT,
     email TEXT,
-    groups_json TEXT NOT NULL DEFAULT '[]',
+    roles_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'active',
+    source TEXT NOT NULL DEFAULT 'api',
+    slack_user_id TEXT,
+    lifecycle_state TEXT NOT NULL DEFAULT 'active',
     last_seen_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_slack_user_id ON users(slack_user_id) WHERE slack_user_id IS NOT NULL;
 
 -- API tokens
 CREATE TABLE IF NOT EXISTS tokens (
@@ -687,6 +785,20 @@ CREATE TABLE IF NOT EXISTS sql_review_policies (
     source TEXT NOT NULL DEFAULT 'config',
     lifecycle_state TEXT NOT NULL DEFAULT 'active',
     UNIQUE(database_name, environment)
+);
+
+-- Groups (config-synced names, members managed via API/CLI)
+CREATE TABLE IF NOT EXISTS groups (
+    name TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL
+);
+
+-- Group memberships
+CREATE TABLE IF NOT EXISTS group_members (
+    group_name TEXT NOT NULL REFERENCES groups(name) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (group_name, user_id)
 );
 
 -- Role definitions (custom roles stored in DB for API management)

@@ -86,14 +86,14 @@ impl SyncDatabaseOps for SqliteTxScope<'_> {
 
 impl SyncUserOps for SqliteTxScope<'_> {
     fn upsert_user(&self, user: &User) -> Result<(), AppError> {
-        let groups_json = serde_json::to_string(&user.groups)
+        let roles_json = serde_json::to_string(&user.roles)
             .map_err(|e| AppError::Internal(format!("json: {e}")))?;
         self.conn.execute(
-            "INSERT INTO users (id, display_name, email, groups_json, status, created_at, updated_at) \
+            "INSERT INTO users (id, display_name, email, roles_json, status, created_at, updated_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-             ON CONFLICT(id) DO UPDATE SET display_name=?2, email=?3, groups_json=?4, updated_at=?7",
+             ON CONFLICT(id) DO UPDATE SET display_name=?2, email=?3, roles_json=?4, updated_at=?7",
             params![
-                user.id, user.display_name, user.email, groups_json,
+                user.id, user.display_name, user.email, roles_json,
                 match user.status {
                     dbward_domain::entities::UserStatus::Active => "active",
                     dbward_domain::entities::UserStatus::Suspended => "suspended",
@@ -229,14 +229,14 @@ impl SyncUserOps for SqliteTxScope<'_> {
 
 impl SyncGroupOps for SqliteTxScope<'_> {
     fn create_group(&self, name: &str, members: &[String], source: &str) -> Result<(), AppError> {
-        let members_json =
-            serde_json::to_string(members).map_err(|e| AppError::Internal(format!("json: {e}")))?;
+        // V25: groups table is name-only. members/source are ignored (legacy trait sig).
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
-            "INSERT INTO groups (name, members_json, source, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4) \
-             ON CONFLICT(name) DO UPDATE SET members_json=?2, source=?3, updated_at=?4",
-            params![name, members_json, source, now],
+            "INSERT INTO groups (name, created_at) VALUES (?1, ?2) \
+             ON CONFLICT(name) DO NOTHING",
+            params![name, now],
         ).map_err(db_err("sync: create_group"))?;
+        let _ = (members, source); // suppress unused warnings
         Ok(())
     }
 
@@ -244,7 +244,7 @@ impl SyncGroupOps for SqliteTxScope<'_> {
         if active_names.is_empty() {
             let n = self
                 .conn
-                .execute("DELETE FROM groups WHERE source = 'config'", [])
+                .execute("DELETE FROM groups", [])
                 .map_err(db_err("sync: delete_stale_groups"))?;
             return Ok(n as u64);
         }
@@ -253,7 +253,7 @@ impl SyncGroupOps for SqliteTxScope<'_> {
             .collect::<Vec<_>>()
             .join(",");
         let sql =
-            format!("DELETE FROM groups WHERE source = 'config' AND name NOT IN ({placeholders})");
+            format!("DELETE FROM groups WHERE name NOT IN ({placeholders})");
         let params: Vec<&dyn rusqlite::types::ToSql> = active_names
             .iter()
             .map(|s| s as &dyn rusqlite::types::ToSql)

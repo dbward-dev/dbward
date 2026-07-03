@@ -109,7 +109,6 @@ pub struct UserInput {
 
 pub struct GroupInput {
     pub name: String,
-    pub members: Vec<String>,
 }
 
 pub struct RoleBindingInput {
@@ -272,7 +271,7 @@ impl SyncConfig {
         users: Vec<UserInput>,
         groups: Vec<GroupInput>,
         roles: Vec<RoleInput>,
-        role_bindings: Vec<RoleBindingInput>,
+        _role_bindings: Vec<RoleBindingInput>,
         webhooks: Vec<WebhookInput>,
         workflows: Vec<WorkflowInput>,
         execution_policies: Vec<ExecutionPolicyInput>,
@@ -282,7 +281,7 @@ impl SyncConfig {
     ) -> Result<SyncSummary, AppError> {
         Ok(SyncSummary {
             databases: apply::sync_databases(scope, license_checker, databases)?,
-            users: apply::sync_users(scope, clock, license_checker, users)?,
+            users: { let _ = users; (0, 0) }, // V25: users managed via API, not config
             groups: apply::sync_groups(scope, groups)?,
             roles: {
                 let r = apply::sync_roles(scope, roles)?;
@@ -295,7 +294,7 @@ impl SyncConfig {
                 }
                 r
             },
-            role_bindings: apply::sync_role_bindings(scope, role_bindings)?,
+            role_bindings: (0, 0), // V25: role_bindings table dropped, no-op until Step 5.5 removes this field
             webhooks: {
                 let w = apply::sync_webhooks(scope, clock, ssrf_validator, webhooks)?;
                 let total = scope.list_active_webhooks()?.len() as u32;
@@ -861,14 +860,32 @@ mod tests {
 
     struct FakeGroupRepo;
     impl GroupRepo for FakeGroupRepo {
-        fn delete_by_source(&self, _: &str) -> Result<u64, AppError> {
-            Ok(0)
-        }
-        fn create(&self, _: &str, _: &[String], _: &str) -> Result<(), AppError> {
+        fn upsert(&self, _: &str) -> Result<(), AppError> {
             Ok(())
         }
-        fn list(&self) -> Result<Vec<(String, Vec<String>)>, AppError> {
+        fn list_names(&self) -> Result<Vec<String>, AppError> {
             Ok(vec![])
+        }
+        fn exists(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_stale(&self, _: &[String]) -> Result<u64, AppError> {
+            Ok(0)
+        }
+        fn add_member(&self, _: &str, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn remove_member(&self, _: &str, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn list_members(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn list_groups_for_user(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn remove_all_memberships(&self, _: &str) -> Result<u64, AppError> {
+            Ok(0)
         }
     }
 

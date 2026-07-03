@@ -659,7 +659,7 @@ fn check_active_tokens(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfi
             .auth
             .groups
             .iter()
-            .filter(|g| g.members.iter().any(|m| m == &subject_id))
+            .filter(|_g| false) // V25: group members are in DB now, not config. Full fix in Step 5.8.
             .map(|g| g.name.as_str())
             .collect();
         let mut resolved_roles: Vec<String> = cfg
@@ -1082,9 +1082,9 @@ mode = "always"
 mode = "token"
 default_role = "developer"
 
-[[auth.role_bindings]]
-role = "admin"
-subjects = ["alice"]
+[[auth.groups]]
+name = "admins"
+roles = ["admin"]
 "#,
         );
         check_role_resolution(&mut ctx, &cfg);
@@ -1107,9 +1107,9 @@ mode = "token"
 name = "dba"
 permissions = ["request.approve"]
 
-[[auth.role_bindings]]
-role = "dba"
-subjects = ["bob"]
+[[auth.groups]]
+name = "dba-team"
+roles = ["dba"]
 "#,
         );
         check_role_resolution(&mut ctx, &cfg);

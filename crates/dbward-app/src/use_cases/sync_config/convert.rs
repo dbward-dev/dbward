@@ -185,7 +185,6 @@ pub fn groups_from_config(defs: &[server::GroupConfig]) -> Vec<GroupInput> {
     defs.iter()
         .map(|g| GroupInput {
             name: g.name.clone(),
-            members: g.members.clone(),
         })
         .collect()
 }
