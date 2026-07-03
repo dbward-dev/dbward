@@ -1062,23 +1062,13 @@ fn build_reloadable_config_with(
     override_role_mappings: Option<&[dbward_config::server::OidcRoleMapping]>,
     policy_repo: Option<Arc<dyn dbward_app::ports::PolicyRepo>>,
 ) -> Result<state::ReloadableConfig, Box<dyn std::error::Error>> {
-    let mut group_bindings: HashMap<String, Vec<String>> = HashMap::new();
-    let mut user_bindings: HashMap<String, Vec<String>> = HashMap::new();
-    for rb in &cfg.auth.role_bindings {
-        for group in &rb.groups {
-            group_bindings
-                .entry(group.clone())
-                .or_default()
-                .push(rb.role.clone());
-        }
-        for subject in &rb.subjects {
-            user_bindings
-                .entry(subject.clone())
-                .or_default()
-                .push(rb.role.clone());
-        }
+    // Build group_roles from config [[auth.groups]].roles
+    let mut group_roles: HashMap<String, Vec<String>> = HashMap::new();
+    for gc in &cfg.auth.groups {
+        group_roles.insert(gc.name.clone(), gc.roles.clone());
     }
-    // Only include OIDC role_mappings when effective mode uses OIDC
+
+    // Include OIDC role_mappings (claim=groups → group_roles entry)
     if effective_auth_mode == "oidc" || effective_auth_mode == "both" {
         let mappings: &[dbward_config::server::OidcRoleMapping] = match override_role_mappings {
             Some(m) => m,
@@ -1086,25 +1076,31 @@ fn build_reloadable_config_with(
         };
         for mapping in mappings {
             if mapping.claim == "groups" {
-                group_bindings
+                group_roles
                     .entry(mapping.value.clone())
                     .or_default()
                     .push(mapping.role.clone());
             }
         }
     }
+
+    // Build role resolver using ConfigRoleResolver (will be fully replaced by DbRoleResolver
+    // once the server startup path passes db_path here — for now, ConfigRoleResolver with
+    // empty user/role bindings + group_roles serves as the bridge)
+    let role_definitions: Vec<_> = cfg.auth.roles.iter().map(build_role_definition).collect();
+
+    // ConfigRoleResolver with:
+    // - role_bindings: group_roles (from config groups + oidc mappings)
+    // - user_bindings: empty (users are in DB now)
+    // - group_members: empty (members are in DB now)
     let resolver = dbward_infra::auth::ConfigRoleResolver::with_policy_repo(
-        cfg.auth.roles.iter().map(build_role_definition).collect(),
-        group_bindings,
-        user_bindings,
+        role_definitions,
+        group_roles,
+        HashMap::new(), // user_bindings: empty (V25)
         cfg.auth.default_role.clone(),
         policy_repo,
     )
-    .with_group_members(
-        // V25: group members are now managed in DB, not config.
-        // ConfigRoleResolver will be replaced by DbRoleResolver in Step 5.6.
-        HashMap::new(),
-    );
+    .with_group_members(HashMap::new());
     let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = Arc::new(resolver);
 
     Ok(state::ReloadableConfig {
