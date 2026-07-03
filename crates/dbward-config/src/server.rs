@@ -1042,6 +1042,21 @@ pub struct SlackConfig {
     pub channel: String,
     #[serde(default)]
     pub channels: HashMap<String, String>,
+    #[serde(default)]
+    pub onboarding: Option<SlackOnboardingConfig>,
+}
+
+/// Configuration for Slack-based user onboarding (/dbward join).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct SlackOnboardingConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub assignable_roles: Vec<String>,
+    #[serde(default)]
+    pub assignable_groups: Vec<String>,
+    #[serde(default)]
+    pub restricted_roles: Vec<String>,
 }
 
 fn default_slack_channel() -> String {

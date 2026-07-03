@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-const SCHEMA_VERSION: u32 = 25;
+const SCHEMA_VERSION: u32 = 26;
 
 const MIGRATION_V2: &str = "
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -457,6 +457,22 @@ fn apply_migration_v14(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+const MIGRATION_V26: &str = "
+CREATE TABLE IF NOT EXISTS onboarding_requests (
+    id TEXT PRIMARY KEY,
+    slack_user_id TEXT NOT NULL,
+    display_name TEXT,
+    requested_roles_json TEXT NOT NULL DEFAULT '[]',
+    requested_groups_json TEXT NOT NULL DEFAULT '[]',
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    decided_by TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_onboarding_status ON onboarding_requests(status);
+";
+
 /// Initialize the database: set pragmas and create schema.
 pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute_batch(
@@ -515,6 +531,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         // V19 not needed for fresh DB (schema already includes chain_version + purge_checkpoints)
         conn.execute_batch(MIGRATION_V24)?;
         apply_migration_v25(conn)?;
+        conn.execute_batch(MIGRATION_V26)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     } else if current < SCHEMA_VERSION {
         if current < 2 {
@@ -598,6 +615,9 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
         }
         if current < 25 {
             apply_migration_v25(conn)?;
+        }
+        if current < 26 {
+            conn.execute_batch(MIGRATION_V26)?;
         }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
@@ -936,4 +956,19 @@ END;
 CREATE INDEX IF NOT EXISTS idx_requests_dispatched ON requests(status) WHERE status = 'dispatched';
 CREATE INDEX IF NOT EXISTS idx_requests_pending ON requests(status) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_requests_claimed ON executions(status) WHERE status = 'claimed';
+
+-- Onboarding requests (Slack /dbward join)
+CREATE TABLE IF NOT EXISTS onboarding_requests (
+    id TEXT PRIMARY KEY,
+    slack_user_id TEXT NOT NULL,
+    display_name TEXT,
+    requested_roles_json TEXT NOT NULL DEFAULT '[]',
+    requested_groups_json TEXT NOT NULL DEFAULT '[]',
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    decided_by TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_onboarding_status ON onboarding_requests(status);
 ";

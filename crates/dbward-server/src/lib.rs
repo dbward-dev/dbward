@@ -540,6 +540,8 @@ pub async fn run_from_args(
             .unwrap_or(10_000),
         slack_config,
         slack_client: slack_client_for_state,
+        slack_onboarding: cfg.slack.as_ref().and_then(|s| s.onboarding.clone()),
+        db_conn: conn.clone(),
         mcp_enabled: cfg.mcp.enabled,
         mcp_allowed_origins: cfg.mcp.allowed_origins.clone(),
         mcp_default_database: cfg

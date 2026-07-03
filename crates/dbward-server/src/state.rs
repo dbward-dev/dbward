@@ -108,6 +108,10 @@ pub struct AppState {
     // Slack — pub(crate)
     pub(crate) slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub(crate) slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
+    pub(crate) slack_onboarding: Option<dbward_config::server::SlackOnboardingConfig>,
+
+    // Raw DB connection for low-level ops (onboarding etc.)
+    pub(crate) db_conn: dbward_infra::sqlite::DbConn,
 
     // MCP
     pub(crate) mcp_enabled: bool,
@@ -572,6 +576,14 @@ impl AppState {
     pub(crate) fn group_repo(&self) -> &Arc<dyn GroupRepo> {
         &self.group_repo
     }
+
+    pub(crate) fn db_conn(&self) -> &dbward_infra::sqlite::DbConn {
+        &self.db_conn
+    }
+
+    pub(crate) fn id_gen(&self) -> &Arc<dyn IdGenerator> {
+        &self.id_generator
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -750,6 +762,8 @@ pub struct AppStateBuilder {
     pub preflight_max_explain_timeout_ms: u64,
     pub slack_config: Option<dbward_infra::slack::SlackConfig>,
     pub slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
+    pub slack_onboarding: Option<dbward_config::server::SlackOnboardingConfig>,
+    pub db_conn: dbward_infra::sqlite::DbConn,
     #[allow(dead_code)]
     pub mcp_enabled: bool,
     #[allow(dead_code)]
@@ -814,6 +828,8 @@ impl AppStateBuilder {
             preflight_max_explain_timeout_ms: self.preflight_max_explain_timeout_ms,
             slack_config: self.slack_config,
             slack_client: self.slack_client,
+            slack_onboarding: self.slack_onboarding,
+            db_conn: self.db_conn,
             mcp_enabled: self.mcp_enabled,
             mcp_allowed_origins: self.mcp_allowed_origins,
             mcp_default_database: self.mcp_default_database,

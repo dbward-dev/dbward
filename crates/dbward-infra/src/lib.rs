@@ -3,6 +3,7 @@ pub mod auth;
 pub mod notification_display;
 pub mod slack;
 pub mod sqlite;
+pub use rusqlite;
 pub mod storage;
 pub mod webhook;
 
