@@ -110,12 +110,6 @@ pub struct GroupInput {
     pub name: String,
 }
 
-pub struct RoleBindingInput {
-    pub role: String,
-    pub subjects: Vec<String>,
-    pub groups: Vec<String>,
-}
-
 pub struct RoleInput {
     pub name: String,
     pub permissions: Vec<String>,
@@ -130,7 +124,6 @@ pub struct SyncSummary {
     pub users: (u64, u64),
     pub groups: (u64, u64),
     pub roles: (u64, u64),
-    pub role_bindings: (u64, u64),
     pub webhooks: (u64, u64),
     pub workflows: (u64, u64),
     pub execution_policies: (u64, u64),
@@ -149,7 +142,6 @@ impl SyncConfig {
         users: Vec<UserInput>,
         groups: Vec<GroupInput>,
         roles: Vec<RoleInput>,
-        role_bindings: Vec<RoleBindingInput>,
         webhooks: Vec<WebhookInput>,
         workflows: Vec<WorkflowInput>,
         execution_policies: Vec<ExecutionPolicyInput>,
@@ -172,7 +164,6 @@ impl SyncConfig {
                 users,
                 groups,
                 roles,
-                role_bindings,
                 webhooks,
                 workflows,
                 execution_policies,
@@ -188,7 +179,6 @@ impl SyncConfig {
                 "users": {"upserted": summary.users.1, "stale": summary.users.0},
                 "groups": {"upserted": summary.groups.1, "stale": summary.groups.0},
                 "roles": {"upserted": summary.roles.1, "stale": summary.roles.0},
-                "role_bindings": {"upserted": summary.role_bindings.1, "stale": summary.role_bindings.0},
                 "webhooks": {"upserted": summary.webhooks.1, "stale": summary.webhooks.0},
                 "workflows": {"upserted": summary.workflows.1, "stale": summary.workflows.0},
                 "execution_policies": {"upserted": summary.execution_policies.1, "stale": summary.execution_policies.0},
@@ -270,7 +260,6 @@ impl SyncConfig {
         users: Vec<UserInput>,
         groups: Vec<GroupInput>,
         roles: Vec<RoleInput>,
-        _role_bindings: Vec<RoleBindingInput>,
         webhooks: Vec<WebhookInput>,
         workflows: Vec<WorkflowInput>,
         execution_policies: Vec<ExecutionPolicyInput>,
@@ -293,7 +282,6 @@ impl SyncConfig {
                 }
                 r
             },
-            role_bindings: (0, 0), // V25: role_bindings table dropped, no-op until Step 5.5 removes this field
             webhooks: {
                 let w = apply::sync_webhooks(scope, clock, ssrf_validator, webhooks)?;
                 let total = scope.list_active_webhooks()?.len() as u32;

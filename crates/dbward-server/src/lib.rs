@@ -1044,7 +1044,6 @@ fn build_sync_inputs_and_run(
         users,
         groups,
         roles,
-        vec![], // V25: role_bindings removed
         webhooks,
         workflows,
         execution_policies,

@@ -7,7 +7,7 @@ use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
 
 use super::{
     ApproverInput, DatabaseInput, ExecutionPolicyInput, GroupInput, NotificationPolicyInput,
-    ResultPolicyInput, RoleBindingInput, RoleInput, UserInput, WebhookInput, WorkflowInput,
+    ResultPolicyInput, RoleInput, UserInput, WebhookInput, WorkflowInput,
     WorkflowStepInput,
 };
 use crate::error::AppError;
@@ -196,16 +196,6 @@ pub fn roles_from_config(defs: &[server::RoleConfig]) -> Vec<RoleInput> {
             permissions: r.permissions.clone(),
             databases: r.databases.clone(),
             environments: r.environments.clone(),
-        })
-        .collect()
-}
-
-pub fn role_bindings_from_config(defs: &[server::RoleBinding]) -> Vec<RoleBindingInput> {
-    defs.iter()
-        .map(|rb| RoleBindingInput {
-            role: rb.role.clone(),
-            subjects: rb.subjects.clone(),
-            groups: rb.groups.clone(),
         })
         .collect()
 }
