@@ -11,6 +11,7 @@ use crate::state::AppState;
 mod agent;
 mod audit;
 mod databases;
+mod groups;
 mod health;
 pub(crate) mod mcp;
 mod metrics;
@@ -196,7 +197,11 @@ pub fn build_router(state: AppState) -> Router {
         )
         // Users
         .route("/api/me", axum::routing::get(users::me))
-        .route("/api/users", axum::routing::get(users::list))
+        .route("/api/users", axum::routing::get(users::list).post(users::create))
+        .route(
+            "/api/users/{id}",
+            axum::routing::get(users::show).patch(users::update_roles_groups).delete(users::delete),
+        )
         .route(
             "/api/users/{id}/suspend",
             axum::routing::post(users::suspend),
@@ -205,6 +210,9 @@ pub fn build_router(state: AppState) -> Router {
             "/api/users/{id}/activate",
             axum::routing::post(users::activate),
         )
+        // Groups
+        .route("/api/groups", axum::routing::get(groups::list))
+        .route("/api/groups/{name}", axum::routing::get(groups::show))
         // Webhooks
         .route(
             "/api/webhooks",
@@ -288,11 +296,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/webhooks/{id}/test",
             axum::routing::post(not_implemented),
         )
-        .route(
-            "/api/users/{id}",
-            axum::routing::get(not_implemented).patch(users::patch),
-        )
-        .route("/api/users/{id}/role", axum::routing::post(not_implemented))
         .route(
             "/api/workflows/{id}",
             axum::routing::get(not_implemented).put(not_implemented),

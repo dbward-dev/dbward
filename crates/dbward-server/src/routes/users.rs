@@ -3,13 +3,158 @@ use axum::{
     extract::{Extension, Path, State},
     http::StatusCode,
 };
-use dbward_app::use_cases::user_manage::UserSuspendInput;
+use dbward_app::use_cases::user_manage::{UserAddInput, UserSuspendInput, UserUpdateInput};
 use dbward_domain::auth::AuthUser;
 
 use crate::middleware::trusted_proxies::ClientIp;
 use crate::state::AppState;
 
 use super::map_error;
+
+pub async fn create(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
+
+    let id = body
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| map_error(dbward_app::error::AppError::Validation("id is required".into())))?
+        .to_string();
+
+    let roles: Vec<String> = body
+        .get("roles")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let groups: Vec<String> = body
+        .get("groups")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let uc = state.users().manage();
+    let output = uc
+        .add(UserAddInput { id, roles, groups }, &user, &ctx)
+        .map_err(map_error)?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": output.id,
+            "token": output.token,
+            "token_prefix": output.token_prefix,
+            "roles": output.roles,
+            "groups": output.groups,
+        })),
+    ))
+}
+
+pub async fn show(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let uc = state.users().manage();
+    let output = uc.show(&id, &user).map_err(map_error)?;
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": output.user.id,
+            "display_name": output.user.display_name,
+            "email": output.user.email,
+            "status": format!("{:?}", output.user.status).to_lowercase(),
+            "roles": output.roles,
+            "groups": output.groups,
+            "created_at": output.user.created_at.to_rfc3339(),
+        })),
+    ))
+}
+
+pub async fn delete(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
+    let uc = state.users().manage();
+    uc.remove(&id, &user, &ctx).map_err(map_error)?;
+    Ok((StatusCode::OK, Json(serde_json::json!({ "id": id, "deleted": true }))))
+}
+
+pub async fn update_roles_groups(
+    State(state): State<AppState>,
+    Extension(user): Extension<AuthUser>,
+    client_ip: Option<Extension<ClientIp>>,
+    connect_info: Option<Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    Path(id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
+    let ctx = super::extract_audit_context(
+        client_ip.as_ref().map(|e| &e.0),
+        connect_info.as_ref().map(|e| &e.0),
+    );
+
+    let set_roles = body.get("roles").and_then(|v| v.as_array()).map(|arr| {
+        arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+    });
+    let add_roles: Vec<String> = body
+        .get("add_roles")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let rm_roles: Vec<String> = body
+        .get("rm_roles")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let add_groups: Vec<String> = body
+        .get("add_groups")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let rm_groups: Vec<String> = body
+        .get("rm_groups")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    if set_roles.is_none() && add_roles.is_empty() && rm_roles.is_empty() && add_groups.is_empty() && rm_groups.is_empty() {
+        return Err(map_error(dbward_app::error::AppError::Validation(
+            "no updateable fields provided (use roles, add_roles, rm_roles, add_groups, rm_groups)".into(),
+        )));
+    }
+
+    let uc = state.users().manage();
+    uc.update(
+        UserUpdateInput {
+            user_id: id.clone(),
+            set_roles,
+            add_roles,
+            rm_roles,
+            add_groups,
+            rm_groups,
+        },
+        &user,
+        &ctx,
+    )
+    .map_err(map_error)?;
+
+    Ok((StatusCode::OK, Json(serde_json::json!({ "id": id, "updated": true }))))
+}
 
 pub async fn me(Extension(user): Extension<AuthUser>) -> (StatusCode, Json<serde_json::Value>) {
     let roles: Vec<serde_json::Value> = user
@@ -111,6 +256,7 @@ pub async fn activate(
     Ok((StatusCode::OK, Json(resp)))
 }
 
+#[allow(dead_code)] // Kept for slack_user_id update; will be integrated in later step
 pub async fn patch(
     State(state): State<AppState>,
     Extension(user): Extension<AuthUser>,

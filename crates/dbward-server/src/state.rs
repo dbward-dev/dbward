@@ -568,6 +568,10 @@ impl AppState {
     pub(crate) fn user_repo(&self) -> &Arc<dyn UserRepo> {
         &self.user_repo
     }
+
+    pub(crate) fn group_repo(&self) -> &Arc<dyn GroupRepo> {
+        &self.group_repo
+    }
 }
 
 // ---------------------------------------------------------------------------

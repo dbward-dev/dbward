@@ -461,6 +461,20 @@ impl ServerClient {
             .map_err(|e| api_to_cli(e, path))
     }
 
+    pub async fn post(&self, path: &str, body: &Value) -> Result<Value, CliError> {
+        self.api
+            .post::<_, Value>(path, body)
+            .await
+            .map_err(|e| api_to_cli(e, path))
+    }
+
+    pub async fn delete(&self, path: &str) -> Result<Value, CliError> {
+        self.api
+            .delete(path)
+            .await
+            .map_err(|e| api_to_cli(e, path))
+    }
+
     pub async fn create_token(&self, body: &Value) -> Result<Value, CliError> {
         let (status, text) = self
             .api
