@@ -41,6 +41,9 @@ pub trait RoleResolver: Send + Sync {
         groups: &[String],
     ) -> Result<Vec<ResolvedRole>, AuthError>;
 
+    /// Invalidate cached role resolution for a subject (no-op for non-caching impls).
+    fn invalidate_cache(&self, _subject_id: &str) {}
+
     /// Reverse lookup: role → subject_ids who have this role via static bindings.
     fn subjects_for_role(&self, _role: &str) -> Vec<String> {
         vec![]

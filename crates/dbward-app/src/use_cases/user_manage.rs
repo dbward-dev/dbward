@@ -220,6 +220,8 @@ impl UserManage {
             matched_selector: None,
         });
 
+        self.role_resolver.invalidate_cache(&input.id);
+
         Ok(UserAddOutput {
             id: input.id,
             token: raw_token,
@@ -349,6 +351,7 @@ impl UserManage {
             "user.updated", "identity", &user.subject_id, Some(&input.user_id), self.clock.now(), ctx,
         );
         let _ = self.audit_logger.record(&audit);
+        self.role_resolver.invalidate_cache(&input.user_id);
         Ok(())
     }
 
@@ -391,6 +394,7 @@ impl UserManage {
             "user.deleted", "identity", &user.subject_id, Some(user_id), now, ctx,
         );
         let _ = self.audit_logger.record(&audit);
+        self.role_resolver.invalidate_cache(user_id);
         Ok(())
     }
 
@@ -439,6 +443,8 @@ impl UserManage {
             Ok((revoked, cancelled))
         })?;
 
+        self.role_resolver.invalidate_cache(&input.user_id);
+
         Ok(UserSuspendOutput {
             id: input.user_id,
             revoked_tokens: result.0,
@@ -485,6 +491,8 @@ impl UserManage {
             tx.record(&audit_event)?;
             Ok(())
         }))?;
+
+        self.role_resolver.invalidate_cache(user_id);
 
         Ok(())
     }

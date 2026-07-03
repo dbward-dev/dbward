@@ -245,6 +245,10 @@ impl RoleResolver for DbRoleResolver {
         Ok(resolved)
     }
 
+    fn invalidate_cache(&self, subject_id: &str) {
+        self.cache.remove(subject_id);
+    }
+
     fn subjects_for_role(&self, role: &str) -> Vec<String> {
         let conn = self.conn.lock();
         let mut subjects: HashSet<String> = HashSet::new();

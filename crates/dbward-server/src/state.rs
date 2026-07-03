@@ -113,6 +113,9 @@ pub struct AppState {
     // Raw DB connection for low-level ops (onboarding etc.)
     pub(crate) db_conn: dbward_infra::sqlite::DbConn,
 
+    // DbRoleResolver (shared, long-lived — DashMap cache survives config reloads)
+    pub(crate) db_role_resolver: Option<Arc<dbward_infra::auth::DbRoleResolver>>,
+
     // MCP
     pub(crate) mcp_enabled: bool,
     pub(crate) mcp_allowed_origins: Vec<String>,
@@ -766,6 +769,7 @@ pub struct AppStateBuilder {
     pub slack_client: Option<Arc<dyn dbward_infra::slack::SlackClient>>,
     pub slack_onboarding: Option<dbward_config::server::SlackOnboardingConfig>,
     pub db_conn: dbward_infra::sqlite::DbConn,
+    pub db_role_resolver: Option<Arc<dbward_infra::auth::DbRoleResolver>>,
     #[allow(dead_code)]
     pub mcp_enabled: bool,
     #[allow(dead_code)]
@@ -832,6 +836,7 @@ impl AppStateBuilder {
             slack_client: self.slack_client,
             slack_onboarding: self.slack_onboarding,
             db_conn: self.db_conn,
+            db_role_resolver: self.db_role_resolver,
             mcp_enabled: self.mcp_enabled,
             mcp_allowed_origins: self.mcp_allowed_origins,
             mcp_default_database: self.mcp_default_database,

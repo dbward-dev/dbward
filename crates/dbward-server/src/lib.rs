@@ -453,12 +453,37 @@ pub async fn run_from_args(
 
     // Rebuild initial_reloadable with the final effective_auth_mode
     // (may differ from cfg.effective_auth_mode() due to license fallback)
-    let initial_reloadable = if effective_auth_mode == cfg.effective_auth_mode() {
-        pre_reloadable
-    } else {
-        let ur: Arc<dyn dbward_app::ports::UserRepo> = user_repo.clone();
-        build_reloadable_config_with(&cfg, &effective_auth_mode, None, Some(policy_repo.clone()), Some(&ur))
-            .map_err(|e| format!("config: {e}"))?
+    // V25: Use DbRoleResolver (DashMap + TTL 5s) instead of ConfigRoleResolver bridge
+    let db_role_resolver = {
+        let mut group_roles: HashMap<String, Vec<String>> = HashMap::new();
+        for gc in &cfg.auth.groups {
+            group_roles.insert(gc.name.clone(), gc.roles.clone());
+        }
+        if (effective_auth_mode == "oidc" || effective_auth_mode == "both")
+            && let Some(ref oidc) = cfg.auth.oidc
+        {
+            for mapping in &oidc.role_mappings {
+                if mapping.claim == "groups" {
+                    group_roles.entry(mapping.value.clone()).or_default().push(mapping.role.clone());
+                }
+            }
+        }
+        let role_defs: Vec<_> = cfg.auth.roles.iter().map(build_role_definition).collect();
+        Arc::new(
+            dbward_infra::auth::DbRoleResolver::new(
+                db_path.to_str().unwrap_or("dbward.db"),
+                group_roles,
+                role_defs,
+                cfg.auth.default_role.clone(),
+                Some(policy_repo.clone()),
+            )
+            .map_err(|e| format!("DbRoleResolver: {e}"))?,
+        )
+    };
+
+    let initial_reloadable = state::ReloadableConfig {
+        role_resolver: db_role_resolver.clone() as Arc<dyn dbward_app::ports::RoleResolver>,
+        default_approval_ttl_secs: Some(cfg.retention.approval_ttl_secs),
     };
 
     let token_verifier: Arc<dyn dbward_app::ports::TokenVerifier> = Arc::new(token_verifier_impl);
@@ -542,6 +567,7 @@ pub async fn run_from_args(
         slack_client: slack_client_for_state,
         slack_onboarding: cfg.slack.as_ref().and_then(|s| s.onboarding.clone()),
         db_conn: conn.clone(),
+        db_role_resolver: Some(db_role_resolver.clone()),
         mcp_enabled: cfg.mcp.enabled,
         mcp_allowed_origins: cfg.mcp.allowed_origins.clone(),
         mcp_default_database: cfg
@@ -757,20 +783,35 @@ pub async fn run_from_args(
                                  Role/auth changes skipped until restart."
                             );
                         } else {
-                            let new_reloadable = build_reloadable_config_with(
-                                &new_cfg,
-                                &startup_auth_mode,
-                                None,
-                                None,
-                                Some(&reload_state.user_repo().clone()),
-                            );
-                            match new_reloadable {
-                                Ok(r) => {
-                                    reload_state.reloadable.store(Arc::new(r));
-                                    tracing::info!("config reloaded successfully");
+                            // V25: Update DbRoleResolver's group_roles from new config
+                            if let Some(ref resolver) = reload_state.db_role_resolver {
+                                let mut new_group_roles: HashMap<String, Vec<String>> = HashMap::new();
+                                for gc in &new_cfg.auth.groups {
+                                    new_group_roles.insert(gc.name.clone(), gc.roles.clone());
                                 }
-                                Err(e) => tracing::warn!("config reload failed (build): {e}"),
+                                if (startup_auth_mode == "oidc" || startup_auth_mode == "both")
+                                    && let Some(ref oidc) = new_cfg.auth.oidc
+                                {
+                                    for mapping in &oidc.role_mappings {
+                                        if mapping.claim == "groups" {
+                                            new_group_roles.entry(mapping.value.clone()).or_default().push(mapping.role.clone());
+                                        }
+                                    }
+                                }
+                                resolver.update_group_roles(new_group_roles);
+                                tracing::info!("config reload: DbRoleResolver group_roles updated + cache cleared");
                             }
+                            // ReloadableConfig stores the same DbRoleResolver Arc; update approval TTL only
+                            let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = match reload_state.db_role_resolver.clone() {
+                                Some(r) => r,
+                                None => reload_state.reloadable.load().role_resolver.clone(),
+                            };
+                            let new_r = state::ReloadableConfig {
+                                role_resolver,
+                                default_approval_ttl_secs: Some(new_cfg.retention.approval_ttl_secs),
+                            };
+                            reload_state.reloadable.store(Arc::new(new_r));
+                            tracing::info!("config reloaded successfully");
                         }
                     }
                     Err(e) => tracing::warn!("config reload failed (sync): {e}"),

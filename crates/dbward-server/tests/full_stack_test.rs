@@ -137,6 +137,7 @@ fn real_state() -> AppState {
         slack_client: None,
         slack_onboarding: None,
         db_conn: std::sync::Arc::new(parking_lot::Mutex::new(dbward_infra::rusqlite::Connection::open_in_memory().unwrap())),
+        db_role_resolver: None,
         auth_mode: "token".into(),
         max_persist_bytes: 10 * 1024 * 1024,
         storage_backend: "local".into(),
