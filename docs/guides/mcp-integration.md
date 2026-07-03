@@ -154,7 +154,7 @@ If the AI can't connect, run `dbward doctor` to check that the server URL and to
 |------|-------------|
 | `dbward_execute_query` | Execute SQL (goes through approval workflow) |
 | `dbward_inspect_schema` | Inspect schema (list tables or describe columns) |
-| `dbward_preview_impact` | Run EXPLAIN to preview query impact |
+| `dbward_preflight_sql` | Analyze SQL before submitting (risk, policy, EXPLAIN) |
 
 ### Request management
 
@@ -190,6 +190,18 @@ When the AI executes a query that requires approval:
 4. A human approves via CLI, another IDE, or Slack
 5. AI calls `dbward_wait_request` to wait for approval and result
 6. Once complete, the result is returned directly
+
+## How AI agents use preflight
+
+AI agents should call `dbward_preflight_sql` **before** submitting SQL to avoid polluting the approval queue with unsafe or blocked queries:
+
+1. AI drafts SQL based on user request
+2. AI calls `dbward_preflight_sql` to validate
+3. If `status` is `blocked` — AI reads `fix_hints` and `next_actions`, rewrites the SQL, and retries preflight
+4. If `status` is `warning` — AI informs the user of risks before proceeding
+5. If `status` is `requestable` — AI calls `dbward_execute_query` to submit
+
+This loop lets the AI converge on safe SQL without human intervention or creating unnecessary requests. The preflight call is lightweight and does not require approval.
 
 ## Resources
 

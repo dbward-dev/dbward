@@ -5,6 +5,7 @@ pub mod http_elicitation;
 pub mod mcp_backend;
 pub mod metrics;
 pub mod middleware;
+pub mod preflight_notifier;
 pub mod routes;
 pub mod session;
 pub mod session_store;
@@ -520,6 +521,20 @@ pub async fn run_from_args(
         auth_mode: effective_auth_mode.clone(),
         storage_backend: cfg.result_storage.backend.clone(),
         draining: draining.clone(),
+        preflight_job_repo: Arc::new(dbward_infra::sqlite::SqlitePreflightJobRepo::new(
+            conn.clone(),
+        )),
+        preflight_notifier: Arc::new(preflight_notifier::PreflightNotifier::new()),
+        preflight_max_concurrent_per_user: cfg
+            .preflight
+            .as_ref()
+            .and_then(|p| p.max_concurrent_per_user)
+            .unwrap_or(3),
+        preflight_max_explain_timeout_ms: cfg
+            .preflight
+            .as_ref()
+            .and_then(|p| p.max_explain_timeout_ms)
+            .unwrap_or(10_000),
         slack_config,
         slack_client: slack_client_for_state,
         mcp_enabled: cfg.mcp.enabled,

@@ -227,6 +227,28 @@ dbward migrate repair --emergency --action remove --version 20240601_add_index -
 
 ---
 
+## dbward preflight
+
+Analyze a SQL statement without creating a request. Returns risk, findings, and fix suggestions.
+
+```bash
+dbward preflight "SELECT * FROM users WHERE id = 1"
+dbward preflight --database app -e production "UPDATE users SET active = false WHERE last_login < '2025-01-01'"
+dbward preflight --no-explain "DROP TABLE sessions"
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `<SQL>` (positional) | — | **Required.** SQL statement to analyze |
+| `--no-explain` | false | Skip EXPLAIN (static analysis only) |
+| `--explain-timeout <MS>` | 5000 | Max EXPLAIN wait in milliseconds |
+| `--database <NAME>` | | Target database (overrides global) |
+| `-e, --environment <ENV>` | | Target environment (overrides global) |
+
+Exit code 0 = requestable/warning, 1 = blocked. Use `--format json` for structured output.
+
+---
+
 ## dbward audit
 
 Search and verify audit logs.

@@ -30,6 +30,21 @@ pub enum RiskFactor {
     SchemaNotSynced,
 }
 
+impl RiskFactor {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read_only",
+            Self::SafeDdl => "safe_ddl",
+            Self::CascadeDelete { .. } => "cascade_delete",
+            Self::LargeTable { .. } => "large_table",
+            Self::DropOperation => "drop_operation",
+            Self::MultiStatement => "multi_statement",
+            Self::ManyWarnings { .. } => "many_warnings",
+            Self::SchemaNotSynced => "schema_not_synced",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RiskAssessment {
     pub level: RiskLevel,
@@ -55,7 +70,7 @@ pub struct RiskInput<'a> {
     pub max_estimated_rows: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TableRiskInfo {
     pub name: String,
     pub estimated_rows: i64,

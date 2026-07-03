@@ -1,5 +1,6 @@
 mod helpers;
 mod migrate;
+mod preflight;
 mod request;
 mod schema;
 
@@ -8,7 +9,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use super::defs::{normalize_preview_sql, required_arg};
+use super::defs::required_arg;
 use super::server::{ElicitHandle, jsonrpc_error};
 
 /// Shared context for all MCP tool handlers.
@@ -107,31 +108,18 @@ pub(super) async fn handle_tools_call(
             request::handle_who_can_approve(&ctx.client, req_id).await
         }
         "dbward_find_similar_requests" => request::handle_find_similar(&ctx.client, args).await,
-        "dbward_preview_impact" => {
-            let sql = match required_arg(args, "sql") {
-                Ok(value) => value,
-                Err(message) => return jsonrpc_error(id, -32602, message),
-            };
-            let preview_sql = match normalize_preview_sql(sql) {
-                Ok(sql) => sql,
-                Err(message) => return jsonrpc_error(id, -32602, message),
-            };
-            schema::handle_preview_impact(
-                &ctx.client,
-                &preview_sql,
-                env,
-                &ctx.db_name,
-                args,
-                &ctx.elicit,
-                ctx.client_supports_elicitation,
-            )
-            .await
-        }
         "dbward_explain_policy_failure" => {
             request::handle_explain_policy(&ctx.client, args, env, &ctx.db_name).await
         }
         "dbward_inspect_schema" => {
             schema::handle_inspect_schema(&ctx.client, args, env, &ctx.db_name).await
+        }
+        "dbward_preflight_sql" => {
+            let sql = match required_arg(args, "sql") {
+                Ok(value) => value,
+                Err(message) => return jsonrpc_error(id, -32602, message),
+            };
+            preflight::handle_preflight(&ctx.client, sql, env, &ctx.db_name, args).await
         }
         _ => Err(format!("Unknown tool: {tool_name}")),
     };

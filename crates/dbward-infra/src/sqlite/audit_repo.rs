@@ -610,6 +610,7 @@ pub(crate) fn category_str(c: EventCategory) -> &'static str {
         EventCategory::Identity => "identity",
         EventCategory::Policy => "policy",
         EventCategory::Request => "request",
+        EventCategory::Preflight => "preflight",
     }
 }
 

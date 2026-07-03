@@ -822,3 +822,67 @@ pub trait ServerMetaRepo: Send + Sync {
     fn get(&self, key: &str) -> Result<Option<String>, AppError>;
     fn set(&self, key: &str, value: &str) -> Result<(), AppError>;
 }
+
+// --- PreflightJobRepo ---
+
+#[derive(Debug, Clone)]
+pub struct PreflightJob {
+    pub id: String,
+    pub user_id: String,
+    pub database_name: String,
+    pub environment: String,
+    pub sql_text: String,
+    pub status: String,
+    pub claimed_by: Option<String>,
+    pub claim_token: Option<String>,
+    pub result_json: Option<String>,
+    pub error_message: Option<String>,
+    pub created_at: String,
+    pub expires_at: String,
+    pub completed_at: Option<String>,
+}
+
+pub trait PreflightJobRepo: Send + Sync {
+    /// Atomically check user concurrent limit + insert job.
+    /// Returns Err(RateLimited) if limit exceeded.
+    fn create_with_limit(&self, job: &PreflightJob, max_concurrent: u32) -> Result<(), AppError>;
+
+    /// Atomically claim pending jobs matching agent scopes (UPDATE RETURNING pattern).
+    fn claim_for_agent(
+        &self,
+        agent_id: &str,
+        scopes: &[(String, String)],
+        limit: usize,
+    ) -> Result<Vec<PreflightJob>, AppError>;
+
+    /// Complete a job. Verifies agent_id + claim_token + status='claimed'.
+    fn complete(
+        &self,
+        job_id: &str,
+        agent_id: &str,
+        claim_token: &str,
+        result_json: &str,
+        now: &str,
+    ) -> Result<bool, AppError>;
+
+    /// Fail a job. Verifies agent_id + claim_token + status='claimed'.
+    fn fail(
+        &self,
+        job_id: &str,
+        agent_id: &str,
+        claim_token: &str,
+        error: &str,
+        now: &str,
+    ) -> Result<bool, AppError>;
+
+    fn get(&self, job_id: &str) -> Result<Option<PreflightJob>, AppError>;
+
+    /// Mark a specific job as expired (used on HTTP timeout).
+    fn mark_expired_by_id(&self, job_id: &str) -> Result<bool, AppError>;
+
+    /// Mark pending/claimed jobs past expires_at as expired.
+    fn mark_expired(&self) -> Result<u64, AppError>;
+
+    /// Physically delete completed/expired/error jobs older than retention_secs.
+    fn purge_old(&self, retention_secs: u64) -> Result<u64, AppError>;
+}

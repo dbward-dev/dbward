@@ -1036,3 +1036,105 @@ impl crate::ports::transaction::RequestWriterOps for NoopSyncScope {
         Ok(vec![])
     }
 }
+
+// --- AgentRepo ---
+
+pub struct FakeAgentRepo {
+    pub agents: Mutex<Vec<Agent>>,
+}
+
+impl FakeAgentRepo {
+    pub fn new() -> Self {
+        Self {
+            agents: Mutex::new(vec![]),
+        }
+    }
+
+    pub fn with_agents(agents: Vec<Agent>) -> Self {
+        Self {
+            agents: Mutex::new(agents),
+        }
+    }
+}
+
+impl crate::ports::AgentRepo for FakeAgentRepo {
+    fn upsert(&self, _: &Agent) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get(&self, _: &str) -> Result<Option<Agent>, AppError> {
+        Ok(None)
+    }
+    fn list(&self) -> Result<Vec<Agent>, AppError> {
+        Ok(self.agents.lock().unwrap().clone())
+    }
+    fn create_execution(&self, _: &Execution) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get_execution(&self, _: &str) -> Result<Option<Execution>, AppError> {
+        Ok(None)
+    }
+    fn update_execution_status(&self, _: &str, _: ExecutionStatus) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn extend_lease(&self, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn find_dispatched_jobs(
+        &self,
+        _: &[(DatabaseName, Environment)],
+    ) -> Result<Vec<Request>, AppError> {
+        Ok(vec![])
+    }
+    fn has_running_migration(
+        &self,
+        _: &DatabaseName,
+        _: &Environment,
+        _: &str,
+    ) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn find_executions_for_request(&self, _: &str) -> Result<Vec<Execution>, AppError> {
+        Ok(vec![])
+    }
+    fn claim_and_mark_running(
+        &self,
+        _: &Execution,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn complete_execution(
+        &self,
+        _: &str,
+        _: &str,
+        _: bool,
+        _: chrono::DateTime<chrono::Utc>,
+        _: &AuditEvent,
+        _: Option<&ExecutionResult>,
+        _: &[ResultAccess],
+    ) -> Result<crate::ports::CompletionOutcome, AppError> {
+        Ok(crate::ports::CompletionOutcome::Normal)
+    }
+    fn find_expired_leases(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+        Ok(vec![])
+    }
+    fn mark_execution_lost(&self, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn mark_execution_lost_and_record(
+        &self,
+        _: &str,
+        _: &str,
+        _: &AuditEvent,
+        _: &str,
+    ) -> Result<bool, AppError> {
+        Ok(true)
+    }
+    fn find_expired_results(&self, _: &str) -> Result<Vec<(String, String)>, AppError> {
+        Ok(vec![])
+    }
+    fn delete_result(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+}

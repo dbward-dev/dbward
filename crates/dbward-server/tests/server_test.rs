@@ -554,6 +554,42 @@ impl dbward_app::ports::SchemaRepo for StubSchemaRepo {
     }
 }
 
+struct StubPreflightJobRepo;
+impl dbward_app::ports::PreflightJobRepo for StubPreflightJobRepo {
+    fn create_with_limit(
+        &self,
+        _: &dbward_app::ports::PreflightJob,
+        _: u32,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn claim_for_agent(
+        &self,
+        _: &str,
+        _: &[(String, String)],
+        _: usize,
+    ) -> Result<Vec<dbward_app::ports::PreflightJob>, AppError> {
+        Ok(vec![])
+    }
+    fn complete(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn fail(&self, _: &str, _: &str, _: &str, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn get(&self, _: &str) -> Result<Option<dbward_app::ports::PreflightJob>, AppError> {
+        Ok(None)
+    }
+    fn mark_expired_by_id(&self, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn mark_expired(&self) -> Result<u64, AppError> {
+        Ok(0)
+    }
+    fn purge_old(&self, _: u64) -> Result<u64, AppError> {
+        Ok(0)
+    }
+}
 struct StubDryRunRepo;
 impl dbward_app::ports::DryRunRepo for StubDryRunRepo {
     fn create_jobs(&self, _: &[dbward_app::ports::DryRunJobRecord]) -> Result<(), AppError> {
@@ -702,6 +738,12 @@ fn test_state() -> AppState {
         audit_verifier: Arc::new(common::NoopAuditSigner),
         webhook_sender: Arc::new(NoopWebhookSender),
         draining: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        preflight_job_repo: std::sync::Arc::new(StubPreflightJobRepo),
+        preflight_notifier: std::sync::Arc::new(
+            dbward_server::preflight_notifier::PreflightNotifier::new(),
+        ),
+        preflight_max_concurrent_per_user: 3,
+        preflight_max_explain_timeout_ms: 10000,
         slack_config: None,
         slack_client: None,
         max_persist_bytes: 10 * 1024 * 1024,

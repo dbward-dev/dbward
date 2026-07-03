@@ -92,11 +92,6 @@ pub(crate) fn tools_definitions() -> Value {
             "inputSchema": {"type": "object", "properties": {"sql": {"type": "string"}, "operation": {"type": "string"}, "limit": {"type": "integer", "default": 5}}}
         },
         {
-            "name": "dbward_preview_impact",
-            "description": "Preview the impact of a SQL statement (EXPLAIN output)",
-            "inputSchema": {"type": "object", "properties": {"sql": {"type": "string"}, "database": {"type": "string"}, "environment": {"type": "string"}}, "required": ["sql"]}
-        },
-        {
             "name": "dbward_explain_policy_failure",
             "description": "Explain why a request was blocked or requires approval",
             "inputSchema": {"type": "object", "properties": {"request_id": {"type": "string"}, "operation": {"type": "string"}, "environment": {"type": "string"}, "database": {"type": "string"}}}
@@ -105,6 +100,21 @@ pub(crate) fn tools_definitions() -> Value {
             "name": "dbward_inspect_schema",
             "description": "Inspect database schema. Omit 'table' to list all tables. Provide 'table' (e.g. 'users' or 'public.users') to show column definitions. Server auto-selects environment.",
             "inputSchema": {"type": "object", "properties": {"table": {"type": "string", "description": "Table name to describe (e.g. 'users' or 'public.users'). Omit to list all tables."}, "database": {"type": "string", "description": "Target database name"}}}
+        },
+        {
+            "name": "dbward_preflight_sql",
+            "description": "Analyze SQL without creating a request. Returns risk level, review findings, policy simulation, and fix hints. Use this before submitting to verify SQL is safe.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["sql"],
+                "properties": {
+                    "sql": {"type": "string", "description": "SQL statement to analyze"},
+                    "database": {"type": "string", "description": "Target database (optional, uses default)"},
+                    "environment": {"type": "string", "description": "Environment (development/staging/production). Optional, uses default."},
+                    "include_explain": {"type": "boolean", "description": "Run EXPLAIN via agent (default: true)"},
+                    "explain_timeout_ms": {"type": "integer", "description": "EXPLAIN timeout in ms (default: 5000)"}
+                }
+            }
         }
     ])
 }
@@ -456,21 +466,6 @@ pub(crate) fn sql_string_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
-pub(crate) fn normalize_preview_sql(sql: &str) -> Result<String, String> {
-    let trimmed = sql.trim();
-    if trimmed.is_empty() {
-        return Err("Missing required argument: sql".to_string());
-    }
-    let statement = trimmed.strip_suffix(';').unwrap_or(trimmed).trim_end();
-    if statement.is_empty() {
-        return Err("sql must not be empty".to_string());
-    }
-    if statement.contains(';') {
-        return Err("preview_impact only accepts a single SQL statement".to_string());
-    }
-    Ok(statement.to_string())
-}
-
 pub(crate) fn normalized_similarity_terms(sql: &str) -> Vec<String> {
     const SQL_KEYWORDS: &[&str] = &[
         "select", "from", "where", "insert", "update", "delete", "set", "into", "values", "join",
@@ -732,18 +727,6 @@ mod tests {
         let parsed = parse_table_reference("public.users").unwrap();
         assert_eq!(parsed.schema.as_deref(), Some("public"));
         assert_eq!(parsed.table, "users");
-    }
-
-    #[test]
-    fn normalize_preview_sql_rejects_multi_statement_input() {
-        let err = normalize_preview_sql("SELECT 1; DROP TABLE users").unwrap_err();
-        assert_eq!(err, "preview_impact only accepts a single SQL statement");
-    }
-
-    #[test]
-    fn normalize_preview_sql_trims_single_trailing_semicolon() {
-        let sql = normalize_preview_sql(" SELECT 1; ").unwrap();
-        assert_eq!(sql, "SELECT 1");
     }
 
     #[test]

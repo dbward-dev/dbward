@@ -150,6 +150,28 @@ Permission: `request.view` (scoped)
 
 ---
 
+## Preflight
+
+### POST /api/preflight
+
+Analyze a SQL statement without creating a request. Returns risk level, review findings, policy simulation, and optional EXPLAIN plan. Safe to call repeatedly while iterating on SQL.
+
+Permission: `request.preflight` (scoped). EXPLAIN requires `request.preflight_explain` — if denied, silently skipped.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `database` | string | ✓ | Target database name |
+| `environment` | string | ✓ | Target environment |
+| `sql` | string | ✓ | SQL to analyze |
+| `include_explain` | bool | | Run EXPLAIN via agent (default: true) |
+| `explain_timeout_ms` | u64 | | Max EXPLAIN wait in ms (default: 5000) |
+
+Response includes `status` (`requestable`/`blocked`/`warning`), `risk`, `classification`, `review`, `risk_assessment`, `policy`, `impact`, `fix_hints`, `retryable`, and `next_actions`.
+
+Status codes: 200 (success), 400 (validation), 401 (auth), 403 (forbidden), 429 (rate limit).
+
+---
+
 ## Results
 
 ### GET /api/results
@@ -474,6 +496,21 @@ Permission: `agent.operate` (agent token required)
 | `claim_token` | string | ✓ | Claim token from claim response |
 | `result` | object | | EXPLAIN output |
 | `error` | string | | Error message |
+
+### POST /api/agent/preflight-result
+
+Agent submits preflight EXPLAIN result. Exactly one of `result` or `error` must be provided.
+
+Permission: `agent.operate` (agent token required)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `job_id` | string | ✓ | Preflight job ID |
+| `claim_token` | string | ✓ | Claim token from poll response |
+| `result` | object | | EXPLAIN plan (max 256KB) |
+| `error` | string | | Error message (max 4KB) |
+
+Status codes: 200 (accepted), 400 (validation), 410 (expired/stale job), 413 (payload too large).
 
 ---
 

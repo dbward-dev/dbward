@@ -403,6 +403,27 @@ impl ServerClient {
         Ok((status, body))
     }
 
+    pub async fn preflight(
+        &self,
+        database: &str,
+        environment: &str,
+        sql: &str,
+        include_explain: bool,
+        explain_timeout_ms: u64,
+    ) -> Result<Value, CliError> {
+        let body = serde_json::json!({
+            "database": database,
+            "environment": environment,
+            "sql": sql,
+            "include_explain": include_explain,
+            "explain_timeout_ms": explain_timeout_ms,
+        });
+        self.api
+            .post::<_, Value>("/api/preflight", &body)
+            .await
+            .map_err(|e| api_to_cli(e, "/api/preflight"))
+    }
+
     pub async fn get_result_content(
         &self,
         request_id: &str,

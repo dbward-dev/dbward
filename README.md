@@ -102,7 +102,7 @@ Dev mode auto-approves everything for fast iteration. See [Connect Your Database
 | `dbward_list_pending` | List pending approval requests |
 | `dbward_who_can_approve` | Show who can approve a request |
 | `dbward_find_similar_requests` | Find similar past requests |
-| `dbward_preview_impact` | EXPLAIN query before execution |
+| `dbward_preflight_sql` | Analyze SQL safety without creating a request |
 | `dbward_explain_policy_failure` | Explain why approval is needed |
 | `dbward_inspect_schema` | Inspect database schema (list tables or describe columns) |
 

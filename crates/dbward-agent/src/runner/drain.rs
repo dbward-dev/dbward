@@ -76,6 +76,7 @@ pub(super) fn build_poll_request(
         limit,
         status: Some(AgentStatusReport {
             in_flight,
+            in_flight_preflight: 0,
             max_concurrent,
             draining,
             uptime_secs,

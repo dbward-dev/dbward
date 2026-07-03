@@ -415,6 +415,19 @@ trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12"]
 
 When empty (default), the direct connection IP is used. Required behind a load balancer for accurate audit log IPs.
 
+### [preflight]
+
+```toml
+[preflight]
+max_concurrent_per_user = 3
+max_explain_timeout_ms = 10000
+```
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `max_concurrent_per_user` | u32 | | `3` | Max in-flight preflight EXPLAIN jobs per user. |
+| `max_explain_timeout_ms` | u64 | | `10000` | Server-side cap on `explain_timeout_ms` from client. |
+
 ---
 
 ## Agent Configuration

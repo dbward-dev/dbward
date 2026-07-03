@@ -58,11 +58,7 @@ pub fn tools_definitions() -> Value {
             "description": "Find past requests similar to the given SQL or operation",
             "inputSchema": {"type": "object", "properties": {"sql": {"type": "string"}, "operation": {"type": "string"}, "limit": {"type": "integer", "default": 5}}}
         },
-        {
-            "name": "dbward_preview_impact",
-            "description": "Preview the impact of a SQL statement (EXPLAIN output)",
-            "inputSchema": {"type": "object", "properties": {"sql": {"type": "string"}, "database": {"type": "string"}, "environment": {"type": "string"}, "reason": {"type": "string", "description": "Reason for execution (required by some workflows)", "maxLength": 1024}}, "required": ["sql"]}
-        },
+
         {
             "name": "dbward_explain_policy_failure",
             "description": "Explain why a request was blocked or requires approval",

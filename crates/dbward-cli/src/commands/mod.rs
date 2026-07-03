@@ -8,6 +8,7 @@ pub(crate) mod helpers;
 mod migrate;
 mod misc;
 mod policy;
+mod preflight;
 mod request;
 mod server;
 mod slack;
@@ -138,6 +139,17 @@ pub enum Command {
         /// Timeout in seconds (no timeout if not specified)
         #[arg(long)]
         timeout: Option<u64>,
+    },
+    /// Preflight check: analyze SQL without creating a request
+    Preflight {
+        /// SQL statement to analyze
+        sql: String,
+        /// Skip EXPLAIN (static analysis only)
+        #[arg(long = "no-explain")]
+        no_explain: bool,
+        /// EXPLAIN timeout in milliseconds
+        #[arg(long = "explain-timeout", default_value = "5000")]
+        explain_timeout_ms: u64,
     },
     /// Search audit log
     Audit {
@@ -564,6 +576,28 @@ pub async fn run(mut cli: Cli) -> Result<(), CliError> {
             .await
         }
         Command::Databases => misc::run_databases(&sc, json_output).await,
+        Command::Preflight {
+            ref sql,
+            no_explain,
+            explain_timeout_ms,
+        } => {
+            let db_name = cfg.resolve_database_name(cli.database.as_deref())?;
+            let env_str = cli
+                .environment
+                .as_deref()
+                .or(cfg.default_environment.as_deref())
+                .unwrap_or("development");
+            preflight::run_preflight(
+                &sc,
+                &db_name,
+                env_str,
+                sql,
+                !no_explain,
+                explain_timeout_ms,
+                json_output,
+            )
+            .await
+        }
         Command::Mcp => crate::mcp::run_stdio(cfg, cli.database.as_deref(), sc).await,
         Command::Audit {
             ref limit,

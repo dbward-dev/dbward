@@ -135,6 +135,50 @@ impl AgentClient {
         Ok(())
     }
 
+    pub async fn submit_preflight_result(
+        &self,
+        job_id: &str,
+        claim_token: &str,
+        result: &serde_json::Value,
+    ) -> Result<(), AgentError> {
+        let body = serde_json::json!({
+            "job_id": job_id,
+            "claim_token": claim_token,
+            "result": result,
+        });
+        let (status, text) = self
+            .api
+            .post_with_status("/api/agent/preflight-result", &body)
+            .await
+            .map_err(map_err)?;
+        if status >= 400 {
+            return Err(AgentError::ServerError { status, body: text });
+        }
+        Ok(())
+    }
+
+    pub async fn submit_preflight_error(
+        &self,
+        job_id: &str,
+        claim_token: &str,
+        error: &str,
+    ) -> Result<(), AgentError> {
+        let body = serde_json::json!({
+            "job_id": job_id,
+            "claim_token": claim_token,
+            "error": error,
+        });
+        let (status, text) = self
+            .api
+            .post_with_status("/api/agent/preflight-result", &body)
+            .await
+            .map_err(map_err)?;
+        if status >= 400 {
+            return Err(AgentError::ServerError { status, body: text });
+        }
+        Ok(())
+    }
+
     pub async fn schema_sync(
         &self,
         database: &str,
