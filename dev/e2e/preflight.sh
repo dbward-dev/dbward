@@ -11,7 +11,7 @@ echo ""
 echo "=== E2E PRE-1: Preflight Tests ==="
 echo ""
 
-TOKEN=$(create_token preflight-tester admin)
+TOKEN=$(create_token e2e-admin admin)
 [ -z "$TOKEN" ] && { echo "Failed to create token"; exit 1; }
 
 # --- 1. SELECT → requestable (no EXPLAIN needed for read-only auto-approve) ---
