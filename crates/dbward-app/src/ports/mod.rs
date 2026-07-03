@@ -23,7 +23,7 @@ pub use repos::{
 };
 pub use services::{Notifier, WebhookEvent, WebhookSender};
 pub use sync_scope::{
-    SyncConfigGenerationOps, SyncDatabaseOps, SyncGroupOps, SyncPolicyOps, SyncRoleBindingOps,
+    SyncConfigGenerationOps, SyncDatabaseOps, SyncGroupOps, SyncPolicyOps,
     SyncScope, SyncTokenOps, SyncUserOps, SyncWebhookOps,
 };
 pub use transaction::{

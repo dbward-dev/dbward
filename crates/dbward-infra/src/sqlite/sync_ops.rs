@@ -266,55 +266,6 @@ impl SyncGroupOps for SqliteTxScope<'_> {
     }
 }
 
-impl SyncRoleBindingOps for SqliteTxScope<'_> {
-    fn create_role_binding(
-        &self,
-        id: &str,
-        role: &str,
-        subjects: &[String],
-        groups: &[String],
-        source: &str,
-    ) -> Result<(), AppError> {
-        let subjects_json = serde_json::to_string(subjects)
-            .map_err(|e| AppError::Internal(format!("json: {e}")))?;
-        let groups_json =
-            serde_json::to_string(groups).map_err(|e| AppError::Internal(format!("json: {e}")))?;
-        let now = Utc::now().to_rfc3339();
-        self.conn.execute(
-            "INSERT INTO role_bindings (id, role, subjects_json, groups_json, source, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6) \
-             ON CONFLICT(id) DO UPDATE SET role=?2, subjects_json=?3, groups_json=?4, source=?5, updated_at=?6",
-            params![id, role, subjects_json, groups_json, source, now],
-        ).map_err(db_err("sync: create_role_binding"))?;
-        Ok(())
-    }
-
-    fn delete_stale_config_role_bindings(&self, active_ids: &[String]) -> Result<u64, AppError> {
-        if active_ids.is_empty() {
-            let n = self
-                .conn
-                .execute("DELETE FROM role_bindings WHERE source = 'config'", [])
-                .map_err(db_err("sync: delete_stale_role_bindings"))?;
-            return Ok(n as u64);
-        }
-        let placeholders: String = (1..=active_ids.len())
-            .map(|i| format!("?{i}"))
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "DELETE FROM role_bindings WHERE source = 'config' AND id NOT IN ({placeholders})"
-        );
-        let params: Vec<&dyn rusqlite::types::ToSql> = active_ids
-            .iter()
-            .map(|s| s as &dyn rusqlite::types::ToSql)
-            .collect();
-        let n = self
-            .conn
-            .execute(&sql, params.as_slice())
-            .map_err(db_err("sync: delete_stale_role_bindings"))?;
-        Ok(n as u64)
-    }
-}
-
 impl SyncTokenOps for SqliteTxScope<'_> {
     fn revoke_all_tokens_for_user(
         &self,

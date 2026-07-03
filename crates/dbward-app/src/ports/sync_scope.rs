@@ -36,18 +36,6 @@ pub trait SyncGroupOps {
     fn delete_stale_config_groups(&self, active_names: &[String]) -> Result<u64, AppError>;
 }
 
-pub trait SyncRoleBindingOps {
-    fn create_role_binding(
-        &self,
-        id: &str,
-        role: &str,
-        subjects: &[String],
-        groups: &[String],
-        source: &str,
-    ) -> Result<(), AppError>;
-    fn delete_stale_config_role_bindings(&self, active_ids: &[String]) -> Result<u64, AppError>;
-}
-
 pub trait SyncTokenOps {
     fn revoke_all_tokens_for_user(
         &self,
@@ -96,7 +84,6 @@ pub trait SyncScope:
     SyncDatabaseOps
     + SyncUserOps
     + SyncGroupOps
-    + SyncRoleBindingOps
     + SyncTokenOps
     + SyncPolicyOps
     + SyncWebhookOps
@@ -110,7 +97,6 @@ impl<T> SyncScope for T where
     T: SyncDatabaseOps
         + SyncUserOps
         + SyncGroupOps
-        + SyncRoleBindingOps
         + SyncTokenOps
         + SyncPolicyOps
         + SyncWebhookOps

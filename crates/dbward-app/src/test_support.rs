@@ -824,24 +824,7 @@ impl crate::ports::sync_scope::SyncGroupOps for NoopSyncScope {
         Ok(0)
     }
 }
-impl crate::ports::sync_scope::SyncRoleBindingOps for NoopSyncScope {
-    fn create_role_binding(
-        &self,
-        _: &str,
-        _: &str,
-        _: &[String],
-        _: &[String],
-        _: &str,
-    ) -> Result<(), crate::error::AppError> {
-        Ok(())
-    }
-    fn delete_stale_config_role_bindings(
-        &self,
-        _: &[String],
-    ) -> Result<u64, crate::error::AppError> {
-        Ok(0)
-    }
-}
+
 impl crate::ports::sync_scope::SyncTokenOps for NoopSyncScope {
     fn revoke_all_tokens_for_user(
         &self,

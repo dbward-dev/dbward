@@ -495,21 +495,6 @@ mod tests {
             Ok(0)
         }
     }
-    impl crate::ports::sync_scope::SyncRoleBindingOps for RepoSyncScope {
-        fn create_role_binding(
-            &self,
-            _: &str,
-            _: &str,
-            _: &[String],
-            _: &[String],
-            _: &str,
-        ) -> Result<(), AppError> {
-            Ok(())
-        }
-        fn delete_stale_config_role_bindings(&self, _: &[String]) -> Result<u64, AppError> {
-            Ok(0)
-        }
-    }
     impl crate::ports::sync_scope::SyncPolicyOps for RepoSyncScope {
         fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> {
             Ok(())
@@ -1194,21 +1179,6 @@ mod tests {
                 Ok(())
             }
             fn delete_stale_config_groups(&self, _: &[String]) -> Result<u64, AppError> {
-                Ok(0)
-            }
-        }
-        impl crate::ports::sync_scope::SyncRoleBindingOps for TrackingScope {
-            fn create_role_binding(
-                &self,
-                _: &str,
-                _: &str,
-                _: &[String],
-                _: &[String],
-                _: &str,
-            ) -> Result<(), AppError> {
-                Ok(())
-            }
-            fn delete_stale_config_role_bindings(&self, _: &[String]) -> Result<u64, AppError> {
                 Ok(0)
             }
         }
