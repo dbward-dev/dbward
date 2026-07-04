@@ -315,9 +315,7 @@ impl UserManage {
             }
         }
 
-        self.user_repo.set_roles(&input.user_id, &current_roles)?;
-
-        // Group changes
+        // Validate groups before committing any changes
         let now = self.clock.now();
         for group in &input.add_groups {
             if !self.group_repo.exists(group)? {
@@ -325,6 +323,13 @@ impl UserManage {
                     "group '{group}' is not defined in config"
                 )));
             }
+        }
+
+        // All validation passed — commit role changes
+        self.user_repo.set_roles(&input.user_id, &current_roles)?;
+
+        // Apply group changes
+        for group in &input.add_groups {
             self.group_repo.add_member(group, &input.user_id, now)?;
             let audit = dbward_domain::entities::AuditEvent::simple(
                 "group.member_added", "identity", &user.subject_id, Some(&input.user_id), now, ctx,
@@ -380,11 +385,16 @@ impl UserManage {
             return Err(AppError::Gone("user already deleted".into()));
         }
 
-        // Last admin guard
-        let roles = self.user_repo.get_roles(user_id)?;
-        if roles.contains(&"admin".to_string()) {
+        // Last admin guard (includes group-derived admin)
+        let has_admin = self.role_resolver
+            .resolve(user_id, dbward_domain::auth::SubjectType::User, &[])
+            .map(|roles| roles.iter().any(|r| r.name == "admin"))
+            .unwrap_or(false);
+        if has_admin {
             let admin_count = self.user_repo.count_admins()?;
-            if admin_count <= 1 {
+            let subjects_with_admin = self.role_resolver.subjects_for_role("admin");
+            let total = admin_count.max(subjects_with_admin.len() as u32);
+            if total <= 1 {
                 return Err(AppError::Validation(
                     "cannot delete the last admin".into(),
                 ));

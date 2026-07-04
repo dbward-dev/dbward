@@ -216,7 +216,9 @@ impl RoleResolver for DbRoleResolver {
         }
 
         // Check cache (TTL-based lazy eviction)
-        if let Some(entry) = self.cache.get(subject_id)
+        // Skip cache when OIDC groups are provided — they vary per request
+        if groups.is_empty()
+            && let Some(entry) = self.cache.get(subject_id)
             && entry.cached_at.elapsed().as_secs() < CACHE_TTL_SECS
         {
             return self.resolve_role_names_to_objects(
@@ -232,15 +234,17 @@ impl RoleResolver for DbRoleResolver {
         let (role_names, effective_groups) = self.resolve_from_db(subject_id, groups)?;
         let resolved = self.resolve_role_names_to_objects(&role_names)?;
 
-        // Store in cache
-        self.cache.insert(
-            subject_id.to_string(),
-            CachedEntry {
-                roles: resolved.clone(),
-                groups: effective_groups,
-                cached_at: Instant::now(),
-            },
-        );
+        // Only cache when no OIDC groups were provided (stable result)
+        if groups.is_empty() {
+            self.cache.insert(
+                subject_id.to_string(),
+                CachedEntry {
+                    roles: resolved.clone(),
+                    groups: effective_groups,
+                    cached_at: Instant::now(),
+                },
+            );
+        }
 
         Ok(resolved)
     }
@@ -255,7 +259,7 @@ impl RoleResolver for DbRoleResolver {
 
         // Direct role holders
         if let Ok(mut stmt) =
-            conn.prepare("SELECT id FROM users WHERE roles_json LIKE ?1 AND lifecycle_state = 'active'")
+            conn.prepare("SELECT id FROM users WHERE roles_json LIKE ?1 AND lifecycle_state = 'active' AND status = 'active'")
             && let Ok(rows) = stmt.query_map(rusqlite::params![format!("%\"{role}\"%")], |row| row.get(0))
         {
             for r in rows.flatten() {
@@ -268,7 +272,7 @@ impl RoleResolver for DbRoleResolver {
         for (group, roles) in group_roles_map.iter() {
             if roles.iter().any(|r| r == role)
                 && let Ok(mut stmt) =
-                    conn.prepare("SELECT user_id FROM group_members WHERE group_name = ?1")
+                    conn.prepare("SELECT gm.user_id FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.group_name = ?1 AND u.lifecycle_state = 'active' AND u.status = 'active'")
                 && let Ok(rows) = stmt.query_map(rusqlite::params![group], |row| row.get(0))
             {
                 for r in rows.flatten() {

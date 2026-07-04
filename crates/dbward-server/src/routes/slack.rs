@@ -1412,10 +1412,12 @@ async fn handle_onboarding_action(
                 // Link slack_user_id + update status
                 {
                     let conn = state.db_conn().lock();
-                    let _ = conn.execute(
+                    if let Err(e) = conn.execute(
                         "UPDATE users SET slack_user_id = ?1 WHERE id = ?2",
                         dbward_infra::rusqlite::params![target_slack_id, user_id],
-                    );
+                    ) {
+                        tracing::error!(error = %e, "onboarding: failed to link slack_user_id");
+                    }
                     let affected = conn.execute(
                         "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2 WHERE id = ?3 AND status = 'pending'",
                         dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), request_id],
@@ -1666,10 +1668,12 @@ async fn handle_modify_approval_submission(
         Ok(output) => {
             let (approved_roles, approved_groups) = {
                 let conn = state.db_conn().lock();
-                let _ = conn.execute(
+                if let Err(e) = conn.execute(
                     "UPDATE users SET slack_user_id = ?1 WHERE id = ?2",
                     dbward_infra::rusqlite::params![target_slack_id, user_id],
-                );
+                ) {
+                    tracing::error!(error = %e, "onboarding modify: failed to link slack_user_id");
+                }
                 let ar = serde_json::to_string(&roles).unwrap_or_default();
                 let ag = serde_json::to_string(&groups).unwrap_or_default();
                 let affected = conn.execute(

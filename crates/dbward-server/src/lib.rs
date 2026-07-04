@@ -800,8 +800,16 @@ pub async fn run_from_args(
                                 }
                                 // Admin absence guard: reject reload if it would leave zero admins
                                 let direct_admin_count = reload_state.user_repo().count_admins().unwrap_or(0);
-                                let group_grants_admin = new_group_roles.values().any(|roles| roles.contains(&"admin".to_string()));
-                                if direct_admin_count == 0 && !group_grants_admin {
+                                let group_has_active_admin_member = new_group_roles.iter().any(|(group_name, roles)| {
+                                    roles.contains(&"admin".to_string())
+                                        && reload_state.group_repo().list_members(group_name)
+                                            .unwrap_or_default()
+                                            .iter()
+                                            .any(|uid| {
+                                                !reload_state.user_repo().is_suspended(uid).unwrap_or(true)
+                                            })
+                                });
+                                if direct_admin_count == 0 && !group_has_active_admin_member {
                                     tracing::warn!("config reload rejected: would leave zero admin users");
                                 } else {
                                     resolver.update_group_roles(new_group_roles);
