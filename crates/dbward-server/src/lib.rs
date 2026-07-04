@@ -814,18 +814,18 @@ pub async fn run_from_args(
                                 } else {
                                     resolver.update_group_roles(new_group_roles);
                                     tracing::info!("config reload: DbRoleResolver group_roles updated + cache cleared");
+                                    // Only update reloadable config when admin guard passes
+                                    let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = match reload_state.db_role_resolver.clone() {
+                                        Some(r) => r,
+                                        None => reload_state.reloadable.load().role_resolver.clone(),
+                                    };
+                                    let new_r = state::ReloadableConfig {
+                                        role_resolver,
+                                        default_approval_ttl_secs: Some(new_cfg.retention.approval_ttl_secs),
+                                    };
+                                    reload_state.reloadable.store(Arc::new(new_r));
                                 }
                             }
-                            // ReloadableConfig stores the same DbRoleResolver Arc; update approval TTL only
-                            let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = match reload_state.db_role_resolver.clone() {
-                                Some(r) => r,
-                                None => reload_state.reloadable.load().role_resolver.clone(),
-                            };
-                            let new_r = state::ReloadableConfig {
-                                role_resolver,
-                                default_approval_ttl_secs: Some(new_cfg.retention.approval_ttl_secs),
-                            };
-                            reload_state.reloadable.store(Arc::new(new_r));
                             tracing::info!("config reloaded successfully");
                         }
                     }

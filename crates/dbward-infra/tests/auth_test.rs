@@ -407,7 +407,8 @@ fn count_active_excludes_suspended() {
     repo.ensure_exists("carol").unwrap();
     repo.suspend("bob", Utc::now()).unwrap();
 
-    assert_eq!(repo.count_active().unwrap(), 2);
+    // count_active counts all non-deleted users (lifecycle_state='active'), including suspended
+    assert_eq!(repo.count_active().unwrap(), 3);
     let ids = repo.list_active_ids().unwrap();
     assert_eq!(ids.len(), 2);
     assert!(ids.contains(&"alice".to_string()));

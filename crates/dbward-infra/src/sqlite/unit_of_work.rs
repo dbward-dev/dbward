@@ -743,6 +743,51 @@ impl UserWriterOps for SqliteTxScope<'_> {
             .map_err(db_err("tx: add_group_member"))?;
         Ok(())
     }
+
+    fn set_roles_tx(&self, user_id: &str, roles: &[String]) -> Result<(), AppError> {
+        let roles_json = serde_json::to_string(roles).unwrap_or_else(|_| "[]".into());
+        self.conn
+            .execute(
+                "UPDATE users SET roles_json = ?1, updated_at = ?2 WHERE id = ?3",
+                params![roles_json, chrono::Utc::now().to_rfc3339(), user_id],
+            )
+            .map_err(db_err("tx: set_roles"))?;
+        Ok(())
+    }
+
+    fn remove_member_tx(&self, group_name: &str, user_id: &str) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "DELETE FROM group_members WHERE group_name = ?1 AND user_id = ?2",
+                params![group_name, user_id],
+            )
+            .map_err(db_err("tx: remove_member"))?;
+        Ok(())
+    }
+
+    fn soft_delete_tx(
+        &self,
+        user_id: &str,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "UPDATE users SET lifecycle_state = 'deleted', status = 'suspended', updated_at = ?1 WHERE id = ?2",
+                params![now.to_rfc3339(), user_id],
+            )
+            .map_err(db_err("tx: soft_delete"))?;
+        Ok(())
+    }
+
+    fn remove_all_memberships_tx(&self, user_id: &str) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "DELETE FROM group_members WHERE user_id = ?1",
+                params![user_id],
+            )
+            .map_err(db_err("tx: remove_all_memberships"))?;
+        Ok(())
+    }
 }
 
 impl dbward_app::ports::ResultWriterOps for SqliteTxScope<'_> {

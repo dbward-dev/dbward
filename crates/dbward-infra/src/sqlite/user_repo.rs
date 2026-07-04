@@ -260,7 +260,7 @@ impl UserRepo for SqliteUserRepo {
         let conn = self.conn.lock();
         let count: u32 = conn
             .query_row(
-                "SELECT COUNT(*) FROM users WHERE status = 'active'",
+                "SELECT COUNT(*) FROM users WHERE lifecycle_state = 'active'",
                 [],
                 |row| row.get(0),
             )

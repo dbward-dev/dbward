@@ -1034,7 +1034,13 @@ async fn handle_join_command(state: &AppState, trigger_id: &str, slack_user_id: 
 
     // Check if user already exists
     let user_repo = state.user_repo();
-    if let Ok(Some(_)) = user_repo.find_by_slack_user_id(slack_user_id) {
+    if let Ok(Some(existing_id)) = user_repo.find_by_slack_user_id(slack_user_id) {
+        if user_repo.is_deleted(&existing_id).unwrap_or(false) {
+            return ephemeral_response("❌ Your account has been deleted. Contact an admin to create a new account.");
+        }
+        if user_repo.is_suspended(&existing_id).unwrap_or(false) {
+            return ephemeral_response("⚠️ Your account is suspended. Contact an admin to reactivate it.");
+        }
         return ephemeral_response("✅ You already have a dbward account.");
     }
 
@@ -1388,6 +1394,22 @@ async fn handle_onboarding_action(
     }
 
     if action_id == "dbward_onboarding_approve" {
+        // Claim the pending row FIRST to prevent race conditions
+        let claimed = {
+            let conn = state.db_conn().lock();
+            let affected = conn.execute(
+                "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2 WHERE id = ?3 AND status = 'pending'",
+                dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), request_id],
+            ).unwrap_or(0);
+            affected > 0
+        };
+        if !claimed {
+            if let Some(ref sc) = state.slack_client {
+                let _ = sc.post_ephemeral(&channel_id, &approver_slack_id, "⚠️ Request already processed.").await;
+            }
+            return;
+        }
+
         // Create user via UserManage
         let user_id = if display_name.is_empty() {
             format!("slack-{target_slack_id}")
@@ -1409,7 +1431,7 @@ async fn handle_onboarding_action(
 
         match result {
             Ok(output) => {
-                // Link slack_user_id + update status
+                // Link slack_user_id
                 {
                     let conn = state.db_conn().lock();
                     if let Err(e) = conn.execute(
@@ -1417,13 +1439,6 @@ async fn handle_onboarding_action(
                         dbward_infra::rusqlite::params![target_slack_id, user_id],
                     ) {
                         tracing::error!(error = %e, "onboarding: failed to link slack_user_id");
-                    }
-                    let affected = conn.execute(
-                        "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2 WHERE id = ?3 AND status = 'pending'",
-                        dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), request_id],
-                    ).unwrap_or(0);
-                    if affected == 0 {
-                        return; // Already processed (concurrent approval)
                     }
                 }
 
@@ -1519,13 +1534,14 @@ fn build_modify_approval_modal(
     initial_roles: &[String],
     initial_groups: &[String],
 ) -> serde_json::Value {
-    let (assignable_roles, assignable_groups) = match onboarding_cfg {
-        Some(cfg) => (cfg.assignable_roles.clone(), cfg.assignable_groups.clone()),
-        None => (vec![], vec![]),
+    let (assignable_roles, assignable_groups, restricted_roles) = match onboarding_cfg {
+        Some(cfg) => (cfg.assignable_roles.clone(), cfg.assignable_groups.clone(), cfg.restricted_roles.clone()),
+        None => (vec![], vec![], vec![]),
     };
 
     let role_options: Vec<serde_json::Value> = assignable_roles
         .iter()
+        .filter(|r| !restricted_roles.contains(r))
         .map(|r| serde_json::json!({"text": {"type": "plain_text", "text": r}, "value": r}))
         .collect();
     let group_options: Vec<serde_json::Value> = assignable_groups
@@ -1644,6 +1660,19 @@ async fn handle_modify_approval_submission(
         None => return StatusCode::OK.into_response(),
     };
 
+    // Claim the pending row FIRST to prevent race conditions
+    let now = chrono::Utc::now();
+    {
+        let conn = state.db_conn().lock();
+        let affected = conn.execute(
+            "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2 WHERE id = ?3 AND status = 'pending'",
+            dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), request_id],
+        ).unwrap_or(0);
+        if affected == 0 {
+            return axum::Json(serde_json::json!({"response_action": "clear"})).into_response();
+        }
+    }
+
     // Create user with modified roles/groups
     let user_id = if display_name.is_empty() {
         format!("slack-{target_slack_id}")
@@ -1663,9 +1692,9 @@ async fn handle_modify_approval_submission(
         &dbward_domain::entities::AuditContext::System,
     );
 
-    let now = chrono::Utc::now();
     match result {
         Ok(output) => {
+            // Link slack_user_id
             let (approved_roles, approved_groups) = {
                 let conn = state.db_conn().lock();
                 if let Err(e) = conn.execute(
@@ -1676,13 +1705,6 @@ async fn handle_modify_approval_submission(
                 }
                 let ar = serde_json::to_string(&roles).unwrap_or_default();
                 let ag = serde_json::to_string(&groups).unwrap_or_default();
-                let affected = conn.execute(
-                    "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2 WHERE id = ?3 AND status = 'pending'",
-                    dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), request_id],
-                ).unwrap_or(0);
-                if affected == 0 {
-                    return axum::Json(serde_json::json!({"response_action": "clear"})).into_response();
-                }
                 (ar, ag)
             };
 

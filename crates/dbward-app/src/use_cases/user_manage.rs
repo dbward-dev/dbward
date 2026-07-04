@@ -131,23 +131,8 @@ impl UserManage {
             updated_at: now,
         };
 
-        // Add group memberships (before resolve, so resolve sees them)
-        for group in &input.groups {
-            self.group_repo.add_member(group, &input.id, now)?;
-        }
-
-        // Resolve effective roles (direct + group-derived)
-        let mut effective_roles = input.roles.clone();
-        let resolved = self.role_resolver.resolve(
-            &input.id,
-            dbward_domain::auth::SubjectType::User,
-            &[],
-        ).map_err(|e| AppError::Internal(format!("resolve: {e}")))?;
-        for r in &resolved {
-            if !effective_roles.contains(&r.name) {
-                effective_roles.push(r.name.clone());
-            }
-        }
+        // Token ceiling = direct roles only. Group-derived roles are resolved at auth time.
+        let effective_roles = input.roles.clone();
 
         let ceiling = dbward_domain::entities::ScopeCeiling {
             roles: effective_roles.clone(),
@@ -325,34 +310,47 @@ impl UserManage {
             }
         }
 
-        // All validation passed — commit role changes
-        self.user_repo.set_roles(&input.user_id, &current_roles)?;
-
-        // Apply group changes
-        for group in &input.add_groups {
-            self.group_repo.add_member(group, &input.user_id, now)?;
-            let audit = dbward_domain::entities::AuditEvent::simple(
-                "group.member_added", "identity", &user.subject_id, Some(&input.user_id), now, ctx,
-            );
-            let _ = self.audit_logger.record(&audit);
-        }
-        for group in &input.rm_groups {
-            // Last-admin-via-group guard: if this group grants admin and user is last admin holder
-            let group_grants_admin = self
-                .role_resolver
+        // Last-admin-via-group guard for rm_groups
+        if !input.rm_groups.is_empty() {
+            let user_has_admin = self.role_resolver
                 .resolve(&input.user_id, dbward_domain::auth::SubjectType::User, &[])
                 .map(|roles| roles.iter().any(|r| r.name == "admin"))
                 .unwrap_or(false);
-            if group_grants_admin {
-                let admin_count = self.user_repo.count_admins()?;
-                let subjects_with_admin = self.role_resolver.subjects_for_role("admin");
-                if admin_count + subjects_with_admin.len() as u32 <= 1 {
+            if user_has_admin {
+                let mut subjects_with_admin = self.role_resolver.subjects_for_role("admin");
+                subjects_with_admin.retain(|s| s != &input.user_id);
+                if subjects_with_admin.is_empty() {
                     return Err(AppError::Validation(
                         "cannot remove user from group: would leave zero admins".into(),
                     ));
                 }
             }
-            self.group_repo.remove_member(group, &input.user_id)?;
+        }
+
+        // All validation passed — commit all changes atomically
+        let user_id_clone = input.user_id.clone();
+        let current_roles_clone = current_roles.clone();
+        let add_groups_clone = input.add_groups.clone();
+        let rm_groups_clone = input.rm_groups.clone();
+        self.uow.execute(Box::new(move |tx| {
+            tx.set_roles_tx(&user_id_clone, &current_roles_clone)?;
+            for group in &add_groups_clone {
+                tx.add_group_member_tx(group, &user_id_clone, now)?;
+            }
+            for group in &rm_groups_clone {
+                tx.remove_member_tx(group, &user_id_clone)?;
+            }
+            Ok(())
+        }))?;
+
+        // Audit events (after successful commit)
+        for _group in &input.add_groups {
+            let audit = dbward_domain::entities::AuditEvent::simple(
+                "group.member_added", "identity", &user.subject_id, Some(&input.user_id), now, ctx,
+            );
+            let _ = self.audit_logger.record(&audit);
+        }
+        for _group in &input.rm_groups {
             let audit = dbward_domain::entities::AuditEvent::simple(
                 "group.member_removed", "identity", &user.subject_id, Some(&input.user_id), now, ctx,
             );
@@ -391,10 +389,9 @@ impl UserManage {
             .map(|roles| roles.iter().any(|r| r.name == "admin"))
             .unwrap_or(false);
         if has_admin {
-            let admin_count = self.user_repo.count_admins()?;
-            let subjects_with_admin = self.role_resolver.subjects_for_role("admin");
-            let total = admin_count.max(subjects_with_admin.len() as u32);
-            if total <= 1 {
+            let mut subjects_with_admin = self.role_resolver.subjects_for_role("admin");
+            subjects_with_admin.retain(|s| s != user_id);
+            if subjects_with_admin.is_empty() {
                 return Err(AppError::Validation(
                     "cannot delete the last admin".into(),
                 ));
@@ -402,15 +399,20 @@ impl UserManage {
         }
 
         let now = self.clock.now();
-        self.user_repo.soft_delete(user_id, now)?;
-        self.group_repo.remove_all_memberships(user_id)?;
-        // Revoke all tokens
-        self.token_repo.revoke_all_for_user(user_id, now)?;
-
-        let audit = dbward_domain::entities::AuditEvent::simple(
-            "user.deleted", "identity", &user.subject_id, Some(user_id), now, ctx,
+        let uid = user_id.to_string();
+        let actor_id = user.subject_id.clone();
+        let audit_event = dbward_domain::entities::AuditEvent::simple(
+            "user.deleted", "identity", &actor_id, Some(user_id), now, ctx,
         );
-        let _ = self.audit_logger.record(&audit);
+        crate::ports::uow_execute(&*self.uow, move |tx| {
+            tx.soft_delete_tx(&uid, now)?;
+            tx.remove_all_memberships_tx(&uid)?;
+            tx.revoke_all_for_user(&uid, now)?;
+            tx.cancel_all_for_user(&uid, &actor_id, Some("user deleted"), now)?;
+            tx.record(&audit_event)?;
+            Ok(())
+        })?;
+
         self.role_resolver.invalidate_cache(user_id);
         Ok(())
     }
@@ -438,13 +440,14 @@ impl UserManage {
             .get(&input.user_id)?
             .ok_or_else(|| AppError::NotFound("user not found".into()))?;
 
-        // Last admin guard: cannot suspend the last admin
-        let roles = self.user_repo.get_roles(&input.user_id)?;
-        if roles.contains(&"admin".to_string()) {
-            let admin_count = self.user_repo.count_admins()?;
+        // Last admin guard: cannot suspend the last admin (includes group-derived admin)
+        let has_admin = self.role_resolver
+            .resolve(&input.user_id, dbward_domain::auth::SubjectType::User, &[])
+            .map(|roles| roles.iter().any(|r| r.name == "admin"))
+            .unwrap_or(false);
+        if has_admin {
             let subjects_with_admin = self.role_resolver.subjects_for_role("admin");
-            let unique_admins: std::collections::HashSet<&str> = subjects_with_admin.iter().map(|s| s.as_str()).collect();
-            let total = admin_count.max(unique_admins.len() as u32);
+            let total = subjects_with_admin.len() as u32;
             if total <= 1 {
                 return Err(AppError::Validation(
                     "cannot suspend the last admin".into(),

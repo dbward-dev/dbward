@@ -147,6 +147,26 @@ pub trait UserWriterOps {
     ) -> Result<(), AppError> {
         Ok(())
     }
+    /// Set roles in transaction.
+    fn set_roles_tx(&self, _user_id: &str, _roles: &[String]) -> Result<(), AppError> {
+        Ok(())
+    }
+    /// Remove group membership in transaction.
+    fn remove_member_tx(&self, _group_name: &str, _user_id: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+    /// Soft-delete a user in transaction.
+    fn soft_delete_tx(
+        &self,
+        _user_id: &str,
+        _now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+    /// Remove all group memberships for a user in transaction.
+    fn remove_all_memberships_tx(&self, _user_id: &str) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 /// Operations available on execution results within a transaction.
