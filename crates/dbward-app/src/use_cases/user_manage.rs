@@ -253,7 +253,7 @@ impl UserManage {
             .authorize_global(user, Permission::UserWrite)
             .map_err(AppError::Forbidden)?;
 
-        let existing = self
+        let _existing = self
             .user_repo
             .get(&input.user_id)?
             .ok_or_else(|| AppError::NotFound("user not found".into()))?;
@@ -288,12 +288,19 @@ impl UserManage {
             }
         }
 
-        // Last admin guard
-        if existing.roles.contains(&"admin".to_string())
-            && !current_roles.contains(&"admin".to_string())
-        {
-            let admin_count = self.user_repo.count_admins()?;
-            if admin_count <= 1 {
+        // Last admin guard: check if this update would leave zero admins
+        // Only relevant when user currently has admin and would lose it
+        let user_currently_admin = self.role_resolver
+            .resolve(&input.user_id, dbward_domain::auth::SubjectType::User, &[])
+            .map(|roles| roles.iter().any(|r| r.name == "admin"))
+            .unwrap_or(false);
+        let user_will_have_admin_direct = current_roles.contains(&"admin".to_string());
+        if user_currently_admin && !user_will_have_admin_direct {
+            // User might lose admin (unless they keep it via a remaining group).
+            // Check if other admins exist (excluding this user).
+            let mut other_admins = self.role_resolver.subjects_for_role("admin");
+            other_admins.retain(|s| s != &input.user_id);
+            if other_admins.is_empty() {
                 return Err(AppError::Validation(
                     "cannot remove admin role from the last admin".into(),
                 ));
@@ -310,16 +317,14 @@ impl UserManage {
             }
         }
 
-        // Last-admin-via-group guard for rm_groups
-        if !input.rm_groups.is_empty() {
-            let user_has_admin = self.role_resolver
-                .resolve(&input.user_id, dbward_domain::auth::SubjectType::User, &[])
-                .map(|roles| roles.iter().any(|r| r.name == "admin"))
-                .unwrap_or(false);
-            if user_has_admin {
-                let mut subjects_with_admin = self.role_resolver.subjects_for_role("admin");
-                subjects_with_admin.retain(|s| s != &input.user_id);
-                if subjects_with_admin.is_empty() {
+        // Last-admin-via-group guard for rm_groups: only when removing a group
+        // would cause this user to lose admin AND they are the last admin
+        if !input.rm_groups.is_empty() && user_currently_admin {
+            // After rm_groups, will user still have admin via direct roles or remaining groups?
+            if !user_will_have_admin_direct {
+                let mut other_admins = self.role_resolver.subjects_for_role("admin");
+                other_admins.retain(|s| s != &input.user_id);
+                if other_admins.is_empty() {
                     return Err(AppError::Validation(
                         "cannot remove user from group: would leave zero admins".into(),
                     ));
@@ -384,6 +389,7 @@ impl UserManage {
         }
 
         // Last admin guard (includes group-derived admin)
+        // NOTE: Same TOCTOU caveat as suspend() — see comment there.
         let has_admin = self.role_resolver
             .resolve(user_id, dbward_domain::auth::SubjectType::User, &[])
             .map(|roles| roles.iter().any(|r| r.name == "admin"))
@@ -441,6 +447,10 @@ impl UserManage {
             .ok_or_else(|| AppError::NotFound("user not found".into()))?;
 
         // Last admin guard: cannot suspend the last admin (includes group-derived admin)
+        // NOTE: This check runs outside the UoW. SQLite IMMEDIATE transactions serialize
+        // writes, but two concurrent suspends could both pass this guard before either enters
+        // the tx. For v0.1 single-server with ≤50 users this is acceptable — the worst case
+        // (zero admins) is recoverable via DBWARD_EMERGENCY_BOOTSTRAP=true.
         let has_admin = self.role_resolver
             .resolve(&input.user_id, dbward_domain::auth::SubjectType::User, &[])
             .map(|roles| roles.iter().any(|r| r.name == "admin"))

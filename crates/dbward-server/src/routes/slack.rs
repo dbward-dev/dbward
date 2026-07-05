@@ -1477,6 +1477,14 @@ async fn handle_onboarding_action(
             }
             Err(e) => {
                 tracing::error!(error = %e, "onboarding: user creation failed");
+                // Roll back claim: revert request to pending so it can be retried
+                {
+                    let conn = state.db_conn().lock();
+                    let _ = conn.execute(
+                        "UPDATE onboarding_requests SET status = 'pending', decided_by = NULL, decided_at = NULL WHERE id = ?1",
+                        dbward_infra::rusqlite::params![request_id],
+                    );
+                }
                 if let Some(ref sc) = state.slack_client {
                     let _ = sc
                         .post_ephemeral(
@@ -1727,6 +1735,12 @@ async fn handle_modify_approval_submission(
         }
         Err(e) => {
             tracing::error!(error = %e, "onboarding modify: user creation failed");
+            // Roll back claim: revert request to pending so it can be retried
+            let conn = state.db_conn().lock();
+            let _ = conn.execute(
+                "UPDATE onboarding_requests SET status = 'pending', decided_by = NULL, decided_at = NULL WHERE id = ?1",
+                dbward_infra::rusqlite::params![request_id],
+            );
         }
     }
 

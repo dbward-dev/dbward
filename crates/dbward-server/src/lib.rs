@@ -824,9 +824,9 @@ pub async fn run_from_args(
                                         default_approval_ttl_secs: Some(new_cfg.retention.approval_ttl_secs),
                                     };
                                     reload_state.reloadable.store(Arc::new(new_r));
+                                    tracing::info!("config reloaded successfully");
                                 }
                             }
-                            tracing::info!("config reloaded successfully");
                         }
                     }
                     Err(e) => tracing::warn!("config reload failed (sync): {e}"),
