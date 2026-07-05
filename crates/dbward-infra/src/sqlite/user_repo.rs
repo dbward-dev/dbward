@@ -90,13 +90,13 @@ impl UserRepo for SqliteUserRepo {
 
     fn suspend(&self, user_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let conn = self.conn.lock();
-        let n = conn.execute("UPDATE users SET status = 'suspended', updated_at = ?1 WHERE id = ?2 AND status != 'suspended'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(db_err("user: suspend"))?;
+        let n = conn.execute("UPDATE users SET status = 'suspended', updated_at = ?1 WHERE id = ?2 AND status != 'suspended' AND lifecycle_state = 'active'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(db_err("user: suspend"))?;
         Ok(n > 0)
     }
 
     fn activate(&self, user_id: &str, now: DateTime<Utc>) -> Result<bool, AppError> {
         let conn = self.conn.lock();
-        let n = conn.execute("UPDATE users SET status = 'active', updated_at = ?1 WHERE id = ?2 AND status != 'active'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(db_err("user: activate"))?;
+        let n = conn.execute("UPDATE users SET status = 'active', updated_at = ?1 WHERE id = ?2 AND status != 'active' AND lifecycle_state = 'active'", rusqlite::params![now.to_rfc3339(), user_id]).map_err(db_err("user: activate"))?;
         Ok(n > 0)
     }
 
@@ -271,7 +271,7 @@ impl UserRepo for SqliteUserRepo {
     fn list_active_ids(&self) -> Result<Vec<String>, AppError> {
         let conn = self.conn.lock();
         let mut stmt = conn
-            .prepare("SELECT id FROM users WHERE status = 'active'")
+            .prepare("SELECT id FROM users WHERE lifecycle_state = 'active'")
             .map_err(db_err("user: list_active_ids"))?;
         let rows = stmt
             .query_map([], |row| row.get(0))

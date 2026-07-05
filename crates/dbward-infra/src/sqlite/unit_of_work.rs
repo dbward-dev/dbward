@@ -659,7 +659,7 @@ impl UserWriterOps for SqliteTxScope<'_> {
         let n = self
             .conn
             .execute(
-                "UPDATE users SET status = 'suspended', updated_at = ?1 WHERE id = ?2 AND status = 'active'",
+                "UPDATE users SET status = 'suspended', updated_at = ?1 WHERE id = ?2 AND status = 'active' AND lifecycle_state = 'active'",
                 params![now.to_rfc3339(), user_id],
             )
             .map_err(db_err("tx: suspend_user"))?;
@@ -670,7 +670,7 @@ impl UserWriterOps for SqliteTxScope<'_> {
         let n = self
             .conn
             .execute(
-                "UPDATE users SET status = 'active', updated_at = ?1 WHERE id = ?2 AND status = 'suspended'",
+                "UPDATE users SET status = 'active', updated_at = ?1 WHERE id = ?2 AND status = 'suspended' AND lifecycle_state = 'active'",
                 params![now.to_rfc3339(), user_id],
             )
             .map_err(db_err("tx: activate_user"))?;

@@ -236,6 +236,10 @@ impl UserManage {
             .get(user_id)?
             .ok_or_else(|| AppError::NotFound("user not found".into()))?;
 
+        if self.user_repo.is_deleted(user_id)? {
+            return Err(AppError::Gone("user has been deleted".into()));
+        }
+
         let groups = self.group_repo.list_groups_for_user(user_id)?;
         let roles = self.user_repo.get_roles(user_id)?;
 
