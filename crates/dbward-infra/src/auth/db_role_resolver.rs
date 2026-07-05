@@ -212,7 +212,7 @@ impl RoleResolver for DbRoleResolver {
                 .roles
                 .get("agent-default")
                 .cloned()
-                .expect("agent-default must exist")]);
+                .ok_or_else(|| AuthError::Internal("agent-default role not found".into()))?]);
         }
 
         // Check cache (TTL-based lazy eviction)

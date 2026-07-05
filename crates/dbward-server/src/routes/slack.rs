@@ -1480,10 +1480,12 @@ async fn handle_onboarding_action(
                 // Roll back claim: revert request to pending so it can be retried
                 {
                     let conn = state.db_conn().lock();
-                    let _ = conn.execute(
+                    if let Err(e) = conn.execute(
                         "UPDATE onboarding_requests SET status = 'pending', decided_by = NULL, decided_at = NULL WHERE id = ?1",
                         dbward_infra::rusqlite::params![request_id],
-                    );
+                    ) {
+                        tracing::warn!(error = %e, "onboarding: failed to rollback request to pending");
+                    }
                 }
                 if let Some(ref sc) = state.slack_client {
                     let _ = sc
@@ -1737,10 +1739,12 @@ async fn handle_modify_approval_submission(
             tracing::error!(error = %e, "onboarding modify: user creation failed");
             // Roll back claim: revert request to pending so it can be retried
             let conn = state.db_conn().lock();
-            let _ = conn.execute(
+            if let Err(e) = conn.execute(
                 "UPDATE onboarding_requests SET status = 'pending', decided_by = NULL, decided_at = NULL WHERE id = ?1",
                 dbward_infra::rusqlite::params![request_id],
-            );
+            ) {
+                tracing::warn!(error = %e, "onboarding modify: failed to rollback request to pending");
+            }
         }
     }
 

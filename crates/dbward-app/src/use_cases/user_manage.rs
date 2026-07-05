@@ -140,6 +140,9 @@ impl UserManage {
 
         let token_id = self.id_gen.generate();
         let raw_token = self.token_gen.generate_token_value();
+        if raw_token.len() < 8 {
+            return Err(AppError::Internal("token generator produced value shorter than 8 chars".into()));
+        }
         let prefix = raw_token[..8].to_string();
         let hash = {
             use sha2::{Digest, Sha256};
@@ -293,7 +296,7 @@ impl UserManage {
         let user_currently_admin = self.role_resolver
             .resolve(&input.user_id, dbward_domain::auth::SubjectType::User, &[])
             .map(|roles| roles.iter().any(|r| r.name == "admin"))
-            .unwrap_or(false);
+            .unwrap_or(true); // fail-close: assume admin if resolve fails
         let user_will_have_admin_direct = current_roles.contains(&"admin".to_string());
         if user_currently_admin && !user_will_have_admin_direct {
             // User might lose admin (unless they keep it via a remaining group).
@@ -393,7 +396,7 @@ impl UserManage {
         let has_admin = self.role_resolver
             .resolve(user_id, dbward_domain::auth::SubjectType::User, &[])
             .map(|roles| roles.iter().any(|r| r.name == "admin"))
-            .unwrap_or(false);
+            .unwrap_or(true); // fail-close: assume admin if resolve fails
         if has_admin {
             let mut subjects_with_admin = self.role_resolver.subjects_for_role("admin");
             subjects_with_admin.retain(|s| s != user_id);
@@ -454,7 +457,7 @@ impl UserManage {
         let has_admin = self.role_resolver
             .resolve(&input.user_id, dbward_domain::auth::SubjectType::User, &[])
             .map(|roles| roles.iter().any(|r| r.name == "admin"))
-            .unwrap_or(false);
+            .unwrap_or(true); // fail-close: assume admin if resolve fails
         if has_admin {
             let subjects_with_admin = self.role_resolver.subjects_for_role("admin");
             let total = subjects_with_admin.len() as u32;
