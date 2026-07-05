@@ -140,10 +140,10 @@ impl UserManage {
 
         let token_id = self.id_gen.generate();
         let raw_token = self.token_gen.generate_token_value();
-        if raw_token.len() < 8 {
-            return Err(AppError::Internal("token generator produced value shorter than 8 chars".into()));
+        if raw_token.len() < 12 {
+            return Err(AppError::Internal("token generator produced value shorter than 12 chars".into()));
         }
-        let prefix = raw_token[..8].to_string();
+        let prefix = raw_token[4..12].to_string();
         let hash = {
             use sha2::{Digest, Sha256};
             hex::encode(Sha256::digest(raw_token.as_bytes()))

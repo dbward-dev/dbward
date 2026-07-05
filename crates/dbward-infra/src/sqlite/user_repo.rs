@@ -63,7 +63,7 @@ impl UserRepo for SqliteUserRepo {
 
     fn list(&self) -> Result<Vec<User>, AppError> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT id, display_name, email, roles_json, status, last_seen_at, created_at, updated_at FROM users ORDER BY created_at DESC").map_err(db_err("user: list"))?;
+        let mut stmt = conn.prepare("SELECT id, display_name, email, roles_json, status, last_seen_at, created_at, updated_at FROM users WHERE lifecycle_state = 'active' ORDER BY created_at DESC").map_err(db_err("user: list"))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok(User {
