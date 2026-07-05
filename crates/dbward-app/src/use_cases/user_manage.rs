@@ -514,6 +514,10 @@ impl UserManage {
             .get(user_id)?
             .ok_or_else(|| AppError::NotFound("user not found".into()))?;
 
+        if self.user_repo.is_deleted(user_id)? {
+            return Err(AppError::Gone("user has been deleted".into()));
+        }
+
         // Only check limit when transitioning from suspended to active
         if existing.status == dbward_domain::entities::UserStatus::Suspended {
             let count = self.user_repo.count_active()?;
