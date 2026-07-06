@@ -146,7 +146,7 @@ fn generate_manifest(server_url: &str, app_name: &str) -> String {
 
 const MANIFEST_TEMPLATE: &str = r##"display_information:
   name: "{app_name}"
-  description: "DB approval workflow — approve/reject from Slack"
+  description: "DB approval workflow — approve/reject and onboard from Slack"
   background_color: "#1E293B"
 features:
   bot_user:
@@ -154,13 +154,14 @@ features:
     always_online: true
   slash_commands:
     - command: /dbward
-      description: "Execute SQL via approval workflow"
-      usage_hint: "execute | help"
+      description: "DB workflow commands (join, execute, help)"
+      usage_hint: "join | execute | help"
       url: "{server_url}/api/slack/commands"
 oauth_config:
   scopes:
     bot:
       - chat:write
+      - im:write
       - channels:join
       - channels:read
       - groups:read
