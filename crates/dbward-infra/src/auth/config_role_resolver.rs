@@ -44,6 +44,7 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
                     Permission::ResultView,
                     Permission::WorkflowRead,
                     Permission::TokenRevokeOwn,
+                    Permission::UserRead,
                 ]
                 .into_iter()
                 .collect(),

@@ -841,7 +841,12 @@ mod tests {
         fn delete_stale(&self, _: &[String]) -> Result<u64, AppError> {
             Ok(0)
         }
-        fn add_member(&self, _: &str, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<(), AppError> {
+        fn add_member(
+            &self,
+            _: &str,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> Result<(), AppError> {
             Ok(())
         }
         fn remove_member(&self, _: &str, _: &str) -> Result<bool, AppError> {

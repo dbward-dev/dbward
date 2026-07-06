@@ -788,6 +788,127 @@ impl UserWriterOps for SqliteTxScope<'_> {
             .map_err(db_err("tx: remove_all_memberships"))?;
         Ok(())
     }
+
+    fn count_active_tx(&self) -> Result<u32, AppError> {
+        let count: u32 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE lifecycle_state = 'active'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| AppError::Internal(format!("count_active_tx: {e}")))?;
+        Ok(count)
+    }
+
+    fn user_exists_tx(&self, user_id: &str) -> Result<bool, AppError> {
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?1)",
+                params![user_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| AppError::Internal(format!("user_exists_tx: {e}")))?;
+        Ok(exists)
+    }
+
+    fn count_admins_tx(&self, admin_groups: &[String]) -> Result<u32, AppError> {
+        if admin_groups.is_empty() {
+            // Only direct admin role holders
+            let count: u32 = self
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM users WHERE lifecycle_state = 'active' AND status = 'active' AND roles_json LIKE '%\"admin\"%'",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(|e| AppError::Internal(format!("count_admins_tx: {e}")))?;
+            return Ok(count);
+        }
+        // UNION direct admin holders with users who are admin via group membership
+        let placeholders: String = admin_groups
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT COUNT(DISTINCT id) FROM (\
+                SELECT id FROM users WHERE lifecycle_state = 'active' AND status = 'active' \
+                    AND EXISTS(SELECT 1 FROM json_each(roles_json) WHERE value = 'admin') \
+                UNION \
+                SELECT gm.user_id AS id FROM group_members gm \
+                    JOIN users u ON u.id = gm.user_id \
+                    WHERE gm.group_name IN ({placeholders}) \
+                    AND u.lifecycle_state = 'active' AND u.status = 'active'\
+            )"
+        );
+        let mut stmt = self.conn.prepare(&sql)
+            .map_err(|e| AppError::Internal(format!("count_admins_tx: {e}")))?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = admin_groups
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let count: u32 = stmt
+            .query_row(params.as_slice(), |r| r.get(0))
+            .map_err(|e| AppError::Internal(format!("count_admins_tx: {e}")))?;
+        Ok(count)
+    }
+
+    fn user_has_admin_tx(&self, user_id: &str, admin_groups: &[String]) -> Result<bool, AppError> {
+        // Check direct admin role
+        let has_direct: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM users WHERE id = ?1 AND roles_json LIKE '%\"admin\"%')",
+                params![user_id],
+                |r| r.get(0),
+            )
+            .map_err(|e| AppError::Internal(format!("user_has_admin_tx: {e}")))?;
+        if has_direct {
+            return Ok(true);
+        }
+        // Check admin via group membership
+        if !admin_groups.is_empty() {
+            let placeholders: String = admin_groups
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 2))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT EXISTS(SELECT 1 FROM group_members WHERE user_id = ?1 AND group_name IN ({placeholders}))"
+            );
+            let mut stmt = self.conn.prepare(&sql)
+                .map_err(|e| AppError::Internal(format!("user_has_admin_tx: {e}")))?;
+            let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(user_id.to_string())];
+            for g in admin_groups {
+                param_values.push(Box::new(g.clone()));
+            }
+            let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|b| b.as_ref()).collect();
+            let has_via_group: bool = stmt
+                .query_row(param_refs.as_slice(), |r| r.get(0))
+                .map_err(|e| AppError::Internal(format!("user_has_admin_tx: {e}")))?;
+            return Ok(has_via_group);
+        }
+        Ok(false)
+    }
+
+    fn set_slack_user_id_tx(
+        &self,
+        user_id: &str,
+        slack_user_id: &str,
+        source: &str,
+    ) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "UPDATE users SET slack_user_id = ?1, source = ?2 WHERE id = ?3",
+                params![slack_user_id, source, user_id],
+            )
+            .map_err(db_err("tx: set_slack_user_id"))?;
+        Ok(())
+    }
 }
 
 impl dbward_app::ports::ResultWriterOps for SqliteTxScope<'_> {

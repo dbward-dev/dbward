@@ -464,7 +464,10 @@ pub async fn run_from_args(
         {
             for mapping in &oidc.role_mappings {
                 if mapping.claim == "groups" {
-                    group_roles.entry(mapping.value.clone()).or_default().push(mapping.role.clone());
+                    group_roles
+                        .entry(mapping.value.clone())
+                        .or_default()
+                        .push(mapping.role.clone());
                 }
             }
         }
@@ -785,7 +788,8 @@ pub async fn run_from_args(
                         } else {
                             // V25: Update DbRoleResolver's group_roles from new config
                             if let Some(ref resolver) = reload_state.db_role_resolver {
-                                let mut new_group_roles: HashMap<String, Vec<String>> = HashMap::new();
+                                let mut new_group_roles: HashMap<String, Vec<String>> =
+                                    HashMap::new();
                                 for gc in &new_cfg.auth.groups {
                                     new_group_roles.insert(gc.name.clone(), gc.roles.clone());
                                 }
@@ -794,34 +798,53 @@ pub async fn run_from_args(
                                 {
                                     for mapping in &oidc.role_mappings {
                                         if mapping.claim == "groups" {
-                                            new_group_roles.entry(mapping.value.clone()).or_default().push(mapping.role.clone());
+                                            new_group_roles
+                                                .entry(mapping.value.clone())
+                                                .or_default()
+                                                .push(mapping.role.clone());
                                         }
                                     }
                                 }
                                 // Admin absence guard: reject reload if it would leave zero admins
-                                let direct_admin_count = reload_state.user_repo().count_admins().unwrap_or(0);
-                                let group_has_active_admin_member = new_group_roles.iter().any(|(group_name, roles)| {
-                                    roles.contains(&"admin".to_string())
-                                        && reload_state.group_repo().list_members(group_name)
-                                            .unwrap_or_default()
-                                            .iter()
-                                            .any(|uid| {
-                                                !reload_state.user_repo().is_suspended(uid).unwrap_or(true)
-                                            })
-                                });
+                                let direct_admin_count =
+                                    reload_state.user_repo().count_admins().unwrap_or(0);
+                                let group_has_active_admin_member =
+                                    new_group_roles.iter().any(|(group_name, roles)| {
+                                        roles.contains(&"admin".to_string())
+                                            && reload_state
+                                                .group_repo()
+                                                .list_members(group_name)
+                                                .unwrap_or_default()
+                                                .iter()
+                                                .any(|uid| {
+                                                    !reload_state
+                                                        .user_repo()
+                                                        .is_suspended(uid)
+                                                        .unwrap_or(true)
+                                                })
+                                    });
                                 if direct_admin_count == 0 && !group_has_active_admin_member {
-                                    tracing::warn!("config reload rejected: would leave zero admin users");
+                                    tracing::warn!(
+                                        "config reload rejected: would leave zero admin users"
+                                    );
                                 } else {
                                     resolver.update_group_roles(new_group_roles);
-                                    tracing::info!("config reload: DbRoleResolver group_roles updated + cache cleared");
+                                    tracing::info!(
+                                        "config reload: DbRoleResolver group_roles updated + cache cleared"
+                                    );
                                     // Only update reloadable config when admin guard passes
-                                    let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> = match reload_state.db_role_resolver.clone() {
-                                        Some(r) => r,
-                                        None => reload_state.reloadable.load().role_resolver.clone(),
-                                    };
+                                    let role_resolver: Arc<dyn dbward_app::ports::RoleResolver> =
+                                        match reload_state.db_role_resolver.clone() {
+                                            Some(r) => r,
+                                            None => {
+                                                reload_state.reloadable.load().role_resolver.clone()
+                                            }
+                                        };
                                     let new_r = state::ReloadableConfig {
                                         role_resolver,
-                                        default_approval_ttl_secs: Some(new_cfg.retention.approval_ttl_secs),
+                                        default_approval_ttl_secs: Some(
+                                            new_cfg.retention.approval_ttl_secs,
+                                        ),
                                     };
                                     reload_state.reloadable.store(Arc::new(new_r));
                                     tracing::info!("config reloaded successfully");

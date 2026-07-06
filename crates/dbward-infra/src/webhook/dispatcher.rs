@@ -111,10 +111,10 @@ impl Notifier for WebhookDispatcher {
             if !hook.events.is_empty()
                 && !hook.events.contains(&event.event_type)
                 && !hook.events.contains(&"*".to_string())
-                && !hook.events.iter().any(|e| {
-                    e.ends_with(".*")
-                        && event.event_type.starts_with(&e[..e.len() - 1])
-                })
+                && !hook
+                    .events
+                    .iter()
+                    .any(|e| e.ends_with(".*") && event.event_type.starts_with(&e[..e.len() - 1]))
             {
                 continue;
             }

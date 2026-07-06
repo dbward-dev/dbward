@@ -523,7 +523,7 @@ pub fn initialize(conn: &Connection) -> Result<(), rusqlite::Error> {
                 channel TEXT NOT NULL,
                 message_ts TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );"
+            );",
         )?;
         conn.execute_batch(MIGRATION_V10)?;
         conn.execute_batch(MIGRATION_V11)?;

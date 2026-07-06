@@ -469,10 +469,7 @@ impl ServerClient {
     }
 
     pub async fn delete(&self, path: &str) -> Result<Value, CliError> {
-        self.api
-            .delete(path)
-            .await
-            .map_err(|e| api_to_cli(e, path))
+        self.api.delete(path).await.map_err(|e| api_to_cli(e, path))
     }
 
     pub async fn create_token(&self, body: &Value) -> Result<Value, CliError> {

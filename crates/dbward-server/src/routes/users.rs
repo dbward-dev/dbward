@@ -26,24 +26,46 @@ pub async fn create(
     let id = body
         .get("id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| map_error(dbward_app::error::AppError::Validation("id is required".into())))?
+        .ok_or_else(|| {
+            map_error(dbward_app::error::AppError::Validation(
+                "id is required".into(),
+            ))
+        })?
         .to_string();
 
     let roles: Vec<String> = body
         .get("roles")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let groups: Vec<String> = body
         .get("groups")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let uc = state.users().manage();
     let output = uc
-        .add(UserAddInput { id, roles, groups }, &user, &ctx)
+        .add(
+            UserAddInput {
+                id,
+                roles,
+                groups,
+                slack_user_id: None,
+                source: None,
+            },
+            &user,
+            &ctx,
+        )
         .map_err(map_error)?;
 
     Ok((
@@ -92,7 +114,10 @@ pub async fn delete(
     );
     let uc = state.users().manage();
     uc.remove(&id, &user, &ctx).map_err(map_error)?;
-    Ok((StatusCode::OK, Json(serde_json::json!({ "id": id, "deleted": true }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({ "id": id, "deleted": true })),
+    ))
 }
 
 pub async fn update_roles_groups(
@@ -109,32 +134,56 @@ pub async fn update_roles_groups(
     );
 
     let set_roles = body.get("roles").and_then(|v| v.as_array()).map(|arr| {
-        arr.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+        arr.iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect()
     });
     let add_roles: Vec<String> = body
         .get("add_roles")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let rm_roles: Vec<String> = body
         .get("rm_roles")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let add_groups: Vec<String> = body
         .get("add_groups")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
     let rm_groups: Vec<String> = body
         .get("rm_groups")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
-    if set_roles.is_none() && add_roles.is_empty() && rm_roles.is_empty() && add_groups.is_empty() && rm_groups.is_empty() {
+    if set_roles.is_none()
+        && add_roles.is_empty()
+        && rm_roles.is_empty()
+        && add_groups.is_empty()
+        && rm_groups.is_empty()
+    {
         return Err(map_error(dbward_app::error::AppError::Validation(
-            "no updateable fields provided (use roles, add_roles, rm_roles, add_groups, rm_groups)".into(),
+            "no updateable fields provided (use roles, add_roles, rm_roles, add_groups, rm_groups)"
+                .into(),
         )));
     }
 
@@ -153,7 +202,10 @@ pub async fn update_roles_groups(
     )
     .map_err(map_error)?;
 
-    Ok((StatusCode::OK, Json(serde_json::json!({ "id": id, "updated": true }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({ "id": id, "updated": true })),
+    ))
 }
 
 pub async fn me(Extension(user): Extension<AuthUser>) -> (StatusCode, Json<serde_json::Value>) {

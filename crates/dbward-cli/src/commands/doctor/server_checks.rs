@@ -519,12 +519,7 @@ fn check_active_tokens(ctx: &mut DoctorContext, cfg: &dbward_config::ServerConfi
         }
 
         // V25: roles are resolved from DB at runtime. Skip static resolution check.
-        let resolved_roles: Vec<String> = cfg
-            .auth
-            .default_role
-            .iter()
-            .cloned()
-            .collect();
+        let resolved_roles: Vec<String> = cfg.auth.default_role.iter().cloned().collect();
 
         // Check: subject has no default_role configured → may rely on DB roles
         if subject_type == "user" && resolved_roles.is_empty() {

@@ -17,14 +17,14 @@ pub use repos::{
     ConfigGenerationRepo, ContextRepo, DatabaseRegistry, DryRunJobRecord, DryRunRepo,
     ExecutionTokenClaims, GroupRepo, LicenseChecker, NoopConfigGenerationRepo, PolicyRepo,
     PreflightJob, PreflightJobRepo, PutOptions, RequestContextRecord, RequestReader, RequestWriter,
-    ResultChannel, ResultStore, ResultStream, SchemaRepo,
-    SchemaSnapshotRecord, ServerMetaRepo, SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner,
-    UserRepo, VerifyFailureReason, WebhookDeliveryRepo, WebhookRepo,
+    ResultChannel, ResultStore, ResultStream, SchemaRepo, SchemaSnapshotRecord, ServerMetaRepo,
+    SsrfValidator, StoredResultEntry, TokenRepo, TokenSigner, UserRepo, VerifyFailureReason,
+    WebhookDeliveryRepo, WebhookRepo,
 };
 pub use services::{Notifier, WebhookEvent, WebhookSender};
 pub use sync_scope::{
-    SyncConfigGenerationOps, SyncDatabaseOps, SyncGroupOps, SyncPolicyOps,
-    SyncScope, SyncTokenOps, SyncUserOps, SyncWebhookOps,
+    SyncConfigGenerationOps, SyncDatabaseOps, SyncGroupOps, SyncPolicyOps, SyncScope, SyncTokenOps,
+    SyncUserOps, SyncWebhookOps,
 };
 pub use transaction::{
     ApprovalWriterOps, AuditWriterOps, ExecutionWriterOps, RequestWriterOps, ResultWriterOps,

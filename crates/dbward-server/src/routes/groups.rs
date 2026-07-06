@@ -14,7 +14,10 @@ pub async fn list(
     Extension(_user): Extension<AuthUser>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<serde_json::Value>)> {
     let groups = state.group_repo().list_names().map_err(map_error)?;
-    Ok((StatusCode::OK, Json(serde_json::json!({ "groups": groups }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({ "groups": groups })),
+    ))
 }
 
 pub async fn show(

@@ -4,7 +4,6 @@ use std::time::Instant;
 
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
-use parking_lot::Mutex;
 use rusqlite::Connection;
 
 use dbward_app::error::AuthError;
@@ -21,10 +20,20 @@ struct CachedEntry {
     cached_at: Instant,
 }
 
+#[derive(Debug)]
+struct BusyTimeoutCustomizer;
+
+impl r2d2::CustomizeConnection<Connection, rusqlite::Error> for BusyTimeoutCustomizer {
+    fn on_acquire(&self, conn: &mut Connection) -> Result<(), rusqlite::Error> {
+        conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+        Ok(())
+    }
+}
+
 /// DB-backed role resolver with per-subject DashMap cache.
 /// Replaces ConfigRoleResolver — reads roles from users.roles_json + group_members.
 pub struct DbRoleResolver {
-    conn: Mutex<Connection>,
+    pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
     cache: DashMap<String, CachedEntry>,
     /// Config-defined group→roles mapping. Swapped atomically on config reload.
     group_roles: ArcSwap<HashMap<String, Vec<String>>>,
@@ -41,12 +50,14 @@ impl DbRoleResolver {
         role_definitions: Vec<dbward_domain::auth::RoleDefinition>,
         default_role: Option<String>,
         policy_repo: Option<Arc<dyn dbward_app::ports::PolicyRepo>>,
-    ) -> Result<Self, rusqlite::Error> {
-        let conn = Connection::open_with_flags(
-            db_path,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let manager = r2d2_sqlite::SqliteConnectionManager::file(db_path).with_flags(
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+        );
+        let pool = r2d2::Pool::builder()
+            .max_size(4)
+            .connection_customizer(Box::new(BusyTimeoutCustomizer))
+            .build(manager)?;
 
         let mut roles = HashMap::new();
         for (name, resolved) in builtin_roles() {
@@ -63,7 +74,7 @@ impl DbRoleResolver {
         }
 
         Ok(Self {
-            conn: Mutex::new(conn),
+            pool,
             cache: DashMap::new(),
             group_roles: ArcSwap::new(Arc::new(group_roles)),
             roles,
@@ -73,18 +84,41 @@ impl DbRoleResolver {
     }
 
     /// For testing: create from an existing connection (in-memory DB).
+    /// The provided connection is used to initialize a shared in-memory pool via backup.
     #[cfg(test)]
     pub fn from_connection(
         conn: Connection,
         group_roles: HashMap<String, Vec<String>>,
         default_role: Option<String>,
     ) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        // Each test gets a unique shared in-memory DB so they don't interfere
+        let uri = format!("file:test_resolver_{id}?mode=memory&cache=shared");
+
+        let manager = r2d2_sqlite::SqliteConnectionManager::file(&uri);
+        let pool = r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("failed to build test pool");
+
+        // Copy schema and data from the provided connection into the pool's DB
+        {
+            let mut pooled = pool.get().expect("failed to get pooled conn");
+            let backup =
+                rusqlite::backup::Backup::new(&conn, &mut pooled).expect("failed to init backup");
+            backup
+                .run_to_completion(100, std::time::Duration::ZERO, None)
+                .expect("failed to run backup");
+        }
+
         let mut roles = HashMap::new();
         for (name, resolved) in builtin_roles() {
             roles.insert(name, resolved);
         }
         Self {
-            conn: Mutex::new(conn),
+            pool,
             cache: DashMap::new(),
             group_roles: ArcSwap::new(Arc::new(group_roles)),
             roles,
@@ -114,7 +148,10 @@ impl DbRoleResolver {
         subject_id: &str,
         oidc_groups: &[String],
     ) -> Result<(Vec<String>, Vec<String>), AuthError> {
-        let conn = self.conn.lock();
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| AuthError::Internal(format!("pool: {e}")))?;
 
         // 1. Get direct roles from users.roles_json
         let direct_roles: Vec<String> = conn
@@ -208,11 +245,9 @@ impl RoleResolver for DbRoleResolver {
     ) -> Result<Vec<ResolvedRole>, AuthError> {
         // Agents always get agent-default only
         if subject_type == SubjectType::Agent {
-            return Ok(vec![self
-                .roles
-                .get("agent-default")
-                .cloned()
-                .ok_or_else(|| AuthError::Internal("agent-default role not found".into()))?]);
+            return Ok(vec![self.roles.get("agent-default").cloned().ok_or_else(
+                || AuthError::Internal("agent-default role not found".into()),
+            )?]);
         }
 
         // Check cache (TTL-based lazy eviction)
@@ -254,13 +289,16 @@ impl RoleResolver for DbRoleResolver {
     }
 
     fn subjects_for_role(&self, role: &str) -> Vec<String> {
-        let conn = self.conn.lock();
+        let conn = match self.pool.get() {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
         let mut subjects: HashSet<String> = HashSet::new();
 
         // Direct role holders
         if let Ok(mut stmt) =
-            conn.prepare("SELECT id FROM users WHERE roles_json LIKE ?1 AND lifecycle_state = 'active' AND status = 'active'")
-            && let Ok(rows) = stmt.query_map(rusqlite::params![format!("%\"{role}\"%")], |row| row.get(0))
+            conn.prepare("SELECT DISTINCT u.id FROM users u, json_each(u.roles_json) je WHERE je.value = ?1 AND u.lifecycle_state = 'active' AND u.status = 'active'")
+            && let Ok(rows) = stmt.query_map(rusqlite::params![role], |row| row.get(0))
         {
             for r in rows.flatten() {
                 subjects.insert(r);
@@ -288,7 +326,10 @@ impl RoleResolver for DbRoleResolver {
         if let Some(role) = selector.strip_prefix("role:") {
             self.subjects_for_role(role)
         } else if let Some(group) = selector.strip_prefix("group:") {
-            let conn = self.conn.lock();
+            let conn = match self.pool.get() {
+                Ok(c) => c,
+                Err(_) => return Vec::new(),
+            };
             let mut result = Vec::new();
             if let Ok(mut stmt) =
                 conn.prepare("SELECT user_id FROM group_members WHERE group_name = ?1")
@@ -321,6 +362,15 @@ impl RoleResolver for DbRoleResolver {
             .cloned()
             .unwrap_or_default()
     }
+
+    fn groups_granting_role(&self, role: &str) -> Vec<String> {
+        self.group_roles
+            .load()
+            .iter()
+            .filter(|(_, roles)| roles.contains(&role.to_string()))
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
 }
 
 fn builtin_roles() -> Vec<(String, ResolvedRole)> {
@@ -349,6 +399,7 @@ fn builtin_roles() -> Vec<(String, ResolvedRole)> {
                     Permission::ResultView,
                     Permission::WorkflowRead,
                     Permission::TokenRevokeOwn,
+                    Permission::UserRead,
                 ]
                 .into_iter()
                 .collect(),
@@ -437,7 +488,8 @@ mod tests {
         insert_group(&conn, "backend-team");
         add_member(&conn, "backend-team", "bob");
 
-        let group_roles = HashMap::from([("backend-team".to_string(), vec!["developer".to_string()])]);
+        let group_roles =
+            HashMap::from([("backend-team".to_string(), vec!["developer".to_string()])]);
         let resolver = DbRoleResolver::from_connection(conn, group_roles, None);
         let roles = resolver.resolve("bob", SubjectType::User, &[]).unwrap();
         assert_eq!(roles.len(), 1);

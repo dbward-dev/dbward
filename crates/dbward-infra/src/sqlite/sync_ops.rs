@@ -231,11 +231,13 @@ impl SyncGroupOps for SqliteTxScope<'_> {
     fn create_group(&self, name: &str, members: &[String], source: &str) -> Result<(), AppError> {
         // V25: groups table is name-only. members/source are ignored (legacy trait sig).
         let now = Utc::now().to_rfc3339();
-        self.conn.execute(
-            "INSERT INTO groups (name, created_at) VALUES (?1, ?2) \
+        self.conn
+            .execute(
+                "INSERT INTO groups (name, created_at) VALUES (?1, ?2) \
              ON CONFLICT(name) DO NOTHING",
-            params![name, now],
-        ).map_err(db_err("sync: create_group"))?;
+                params![name, now],
+            )
+            .map_err(db_err("sync: create_group"))?;
         let _ = (members, source); // suppress unused warnings
         Ok(())
     }
@@ -252,8 +254,7 @@ impl SyncGroupOps for SqliteTxScope<'_> {
             .map(|i| format!("?{i}"))
             .collect::<Vec<_>>()
             .join(",");
-        let sql =
-            format!("DELETE FROM groups WHERE name NOT IN ({placeholders})");
+        let sql = format!("DELETE FROM groups WHERE name NOT IN ({placeholders})");
         let params: Vec<&dyn rusqlite::types::ToSql> = active_names
             .iter()
             .map(|s| s as &dyn rusqlite::types::ToSql)

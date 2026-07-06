@@ -30,6 +30,8 @@ pub struct UserAddInput {
     pub id: String,
     pub roles: Vec<String>,
     pub groups: Vec<String>,
+    pub slack_user_id: Option<String>,
+    pub source: Option<String>,
 }
 
 pub struct UserAddOutput {
@@ -80,19 +82,20 @@ impl UserManage {
             return Err(AppError::Validation("user id is required".into()));
         }
 
-        // Check for existing (including soft-deleted)
-        if let Some(existing) = self.user_repo.get(&input.id)? {
-            let _ = existing;
-            return Err(AppError::Conflict(format!(
-                "user '{}' already exists",
-                input.id
-            )));
+        // Validate user ID format: max 128 chars, alphanumeric + -_@. only
+        if input.id.len() > 128 {
+            return Err(AppError::Validation(
+                "user id must be 128 characters or fewer".into(),
+            ));
         }
-
-        // Plan limit
-        let count = self.user_repo.count_active()?;
-        if count >= self.license.max_users() {
-            return Err(AppError::PlanLimit("user limit reached".into()));
+        if !input
+            .id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '@' || c == '.')
+        {
+            return Err(AppError::Validation(
+                "user id may only contain ASCII alphanumeric characters, hyphens, underscores, @ and dots".into(),
+            ));
         }
 
         // Validate roles exist
@@ -100,7 +103,11 @@ impl UserManage {
         let known_names: std::collections::HashSet<&str> = known_roles
             .iter()
             .map(|r| r.name.as_str())
-            .chain(["admin", "developer", "readonly", "agent-default"].iter().copied())
+            .chain(
+                ["admin", "developer", "readonly", "agent-default"]
+                    .iter()
+                    .copied(),
+            )
             .collect();
         for role in &input.roles {
             if !known_names.contains(role.as_str()) {
@@ -148,7 +155,9 @@ impl UserManage {
         let token_id = self.id_gen.generate();
         let raw_token = self.token_gen.generate_token_value();
         if raw_token.len() < 12 {
-            return Err(AppError::Internal("token generator produced value shorter than 12 chars".into()));
+            return Err(AppError::Internal(
+                "token generator produced value shorter than 12 chars".into(),
+            ));
         }
         let prefix = raw_token[4..12].to_string();
         let hash = {
@@ -175,8 +184,26 @@ impl UserManage {
         let token_clone = token.clone();
         let groups_clone = input.groups.clone();
         let id_clone = input.id.clone();
+        let max_users = self.license.max_users();
+        let slack_user_id_clone = input.slack_user_id.clone();
+        let source_clone = input.source.clone();
         self.uow.execute(Box::new(move |tx| {
+            // Existence check inside tx to prevent TOCTOU
+            if tx.user_exists_tx(&id_clone)? {
+                return Err(AppError::Conflict(format!(
+                    "user '{}' already exists",
+                    id_clone
+                )));
+            }
+            // Plan limit inside tx
+            let count = tx.count_active_tx()?;
+            if count >= max_users {
+                return Err(AppError::PlanLimit("user limit reached".into()));
+            }
             tx.upsert_user_tx(&user_clone)?;
+            if let (Some(slack_id), Some(source)) = (&slack_user_id_clone, &source_clone) {
+                tx.set_slack_user_id_tx(&id_clone, slack_id, source)?;
+            }
             for group in &groups_clone {
                 tx.add_group_member_tx(group, &id_clone, now)?;
             }
@@ -187,7 +214,12 @@ impl UserManage {
         // Audit (group membership)
         for _group in &input.groups {
             let audit = dbward_domain::entities::AuditEvent::simple(
-                "group.member_added", "identity", &user.subject_id, Some(&input.id), now, _ctx,
+                "group.member_added",
+                "identity",
+                &user.subject_id,
+                Some(&input.id),
+                now,
+                _ctx,
             );
             let _ = self.audit_logger.record(&audit);
         }
@@ -235,7 +267,7 @@ impl UserManage {
 
     pub fn show(&self, user_id: &str, user: &AuthUser) -> Result<UserShowOutput, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::UserWrite)
+            .authorize_global(user, Permission::UserRead)
             .map_err(AppError::Forbidden)?;
 
         let existing = self
@@ -294,7 +326,11 @@ impl UserManage {
         let known_names: std::collections::HashSet<&str> = known_roles
             .iter()
             .map(|r| r.name.as_str())
-            .chain(["admin", "developer", "readonly", "agent-default"].iter().copied())
+            .chain(
+                ["admin", "developer", "readonly", "agent-default"]
+                    .iter()
+                    .copied(),
+            )
             .collect();
         for role in &current_roles {
             if !known_names.contains(role.as_str()) {
@@ -302,24 +338,13 @@ impl UserManage {
             }
         }
 
-        // Last admin guard: check if this update would leave zero admins
-        // Only relevant when user currently has admin and would lose it
-        let user_currently_admin = self.role_resolver
+        // Last admin guard: compute state needed for the in-tx check
+        let user_currently_admin = self
+            .role_resolver
             .resolve(&input.user_id, dbward_domain::auth::SubjectType::User, &[])
             .map(|roles| roles.iter().any(|r| r.name == "admin"))
             .unwrap_or(true); // fail-close: assume admin if resolve fails
         let user_will_have_admin_direct = current_roles.contains(&"admin".to_string());
-        if user_currently_admin && !user_will_have_admin_direct {
-            // User might lose admin (unless they keep it via a remaining group).
-            // Check if other admins exist (excluding this user).
-            let mut other_admins = self.role_resolver.subjects_for_role("admin");
-            other_admins.retain(|s| s != &input.user_id);
-            if other_admins.is_empty() {
-                return Err(AppError::Validation(
-                    "cannot remove admin role from the last admin".into(),
-                ));
-            }
-        }
 
         // Validate groups before committing any changes
         let now = self.clock.now();
@@ -331,27 +356,22 @@ impl UserManage {
             }
         }
 
-        // Last-admin-via-group guard for rm_groups: only when removing a group
-        // would cause this user to lose admin AND they are the last admin
-        if !input.rm_groups.is_empty() && user_currently_admin {
-            // After rm_groups, will user still have admin via direct roles or remaining groups?
-            if !user_will_have_admin_direct {
-                let mut other_admins = self.role_resolver.subjects_for_role("admin");
-                other_admins.retain(|s| s != &input.user_id);
-                if other_admins.is_empty() {
-                    return Err(AppError::Validation(
-                        "cannot remove user from group: would leave zero admins".into(),
-                    ));
-                }
-            }
-        }
-
         // All validation passed — commit all changes atomically
+        let admin_groups = self.role_resolver.groups_granting_role("admin");
         let user_id_clone = input.user_id.clone();
         let current_roles_clone = current_roles.clone();
         let add_groups_clone = input.add_groups.clone();
         let rm_groups_clone = input.rm_groups.clone();
         self.uow.execute(Box::new(move |tx| {
+            // Last admin guard inside tx to prevent TOCTOU
+            if user_currently_admin && !user_will_have_admin_direct {
+                let admin_count = tx.count_admins_tx(&admin_groups)?;
+                if admin_count <= 1 {
+                    return Err(AppError::Validation(
+                        "cannot remove admin role from the last admin".into(),
+                    ));
+                }
+            }
             tx.set_roles_tx(&user_id_clone, &current_roles_clone)?;
             for group in &add_groups_clone {
                 tx.add_group_member_tx(group, &user_id_clone, now)?;
@@ -365,19 +385,34 @@ impl UserManage {
         // Audit events (after successful commit)
         for _group in &input.add_groups {
             let audit = dbward_domain::entities::AuditEvent::simple(
-                "group.member_added", "identity", &user.subject_id, Some(&input.user_id), now, ctx,
+                "group.member_added",
+                "identity",
+                &user.subject_id,
+                Some(&input.user_id),
+                now,
+                ctx,
             );
             let _ = self.audit_logger.record(&audit);
         }
         for _group in &input.rm_groups {
             let audit = dbward_domain::entities::AuditEvent::simple(
-                "group.member_removed", "identity", &user.subject_id, Some(&input.user_id), now, ctx,
+                "group.member_removed",
+                "identity",
+                &user.subject_id,
+                Some(&input.user_id),
+                now,
+                ctx,
             );
             let _ = self.audit_logger.record(&audit);
         }
 
         let audit = dbward_domain::entities::AuditEvent::simple(
-            "user.updated", "identity", &user.subject_id, Some(&input.user_id), self.clock.now(), ctx,
+            "user.updated",
+            "identity",
+            &user.subject_id,
+            Some(&input.user_id),
+            self.clock.now(),
+            ctx,
         );
         let _ = self.audit_logger.record(&audit);
         self.role_resolver.invalidate_cache(&input.user_id);
@@ -402,29 +437,27 @@ impl UserManage {
             return Err(AppError::Gone("user already deleted".into()));
         }
 
-        // Last admin guard (includes group-derived admin)
-        // NOTE: Same TOCTOU caveat as suspend() — see comment there.
-        let has_admin = self.role_resolver
-            .resolve(user_id, dbward_domain::auth::SubjectType::User, &[])
-            .map(|roles| roles.iter().any(|r| r.name == "admin"))
-            .unwrap_or(true); // fail-close: assume admin if resolve fails
-        if has_admin {
-            let mut subjects_with_admin = self.role_resolver.subjects_for_role("admin");
-            subjects_with_admin.retain(|s| s != user_id);
-            if subjects_with_admin.is_empty() {
-                return Err(AppError::Validation(
-                    "cannot delete the last admin".into(),
-                ));
-            }
-        }
-
+        // Last admin guard is checked inside tx to prevent TOCTOU race.
+        let admin_groups = self.role_resolver.groups_granting_role("admin");
         let now = self.clock.now();
         let uid = user_id.to_string();
         let actor_id = user.subject_id.clone();
         let audit_event = dbward_domain::entities::AuditEvent::simple(
-            "user.deleted", "identity", &actor_id, Some(user_id), now, ctx,
+            "user.deleted",
+            "identity",
+            &actor_id,
+            Some(user_id),
+            now,
+            ctx,
         );
         crate::ports::uow_execute(&*self.uow, move |tx| {
+            // Last admin guard inside tx
+            if tx.user_has_admin_tx(&uid, &admin_groups)? {
+                let admin_count = tx.count_admins_tx(&admin_groups)?;
+                if admin_count <= 1 {
+                    return Err(AppError::Validation("cannot delete the last admin".into()));
+                }
+            }
             tx.soft_delete_tx(&uid, now)?;
             tx.remove_all_memberships_tx(&uid)?;
             tx.revoke_all_for_user(&uid, now)?;
@@ -439,7 +472,7 @@ impl UserManage {
 
     pub fn list(&self, user: &AuthUser) -> Result<UserListOutput, AppError> {
         self.authorizer
-            .authorize_global(user, Permission::UserWrite)
+            .authorize_global(user, Permission::UserRead)
             .map_err(AppError::Forbidden)?;
         let users = self.user_repo.list()?;
         Ok(UserListOutput { users })
@@ -460,28 +493,11 @@ impl UserManage {
             .get(&input.user_id)?
             .ok_or_else(|| AppError::NotFound("user not found".into()))?;
 
-        // Last admin guard: cannot suspend the last admin (includes group-derived admin)
-        // NOTE: This check runs outside the UoW. SQLite IMMEDIATE transactions serialize
-        // writes, but two concurrent suspends could both pass this guard before either enters
-        // the tx. For v0.1 single-server with ≤50 users this is acceptable — the worst case
-        // (zero admins) is recoverable via DBWARD_EMERGENCY_BOOTSTRAP=true.
-        let has_admin = self.role_resolver
-            .resolve(&input.user_id, dbward_domain::auth::SubjectType::User, &[])
-            .map(|roles| roles.iter().any(|r| r.name == "admin"))
-            .unwrap_or(true); // fail-close: assume admin if resolve fails
-        if has_admin {
-            let subjects_with_admin = self.role_resolver.subjects_for_role("admin");
-            let total = subjects_with_admin.len() as u32;
-            if total <= 1 {
-                return Err(AppError::Validation(
-                    "cannot suspend the last admin".into(),
-                ));
-            }
-        }
-
         let now = self.clock.now();
 
         // Atomic: suspend + revoke tokens + cancel requests + audit
+        // Last admin guard is checked inside tx to prevent TOCTOU race.
+        let admin_groups = self.role_resolver.groups_granting_role("admin");
         let user_id = input.user_id.clone();
         let actor_id = user.subject_id.clone();
         let audit_event = dbward_domain::entities::AuditEvent::simple(
@@ -493,6 +509,13 @@ impl UserManage {
             ctx,
         );
         let result = crate::ports::uow_execute(&*self.uow, move |tx| {
+            // Last admin guard inside tx
+            if tx.user_has_admin_tx(&user_id, &admin_groups)? {
+                let admin_count = tx.count_admins_tx(&admin_groups)?;
+                if admin_count <= 1 {
+                    return Err(AppError::Validation("cannot suspend the last admin".into()));
+                }
+            }
             tx.suspend_user(&user_id, now)?;
             let revoked = tx.revoke_all_for_user(&user_id, now)?;
             let cancelled =
@@ -619,61 +642,178 @@ mod tests {
 
     struct FakeGroupRepo;
     impl crate::ports::GroupRepo for FakeGroupRepo {
-        fn upsert(&self, _: &str) -> Result<(), AppError> { Ok(()) }
-        fn list_names(&self) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-        fn exists(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
-        fn delete_stale(&self, _: &[String]) -> Result<u64, AppError> { Ok(0) }
-        fn add_member(&self, _: &str, _: &str, _: DateTime<Utc>) -> Result<(), AppError> { Ok(()) }
-        fn remove_member(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(false) }
-        fn list_members(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-        fn list_groups_for_user(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-        fn remove_all_memberships(&self, _: &str) -> Result<u64, AppError> { Ok(0) }
+        fn upsert(&self, _: &str) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn list_names(&self) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn exists(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_stale(&self, _: &[String]) -> Result<u64, AppError> {
+            Ok(0)
+        }
+        fn add_member(&self, _: &str, _: &str, _: DateTime<Utc>) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn remove_member(&self, _: &str, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn list_members(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn list_groups_for_user(&self, _: &str) -> Result<Vec<String>, AppError> {
+            Ok(vec![])
+        }
+        fn remove_all_memberships(&self, _: &str) -> Result<u64, AppError> {
+            Ok(0)
+        }
     }
 
     struct FakeRoleResolver;
     impl crate::ports::RoleResolver for FakeRoleResolver {
-        fn resolve(&self, _: &str, _: SubjectType, _: &[String]) -> Result<Vec<ResolvedRole>, crate::error::AuthError> {
+        fn resolve(
+            &self,
+            _: &str,
+            _: SubjectType,
+            _: &[String],
+        ) -> Result<Vec<ResolvedRole>, crate::error::AuthError> {
             Ok(vec![])
         }
     }
 
     struct FakePolicyRepo;
     impl crate::ports::PolicyRepo for FakePolicyRepo {
-        fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
-        fn get_roles_by_names(&self, _: &[String]) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> { Ok(vec![]) }
-        fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> { Ok(()) }
-        fn get_workflow(&self, _: &str) -> Result<Option<dbward_domain::policies::Workflow>, AppError> { Ok(None) }
-        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError> { Ok(vec![]) }
-        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
-        fn count_workflows(&self) -> Result<u32, AppError> { Ok(0) }
-        fn create_execution_policy(&self, _: &dbward_domain::policies::ExecutionPolicy) -> Result<(), AppError> { Ok(()) }
-        fn get_execution_policy(&self, _: &str) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(None) }
-        fn list_execution_policies(&self) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> { Ok(vec![]) }
-        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
-        fn find_result_policy(&self, _: &dbward_domain::values::DatabaseName, _: &dbward_domain::values::Environment) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> { Ok(None) }
-        fn create_result_policy(&self, _: &dbward_domain::policies::ResultPolicy) -> Result<(), AppError> { Ok(()) }
-        fn get_result_policy(&self, _: &str) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> { Ok(None) }
-        fn list_result_policies(&self) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> { Ok(vec![]) }
-        fn update_result_policy(&self, _: &dbward_domain::policies::ResultPolicy) -> Result<bool, AppError> { Ok(false) }
-        fn delete_result_policy(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
-        fn create_notification_policy(&self, _: &dbward_domain::policies::NotificationPolicy) -> Result<(), AppError> { Ok(()) }
-        fn get_notification_policy(&self, _: &str) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError> { Ok(None) }
-        fn list_notification_policies(&self) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> { Ok(vec![]) }
-        fn update_notification_policy(&self, _: &dbward_domain::policies::NotificationPolicy) -> Result<bool, AppError> { Ok(false) }
-        fn delete_notification_policy(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
-        fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> { Ok(()) }
-        fn delete_role(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
-        fn count_roles(&self) -> Result<u32, AppError> { Ok(0) }
+        fn list_roles(&self) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> {
+            Ok(vec![])
+        }
+        fn get_roles_by_names(
+            &self,
+            _: &[String],
+        ) -> Result<Vec<dbward_domain::auth::RoleDefinition>, AppError> {
+            Ok(vec![])
+        }
+        fn create_workflow(&self, _: &dbward_domain::policies::Workflow) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_workflow(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::Workflow>, AppError> {
+            Ok(None)
+        }
+        fn list_workflows(&self) -> Result<Vec<dbward_domain::policies::Workflow>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_workflow(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn count_workflows(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
+        fn create_execution_policy(
+            &self,
+            _: &dbward_domain::policies::ExecutionPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_execution_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::ExecutionPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_execution_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::ExecutionPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn delete_execution_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn find_result_policy(
+            &self,
+            _: &dbward_domain::values::DatabaseName,
+            _: &dbward_domain::values::Environment,
+        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(None)
+        }
+        fn create_result_policy(
+            &self,
+            _: &dbward_domain::policies::ResultPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_result_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_result_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::ResultPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn update_result_policy(
+            &self,
+            _: &dbward_domain::policies::ResultPolicy,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_result_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn create_notification_policy(
+            &self,
+            _: &dbward_domain::policies::NotificationPolicy,
+        ) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn get_notification_policy(
+            &self,
+            _: &str,
+        ) -> Result<Option<dbward_domain::policies::NotificationPolicy>, AppError> {
+            Ok(None)
+        }
+        fn list_notification_policies(
+            &self,
+        ) -> Result<Vec<dbward_domain::policies::NotificationPolicy>, AppError> {
+            Ok(vec![])
+        }
+        fn update_notification_policy(
+            &self,
+            _: &dbward_domain::policies::NotificationPolicy,
+        ) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn delete_notification_policy(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn create_role(&self, _: &dbward_domain::auth::RoleDefinition) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn delete_role(&self, _: &str) -> Result<bool, AppError> {
+            Ok(false)
+        }
+        fn count_roles(&self) -> Result<u32, AppError> {
+            Ok(0)
+        }
     }
 
     struct FakeIdGen;
     impl crate::ports::IdGenerator for FakeIdGen {
-        fn generate(&self) -> String { "test-id-001".to_string() }
+        fn generate(&self) -> String {
+            "test-id-001".to_string()
+        }
     }
 
     struct FakeTokenGen;
     impl crate::ports::TokenValueGenerator for FakeTokenGen {
-        fn generate_token_value(&self) -> String { "dbw_test1234567890abcdef".to_string() }
+        fn generate_token_value(&self) -> String {
+            "dbw_test1234567890abcdef".to_string()
+        }
     }
 
     struct FakeUserRepo {

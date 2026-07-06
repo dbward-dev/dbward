@@ -364,15 +364,38 @@ impl UserRepo for StubUserRepo {
 
 struct StubGroupRepo;
 impl GroupRepo for StubGroupRepo {
-    fn upsert(&self, _: &str) -> Result<(), AppError> { Ok(()) }
-    fn list_names(&self) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-    fn exists(&self, _: &str) -> Result<bool, AppError> { Ok(false) }
-    fn delete_stale(&self, _: &[String]) -> Result<u64, AppError> { Ok(0) }
-    fn add_member(&self, _: &str, _: &str, _: chrono::DateTime<chrono::Utc>) -> Result<(), AppError> { Ok(()) }
-    fn remove_member(&self, _: &str, _: &str) -> Result<bool, AppError> { Ok(false) }
-    fn list_members(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-    fn list_groups_for_user(&self, _: &str) -> Result<Vec<String>, AppError> { Ok(vec![]) }
-    fn remove_all_memberships(&self, _: &str) -> Result<u64, AppError> { Ok(0) }
+    fn upsert(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn list_names(&self) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
+    }
+    fn exists(&self, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn delete_stale(&self, _: &[String]) -> Result<u64, AppError> {
+        Ok(0)
+    }
+    fn add_member(
+        &self,
+        _: &str,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn remove_member(&self, _: &str, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn list_members(&self, _: &str) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
+    }
+    fn list_groups_for_user(&self, _: &str) -> Result<Vec<String>, AppError> {
+        Ok(vec![])
+    }
+    fn remove_all_memberships(&self, _: &str) -> Result<u64, AppError> {
+        Ok(0)
+    }
 }
 
 struct StubTokenRepo;
@@ -761,7 +784,9 @@ fn test_state() -> AppState {
         slack_config: None,
         slack_client: None,
         slack_onboarding: None,
-        db_conn: std::sync::Arc::new(parking_lot::Mutex::new(dbward_infra::rusqlite::Connection::open_in_memory().unwrap())),
+        db_conn: std::sync::Arc::new(parking_lot::Mutex::new(
+            dbward_infra::rusqlite::Connection::open_in_memory().unwrap(),
+        )),
         db_role_resolver: None,
         max_persist_bytes: 10 * 1024 * 1024,
         auth_mode: "both".to_string(),

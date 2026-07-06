@@ -197,10 +197,15 @@ pub fn build_router(state: AppState) -> Router {
         )
         // Users
         .route("/api/me", axum::routing::get(users::me))
-        .route("/api/users", axum::routing::get(users::list).post(users::create))
+        .route(
+            "/api/users",
+            axum::routing::get(users::list).post(users::create),
+        )
         .route(
             "/api/users/{id}",
-            axum::routing::get(users::show).patch(users::update_roles_groups).delete(users::delete),
+            axum::routing::get(users::show)
+                .patch(users::update_roles_groups)
+                .delete(users::delete),
         )
         .route(
             "/api/users/{id}/suspend",

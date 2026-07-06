@@ -336,7 +336,7 @@ impl UserRepo for SqliteUserRepo {
         let conn = self.conn.lock();
         let count: u32 = conn
             .query_row(
-                "SELECT COUNT(*) FROM users WHERE roles_json LIKE '%\"admin\"%' AND lifecycle_state = 'active' AND status = 'active'",
+                "SELECT COUNT(DISTINCT u.id) FROM users u, json_each(u.roles_json) je WHERE je.value = 'admin' AND u.lifecycle_state = 'active' AND u.status = 'active'",
                 [],
                 |row| row.get(0),
             )

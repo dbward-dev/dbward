@@ -125,17 +125,11 @@ pub trait UserWriterOps {
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<bool, AppError>;
     /// Insert or update user in transaction.
-    fn upsert_user_tx(
-        &self,
-        _user: &dbward_domain::entities::User,
-    ) -> Result<(), AppError> {
+    fn upsert_user_tx(&self, _user: &dbward_domain::entities::User) -> Result<(), AppError> {
         Ok(())
     }
     /// Create token in transaction.
-    fn create_token_tx(
-        &self,
-        _token: &dbward_domain::entities::Token,
-    ) -> Result<(), AppError> {
+    fn create_token_tx(&self, _token: &dbward_domain::entities::Token) -> Result<(), AppError> {
         Ok(())
     }
     /// Add group membership in transaction.
@@ -165,6 +159,35 @@ pub trait UserWriterOps {
     }
     /// Remove all group memberships for a user in transaction.
     fn remove_all_memberships_tx(&self, _user_id: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+    /// Count active users within transaction (for atomic plan limit check).
+    fn count_active_tx(&self) -> Result<u32, AppError> {
+        Err(AppError::Internal("not implemented".into()))
+    }
+    /// Check if user exists within transaction.
+    fn user_exists_tx(&self, user_id: &str) -> Result<bool, AppError> {
+        let _ = user_id;
+        Err(AppError::Internal("not implemented".into()))
+    }
+    /// Count users with admin role (for last-admin guard inside tx).
+    /// `admin_groups` is the list of group names whose config grants the admin role.
+    fn count_admins_tx(&self, admin_groups: &[String]) -> Result<u32, AppError> {
+        let _ = admin_groups;
+        Err(AppError::Internal("not implemented".into()))
+    }
+    /// Check if user has admin role in tx (direct or via group membership).
+    fn user_has_admin_tx(&self, user_id: &str, admin_groups: &[String]) -> Result<bool, AppError> {
+        let _ = (user_id, admin_groups);
+        Err(AppError::Internal("not implemented".into()))
+    }
+    /// Set slack_user_id and source on a user within transaction.
+    fn set_slack_user_id_tx(
+        &self,
+        _user_id: &str,
+        _slack_user_id: &str,
+        _source: &str,
+    ) -> Result<(), AppError> {
         Ok(())
     }
 }

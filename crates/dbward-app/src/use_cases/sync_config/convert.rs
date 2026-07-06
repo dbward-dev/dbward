@@ -7,8 +7,7 @@ use dbward_domain::values::{DatabaseName, Environment, Operation, Selector};
 
 use super::{
     ApproverInput, DatabaseInput, ExecutionPolicyInput, GroupInput, NotificationPolicyInput,
-    ResultPolicyInput, RoleInput, WebhookInput, WorkflowInput,
-    WorkflowStepInput,
+    ResultPolicyInput, RoleInput, WebhookInput, WorkflowInput, WorkflowStepInput,
 };
 use crate::error::AppError;
 

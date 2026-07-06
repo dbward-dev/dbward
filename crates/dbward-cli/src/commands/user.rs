@@ -137,10 +137,13 @@ pub async fn run_user(sc: &ServerClient, action: UserAction) -> Result<(), CliEr
             Ok(())
         }
         UserAction::Suspend { id } => {
-            let resp: serde_json::Value =
-                sc.post(&format!("/api/users/{id}/suspend"), &serde_json::json!({}))
-                    .await?;
-            let revoked = resp.get("revoked_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+            let resp: serde_json::Value = sc
+                .post(&format!("/api/users/{id}/suspend"), &serde_json::json!({}))
+                .await?;
+            let revoked = resp
+                .get("revoked_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             eprintln!("User '{id}' suspended. {revoked} token(s) revoked.");
             Ok(())
         }

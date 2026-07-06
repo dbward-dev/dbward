@@ -236,7 +236,11 @@ impl SlackNotifier {
         let reply_text = if mention_suffix.is_empty() {
             block_kit::fallback_text(&event_resolved)
         } else {
-            format!("{} — {}", block_kit::fallback_text(&event_resolved), mention_suffix)
+            format!(
+                "{} — {}",
+                block_kit::fallback_text(&event_resolved),
+                mention_suffix
+            )
         };
         if let Err(e) = self
             .client
