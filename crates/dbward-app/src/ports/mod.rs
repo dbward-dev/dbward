@@ -1,6 +1,7 @@
 mod authorizer;
 mod clock;
 pub mod crypto;
+pub mod onboarding;
 pub mod repos;
 mod services;
 pub mod sync_scope;
@@ -11,6 +12,9 @@ pub use authorizer::{
 };
 pub use clock::{Clock, IdGenerator, TokenValueGenerator};
 pub use crypto::{AuditSigner, AuditVerifier};
+pub use onboarding::{
+    ClaimResult, CreateOnboardingInput, OnboardingRequest, OnboardingRequestRepo,
+};
 pub use repos::{
     AgentRepo, ApprovalRepo, AuditFilter, AuditLogger, AuditRepo, AuditVerifyFailure,
     AuditVerifyResult, BackgroundTaskRepo, BreakGlassMetrics, CompletionOutcome,

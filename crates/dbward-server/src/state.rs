@@ -57,6 +57,7 @@ pub struct AppState {
     agent_repo: Arc<dyn AgentRepo>,
     user_repo: Arc<dyn UserRepo>,
     group_repo: Arc<dyn GroupRepo>,
+    onboarding_repo: Arc<dyn dbward_app::ports::OnboardingRequestRepo>,
     token_repo: Arc<dyn TokenRepo>,
     webhook_repo: Arc<dyn WebhookRepo>,
     policy_repo: Arc<dyn PolicyRepo>,
@@ -577,6 +578,10 @@ impl AppState {
         &self.group_repo
     }
 
+    pub(crate) fn onboarding_repo(&self) -> &Arc<dyn dbward_app::ports::OnboardingRequestRepo> {
+        &self.onboarding_repo
+    }
+
     pub(crate) fn db_conn(&self) -> &dbward_infra::sqlite::DbConn {
         &self.db_conn
     }
@@ -724,6 +729,7 @@ pub struct AppStateBuilder {
     pub agent_repo: Arc<dyn AgentRepo>,
     pub user_repo: Arc<dyn UserRepo>,
     pub group_repo: Arc<dyn GroupRepo>,
+    pub onboarding_repo: Arc<dyn dbward_app::ports::OnboardingRequestRepo>,
     pub token_repo: Arc<dyn TokenRepo>,
     pub webhook_repo: Arc<dyn WebhookRepo>,
     pub policy_repo: Arc<dyn PolicyRepo>,
@@ -791,6 +797,7 @@ impl AppStateBuilder {
             agent_repo: self.agent_repo,
             user_repo: self.user_repo,
             group_repo: self.group_repo,
+            onboarding_repo: self.onboarding_repo,
             token_repo: self.token_repo,
             webhook_repo: self.webhook_repo,
             policy_repo: self.policy_repo,

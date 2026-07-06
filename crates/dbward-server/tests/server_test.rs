@@ -411,6 +411,31 @@ impl GroupRepo for StubGroupRepo {
     }
 }
 
+struct StubOnboardingRepo;
+impl dbward_app::ports::OnboardingRequestRepo for StubOnboardingRepo {
+    fn has_pending(&self, _: &str) -> Result<bool, AppError> {
+        Ok(false)
+    }
+    fn create(&self, _: &dbward_app::ports::CreateOnboardingInput) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn set_message_ts(&self, _: &str, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn get_pending(&self, _: &str) -> Result<Option<dbward_app::ports::OnboardingRequest>, AppError> {
+        Ok(None)
+    }
+    fn claim_approved(&self, _: &str, _: &str, _: chrono::DateTime<chrono::Utc>, _: &[String], _: &[String], _: Option<&str>) -> Result<dbward_app::ports::ClaimResult, AppError> {
+        Ok(dbward_app::ports::ClaimResult { claimed: false })
+    }
+    fn claim_rejected(&self, _: &str, _: &str, _: chrono::DateTime<chrono::Utc>, _: Option<&str>) -> Result<dbward_app::ports::ClaimResult, AppError> {
+        Ok(dbward_app::ports::ClaimResult { claimed: false })
+    }
+    fn rollback_to_pending(&self, _: &str) -> Result<(), AppError> {
+        Ok(())
+    }
+}
+
 struct StubTokenRepo;
 impl TokenRepo for StubTokenRepo {
     fn create(&self, _: &Token) -> Result<(), AppError> {
@@ -759,6 +784,7 @@ fn test_state() -> AppState {
         agent_repo: Arc::new(StubAgentRepo),
         user_repo: Arc::new(StubUserRepo),
         group_repo: Arc::new(StubGroupRepo),
+        onboarding_repo: Arc::new(StubOnboardingRepo),
         token_repo: Arc::new(StubTokenRepo),
         webhook_repo: Arc::new(StubWebhookRepo),
         policy_repo: Arc::new(StubPolicyRepo),

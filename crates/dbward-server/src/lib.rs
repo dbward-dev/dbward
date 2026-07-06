@@ -516,6 +516,7 @@ pub async fn run_from_args(
         agent_repo,
         user_repo,
         group_repo: Arc::new(dbward_infra::sqlite::SqliteGroupRepo::new(conn.clone())),
+        onboarding_repo: Arc::new(dbward_infra::sqlite::SqliteOnboardingRequestRepo::new(conn.clone())),
         token_repo,
         webhook_repo,
         policy_repo,

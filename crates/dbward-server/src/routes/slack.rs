@@ -1029,13 +1029,12 @@ async fn handle_join_command(state: &AppState, trigger_id: &str, slack_user_id: 
     }
 
     // Check if there's a pending onboarding request
-    let has_pending: bool = {
-        let conn = state.db_conn().lock();
-        conn
-            .prepare("SELECT COUNT(*) FROM onboarding_requests WHERE slack_user_id = ?1 AND status = 'pending'")
-            .and_then(|mut s| s.query_row(dbward_infra::rusqlite::params![slack_user_id], |r| r.get::<_, i64>(0)))
-            .unwrap_or(0)
-            > 0
+    let has_pending = match state.onboarding_repo().has_pending(slack_user_id) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "onboarding: failed to check pending status");
+            false
+        }
     };
     if has_pending {
         return ephemeral_response("⏳ You already have a pending onboarding request.");
@@ -1181,26 +1180,18 @@ async fn handle_onboarding_submission(
         .map(|c| c.request_ttl_hours)
         .unwrap_or(72);
     let expires_at = now + chrono::Duration::hours(ttl_hours as i64);
-    let roles_json = serde_json::to_string(&roles).unwrap_or_else(|_| "[]".into());
-    let groups_json = serde_json::to_string(&groups).unwrap_or_else(|_| "[]".into());
-
-    let insert_result = {
-        let conn = state.db_conn().lock();
-        conn.execute(
-            "INSERT INTO onboarding_requests (id, slack_user_id, display_name, requested_roles_json, requested_groups_json, reason, status, created_at, expires_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8)",
-            dbward_infra::rusqlite::params![
-                request_id,
-                slack_user_id,
-                display_name,
-                roles_json,
-                groups_json,
-                reason,
-                now.to_rfc3339(),
-                expires_at.to_rfc3339(),
-            ],
-        )
-    };
+    let insert_result = state.onboarding_repo().create(
+        &dbward_app::ports::CreateOnboardingInput {
+            id: request_id.clone(),
+            slack_user_id: slack_user_id.to_string(),
+            display_name: Some(display_name.clone()),
+            requested_roles: roles.clone(),
+            requested_groups: groups.clone(),
+            reason: if reason.is_empty() { None } else { Some(reason.clone()) },
+            created_at: now,
+            expires_at,
+        },
+    );
     if let Err(e) = insert_result {
         tracing::error!(error = %e, "failed to insert onboarding request");
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -1258,11 +1249,7 @@ async fn handle_onboarding_submission(
             .await
         {
             Ok(ts) => {
-                let conn = state.db_conn().lock();
-                if let Err(e) = conn.execute(
-                    "UPDATE onboarding_requests SET message_ts = ?1 WHERE id = ?2",
-                    dbward_infra::rusqlite::params![ts, request_id],
-                ) {
+                if let Err(e) = state.onboarding_repo().set_message_ts(&request_id, &ts) {
                     tracing::warn!(error = %e, "onboarding: failed to save message_ts");
                 }
             }
@@ -1326,28 +1313,22 @@ async fn handle_onboarding_review_button(
     }
 
     // Load onboarding request
-    let req_data: Option<(String, String, String, String, String)> = {
-        let conn = state.db_conn().lock();
-        conn.prepare(
-            "SELECT slack_user_id, display_name, requested_roles_json, requested_groups_json, reason \
-             FROM onboarding_requests WHERE id = ?1 AND status = 'pending'",
-        )
-        .and_then(|mut s| {
-            s.query_row(dbward_infra::rusqlite::params![request_id], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, Option<String>>(1)?.unwrap_or_default(),
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, Option<String>>(4)?.unwrap_or_default(),
-                ))
-            })
-        })
-        .ok()
+    let req_data = match state.onboarding_repo().get_pending(request_id) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, request_id = %request_id, "onboarding: failed to load request");
+            None
+        }
     };
 
-    let (target_slack_id, display_name, roles_json, groups_json, reason) = match req_data {
-        Some(d) => d,
+    let (target_slack_id, display_name, roles, groups, reason) = match req_data {
+        Some(req) => (
+            req.slack_user_id,
+            req.display_name.unwrap_or_default(),
+            req.requested_roles,
+            req.requested_groups,
+            req.reason.unwrap_or_default(),
+        ),
         None => {
             if let Some(ref sc) = state.slack_client {
                 let _ = sc
@@ -1361,9 +1342,6 @@ async fn handle_onboarding_review_button(
             return;
         }
     };
-
-    let roles: Vec<String> = serde_json::from_str(&roles_json).unwrap_or_default();
-    let groups: Vec<String> = serde_json::from_str(&groups_json).unwrap_or_default();
 
     // Build and open review modal
     let view = build_review_modal(
@@ -1598,21 +1576,16 @@ async fn handle_onboarding_review_submit(
     }
 
     // Load onboarding request
-    let req_data: Option<(String, String, Option<String>)> = {
-        let conn = state.db_conn().lock();
-        conn.prepare("SELECT slack_user_id, display_name, message_ts FROM onboarding_requests WHERE id = ?1 AND status = 'pending'")
-            .and_then(|mut s| s.query_row(dbward_infra::rusqlite::params![request_id], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default(), r.get::<_, Option<String>>(2)?))
-            }))
-            .map_err(|e| {
-                tracing::error!(error = %e, request_id = %request_id, "onboarding: failed to load request");
-                e
-            })
-            .ok()
+    let req_data = match state.onboarding_repo().get_pending(&request_id) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, request_id = %request_id, "onboarding: failed to load request");
+            None
+        }
     };
 
     let (target_slack_id, display_name, message_ts) = match req_data {
-        Some(d) => d,
+        Some(req) => (req.slack_user_id, req.display_name.unwrap_or_default(), req.message_ts),
         None => return StatusCode::OK.into_response(),
     };
 
@@ -1630,19 +1603,19 @@ async fn handle_onboarding_review_submit(
 
     if decision == "approve" {
         // Claim the pending row
-        let roles_record = serde_json::to_string(&roles).unwrap_or_else(|_| "[]".into());
-        let groups_record = serde_json::to_string(&groups).unwrap_or_else(|_| "[]".into());
-        let claimed = {
-            let conn = state.db_conn().lock();
-            let affected = conn.execute(
-                "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2, \
-                 approved_roles_json = ?3, approved_groups_json = ?4, decision_comment = ?5 WHERE id = ?6 AND status = 'pending'",
-                dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), roles_record, groups_record, comment_opt, request_id],
-            ).unwrap_or_else(|e| {
+        let claimed = match state.onboarding_repo().claim_approved(
+            &request_id,
+            &auth_user.subject_id,
+            now,
+            &roles,
+            &groups,
+            comment_opt,
+        ) {
+            Ok(result) => result.claimed,
+            Err(e) => {
                 tracing::error!(error = %e, "onboarding: claim update failed");
-                0
-            });
-            affected > 0
+                false
+            }
         };
         if !claimed {
             return StatusCode::OK.into_response();
@@ -1747,13 +1720,8 @@ async fn handle_onboarding_review_submit(
             Err(e) => {
                 tracing::error!(error = %e, "onboarding: user creation failed");
                 // Rollback
-                {
-                    let conn = state.db_conn().lock();
-                    let _ = conn.execute(
-                        "UPDATE onboarding_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, \
-                         approved_roles_json = NULL, approved_groups_json = NULL, decision_comment = NULL WHERE id = ?1",
-                        dbward_infra::rusqlite::params![request_id],
-                    );
+                if let Err(re) = state.onboarding_repo().rollback_to_pending(&request_id) {
+                    tracing::warn!(error = %re, "onboarding: rollback failed");
                 }
                 // Notify admin
                 if let Some(ref sc) = state.slack_client {
@@ -1767,16 +1735,17 @@ async fn handle_onboarding_review_submit(
         }
     } else {
         // Reject — claim with affected rows check
-        let claimed = {
-            let conn = state.db_conn().lock();
-            let affected = conn.execute(
-                "UPDATE onboarding_requests SET status = 'rejected', decided_by = ?1, decided_at = ?2, decision_comment = ?3 WHERE id = ?4 AND status = 'pending'",
-                dbward_infra::rusqlite::params![auth_user.subject_id, now.to_rfc3339(), comment_opt, request_id],
-            ).unwrap_or_else(|e| {
+        let claimed = match state.onboarding_repo().claim_rejected(
+            &request_id,
+            &auth_user.subject_id,
+            now,
+            comment_opt,
+        ) {
+            Ok(result) => result.claimed,
+            Err(e) => {
                 tracing::error!(error = %e, "onboarding: claim update failed");
-                0
-            });
-            affected > 0
+                false
+            }
         };
         if !claimed {
             return StatusCode::OK.into_response();
