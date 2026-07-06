@@ -1033,7 +1033,8 @@ async fn handle_join_command(state: &AppState, trigger_id: &str, slack_user_id: 
         Ok(v) => v,
         Err(e) => {
             tracing::error!(error = %e, "onboarding: failed to check pending status");
-            false
+            // Fail-closed: reject the request if we can't verify pending status
+            return ephemeral_response("❌ Unable to process your request. Please try again later.");
         }
     };
     if has_pending {
@@ -1193,8 +1194,12 @@ async fn handle_onboarding_submission(
         },
     );
     if let Err(e) = insert_result {
+        let err_msg = e.to_string();
+        if err_msg.contains("UNIQUE") || err_msg.contains("unique") {
+            return ephemeral_response("⏳ You already have a pending onboarding request.");
+        }
         tracing::error!(error = %e, "failed to insert onboarding request");
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        return ephemeral_response("❌ An error occurred. Please try again later.");
     }
 
     // Notify approval channel
