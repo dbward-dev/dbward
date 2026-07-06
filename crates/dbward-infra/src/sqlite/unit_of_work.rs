@@ -921,6 +921,50 @@ impl UserWriterOps for SqliteTxScope<'_> {
             .map_err(db_err("tx: set_slack_user_id"))?;
         Ok(())
     }
+
+    fn claim_onboarding_approved_tx(
+        &self,
+        request_id: &str,
+        decided_by: &str,
+        decided_at: chrono::DateTime<chrono::Utc>,
+        approved_roles: &[String],
+        approved_groups: &[String],
+        decision_comment: Option<&str>,
+    ) -> Result<bool, AppError> {
+        let roles_json = serde_json::to_string(approved_roles)
+            .map_err(|e| AppError::Internal(format!("serialize: {e}")))?;
+        let groups_json = serde_json::to_string(approved_groups)
+            .map_err(|e| AppError::Internal(format!("serialize: {e}")))?;
+        let affected = self
+            .conn
+            .execute(
+                "UPDATE onboarding_requests SET status = 'approved', decided_by = ?1, decided_at = ?2, \
+                 approved_roles_json = ?3, approved_groups_json = ?4, decision_comment = ?5 \
+                 WHERE id = ?6 AND status = 'pending'",
+                params![
+                    decided_by,
+                    decided_at.to_rfc3339(),
+                    roles_json,
+                    groups_json,
+                    decision_comment,
+                    request_id,
+                ],
+            )
+            .map_err(db_err("tx: claim_onboarding_approved"))?;
+        Ok(affected > 0)
+    }
+
+    fn rollback_onboarding_to_pending_tx(&self, request_id: &str) -> Result<(), AppError> {
+        self.conn
+            .execute(
+                "UPDATE onboarding_requests SET status = 'pending', decided_by = NULL, decided_at = NULL, \
+                 approved_roles_json = NULL, approved_groups_json = NULL, decision_comment = NULL \
+                 WHERE id = ?1",
+                params![request_id],
+            )
+            .map_err(db_err("tx: rollback_onboarding_to_pending"))?;
+        Ok(())
+    }
 }
 
 impl dbward_app::ports::ResultWriterOps for SqliteTxScope<'_> {

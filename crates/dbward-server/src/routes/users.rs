@@ -62,6 +62,7 @@ pub async fn create(
                 groups,
                 slack_user_id: None,
                 source: None,
+                onboarding_claim: None,
             },
             &user,
             &ctx,

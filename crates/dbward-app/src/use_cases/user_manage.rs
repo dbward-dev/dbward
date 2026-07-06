@@ -31,6 +31,20 @@ pub struct UserAddInput {
     pub groups: Vec<String>,
     pub slack_user_id: Option<String>,
     pub source: Option<String>,
+    /// If set, atomically claim this onboarding request (pending→approved) in the same
+    /// transaction that creates the user. On tx failure, the claim is also rolled back.
+    pub onboarding_claim: Option<OnboardingClaimInput>,
+}
+
+/// Parameters for atomically claiming an onboarding request during user creation.
+#[derive(Clone, Debug)]
+pub struct OnboardingClaimInput {
+    pub request_id: String,
+    pub decided_by: String,
+    pub decided_at: chrono::DateTime<chrono::Utc>,
+    pub approved_roles: Vec<String>,
+    pub approved_groups: Vec<String>,
+    pub decision_comment: Option<String>,
 }
 
 pub struct UserAddOutput {
@@ -186,9 +200,26 @@ impl UserManage {
         let max_users = self.license.max_users();
         let slack_user_id_clone = input.slack_user_id.clone();
         let source_clone = input.source.clone();
+        let onboarding_claim_clone = input.onboarding_claim.clone();
         let actor_id_clone = user.subject_id.clone();
         let audit_ctx_clone = _ctx.clone();
         self.uow.execute(Box::new(move |tx| {
+            // Onboarding claim FIRST — ensures duplicate approval is detected before any other check
+            if let Some(ref claim) = onboarding_claim_clone {
+                let claimed = tx.claim_onboarding_approved_tx(
+                    &claim.request_id,
+                    &claim.decided_by,
+                    claim.decided_at,
+                    &claim.approved_roles,
+                    &claim.approved_groups,
+                    claim.decision_comment.as_deref(),
+                )?;
+                if !claimed {
+                    return Err(AppError::Conflict(
+                        "onboarding request already processed".into(),
+                    ));
+                }
+            }
             // Existence check inside tx to prevent TOCTOU
             if tx.user_exists_tx(&id_clone)? {
                 return Err(AppError::Conflict(format!(

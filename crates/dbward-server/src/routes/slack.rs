@@ -1602,26 +1602,7 @@ async fn handle_onboarding_review_submit(
     };
 
     if decision == "approve" {
-        // Claim the pending row
-        let claimed = match state.onboarding_repo().claim_approved(
-            &request_id,
-            &auth_user.subject_id,
-            now,
-            &roles,
-            &groups,
-            comment_opt,
-        ) {
-            Ok(result) => result.claimed,
-            Err(e) => {
-                tracing::error!(error = %e, "onboarding: claim update failed");
-                false
-            }
-        };
-        if !claimed {
-            return StatusCode::OK.into_response();
-        }
-
-        // Create user
+        // Create user with atomic onboarding claim (claim + user creation in same tx)
         let user_id = if display_name.is_empty() {
             format!("slack-{target_slack_id}")
         } else {
@@ -1645,6 +1626,14 @@ async fn handle_onboarding_review_submit(
             groups: groups.clone(),
             slack_user_id: Some(target_slack_id.clone()),
             source: Some("slack".to_string()),
+            onboarding_claim: Some(dbward_app::use_cases::user_manage::OnboardingClaimInput {
+                request_id: request_id.to_string(),
+                decided_by: auth_user.subject_id.clone(),
+                decided_at: now,
+                approved_roles: roles.clone(),
+                approved_groups: groups.clone(),
+                decision_comment: comment_opt.map(|s| s.to_string()),
+            }),
         };
 
         let result = state.users().manage().add(
@@ -1717,18 +1706,17 @@ async fn handle_onboarding_review_submit(
                     }
                 }
             }
+            Err(dbward_app::error::AppError::Conflict(ref msg)) if msg.contains("already processed") => {
+                // Idempotent: onboarding request already claimed — silent no-op
+                tracing::info!("onboarding: duplicate approval (already processed)");
+            }
             Err(e) => {
-                tracing::error!(error = %e, "onboarding: user creation failed");
-                // Rollback
-                if let Err(re) = state.onboarding_repo().rollback_to_pending(&request_id) {
-                    tracing::warn!(error = %re, "onboarding: rollback failed");
-                }
-                // Notify admin
+                tracing::error!(error = %e, "onboarding: user creation failed (tx rolled back atomically)");
                 if let Some(ref sc) = state.slack_client {
                     let _ = sc.post_ephemeral(
                         &channel_id,
                         &approver_slack_id,
-                        &format!("⚠️ User creation failed: {e}. Request returned to pending."),
+                        &format!("⚠️ User creation failed: {e}. Please try again."),
                     ).await;
                 }
             }

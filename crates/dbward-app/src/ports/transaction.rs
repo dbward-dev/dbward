@@ -195,6 +195,27 @@ pub trait UserWriterOps {
     ) -> Result<(), AppError> {
         Ok(())
     }
+
+    /// Atomically claim an onboarding request as approved within the same transaction
+    /// that creates the user. Returns true if claimed (CAS: pending→approved).
+    fn claim_onboarding_approved_tx(
+        &self,
+        request_id: &str,
+        decided_by: &str,
+        decided_at: chrono::DateTime<chrono::Utc>,
+        approved_roles: &[String],
+        approved_groups: &[String],
+        decision_comment: Option<&str>,
+    ) -> Result<bool, AppError> {
+        let _ = (request_id, decided_by, decided_at, approved_roles, approved_groups, decision_comment);
+        Err(AppError::Internal("claim_onboarding_approved_tx not implemented".into()))
+    }
+
+    /// Rollback an onboarding request back to pending within a transaction.
+    fn rollback_onboarding_to_pending_tx(&self, request_id: &str) -> Result<(), AppError> {
+        let _ = request_id;
+        Err(AppError::Internal("rollback_onboarding_to_pending_tx not implemented".into()))
+    }
 }
 
 /// Operations available on execution results within a transaction.

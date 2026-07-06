@@ -30,16 +30,21 @@ impl r2d2::CustomizeConnection<Connection, rusqlite::Error> for BusyTimeoutCusto
     }
 }
 
+/// Immutable snapshot of config-derived resolver state.
+/// Swapped atomically on config reload — guarantees cross-field consistency.
+struct ResolverSnapshot {
+    group_roles: HashMap<String, Vec<String>>,
+    roles: HashMap<String, ResolvedRole>,
+    default_role: Option<String>,
+}
+
 /// DB-backed role resolver with per-subject DashMap cache.
 /// Replaces ConfigRoleResolver — reads roles from users.roles_json + group_members.
 pub struct DbRoleResolver {
     pool: r2d2::Pool<r2d2_sqlite::SqliteConnectionManager>,
     cache: DashMap<String, CachedEntry>,
-    /// Config-defined group→roles mapping. Swapped atomically on config reload.
-    group_roles: ArcSwap<HashMap<String, Vec<String>>>,
-    /// Built-in + custom role definitions (name → ResolvedRole).
-    roles: ArcSwap<HashMap<String, ResolvedRole>>,
-    default_role: ArcSwap<Option<String>>,
+    /// Atomic snapshot of all config-derived state.
+    snapshot: ArcSwap<ResolverSnapshot>,
     policy_repo: Option<Arc<dyn dbward_app::ports::PolicyRepo>>,
 }
 
@@ -76,9 +81,11 @@ impl DbRoleResolver {
         Ok(Self {
             pool,
             cache: DashMap::new(),
-            group_roles: ArcSwap::new(Arc::new(group_roles)),
-            roles: ArcSwap::new(Arc::new(roles)),
-            default_role: ArcSwap::new(Arc::new(default_role)),
+            snapshot: ArcSwap::new(Arc::new(ResolverSnapshot {
+                group_roles,
+                roles,
+                default_role,
+            })),
             policy_repo,
         })
     }
@@ -120,9 +127,11 @@ impl DbRoleResolver {
         Self {
             pool,
             cache: DashMap::new(),
-            group_roles: ArcSwap::new(Arc::new(group_roles)),
-            roles: ArcSwap::new(Arc::new(roles)),
-            default_role: ArcSwap::new(Arc::new(default_role)),
+            snapshot: ArcSwap::new(Arc::new(ResolverSnapshot {
+                group_roles,
+                roles,
+                default_role,
+            })),
             policy_repo: None,
         }
     }
@@ -139,16 +148,16 @@ impl DbRoleResolver {
 
     /// Update group→roles mapping from config (call on config reload).
     pub fn update_group_roles(&self, new_group_roles: HashMap<String, Vec<String>>) {
-        self.group_roles.store(Arc::new(new_group_roles));
+        let current = self.snapshot.load();
+        self.snapshot.store(Arc::new(ResolverSnapshot {
+            group_roles: new_group_roles,
+            roles: current.roles.clone(),
+            default_role: current.default_role.clone(),
+        }));
         self.cache.clear();
     }
 
-    /// Atomically update all config-derived state in one shot (call on config reload).
-    /// Note: the three ArcSwap::store() calls are individually atomic but not jointly.
-    /// In practice this is safe because: (1) reload is mutex-guarded (single writer),
-    /// (2) cache.clear() forces all subsequent resolves to re-read all three stores,
-    /// (3) the window between stores is sub-microsecond. Full snapshot atomicity
-    /// would require wrapping all three in a single Arc<ConfigSnapshot> — deferred to v0.2.
+    /// Atomically update all config-derived state in a single snapshot swap.
     pub fn reload_config(
         &self,
         new_group_roles: HashMap<String, Vec<String>>,
@@ -168,43 +177,17 @@ impl DbRoleResolver {
             };
             new_roles.insert(def.name, resolved);
         }
-        // Store all three atomically (cache clear only once at the end)
-        self.group_roles.store(Arc::new(new_group_roles));
-        self.roles.store(Arc::new(new_roles));
-        self.default_role.store(Arc::new(new_default_role));
+        self.snapshot.store(Arc::new(ResolverSnapshot {
+            group_roles: new_group_roles,
+            roles: new_roles,
+            default_role: new_default_role,
+        }));
         self.cache.clear();
     }
 
-    /// Update role definitions from config (call on config reload).
-    pub fn update_role_definitions(
+    fn resolve_from_db_with_snapshot(
         &self,
-        role_definitions: Vec<dbward_domain::auth::RoleDefinition>,
-    ) {
-        let mut new_roles = HashMap::new();
-        for (name, resolved) in builtin_roles() {
-            new_roles.insert(name, resolved);
-        }
-        for def in role_definitions {
-            let resolved = ResolvedRole {
-                name: def.name.clone(),
-                permissions: def.permissions.into_iter().collect(),
-                databases: def.databases,
-                environments: def.environments,
-            };
-            new_roles.insert(def.name, resolved);
-        }
-        self.roles.store(Arc::new(new_roles));
-        self.cache.clear();
-    }
-
-    /// Update default_role from config (call on config reload).
-    pub fn update_default_role(&self, new_default: Option<String>) {
-        self.default_role.store(Arc::new(new_default));
-        self.cache.clear();
-    }
-
-    fn resolve_from_db(
-        &self,
+        snap: &ResolverSnapshot,
         subject_id: &str,
         oidc_groups: &[String],
     ) -> Result<(Vec<String>, Vec<String>), AuthError> {
@@ -242,10 +225,9 @@ impl DbRoleResolver {
         }
 
         // 4. Collect group-derived role names from config
-        let group_roles_map = self.group_roles.load();
         let mut all_role_names: HashSet<String> = direct_roles.into_iter().collect();
         for group in &effective_groups {
-            if let Some(roles) = group_roles_map.get(group) {
+            if let Some(roles) = snap.group_roles.get(group) {
                 for r in roles {
                     all_role_names.insert(r.clone());
                 }
@@ -253,26 +235,25 @@ impl DbRoleResolver {
         }
 
         // 5. Default role fallback
-        if all_role_names.is_empty() {
-            let default = self.default_role.load();
-            if let Some(ref d) = **default {
-                all_role_names.insert(d.clone());
-            }
+        if all_role_names.is_empty()
+            && let Some(ref d) = snap.default_role
+        {
+            all_role_names.insert(d.clone());
         }
 
         Ok((all_role_names.into_iter().collect(), effective_groups))
     }
 
-    fn resolve_role_names_to_objects(
+    fn resolve_role_names_with_snapshot(
         &self,
+        snap: &ResolverSnapshot,
         role_names: &[String],
     ) -> Result<Vec<ResolvedRole>, AuthError> {
         let mut resolved = Vec::new();
         let mut unresolved = Vec::new();
-        let roles_map = self.roles.load();
 
         for name in role_names {
-            if let Some(r) = roles_map.get(name) {
+            if let Some(r) = snap.roles.get(name) {
                 resolved.push(r.clone());
             } else {
                 unresolved.push(name.clone());
@@ -305,10 +286,12 @@ impl RoleResolver for DbRoleResolver {
         subject_type: SubjectType,
         groups: &[String],
     ) -> Result<Vec<ResolvedRole>, AuthError> {
+        // Load config snapshot once for the entire resolve flow (consistency guarantee)
+        let snap = self.snapshot.load();
+
         // Agents always get agent-default only
         if subject_type == SubjectType::Agent {
-            let roles_map = self.roles.load();
-            return Ok(vec![roles_map.get("agent-default").cloned().ok_or_else(
+            return Ok(vec![snap.roles.get("agent-default").cloned().ok_or_else(
                 || AuthError::Internal("agent-default role not found".into()),
             )?]);
         }
@@ -319,7 +302,8 @@ impl RoleResolver for DbRoleResolver {
             && let Some(entry) = self.cache.get(subject_id)
             && entry.cached_at.elapsed().as_secs() < CACHE_TTL_SECS
         {
-            return self.resolve_role_names_to_objects(
+            return self.resolve_role_names_with_snapshot(
+                &snap,
                 &entry
                     .roles
                     .iter()
@@ -329,8 +313,8 @@ impl RoleResolver for DbRoleResolver {
         }
 
         // Cache miss: query DB
-        let (role_names, effective_groups) = self.resolve_from_db(subject_id, groups)?;
-        let resolved = self.resolve_role_names_to_objects(&role_names)?;
+        let (role_names, effective_groups) = self.resolve_from_db_with_snapshot(&snap, subject_id, groups)?;
+        let resolved = self.resolve_role_names_with_snapshot(&snap, &role_names)?;
 
         // Only cache when no OIDC groups were provided (stable result)
         if groups.is_empty() {
@@ -369,8 +353,8 @@ impl RoleResolver for DbRoleResolver {
         }
 
         // Group-derived role holders
-        let group_roles_map = self.group_roles.load();
-        for (group, roles) in group_roles_map.iter() {
+        let snap = self.snapshot.load();
+        for (group, roles) in snap.group_roles.iter() {
             if roles.iter().any(|r| r == role)
                 && let Ok(mut stmt) =
                     conn.prepare("SELECT gm.user_id FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.group_name = ?1 AND u.lifecycle_state = 'active' AND u.status = 'active'")
@@ -419,16 +403,18 @@ impl RoleResolver for DbRoleResolver {
     }
 
     fn roles_for_group(&self, group_name: &str) -> Vec<String> {
-        self.group_roles
+        self.snapshot
             .load()
+            .group_roles
             .get(group_name)
             .cloned()
             .unwrap_or_default()
     }
 
     fn groups_granting_role(&self, role: &str) -> Vec<String> {
-        self.group_roles
+        self.snapshot
             .load()
+            .group_roles
             .iter()
             .filter(|(_, roles)| roles.contains(&role.to_string()))
             .map(|(name, _)| name.clone())
